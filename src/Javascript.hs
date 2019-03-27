@@ -4,6 +4,8 @@
 {-# language PolyKinds #-}
 {-# language ExistentialQuantification #-}
 {-# language TypeOperators #-}
+{-# language TypeFamilies #-}
+{-# language RankNTypes #-}
 
 module Javascript 
   ( -- * Types
@@ -30,12 +32,12 @@ data Value :: Universe -> Type where
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
 
-data Rec :: (Universe -> Type) -> [Universe] -> Type where
-  RecNil :: Rec f '[]
-  RecCons :: _ -> Rec f rs -> Rec f (r ': rs)
+-- data Rec :: (Universe -> Type) -> [Universe] -> Type where
+  -- RecNil :: Rec f '[]
+  -- RecCons :: _ -> Rec f rs -> Rec f (r ': rs)
 
-data Function :: Type -> [Universe] -> Universe -> Type where
-  Function :: STRef s _ -> Function s rs res
+-- data Function :: Type -> [Universe] -> Universe -> Type where
+  -- Function :: STRef s _ -> Function s rs res
 
 -- When generating code, we ignore the type of the value
 -- since we are just going to produce a monotonically
@@ -61,12 +63,14 @@ data Action s (t :: Strategy) n
   | forall (u :: Universe). Foreach (Binding s t 'Number) (Binding s t ('Array u)) (Binding s t u -> Free (Action s t) ()) n
     -- ^ Foreach is an inherently imperative construct. Consequently, it does not
     -- return anything.
-  | forall (rs :: [Universe]) (res :: Universe). Declare (Rec (Binding s t) rs -> Free (Action s t) (Binding s t res)) (Function rs res -> n)
+  -- | forall (rs :: [Universe]) (res :: Universe). Declare (Rec (Binding s t) rs -> Free (Action s t) (Binding s t res)) (Function rs res -> n)
     -- ^ Not totally sure if Declare should have the function arrow in its first arg.
-  | forall (rs :: [Universe]) (res :: Universe). Call (Function rs res) (Rec Value rs) (Value res -> n)
+  -- | forall (rs :: [Universe]) (res :: Universe). Call (Function rs res) (Rec Value rs) (Value res -> n)
+
+type JSM s n = Free (Action s n)
 
 -- Create a binding to an literal
-literal :: Value u -> Free (Action s) (Binding s t u)
+literal :: Value u -> JSM s n (Binding s t u)
 literal value = undefined
 
 interpret :: (forall s t. Free (Action s t) (Binding s t u)) -> Value u
