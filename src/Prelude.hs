@@ -23,3 +23,4 @@ import Data.Type.Equality as P
 import Data.Word as P
 import GHC.Err as P (error,undefined)
 import GHC.Integer as P (Integer)
+import Data.Void as P (Void)
