@@ -92,8 +92,8 @@ type JSM s t = Free (Action s t)
 -- Create a binding to an literal
 literal :: Value u -> JSM s t (Binding s t u)
 literal = \case
-  ValueNumber i -> liftF (Literal (ValueNumber i) id)
-  ValueString s -> liftF (Literal (ValueString s) id)
+  v@ValueNumber{} -> liftF (Literal v id)
+  v@ValueString{} -> liftF (Literal v id)
   ValueArray a -> error "idk" -- liftF (Literal (ValueArray a) id)
 
 --interpret :: (forall s t. Free (Action s t) (Binding s t u)) -> Value u
