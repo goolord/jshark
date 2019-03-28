@@ -77,36 +77,6 @@ data Expr (f :: Universe -> Type) n where
    -> Binding f 'Number
    -> (Binding f 'Number -> n)
    -> Expr f n
-  Sin :: -- ^ IEEE 754 double-precision sin.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  Cos :: -- ^ IEEE 754 double-precision cos.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  Tan :: -- ^ IEEE 754 double-precision tan.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  Exp :: -- ^ IEEE 754 double-precision exp.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  ExpM1 :: -- ^ IEEE 754 double-precision expm1.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  LogE :: -- ^ IEEE 754 double-precision log.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  LogP1 :: -- ^ IEEE 754 double-precision logp1.
-      Binding f 'Number
-   -> (Binding f 'Number -> n)
-   -> Expr f n
-  Random :: -- ^ IEEE 754 double-precision random.
-      Expr f n
 
 data Statement (f :: Universe -> Type) n where
   Log ::
