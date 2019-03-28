@@ -11,6 +11,7 @@
 {-# language TypeFamilies #-}
 {-# language TypeFamilyDependencies #-}
 {-# language TypeOperators #-}
+{-# language ScopedTypeVariables #-}
 
 module Javascript 
   ( -- * Types
@@ -23,6 +24,8 @@ module Javascript
     -- * Interpretation
 --  , interpret
   ) where
+
+import Data.Void (absurd)
 
 data Universe
   = Null -- ^ null
@@ -98,9 +101,12 @@ data Statement (f :: Universe -> Type) n where
     -- ^ Not totally sure if Declare should have the function arrow in its first arg.
   -- | forall (rs :: [Universe]) (res :: Universe). Call (Function rs res) (Rec Value rs) (Value res -> n)
 
---deriving stock instance Functor (Statement f)
+data Action f n = S (Statement f n) | E (Expr f n)
 
---type JSM f = Free (Statement f)
+deriving stock instance Functor (Statement f)
+deriving stock instance Functor (Expr f)
+deriving stock instance Functor (Action f)
+type JSM f = Free (Action f)
 
 -- Create a binding to an literal
 --literal :: Value u -> JSM f (Binding f u)
@@ -109,9 +115,12 @@ data Statement (f :: Universe -> Type) n where
 --  v@ValueString{} -> liftF (Literal v id)
 --  ValueArray a -> error "idk" -- liftF (Literal (ValueArray a) id)
 
---interpret :: (forall s t. Free (Statement s t) (Binding s t u)) -> Value u
---interpret a = internalInterpret a
+interpret :: (forall f. JSM f (Binding f u)) -> Value u
+interpret a = internalInterpret a
 
 -- Not exported
---internalInterpret :: (forall s t. Free (Statement s 'Evaluate) (Binding s t u)) -> Value u
---internalInterpret = _ -- write me
+internalInterpret :: (forall f. JSM Evaluate (Binding Evaluate u)) -> Value u
+internalInterpret (Free (E (Plus num1 num2 f))) = do
+  let x :: _; x = internalInterpret $ f num1
+  let y :: _; y = internalInterpret $ f num2
+  undefined

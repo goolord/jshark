@@ -37,7 +37,6 @@ extra-source-files:
 library
   exposed-modules:
     Javascript
-    Key
   other-modules:
     Prelude
   build-depends:
