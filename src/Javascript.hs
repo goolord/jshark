@@ -90,10 +90,13 @@ type JSM s n = Free (Action s n)
 -- Create a binding to an literal
 literal :: Value u -> JSM s n (Binding s t u)
 literal = \case
-  ValueNumber i -> liftF (Literal (ValueNumber i) undefined)
-  ValueString s -> liftF (Literal (ValueString s) undefined)
+  ValueNumber i -> liftF (Literal (ValueNumber i) hole)
+  ValueString s -> liftF (Literal (ValueString s) hole)
   ValueArray _ -> error "idk"
- 
+
+hole :: Binding s n u -> Binding s t u
+hole = undefined
+
 --interpret :: (forall s t. Free (Action s t) (Binding s t u)) -> Value u
 --interpret a = internalInterpret a
 
