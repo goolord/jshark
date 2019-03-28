@@ -44,7 +44,7 @@ data Value :: Universe -> Type where
 -- value whose type corresponds to that of the binding in
 -- the EDSL.
 type family Bound (t :: Strategy) (u :: Universe) :: (b :: Type) | b -> t where
-  Bound 'Generate _ = Int
+  Bound 'Generate _ = Integer
   Bound 'Evaluate u = Value u
 
 newtype Binding :: Type -> Strategy -> Universe -> Type where
