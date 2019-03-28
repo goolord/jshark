@@ -24,8 +24,6 @@ module Javascript
 --  , interpret
   ) where
 
-import Key
-
 data Universe
   = Null -- ^ null
   | Number -- ^ IEEE 754 floating point double precision
@@ -41,6 +39,8 @@ data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
 --  ValueOption ::
 --  ValueResult ::
+
+data Option n = Some (Value n) | None
 
 -- data Function :: Type -> [Universe] -> Universe -> Type where
   -- Function :: STRef s _ -> Function s rs res
@@ -109,8 +109,8 @@ data Expr (f :: Universe -> Type) n where
       Expr f n
 
 data Statement (f :: Universe -> Type) n where
-  Log ::
-       Binding f 'String
+  Log :: 
+       Binding f u
     -> n
     -> Statement f n
   Foreach ::
