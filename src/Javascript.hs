@@ -1,5 +1,6 @@
 {-# language DataKinds #-}
 {-# language DeriveFunctor #-}
+{-# language DerivingStrategies #-}
 {-# language ExistentialQuantification #-}
 {-# language StandaloneDeriving #-}
 {-# language GADTs #-}
@@ -21,12 +22,6 @@ module Javascript
     -- * Interpretation
 --  , interpret
   ) where
-
-import Data.Kind
-import Data.STRef
-import Data.Text (Text)
-import Data.Int
-import Control.Monad.Free
 
 data Universe = Number | String | Array Universe
 
@@ -87,7 +82,7 @@ data Action s (t :: Strategy) n where
   -- | forall (rs :: [Universe]) (res :: Universe). Call (Function rs res) (Rec Value rs) (Value res -> n)
 -}
 
-deriving instance Functor (Action s t)
+deriving stock instance Functor (Action s t)
 
 type JSM s n = Free (Action s n)
 
