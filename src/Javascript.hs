@@ -16,10 +16,15 @@ module Javascript
   ( -- * Types
     Universe(..)
   , Value(..)
-  -- , Strategy(..)
---  , Statement(..)
+  , Expr(..)
+  , Statement(..)
+  , Action(..)
+  , JSE, JSM, JSA
+
     -- * Construction
---  , literal
+  , literal
+  , bind
+
     -- * Interpretation
 --  , interpret
   ) where
@@ -37,13 +42,14 @@ data Value :: Universe -> Type where
   ValueNumber :: Int64 -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
---  ValueOption ::
---  ValueResult ::
+--  ValueOption :: Option u -> Value ('Option u)
 
-data Option n = Some (Value n) | None
+--data Option u = Some (Value u) | None
 
--- data Function :: Type -> [Universe] -> Universe -> Type where
-  -- Function :: STRef s _ -> Function s rs res
+data Function :: [Universe] -> Universe -> Type where
+  Function ::
+
+--Function args output
 
 newtype Binding :: (Universe -> Type) -> Universe -> Type where
   Binding :: f u -> Binding f u
@@ -78,7 +84,24 @@ data Expr (f :: Universe -> Type) n where
    -> (Binding f 'Number -> n)
    -> Expr f n
 
+deriving stock instance Functor (Expr f)
+
+type JSE = Free (Expr f)
+
+-- Create a binding to an literal
+literal :: Value u -> JSC f (Binding f u)
+literal = \case
+  v@ValueNumber{} -> liftF (Literal v id)
+  v@ValueString{} -> liftF (Literal v id)
+  v@ValueNull{} -> liftF (Literal v id)
+  v@ValueArray{} -> liftF (Literal v id)
+
+-- | The type of statements, which are not necessarily pure computations.
 data Statement (f :: Universe -> Type) n where
+  Bind ::
+      Value u
+   -> (Binding f u -> n)
+   -> Statement f n
   Log :: 
        Binding f u
     -> n
@@ -97,20 +120,24 @@ data Statement (f :: Universe -> Type) n where
     -- ^ Not totally sure if Declare should have the function arrow in its first arg.
   -- | forall (rs :: [Universe]) (res :: Universe). Call (Function rs res) (Rec Value rs) (Value res -> n)
 
---deriving stock instance Functor (Statement f)
+deriving stock instance Functor (Statement f)
 
---type JSM f = Free (Statement f)
+type JSM f = Free (Statement f)
 
--- Create a binding to an literal
---literal :: Value u -> JSM f (Binding f u)
---literal = \case
---  v@ValueNumber{} -> liftF (Literal v id)
---  v@ValueString{} -> liftF (Literal v id)
---  ValueArray a -> error "idk" -- liftF (Literal (ValueArray a) id)
+data Action f n where
+  EAction :: Expr f n -> Action f n
+  SAction :: Statement f n -> Action f n
 
---interpret :: (forall s t. Free (Statement s t) (Binding s t u)) -> Value u
---interpret a = internalInterpret a
+deriving stock instance Functor (Action f)
 
--- Not exported
---internalInterpret :: (forall s t. Free (Statement s 'Evaluate) (Binding s t u)) -> Value u
---internalInterpret = _ -- write me
+type JSA f = Free (Action f)
+
+-- | Create a binding to a not-necessarily pure variable
+bind :: Value u -> JSM f (Binding f u)
+bind = \case
+  v@ValueNumber{} -> liftF (Bind v id)
+  v@ValueString{} -> liftF (Bind v id)
+  v@ValueNull{} -> liftF (Bind v id)
+  v@ValueArray{} -> liftF (Bind v id)
+
+
