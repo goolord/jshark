@@ -2,6 +2,7 @@ module Prelude
   ( module P
   ) where
 
+import Data.Coerce as P (coerce)
 import Control.Applicative as P (Applicative(..))
 import Control.Monad as P (Monad(..))
 import Control.Monad.Free as P (Free(..),liftF)
