@@ -42,8 +42,10 @@ data Universe
   | String -- ^ javascript strings
   | Array Universe -- ^ javascript arrays
   | JSBool -- ^ javascript bool
---  | Option Universe -- ^ option type. does not exist in source js.
---  | Result Universe Universe -- ^ result type. does not exist in source js.
+  | Tuple2 Universe Universe -- ^ 2-tuple. does not exist in source js.
+  | Tuple3 Universe Universe Universe -- ^ 3-tuple. does not exist in source js.
+  | Option Universe -- ^ option type. does not exist in source js.
+  | Result Universe Universe -- ^ result type. does not exist in source js.
   deriving stock (Eq, Show)
 
 data Value :: Universe -> Type where
@@ -52,7 +54,10 @@ data Value :: Universe -> Type where
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
   ValueBool :: Bool -> Value 'JSBool
---  ValueOption :: Option u -> Value ('Option u)
+  ValueTuple2 :: Value u -> Value u' -> Value ('Tuple2 u u')
+  ValueTuple3 :: Value u -> Value u' -> Value u'' -> Value ('Tuple3 u u' u'')
+  ValueOption :: Maybe (Value u) -> Value ('Option u)
+  ValueResult :: Value u -> Value u' -> Value ('Result u u')
 
 deriving stock instance Show (Value u)
 deriving stock instance Eq (Value u)
@@ -71,12 +76,7 @@ instance Semiring (Value 'Number) where
   times = (Num.*)
   one = ValueNumber 1
 
-data Option n = Some (Value n) | None
-
 -- data Function :: [Universe] -> Universe -> Type where
-  -- Function ::
-
---Function args output
 
 newtype Binding :: (Universe -> Type) -> Universe -> Type where
   Binding :: f u -> Binding f u
@@ -137,6 +137,10 @@ literal = \case
   v@ValueNull{} -> liftF (Literal v id)
   v@ValueArray{} -> liftF (Literal v id)
   v@ValueBool{} -> liftF (Literal v id)
+  v@ValueTuple2{} -> liftF (Literal v id)
+  v@ValueTuple3{} -> liftF (Literal v id)
+  v@ValueOption{} -> liftF (Literal v id)
+  v@ValueResult{} -> liftF (Literal v id)
 
 -- | The type of statements, which are not necessarily pure computations.
 data Statement (f :: Universe -> Type) n where
@@ -195,22 +199,22 @@ bind = \case
   v@ValueNull{} -> liftF (Bind v id)
   v@ValueArray{} -> liftF (Bind v id)
   v@ValueBool{} -> liftF (Bind v id)
+  v@ValueTuple2{} -> liftF (Bind v id)
+  v@ValueTuple3{} -> liftF (Bind v id)
+  v@ValueOption{} -> liftF (Bind v id)
+  v@ValueResult{} -> liftF (Bind v id)
 
-interpret :: (forall f. JSE f (Binding f u)) -> Value u
-interpret a = interpretInternal a
-
--- Not exported
-interpretInternal :: JSE Evaluate (Binding Evaluate u) -> Value u
-interpretInternal = \case
+interpretExpr :: JSE Evaluate (Binding Evaluate u) -> Value u
+interpretExpr = \case
   Pure (Binding (Evaluate u)) -> u
   Free b -> case b of
-    Literal a f -> interpretInternal (f (Binding (Evaluate a)))
-    Plus x y f -> interpretInternal (f (plus_ x y))
-    Times x y f -> interpretInternal (f (times_ x y))
-    Minus x y f -> interpretInternal (f (minus_ x y))
-    Map f arr g -> interpretInternal (g (map_ f arr))
-    Equals x y f -> interpretInternal (f (equals_ x y))
-    IfThenElse bool' then' else' f -> interpretInternal (f (ifThenElse_ bool' then' else'))
+    Literal a f -> interpretExpr (f (Binding (Evaluate a)))
+    Plus x y f -> interpretExpr (f (plus_ x y))
+    Times x y f -> interpretExpr (f (times_ x y))
+    Minus x y f -> interpretExpr (f (minus_ x y))
+    Map f arr g -> interpretExpr (g (map_ f arr))
+    Equals x y f -> interpretExpr (f (equals_ x y))
+    IfThenElse bool' then' else' f -> interpretExpr (f (ifThenElse_ bool' then' else'))
 
 plus_ :: Binding Evaluate 'Number -> Binding Evaluate 'Number -> Binding Evaluate 'Number
 plus_ (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y)))
@@ -242,13 +246,13 @@ ifThenElse_ (Binding (Evaluate (ValueBool bool'))) a b =
   else b
 
 exampleMap :: Value ('Array 'Number)
-exampleMap = interpretInternal $ do
+exampleMap = interpretExpr $ do
   x <- literal $ ValueArray [1,3,5]
   let fx = map_ (plus_ (Binding (Evaluate 1))) x
   pure fx      
 
 example :: Value 'Number
-example = interpret $ do
+example = interpretExpr $ do
   x <- literal 2
   y <- literal 3
   xy <- plus' x y
