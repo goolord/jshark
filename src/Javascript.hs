@@ -78,6 +78,7 @@ data Expr (f :: Universe -> Type) n where
    -> (Binding f 'Number -> n)
    -> Expr f n
 
+-- | Imperitive statemnets, which are impure computations
 data Statement (f :: Universe -> Type) n where
   Log :: 
        Binding f u
