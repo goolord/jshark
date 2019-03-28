@@ -1,2 +1,6 @@
 dist*
 .ghc*
+*.swo
+*.swp
+result
+result-*
