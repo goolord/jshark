@@ -12,20 +12,24 @@
 {-# language TypeFamilyDependencies #-}
 {-# language TypeOperators #-}
 {-# language ScopedTypeVariables #-}
+{-# language FlexibleInstances #-}
 
-module Javascript 
-  ( -- * Types
-    Universe(..)
-  , Value(..)
+-- {-# OPTIONS_GHC -Wall -Werror #-}
+
+module Javascript where
+  -- ( -- * Types
+    -- Universe(..)
+  -- , Value(..)
   -- , Strategy(..)
 --  , Statement(..)
     -- * Construction
 --  , literal
     -- * Interpretation
 --  , interpret
-  ) where
+  -- ) where
 
 import Data.Void (absurd)
+import qualified GHC.Num as Num
 
 data Universe
   = Null -- ^ null
@@ -37,11 +41,27 @@ data Universe
 
 data Value :: Universe -> Type where
   ValueNull :: Void -> Value 'Null -- ^ absurd
-  ValueNumber :: Int64 -> Value 'Number
+  ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
 --  ValueOption ::
 --  ValueResult ::
+
+instance Num.Num (Value 'Number) where
+  (ValueNumber a) + (ValueNumber b) = ValueNumber (a + b)
+  (ValueNumber a) * (ValueNumber b) = ValueNumber (a * b)
+  (ValueNumber a) - (ValueNumber b) = ValueNumber (a - b)
+  abs (ValueNumber a) = ValueNumber (Num.abs a)
+  signum (ValueNumber a) = ValueNumber (Num.signum a)
+  fromInteger n = ValueNumber (Num.fromInteger n)
+
+instance Semiring (Value 'Number) where
+  plus = (Num.+)
+  zero = ValueNumber 0
+  times = (Num.*)
+  one = ValueNumber 1
+
+deriving instance Show (Value u)
 
 data Option n = Some (Value n) | None
 
@@ -57,7 +77,7 @@ newtype Evaluate :: Universe -> Type where
 
 -- | Code Generation.
 newtype Generate :: Universe -> Type where
-  Generate :: Int64 -> Generate u
+  Generate :: Double -> Generate u
 
 -- | The type of expressions, which are pure computations.
 data Expr (f :: Universe -> Type) n where
@@ -101,26 +121,35 @@ data Statement (f :: Universe -> Type) n where
     -- ^ Not totally sure if Declare should have the function arrow in its first arg.
   -- | forall (rs :: [Universe]) (res :: Universe). Call (Function rs res) (Rec Value rs) (Value res -> n)
 
-data Action f n = S (Statement f n) | E (Expr f n)
-
 deriving stock instance Functor (Statement f)
 deriving stock instance Functor (Expr f)
-deriving stock instance Functor (Action f)
-type JSM f = Free (Action f)
+
+type JSM f = Free (Expr f)
 
 -- Create a binding to an literal
---literal :: Value u -> JSM f (Binding f u)
---literal = \case
---  v@ValueNumber{} -> liftF (Literal v id)
---  v@ValueString{} -> liftF (Literal v id)
---  ValueArray a -> error "idk" -- liftF (Literal (ValueArray a) id)
+literal :: Value u -> JSM f (Binding f u)
+literal = \case
+ v@ValueNumber{} -> liftF (Literal v id)
+ v@ValueString{} -> liftF (Literal v id)
+ ValueArray a -> error "idk" -- liftF (Literal (ValueArray a) id)
+ ValueNull a -> absurd a
+
+plus' :: Binding f 'Number -> Binding f 'Number -> JSM f (Binding f 'Number)
+plus' x y = liftF $ Plus x y id
 
 interpret :: (forall f. JSM f (Binding f u)) -> Value u
 interpret a = internalInterpret a
 
 -- Not exported
-internalInterpret :: (forall f. JSM Evaluate (Binding Evaluate u)) -> Value u
-internalInterpret (Free (E (Plus num1 num2 f))) = do
-  let x :: _; x = internalInterpret $ f num1
-  let y :: _; y = internalInterpret $ f num2
-  undefined
+internalInterpret :: JSM Evaluate (Binding Evaluate u) -> Value u
+internalInterpret (Free (Plus (Binding (Evaluate (ValueNumber num1))) (Binding (Evaluate (ValueNumber num2))) f)) = do
+  internalInterpret $ f $ Binding $ Evaluate $ ValueNumber (num1 + num2)
+internalInterpret (Free (Literal a f)) = internalInterpret $ f (Binding $ Evaluate a)
+internalInterpret (Pure (Binding (Evaluate u))) = u
+
+example :: Value 'Number
+example = interpret $ do
+  x <- literal $ ValueNumber 2
+  y <- literal $ ValueNumber 3
+  xy <- plus' x y
+  pure xy

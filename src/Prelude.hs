@@ -21,6 +21,8 @@ import Data.Semiring as P (Semiring(..), (+),(*), Ring(..), (-))
 import Data.Text as P (Text)
 import Data.Type.Equality as P 
 import Data.Word as P
+import GHC.Exts as P (Double)
 import GHC.Err as P (error,undefined)
 import GHC.Integer as P (Integer)
 import Data.Void as P (Void)
+import Text.Show as P
