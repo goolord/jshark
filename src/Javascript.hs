@@ -14,19 +14,22 @@
 {-# language ScopedTypeVariables #-}
 {-# language FlexibleInstances #-}
 
--- {-# OPTIONS_GHC -Wall -Werror #-}
-
-module Javascript where
+module Javascript 
   -- ( -- * Types
     -- Universe(..)
   -- , Value(..)
-  -- , Strategy(..)
---  , Statement(..)
-    -- * Construction
---  , literal
-    -- * Interpretation
---  , interpret
+  -- , Expr(..)
+  -- , Statement(..)
+  -- , Action(..)
+  -- , JSE, JSM, JSA
+    -- -- * Construction
+  -- , literal
+  -- , bind
+
+    -- -- * Interpretation
+-- --  , interpret
   -- ) where
+  where
 
 import Data.Void (absurd)
 import qualified GHC.Num as Num
@@ -44,8 +47,7 @@ data Value :: Universe -> Type where
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
---  ValueOption ::
---  ValueResult ::
+--  ValueOption :: Option u -> Value ('Option u)
 
 instance Num.Num (Value 'Number) where
   (ValueNumber a) + (ValueNumber b) = ValueNumber (a + b)
@@ -65,8 +67,10 @@ deriving instance Show (Value u)
 
 data Option n = Some (Value n) | None
 
--- data Function :: Type -> [Universe] -> Universe -> Type where
-  -- Function :: STRef s _ -> Function s rs res
+-- data Function :: [Universe] -> Universe -> Type where
+  -- Function ::
+
+--Function args output
 
 newtype Binding :: (Universe -> Type) -> Universe -> Type where
   Binding :: f u -> Binding f u
@@ -101,8 +105,22 @@ data Expr (f :: Universe -> Type) n where
    -> (Binding f 'Number -> n)
    -> Expr f n
 
--- | Imperitive statemnets, which are impure computations
+type JSE f = Free (Expr f)
+
+-- Create a binding to an literal
+literal :: Value u -> JSE f (Binding f u)
+literal = \case
+  v@ValueNumber{} -> liftF (Literal v id)
+  v@ValueString{} -> liftF (Literal v id)
+  v@ValueNull{} -> liftF (Literal v id)
+  v@ValueArray{} -> liftF (Literal v id)
+
+-- | The type of statements, which are not necessarily pure computations.
 data Statement (f :: Universe -> Type) n where
+  Bind ::
+      Value u
+   -> (Binding f u -> n)
+   -> Statement f n
   Log :: 
        Binding f u
     -> n
@@ -124,24 +142,32 @@ data Statement (f :: Universe -> Type) n where
 deriving stock instance Functor (Statement f)
 deriving stock instance Functor (Expr f)
 
-type JSM f = Free (Expr f)
-
--- Create a binding to an literal
-literal :: Value u -> JSM f (Binding f u)
-literal = \case
- v@ValueNumber{} -> liftF (Literal v id)
- v@ValueString{} -> liftF (Literal v id)
- ValueArray a -> error "idk" -- liftF (Literal (ValueArray a) id)
- ValueNull a -> absurd a
-
-plus' :: Binding f 'Number -> Binding f 'Number -> JSM f (Binding f 'Number)
+plus' :: Binding f 'Number -> Binding f 'Number -> JSE f (Binding f 'Number)
 plus' x y = liftF $ Plus x y id
 
-interpret :: (forall f. JSM f (Binding f u)) -> Value u
+type JSM f = Free (Statement f)
+
+data Action f n where
+  EAction :: Expr f n -> Action f n
+  SAction :: Statement f n -> Action f n
+
+deriving stock instance Functor (Action f)
+
+type JSA f = Free (Action f)
+
+-- | Create a binding to a not-necessarily pure variable
+bind :: Value u -> JSM f (Binding f u)
+bind = \case
+  v@ValueNumber{} -> liftF (Bind v id)
+  v@ValueString{} -> liftF (Bind v id)
+  v@ValueNull{} -> liftF (Bind v id)
+  v@ValueArray{} -> liftF (Bind v id)
+
+interpret :: (forall f. JSE f (Binding f u)) -> Value u
 interpret a = internalInterpret a
 
 -- Not exported
-internalInterpret :: JSM Evaluate (Binding Evaluate u) -> Value u
+internalInterpret :: JSE Evaluate (Binding Evaluate u) -> Value u
 internalInterpret (Free (Plus (Binding (Evaluate (ValueNumber num1))) (Binding (Evaluate (ValueNumber num2))) f)) = do
   internalInterpret $ f $ Binding $ Evaluate $ ValueNumber (num1 + num2)
 internalInterpret (Free (Literal a f)) = internalInterpret $ f (Binding $ Evaluate a)
