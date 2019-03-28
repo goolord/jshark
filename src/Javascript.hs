@@ -9,6 +9,7 @@
 {-# language PolyKinds #-}
 {-# language RankNTypes #-}
 {-# language TypeFamilies #-}
+{-# language TypeFamilyDependencies #-}
 {-# language TypeOperators #-}
 
 module Javascript 
@@ -42,7 +43,7 @@ data Value :: Universe -> Type where
 -- increasing identifier. When evaluating, we use a haskell
 -- value whose type corresponds to that of the binding in
 -- the EDSL.
-type family Bound (t :: Strategy) (u :: Universe) :: Type where
+type family Bound (t :: Strategy) (u :: Universe) :: (b :: Type) | b -> t where
   Bound 'Generate _ = Int
   Bound 'Evaluate u = Value u
 
