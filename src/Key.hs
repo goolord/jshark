@@ -26,7 +26,7 @@ instance TestEquality (Key s) where
 
 newKey :: KeyM s (Key s a)
 newKey = KeyM $ \r -> unsafePerformIO $ do
-  k <- atomicModifyIORef' r (\n -> (n+1,Key n))
+  k <- atomicModifyIORef' r (\n -> (n + 1, Key n))
   pure k
 
 runKeyM :: (forall s. KeyM s a) -> a
