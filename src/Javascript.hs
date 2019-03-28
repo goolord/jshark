@@ -34,6 +34,7 @@ module Javascript
   where
 
 import qualified GHC.Num as Num
+import qualified Data.List as List
 
 data Universe
   = Null -- ^ null
@@ -114,6 +115,17 @@ data Expr (f :: Universe -> Type) n where
    -> Binding f u
    -> (Binding f 'JSBool -> n)
    -> Expr f n
+  Map ::
+      (Binding f u -> Binding f u')
+   -> Binding f ('Array u)
+   -> (Binding f ('Array u') -> n)
+   -> Expr f n
+  IfThenElse ::
+      Binding f ('JSBool)
+   -> Binding f u
+   -> Binding f u
+   -> (Binding f u -> n)
+   -> Expr f n
 
 type JSE f = Free (Expr f)
 
@@ -162,6 +174,9 @@ minus' x y = liftF $ Minus x y id
 equals' :: Binding f u -> Binding f u -> JSE f (Binding f 'JSBool)
 equals' x y = liftF $ Equals x y id
 
+ifThenElse' :: Binding f 'JSBool -> Binding f u -> Binding f u -> JSE f (Binding f u)
+ifThenElse' b x y = liftF $ IfThenElse b x y id
+
 type JSM f = Free (Statement f)
 
 data Action f n where
@@ -182,22 +197,63 @@ bind = \case
   v@ValueBool{} -> liftF (Bind v id)
 
 interpret :: (forall f. JSE f (Binding f u)) -> Value u
-interpret a = internalInterpret a
+interpret a = interpretInternal a
 
 -- Not exported
-internalInterpret :: JSE Evaluate (Binding Evaluate u) -> Value u
-internalInterpret (Free (Plus (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x + y
-internalInterpret (Free (Times (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x * y
-internalInterpret (Free (Minus (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x - y
-internalInterpret (Free (Minus (Binding (Evaluate x)) (Binding (Evaluate y)) f)) = internalInterpret . f . Binding . Evaluate . ValueBool $ x == y
-internalInterpret (Free (Literal a f)) = internalInterpret $ f (Binding $ Evaluate a)
-internalInterpret (Pure (Binding (Evaluate u))) = u
+interpretInternal :: JSE Evaluate (Binding Evaluate u) -> Value u
+interpretInternal = \case
+  Pure (Binding (Evaluate u)) -> u
+  Free b -> case b of
+    Literal a f -> interpretInternal (f (Binding (Evaluate a)))
+    Plus x y f -> interpretInternal (f (plus_ x y))
+    Times x y f -> interpretInternal (f (times_ x y))
+    Minus x y f -> interpretInternal (f (minus_ x y))
+    Map f arr g -> interpretInternal (g (map_ f arr))
+    Equals x y f -> interpretInternal (f (equals_ x y))
+    IfThenElse bool' then' else' f -> interpretInternal (f (ifThenElse_ bool' then' else'))
+
+plus_ :: Binding Evaluate 'Number -> Binding Evaluate 'Number -> Binding Evaluate 'Number
+plus_ (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y)))
+  = Binding (Evaluate (ValueNumber (x + y)))
+
+times_ :: Binding Evaluate 'Number -> Binding Evaluate 'Number -> Binding Evaluate 'Number
+times_ (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y)))
+  = Binding (Evaluate (ValueNumber (x * y)))
+
+minus_ :: Binding Evaluate 'Number -> Binding Evaluate 'Number -> Binding Evaluate 'Number
+minus_ (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y)))
+  = Binding (Evaluate (ValueNumber (x - y)))
+
+map_ ::
+     (Binding Evaluate u -> Binding Evaluate u')
+  -> Binding Evaluate ('Array u)
+  -> Binding Evaluate ('Array u')
+map_ f (Binding (Evaluate (ValueArray (xs :: [Value u])))) =
+  let xs' = List.map (coerce . f . coerce) xs
+  in Binding (Evaluate (ValueArray xs'))
+
+equals_ :: Binding Evaluate u -> Binding Evaluate u -> Binding Evaluate 'JSBool
+equals_ (Binding (Evaluate x)) (Binding (Evaluate y)) = Binding (Evaluate (ValueBool (x == y)))
+
+ifThenElse_ :: Binding Evaluate 'JSBool -> Binding Evaluate u -> Binding Evaluate u -> Binding Evaluate u
+ifThenElse_ (Binding (Evaluate (ValueBool bool'))) a b =
+  if bool'
+  then a
+  else b
+
+exampleMap :: Value ('Array 'Number)
+exampleMap = interpretInternal $ do
+  x <- literal $ ValueArray [1,3,5]
+  let fx = map_ (plus_ (Binding (Evaluate 1))) x
+  pure fx      
 
 example :: Value 'Number
 example = interpret $ do
-  x <- literal $ ValueNumber 2
-  y <- literal $ ValueNumber 3
+  x <- literal 2
+  y <- literal 3
   xy <- plus' x y
   x' <- minus' xy y
+  false <- literal 0
   bool' <- x `equals'` x'
-  pure xy
+  rval <- ifThenElse' bool' xy false 
+  pure rval
