@@ -9,7 +9,7 @@ import Control.Monad.ST as P (ST, runST)
 import Data.Bool as P (Bool(..), (&&), (||), otherwise)
 import Data.Either as P (Either(..),either)
 import Data.Eq as P (Eq(..))
-import Data.Function as P (($),id,(&))
+import Data.Function as P (($),id,(&),(.))
 import Data.Functor as P (Functor(..))
 import Data.IORef as P
 import Data.Int as P
