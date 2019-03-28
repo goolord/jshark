@@ -14,6 +14,8 @@
 {-# language ScopedTypeVariables #-}
 {-# language FlexibleInstances #-}
 
+{-# options_ghc -Wall #-}
+
 module Javascript 
   -- ( -- * Types
     -- Universe(..)
@@ -31,7 +33,6 @@ module Javascript
   -- ) where
   where
 
-import Data.Void (absurd)
 import qualified GHC.Num as Num
 
 data Universe
@@ -41,6 +42,7 @@ data Universe
   | Array Universe -- ^ javascript arrays
 --  | Option Universe -- ^ option type. does not exist in source js.
 --  | Result Universe Universe -- ^ result type. does not exist in source js.
+  deriving stock (Eq, Show)
 
 data Value :: Universe -> Type where
   ValueNull :: Void -> Value 'Null -- ^ absurd
@@ -48,6 +50,9 @@ data Value :: Universe -> Type where
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
 --  ValueOption :: Option u -> Value ('Option u)
+
+deriving stock instance Show (Value u)
+deriving stock instance Eq (Value u)
 
 instance Num.Num (Value 'Number) where
   (ValueNumber a) + (ValueNumber b) = ValueNumber (a + b)
@@ -62,8 +67,6 @@ instance Semiring (Value 'Number) where
   zero = ValueNumber 0
   times = (Num.*)
   one = ValueNumber 1
-
-deriving instance Show (Value u)
 
 data Option n = Some (Value n) | None
 
@@ -168,8 +171,9 @@ interpret a = internalInterpret a
 
 -- Not exported
 internalInterpret :: JSE Evaluate (Binding Evaluate u) -> Value u
-internalInterpret (Free (Plus (Binding (Evaluate (ValueNumber num1))) (Binding (Evaluate (ValueNumber num2))) f)) = do
-  internalInterpret $ f $ Binding $ Evaluate $ ValueNumber (num1 + num2)
+internalInterpret (Free (Plus (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x + y
+internalInterpret (Free (Times (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x * y
+internalInterpret (Free (Minus (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x - y
 internalInterpret (Free (Literal a f)) = internalInterpret $ f (Binding $ Evaluate a)
 internalInterpret (Pure (Binding (Evaluate u))) = u
 
