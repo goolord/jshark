@@ -11,6 +11,7 @@
 {-# language TypeFamilies #-}
 {-# language TypeFamilyDependencies #-}
 {-# language TypeOperators #-}
+{-# language ScopedTypeVariables #-}
 
 module Javascript 
   ( -- * Types
@@ -28,6 +29,8 @@ module Javascript
     -- * Interpretation
 --  , interpret
   ) where
+
+import Data.Void (absurd)
 
 data Universe
   = Null -- ^ null
@@ -84,6 +87,7 @@ data Expr (f :: Universe -> Type) n where
    -> (Binding f 'Number -> n)
    -> Expr f n
 
+<<<<<<< HEAD
 deriving stock instance Functor (Expr f)
 
 type JSE = Free (Expr f)
@@ -97,6 +101,9 @@ literal = \case
   v@ValueArray{} -> liftF (Literal v id)
 
 -- | The type of statements, which are not necessarily pure computations.
+=======
+-- | Imperitive statemnets, which are impure computations
+>>>>>>> 9d25bd7e48b55a54e77111b1d5bee063f5b9780e
 data Statement (f :: Universe -> Type) n where
   Bind ::
       Value u
@@ -140,4 +147,12 @@ bind = \case
   v@ValueNull{} -> liftF (Bind v id)
   v@ValueArray{} -> liftF (Bind v id)
 
+interpret :: (forall f. JSM f (Binding f u)) -> Value u
+interpret a = internalInterpret a
 
+-- Not exported
+internalInterpret :: (forall f. JSM Evaluate (Binding Evaluate u)) -> Value u
+internalInterpret (Free (E (Plus num1 num2 f))) = do
+  let x :: _; x = internalInterpret $ f num1
+  let y :: _; y = internalInterpret $ f num2
+  undefined
