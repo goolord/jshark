@@ -40,6 +40,7 @@ data Universe
   | Number -- ^ IEEE 754 floating point double precision
   | String -- ^ javascript strings
   | Array Universe -- ^ javascript arrays
+  | JSBool -- ^ javascript bool
 --  | Option Universe -- ^ option type. does not exist in source js.
 --  | Result Universe Universe -- ^ result type. does not exist in source js.
   deriving stock (Eq, Show)
@@ -49,6 +50,7 @@ data Value :: Universe -> Type where
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
+  ValueBool :: Bool -> Value 'JSBool
 --  ValueOption :: Option u -> Value ('Option u)
 
 deriving stock instance Show (Value u)
@@ -107,6 +109,11 @@ data Expr (f :: Universe -> Type) n where
    -> Binding f 'Number
    -> (Binding f 'Number -> n)
    -> Expr f n
+  Equals ::
+      Binding f u
+   -> Binding f u
+   -> (Binding f 'JSBool -> n)
+   -> Expr f n
 
 type JSE f = Free (Expr f)
 
@@ -117,6 +124,7 @@ literal = \case
   v@ValueString{} -> liftF (Literal v id)
   v@ValueNull{} -> liftF (Literal v id)
   v@ValueArray{} -> liftF (Literal v id)
+  v@ValueBool{} -> liftF (Literal v id)
 
 -- | The type of statements, which are not necessarily pure computations.
 data Statement (f :: Universe -> Type) n where
@@ -148,6 +156,12 @@ deriving stock instance Functor (Expr f)
 plus' :: Binding f 'Number -> Binding f 'Number -> JSE f (Binding f 'Number)
 plus' x y = liftF $ Plus x y id
 
+minus' :: Binding f 'Number -> Binding f 'Number -> JSE f (Binding f 'Number)
+minus' x y = liftF $ Minus x y id
+
+equals' :: Binding f u -> Binding f u -> JSE f (Binding f 'JSBool)
+equals' x y = liftF $ Equals x y id
+
 type JSM f = Free (Statement f)
 
 data Action f n where
@@ -165,6 +179,7 @@ bind = \case
   v@ValueString{} -> liftF (Bind v id)
   v@ValueNull{} -> liftF (Bind v id)
   v@ValueArray{} -> liftF (Bind v id)
+  v@ValueBool{} -> liftF (Bind v id)
 
 interpret :: (forall f. JSE f (Binding f u)) -> Value u
 interpret a = internalInterpret a
@@ -174,6 +189,7 @@ internalInterpret :: JSE Evaluate (Binding Evaluate u) -> Value u
 internalInterpret (Free (Plus (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x + y
 internalInterpret (Free (Times (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x * y
 internalInterpret (Free (Minus (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y))) f)) = internalInterpret . f . Binding . Evaluate . ValueNumber $ x - y
+internalInterpret (Free (Minus (Binding (Evaluate x)) (Binding (Evaluate y)) f)) = internalInterpret . f . Binding . Evaluate . ValueBool $ x == y
 internalInterpret (Free (Literal a f)) = internalInterpret $ f (Binding $ Evaluate a)
 internalInterpret (Pure (Binding (Evaluate u))) = u
 
@@ -182,4 +198,6 @@ example = interpret $ do
   x <- literal $ ValueNumber 2
   y <- literal $ ValueNumber 3
   xy <- plus' x y
+  x' <- minus' xy y
+  bool' <- x `equals'` x'
   pure xy
