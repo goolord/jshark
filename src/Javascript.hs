@@ -41,8 +41,10 @@ data Universe
   | Number -- ^ IEEE 754 floating point double precision
   | String -- ^ javascript strings
   | Array Universe -- ^ javascript arrays
---  | Option Universe -- ^ option type. does not exist in source js.
---  | Result Universe Universe -- ^ result type. does not exist in source js.
+  | Tuple2 Universe Universe -- ^ 2-tuple. does not exist in source js.
+  | Tuple3 Universe Universe Universe -- ^ 3-tuple. does not exist in source js.
+  | Option Universe -- ^ option type. does not exist in source js.
+  | Result Universe Universe -- ^ result type. does not exist in source js.
   deriving stock (Eq, Show)
 
 data Value :: Universe -> Type where
@@ -50,7 +52,10 @@ data Value :: Universe -> Type where
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
---  ValueOption :: Option u -> Value ('Option u)
+  ValueTuple2 :: Value u -> Value u' -> Value ('Tuple2 u u')
+  ValueTuple3 :: Value u -> Value u' -> Value u'' -> Value ('Tuple3 u u' u'')
+  ValueOption :: Maybe (Value u) -> Value ('Option u)
+  ValueResult :: Value u -> Value u' -> Value ('Result u u')
 
 deriving stock instance Show (Value u)
 deriving stock instance Eq (Value u)
@@ -69,12 +74,7 @@ instance Semiring (Value 'Number) where
   times = (Num.*)
   one = ValueNumber 1
 
-data Option n = Some (Value n) | None
-
 -- data Function :: [Universe] -> Universe -> Type where
-  -- Function ::
-
---Function args output
 
 newtype Binding :: (Universe -> Type) -> Universe -> Type where
   Binding :: f u -> Binding f u
@@ -123,6 +123,10 @@ literal = \case
   v@ValueString{} -> liftF (Literal v id)
   v@ValueNull{} -> liftF (Literal v id)
   v@ValueArray{} -> liftF (Literal v id)
+  v@ValueTuple2{} -> liftF (Literal v id)
+  v@ValueTuple3{} -> liftF (Literal v id)
+  v@ValueOption{} -> liftF (Literal v id)
+  v@ValueResult{} -> liftF (Literal v id)
 
 -- | The type of statements, which are not necessarily pure computations.
 data Statement (f :: Universe -> Type) n where
@@ -171,20 +175,20 @@ bind = \case
   v@ValueString{} -> liftF (Bind v id)
   v@ValueNull{} -> liftF (Bind v id)
   v@ValueArray{} -> liftF (Bind v id)
+  v@ValueTuple2{} -> liftF (Bind v id)
+  v@ValueTuple3{} -> liftF (Bind v id)
+  v@ValueOption{} -> liftF (Bind v id)
+  v@ValueResult{} -> liftF (Bind v id)
 
-interpret :: (forall f. JSE f (Binding f u)) -> Value u
-interpret a = interpretInternal a
-
--- Not exported
-interpretInternal :: JSE Evaluate (Binding Evaluate u) -> Value u
-interpretInternal = \case
+interpretExpr :: JSE Evaluate (Binding Evaluate u) -> Value u
+interpretExpr = \case
   Pure (Binding (Evaluate u)) -> u
   Free b -> case b of
-    Literal a f -> interpretInternal (f (Binding (Evaluate a)))
-    Plus x y f -> interpretInternal (f (plus_ x y))
-    Times x y f -> interpretInternal (f (times_ x y))
-    Minus x y f -> interpretInternal (f (minus_ x y))
-    Map f arr g -> interpretInternal (g (map_ f arr))
+    Literal a f -> interpretExpr (f (Binding (Evaluate a)))
+    Plus x y f -> interpretExpr (f (plus_ x y))
+    Times x y f -> interpretExpr (f (times_ x y))
+    Minus x y f -> interpretExpr (f (minus_ x y))
+    Map f arr g -> interpretExpr (g (map_ f arr))
 
 plus_ :: Binding Evaluate 'Number -> Binding Evaluate 'Number -> Binding Evaluate 'Number
 plus_ (Binding (Evaluate (ValueNumber x))) (Binding (Evaluate (ValueNumber y)))
@@ -210,13 +214,13 @@ map_ f (Binding (Evaluate (ValueArray (xs :: [Value u])))) =
 --equals (Binding (Evaluate x)) (Binding (Evaluate y)) =
 
 exampleMap :: Value ('Array 'Number)
-exampleMap = interpretInternal $ do
+exampleMap = interpretExpr $ do
   x <- literal $ ValueArray [1,3,5]
   let fx = map_ (plus_ (Binding (Evaluate 1))) x
   pure fx      
 
 example :: Value 'Number
-example = interpret $ do
+example = interpretExpr $ do
   x <- literal $ ValueNumber 2
   y <- literal $ ValueNumber 3
   xy <- plus' x y
