@@ -1,1 +1,1 @@
-(import ./. {}).env
+(import ./default.nix {}).env
