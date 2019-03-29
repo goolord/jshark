@@ -2,6 +2,8 @@ module Prelude
   ( module P
   ) where
 
+import Data.Monoid as P (Monoid(..))
+import Data.Semigroup as P (Semigroup(..))
 import Data.Coerce as P (coerce)
 import Control.Applicative as P (Applicative(..))
 import Control.Monad as P (Monad(..))
