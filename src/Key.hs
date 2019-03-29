@@ -14,10 +14,10 @@ import System.IO.Unsafe (unsafePerformIO)
 
 -- Should these use Int or Integer?
 -- Not sure we care about unboxing here.
-newtype KeyM s a = KeyM { getKeyM :: IORef Integer -> a }
+newtype KeyM s a = KeyM (IORef Integer -> a)
   deriving newtype (Functor,Applicative,Monad)
 
-newtype Key s a = Key { getKey :: Integer }
+newtype Key s a = Key Integer
 
 instance TestEquality (Key s) where
   testEquality (Key i) (Key j)
