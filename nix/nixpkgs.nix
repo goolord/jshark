@@ -1,20 +1,14 @@
-{ compiler }:
-with rec {
+{ }:
+
+let
   fetchNixpkgs = import ./fetchNixpkgs.nix;
+
   nixpkgs = fetchNixpkgs {
-    owner  = "NixOS";
-    repo   = "nixpkgs";
-    rev    = "382333b25e0d6fbac746d91224ed6b805b6407a0";
-    sha256 = "11g2kaj087c4yaxaszqjksccfa9s5968yi0brd0jk1gw8lznj44q";
+    owner = "layer-3-communications";
+    repo = "nixpkgs";
+    rev = "711cfa0b6612ceb3d727fd14cc92324eb60461b6";
+    sha256 = "0gz5ybq00nif578bbricb4d640m1szh06xwrdk7q97hw4fy9rkjh";
   };
-};
-import nixpkgs {
-  config = {
-    packageOverrides = super: let self = super.pkgs; in {
-      haskellPackages = super.haskell.packages.${compiler}.override {
-        overrides = import ./overrides.nix { pkgs = self; };
-      };
-    };
-  };
-  overlays = [ ];
-}
+
+in
+  nixpkgs
