@@ -33,11 +33,13 @@ module Reboot
 -- This uses a higher-order PHOAS approach as described by
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
-import Data.Text (Text)
 import Data.Functor.Const (Const(..))
 import qualified Data.Text as T
 
-data Universe = Number | String | Function Universe Universe
+data Universe
+  = Number
+  | String
+  | Function Universe Universe
 
 data Value :: Universe -> Type where
   ValueNumber :: Double -> Value 'Number
