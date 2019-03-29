@@ -35,6 +35,7 @@ data Universe
   | Number -- ^ IEEE 754 floating point double precision
   | String -- ^ javascript strings
   | Array Universe -- ^ javascript arrays
+  | JSBool -- ^ javascript bool
   | Tuple2 Universe Universe -- ^ 2-tuple. does not exist in source js.
   | Tuple3 Universe Universe Universe -- ^ 3-tuple. does not exist in source js.
   | Option Universe -- ^ option type. does not exist in source js.
@@ -48,6 +49,7 @@ data Value :: Universe -> Type where
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueArray :: [Value u] -> Value ('Array u)
+  ValueBool :: Bool -> Value 'JSBool
   ValueTuple2 :: Value u -> Value u' -> Value ('Tuple2 u u')
   ValueTuple3 :: Value u -> Value u' -> Value u'' -> Value ('Tuple3 u u' u'')
   ValueOption :: Maybe (Value u) -> Value ('Option u)
@@ -223,6 +225,7 @@ bind = \case
   v@ValueString{} -> liftF (Bind v id)
   v@ValueNull{} -> liftF (Bind v id)
   v@ValueArray{} -> liftF (Bind v id)
+  v@ValueBool{} -> liftF (Bind v id)
   v@ValueTuple2{} -> liftF (Bind v id)
   v@ValueTuple3{} -> liftF (Bind v id)
   v@ValueOption{} -> liftF (Bind v id)
@@ -299,8 +302,16 @@ map_ f (Binding (Evaluate (ValueArray (xs :: [Value u])))) =
   let xs' = List.map (coerce . f . coerce) xs
   in Binding (Evaluate (ValueArray xs'))
 
---equals :: Binding Evaluate u -> Binding Evaluate u -> Binding f JSBool
---equals (Binding (Evaluate x)) (Binding (Evaluate y)) =
+{-
+equals_ :: Binding Evaluate u -> Binding Evaluate u -> Binding Evaluate 'JSBool
+equals_ (Binding (Evaluate x)) (Binding (Evaluate y)) = Binding (Evaluate (ValueBool (x == y)))
+
+ifThenElse_ :: Binding Evaluate 'JSBool -> Binding Evaluate u -> Binding Evaluate u -> Binding Evaluate u
+ifThenElse_ (Binding (Evaluate (ValueBool bool'))) a b =
+  if bool'
+  then a
+  else b
+-}
 
 identity :: Value ('Function Number Number)
 identity = interpretExpr (SFunction SNumber SNumber) mempty $ do
@@ -320,8 +331,8 @@ exampleMap = interpretExpr $ do
 
 example :: Value 'Number
 example = interpretExpr $ do
-  x <- literal $ ValueNumber 2
-  y <- literal $ ValueNumber 3
+  x <- literal 2
+  y <- literal 3
   xy <- plus' x y
   pure xy
 
