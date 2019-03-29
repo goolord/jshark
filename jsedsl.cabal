@@ -48,7 +48,6 @@ library
     , containers >= 0.5 && < 0.7
     , free >= 5 && < 6
     , integer-gmp >= 1 && < 1.1
-    , mtl >= 2.1 && < 2.3
     , semirings >= 0.3 && < 0.4
     , transformers >= 0.5 && < 0.6
     , text >= 1.2 && < 1.3
