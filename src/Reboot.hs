@@ -16,6 +16,7 @@
 {-# language TypeInType #-}
 {-# language TypeFamilies #-}
 {-# language TypeOperators #-}
+
 module Reboot
   ( Expr(..)
   , Value(..)
@@ -32,7 +33,6 @@ module Reboot
 -- This uses a higher-order PHOAS approach as described by
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
-import Data.Text (Text)
 import Data.Functor.Const (Const(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Product (Product(Pair))
@@ -40,7 +40,10 @@ import Data.Proxy (Proxy(..))
 import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Text as T
 
-data Universe = Number | String | Function Universe Universe
+data Universe
+  = Number
+  | String
+  | Function Universe Universe
 
 data SingUniverse :: Universe -> Type where
   SingUniverseNumber :: SingUniverse 'Number
@@ -48,7 +51,7 @@ data SingUniverse :: Universe -> Type where
   SingUniverseFunction :: SingUniverse a -> SingUniverse b -> SingUniverse ('Function a b)
 
 data Value :: Universe -> Type where
-  ValueNumber :: Int -> Value 'Number
+  ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
 
@@ -68,8 +71,8 @@ data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type w
   ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
   VarF :: f u -> ExprF g f u
 
-unNumber :: Value 'Number -> Int
-unNumber (ValueNumber i) = i
+unNumber :: Value 'Number -> Double
+unNumber (ValueNumber d) = d
 
 unFunction :: Value ('Function u v) -> Value u -> Value v
 unFunction (ValueFunction f) = f
@@ -85,10 +88,10 @@ lambda ::
   -> Expr f ('Function u v)
 lambda f = Lambda (f . Var)
 
-number :: Int -> Expr f 'Number
+number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
 
-evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Int
+evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
 
 evaluate :: forall (u :: Universe).
@@ -96,42 +99,44 @@ evaluate :: forall (u :: Universe).
   -> Value u
 evaluate = go where
   go :: forall v. Expr Value v -> Value v
-  go (Literal v) = v
-  go (Plus x y) = ValueNumber (unNumber (go x) + unNumber (go y))
-  go (Var x) = x
-  go (Let x g) = go (g (go x))
-  go (Apply g x) = unFunction (go g) (go x)
-  go (Lambda g) = ValueFunction (go . g)
+  go = \case
+    Literal v -> v
+    Plus x y -> ValueNumber (unNumber (go x) + unNumber (go y))
+    Var x -> x
+    Let x g -> go (g (go x))
+    Apply g x -> unFunction (go g) (go x)
+    Lambda g -> ValueFunction (go . g)
 
 pretty :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Text
 pretty = getConst . go 0 where
   go :: forall v. Int -> Expr (Const Text) v -> Const Text v
-  go !_ (Literal v) = case v of
-    ValueNumber n -> Const $ T.pack (show n)
-    ValueString t -> Const $ T.pack (show t)
-    ValueFunction _ -> Const "<builtin>"
-  go !n (Plus x y) = Const ("plus (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
-  go !_ (Var x) = x
-  go !n (Lambda g) =
-    let name = "x" <> T.pack (show n)
-     in Const
-        $  "λ"
-        <> name
-        <> " -> "
-        <> getConst (go (n + 1) (g (Const name)))
-  go !n (Apply g x) = Const ("(" <> getConst (go n g) <> ") (" <> getConst (go n x) <> ")")
-  go !n (Let x g) =
-    let name = "x" <> T.pack (show n)
-     in Const
-        $  "let "
-        <> name
-        <> " = {"
-        <> getConst (go (n + 1) x)
-        <> "} in {"
-        <> getConst (go (n + 1) (g (Const name)))
-        <> "}"
+  go !n = \case
+    Literal v -> case v of
+      ValueNumber d -> Const $ T.pack (show d)
+      ValueString t -> Const $ T.pack (show t)
+      ValueFunction _ -> Const $ T.pack "<function>"
+    Plus x y -> Const ("plus (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
+    Var x -> x
+    Lambda g ->
+      let name = "x" <> T.pack (show n)
+       in Const  
+          $  "λ"
+          <> name
+          <> " -> "
+          <> getConst (go (n + 1) (g (Const name)))
+    Apply g x -> Const ("(" <> getConst (go n g) <> ") (" <> getConst (go n x) <> ")")
+    Let x g ->
+      let name = "x" <> T.pack (show n)
+       in Const
+          $  "let "
+          <> name
+          <> " = {"
+          <> getConst (go (n + 1) x)
+          <> "} in {"
+          <> getConst (go (n + 1) (g (Const name)))
+          <> "}"
 
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 
