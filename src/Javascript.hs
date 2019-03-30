@@ -23,6 +23,7 @@ module Javascript
   (
   ) where
 
+{-
 import Unsafe.Coerce (unsafeCoerce)
 import qualified GHC.Num as Num
 import qualified Data.List as List
@@ -338,5 +339,7 @@ example = interpretExpr $ do
 
 plus' :: Binding f 'Number -> Binding f 'Number -> JSE f (Binding f 'Number)
 plus' x y = liftF $ Plus x y id
+
+-}
 
 -}
