@@ -34,9 +34,18 @@ module Reboot
 
 import Data.Text (Text)
 import Data.Functor.Const (Const(..))
+import Data.Functor.Compose (Compose(..))
+import Data.Functor.Product (Product(Pair))
+import Data.Proxy (Proxy(..))
+import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Text as T
 
 data Universe = Number | String | Function Universe Universe
+
+data SingUniverse :: Universe -> Type where
+  SingUniverseNumber :: SingUniverse 'Number
+  SingUniverseString :: SingUniverse 'String
+  SingUniverseFunction :: SingUniverse a -> SingUniverse b -> SingUniverse ('Function a b)
 
 data Value :: Universe -> Type where
   ValueNumber :: Int -> Value 'Number
@@ -50,6 +59,14 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
   Var :: f u -> Expr f u
+
+data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
+  LiteralF :: Value u -> ExprF g f u
+  PlusF :: ExprF g f 'Number -> ExprF g f 'Number -> ExprF g f 'Number
+  LetF :: ExprF g f u -> g (f u) (ExprF g f v) -> ExprF g f v
+  LambdaF :: g (f u) (ExprF g f v) -> ExprF g f ('Function u v)
+  ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
+  VarF :: f u -> ExprF g f u
 
 unNumber :: Value 'Number -> Int
 unNumber (ValueNumber i) = i
@@ -116,3 +133,86 @@ pretty = getConst . go 0 where
         <> getConst (go (n + 1) (g (Const name)))
         <> "}"
 
+-- data Ref s a = Ref !Addr !(STRef s a)
+-- 
+-- testRefEquality :: STRef s a -> STRef s b -> Maybe (a :~: b)
+
+
+
+-- newtype Detector :: (Universe -> Type) -> Universe -> Type where
+--   Detector :: (f u -> _) -> Detector f u
+
+-- eliminateUnusedBindings :: forall (f :: Universe -> Type) (u :: Universe).
+--      (forall (g :: Universe -> Type). Expr g u)
+--   -> Expr f u
+-- eliminateUnusedBindings e = case go e of
+--   Nothing -> e
+--   Just r -> r
+--   where
+--   go :: forall (v :: Universe). Expr (Compose Maybe f) v -> Maybe (Expr f v)
+--   go (Literal v) = pure (Literal v)
+--   go (Var (Compose v)) = case v of
+--     Just w -> Just (Var w)
+--     Nothing -> Nothing
+--   go (Let x g) = case go (g (Compose Nothing)) of
+--     Nothing -> do
+--       y <- go x
+--       b <- go (g (Compose (Just _)))
+--       Just (Let y h)
+--     Just r -> Just r
+
+-- data TupleRef :: Type -> Type -> Type -> Type where
+--   TupleRef :: STRef s x -> y -> TupleRef s x y
+
+
+identify :: ExprF (->) (Compose (STRef s) Proxy) u -> ST s (ExprF (,) (Compose (STRef s) Proxy) u)
+identify (LiteralF v) = pure (LiteralF v)
+identify (VarF v) = pure (VarF v)
+identify (LetF x g) = do
+  r <- newSTRef Proxy
+  x' <- identify x
+  g' <- identify (g (Compose r))
+  pure (LetF x' (Compose r,g'))
+identify (PlusF a b) = liftA2 PlusF (identify a) (identify b)
+identify (ApplyF g a) = liftA2 ApplyF (identify g) (identify a)
+identify (LambdaF g) = do
+  r <- newSTRef Proxy
+  g' <- identify (g (Compose r))
+  pure (LambdaF (Compose r,g'))
+
+data Together :: Type -> (Universe -> Type) -> Type where
+  Together :: STRef s (Proxy u) -> f u -> Together s f
+
+match :: forall (f :: Universe -> Type) (s :: Type) (u :: Universe).
+  STRef s (Proxy u) -> [Together s f] -> f u
+match !_ [] = error "match: implementation error in unidentify"
+match !r (Together x v : xs) = if r == unsafeCoerce x
+  then unsafeCoerce v
+  else match r xs
+
+unidentify :: forall (f :: Universe -> Type) (s :: Type) (u :: Universe).
+  [Together s f]  -> ExprF (,) (Compose (STRef s) Proxy) u -> ExprF (->) f u
+unidentify _ (LiteralF v) = LiteralF v
+unidentify rs (VarF (Compose v)) = VarF (match v rs)
+unidentify rs (LetF x (Compose ref,expr)) =
+  LetF (unidentify rs x) (\z -> unidentify (Together ref z : rs) expr)
+unidentify rs (PlusF a b) = PlusF (unidentify rs a) (unidentify rs b)
+unidentify rs (ApplyF g x) = ApplyF (unidentify rs g) (unidentify rs x)
+unidentify rs (LambdaF (Compose ref,expr)) =
+  LambdaF (\z -> unidentify (Together ref z : rs) expr)
+
+
+-- eliminateUnusedBindings :: forall (f :: Universe -> Type) (u :: Universe).
+--      (forall (g :: Universe -> Type). Expr g u)
+--   -> Expr f u
+-- eliminateUnusedBindings e = case go e of
+--   Nothing -> e
+--   Just r -> r
+--   where
+--   go :: forall (v :: Universe). Expr (Compose Maybe f) v -> Maybe (f v -> Expr f v)
+--   go (Let x g) = case go (g (Compose Nothing)) of
+--     Nothing -> do
+--       y <- go x
+--       b <- go (g (Compose (Just y)))
+--       Just (Let y b)
+--     Just r -> Just r
