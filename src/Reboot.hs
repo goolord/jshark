@@ -55,20 +55,28 @@ import qualified Text.PrettyPrint.Leijen as PP
 data Universe
   = Number
   | String
+  | Unit
+  | Element
+  | List Universe
+  | Effectful Universe
   | Function Universe Universe
-
-data SingUniverse :: Universe -> Type where
-  SingUniverseNumber :: SingUniverse 'Number
-  SingUniverseString :: SingUniverse 'String
-  SingUniverseFunction :: SingUniverse a -> SingUniverse b -> SingUniverse ('Function a b)
 
 data Value :: Universe -> Type where
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
+  ValueEffect :: (forall f. Effect f u) -> Value ('Effectful u)
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
+
+data Effect :: (Universe -> Type) -> Universe -> Type where
+  Host :: (f 'String -> Effect f u) -> Effect f u
+  Log :: Expr f 'String -> Effect f u -> Effect f u
+  LookupId :: f 'String -> (f 'Element -> Effect f u) -> Effect f u
+  LookupClass :: f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
+  Lift :: Expr f u -> Effect f u
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u
+  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
   Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
@@ -92,6 +100,14 @@ unNumber (ValueNumber d) = d
 
 unFunction :: Value ('Function u v) -> Value u -> Value v
 unFunction (ValueFunction f) = f
+
+host ::
+     (Expr f 'String -> Effect f u)
+  -> Effect f u
+host f = Host (f . Var)
+
+expr :: Expr f u -> Effect f u
+expr = Lift
 
 let_ ::
      Expr f u
@@ -201,6 +217,32 @@ printComputation (Computation e ss) = do
 simple :: [GP.VarStmt] -> GP.Expr -> Computation
 simple ss e = Computation e ss
 
+fromRightE = either error id
+
+effectfulAst :: forall (u :: Universe).
+     (forall (f :: Universe -> Type). Effect f Unit)
+  -> Computation
+effectfulAst x = go [] x
+  where
+  go :: [GP.VarStmt] -> Effect f v -> Computation
+  go !ss = \case
+    -- window.location.host
+    Host _ -> simple ss $ 
+      (GP.ExprName $ fromRightE $ GP.name "window")
+      `GP.ExprRefinement`
+      (GP.Property $ fromRightE $ GP.name "location")
+      `GP.ExprRefinement`
+      (GP.Property $ fromRightE $ GP.name "host")
+    Log x y -> simple ss $ do
+      let (Computation expr rs) = convertAST x
+      GP.ExprInvocation
+        ( (GP.ExprName $ fromRightE $ GP.name "console")
+          `GP.ExprRefinement`
+          (GP.Property $ fromRightE $ GP.name "log")
+        )
+        (GP.Invocation [GP.ExprLit $ GP.LitString $ fromRightE $ GP.jsString $ _ x])
+      
+
 convertAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Computation
@@ -211,17 +253,17 @@ convertAST x = snd (go 0 [] x)
   go !n !ss = \case
     Literal v -> case v of
       ValueNumber d -> (n,simple ss $ GP.ExprLit $ GP.LitNumber $ GP.Number d)
-      ValueString t -> (n,simple ss $ GP.ExprLit $ GP.LitString $ either error id $ GP.jsString (T.unpack t))
+      ValueString t -> (n,simple ss $ GP.ExprLit $ GP.LitString $ fromRightE $ GP.jsString (T.unpack t))
       -- v don't know what to do here
       ValueFunction _ -> (n,simple ss $ GP.ExprLit $ undefined )
     Plus x y ->
       let (m,Computation exprX rs) = go n ss x
           (p,Computation exprY ts) = go m rs y
        in (p,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
-    Var (Const v) -> (n,simple ss $ GP.ExprName $ either error id $ GP.name ('n':(show v)))
+    Var (Const v) -> (n,simple ss $ GP.ExprName $ fromRightE $ GP.name ('n':(show v)))
     Let e g ->
       let (m,Computation exprE rs) = go n ss e
-          vs = (GP.ConstStmt $ GP.VarDecl (either error id $ GP.name ('n':(show m))) (Just exprE)) : rs
+          vs = (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show m))) (Just exprE)) : rs
        in go (m + 1) vs (g (Const m))
 
 mathy :: Expr f 'Number
@@ -229,6 +271,17 @@ mathy =
   let_ (Plus (number 5) (number 6)) $ \x ->
   let_ (Plus (number 7) x) $ \y ->
   Plus x y
+
+-- mathy :: Expr f 'Number
+-- mathy = do
+--   x <- let_ (Plus (number 5) (number 6))
+--   y <- let_ (Plus (number 7) x)
+--   pure (Plus x y)
+
+stringy :: Effect f 'String
+stringy =
+  host $ \x ->
+  expr (Concat x x)
 
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 
@@ -288,12 +341,12 @@ unidentify :: forall (f :: Universe -> Type) (s :: Type) (u :: Universe).
   [Together s f]  -> ExprF (,) (Compose (STRef s) Proxy) u -> ExprF (->) f u
 unidentify _ (LiteralF v) = LiteralF v
 unidentify rs (VarF (Compose v)) = VarF (match v rs)
-unidentify rs (LetF x (Compose ref,expr)) =
-  LetF (unidentify rs x) (\z -> unidentify (Together ref z : rs) expr)
+unidentify rs (LetF x (Compose ref,exprA)) =
+  LetF (unidentify rs x) (\z -> unidentify (Together ref z : rs) exprA)
 unidentify rs (PlusF a b) = PlusF (unidentify rs a) (unidentify rs b)
 unidentify rs (ApplyF g x) = ApplyF (unidentify rs g) (unidentify rs x)
-unidentify rs (LambdaF (Compose ref,expr)) =
-  LambdaF (\z -> unidentify (Together ref z : rs) expr)
+unidentify rs (LambdaF (Compose ref,exprA)) =
+  LambdaF (\z -> unidentify (Together ref z : rs) exprA)
 
 -- eliminateUnusedBindings :: forall (f :: Universe -> Type) (u :: Universe).
 --      (forall (g :: Universe -> Type). Expr g u)
