@@ -45,10 +45,12 @@ import Data.Functor.Compose (Compose(..))
 import Data.Functor.Product (Product(Pair))
 import Data.Proxy (Proxy(..))
 import Unsafe.Coerce (unsafeCoerce)
-import Language.JavaScript.Parser.AST
-import Language.JavaScript.Pretty.Printer
+import qualified Language.JavaScript.AST as GP
+import qualified Language.JavaScript.Pretty as GP
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import qualified Data.List as List
+import qualified Text.PrettyPrint.Leijen as PP
 
 data Universe
   = Number
@@ -187,14 +189,16 @@ prettyJS = getConst . go 0 where
           <> getConst (go (n + 1) (g (Const name)))
           <> "}"
 
-data Computation = Computation JSExpression [JSStatement]
-  deriving (Show)
+data Computation = Computation GP.Expr [GP.VarStmt]
 
 printComputation :: Computation -> IO ()
 printComputation (Computation e ss) = do
-  putStrLn $ renderToString $ JSAstProgram (List.reverse (JSExpressionStatement e JSSemiAuto : ss)) JSAnnotSpace
+  putStrLn $ show $ 
+       (GP.pretty $ GP.Program (List.reverse ss) [])
+    <> GP.pretty (PP.text "\n")
+    <> GP.pretty e
 
-simple :: [JSStatement] -> JSExpression -> Computation
+simple :: [GP.VarStmt] -> GP.Expr -> Computation
 simple ss e = Computation e ss
 
 convertAST :: forall (u :: Universe).
@@ -202,22 +206,23 @@ convertAST :: forall (u :: Universe).
   -> Computation
 convertAST x = snd (go 0 [] x)
   where 
-  go :: forall v. Int -> [JSStatement] -> Expr (Const Int) v 
+  go :: forall v. Int -> [GP.VarStmt] -> Expr (Const Int) v 
      -> (Int,Computation)
   go !n !ss = \case
     Literal v -> case v of
-      ValueNumber d -> (n,simple ss $ JSLiteral JSAnnotSpace (showFFloat Nothing d ""))
-      ValueString t -> (n,simple ss $ JSLiteral JSAnnotSpace (show t))
-      ValueFunction _ -> (n,simple ss $ JSLiteral JSAnnotSpace "<function>")
+      ValueNumber d -> (n,simple ss $ GP.ExprLit $ GP.LitNumber $ GP.Number d)
+      ValueString t -> (n,simple ss $ GP.ExprLit $ GP.LitString $ either error id $ GP.jsString (T.unpack t))
+      -- v don't know what to do here
+      ValueFunction _ -> (n,simple ss $ GP.ExprLit $ undefined )
     Plus x y ->
       let (m,Computation exprX rs) = go n ss x
           (p,Computation exprY ts) = go m rs y
-       in (p,Computation (JSExpressionBinary exprX (JSBinOpPlus JSAnnotSpace) exprY) ts)
-    Var (Const v) -> (n,simple ss $ JSIdentifier JSAnnotSpace ('n':(show v)))
+       in (p,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
+    Var (Const v) -> (n,simple ss $ GP.ExprName $ either error id $ GP.name ('n':(show v)))
     Let e g ->
       let (m,Computation exprE rs) = go n ss e
-          ts = JSConstant JSAnnotSpace (JSLOne $ JSAssignExpression (JSIdentifier JSAnnotSpace ('n':(show m))) (JSAssign JSAnnotSpace) exprE) JSSemiAuto : rs
-       in go (m + 1) ts (g (Const m))
+          vs = (GP.ConstStmt $ GP.VarDecl (either error id $ GP.name ('n':(show m))) (Just exprE)) : rs
+       in go (m + 1) vs (g (Const m))
 
 mathy :: Expr f 'Number
 mathy =
