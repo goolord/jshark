@@ -192,9 +192,7 @@ data Computation = Computation JSExpression [JSStatement]
 
 printComputation :: Computation -> IO ()
 printComputation (Computation e ss) = do
-  for_ (List.reverse ss) $ \s -> do
-    putStrLn $ renderToString $ JSAstStatement s JSNoAnnot
-  putStrLn $ renderToString $ JSAstExpression e JSNoAnnot
+  putStrLn $ renderToString $ JSAstProgram (List.reverse (JSExpressionStatement e JSSemiAuto : ss)) JSAnnotSpace
 
 simple :: [JSStatement] -> JSExpression -> Computation
 simple ss e = Computation e ss
