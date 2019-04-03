@@ -193,7 +193,7 @@ data Computation = Computation JSExpression [JSStatement]
 printComputation :: Computation -> IO ()
 printComputation (Computation e ss) = do
   for_ (List.reverse ss) $ \s -> do
-    putStrLn $ renderToString $ JSAstProgram [s] JSNoAnnot
+    putStrLn $ renderToString $ JSAstStatement s JSNoAnnot
   putStrLn $ renderToString $ JSAstExpression e JSNoAnnot
 
 simple :: [JSStatement] -> JSExpression -> Computation
@@ -227,38 +227,9 @@ mathy =
   let_ (Plus (number 7) x) $ \y ->
   Plus x y
 
-convertASTDerp :: forall (u :: Universe).
-     (forall (f :: Universe -> Type). Expr f u)
-  -> JSAST
-convertASTDerp x = JSAstExpression (getConst (go 0 x)) JSNoAnnot
-  where 
-  go :: forall v. Int -> Expr (Const JSExpression) v -> Const JSExpression v
-  go !n = \case
-    Literal v -> case v of
-      ValueNumber d -> Const $ JSLiteral JSNoAnnot (showFFloat Nothing d "")
-      ValueString t -> Const $ JSLiteral JSNoAnnot (show t)
-      ValueFunction _ -> Const $ JSLiteral JSNoAnnot "<function>"
-    Plus x y -> Const $ JSExpressionBinary (getConst $ go n x) (JSBinOpPlus JSNoAnnot) (getConst $ go n y)
-    -- Var x -> Const $ JSVarInitExpression (getConst x) JSVarInitNone
-    -- Let x g ->
-    --   let name = 'x':(shown n)
-    -- Lambda g ->
-      -- let name = 'x':(show n)
-       -- in Const
-        -- $ JSFunctionExpression 
-          -- JSNoAnnot JSIdentNone JSNoAnnot 
-          -- (JSLOne $ JSIdentName JSNoAnnot name)
-          -- JSNoAnnot
-          -- (JSBlock JSNoAnnot [JSNoAnnot (getConst $ go (n+1) (g (Const name)))] JSNoAnnot)
-
--- example :: IO ()
--- example = putStrLn $ renderToString $ convertAST $ let_ _ _
-
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 
 -- testRefEquality :: STRef s a -> STRef s b -> Maybe (a :~: b)
-
-
 
 -- newtype Detector :: (Universe -> Type) -> Universe -> Type where
 --   Detector :: (f u -> _) -> Detector f u
