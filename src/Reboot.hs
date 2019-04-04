@@ -45,9 +45,8 @@ import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
 import Data.STRef
-import Data.Text
+import Data.Text (Text)
 import Data.Tuple (snd)
-import qualified Data.Foldable as F
 import Unsafe.Coerce (unsafeCoerce)
 import Data.Sequence (Seq(..), (|>), (<|))
 -- import qualified Data.Sequence as Seq
@@ -237,11 +236,11 @@ data Computation = Computation GP.Expr (Seq GP.VarStmt)
 newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Expr))
 
 instance PP.Pretty EffComputation where
-  pretty (EffComputation x) = F.foldr1 (PP.<$$>) (fmap PP.pretty x)
+  pretty (EffComputation x) = foldr1 (PP.<$$>) (fmap PP.pretty x)
 
 instance PP.Pretty Computation where
   pretty (Computation ex vars) = 
-    F.foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
+    foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
 
 instance (PP.Pretty a, PP.Pretty b) => PP.Pretty (Either a b) where
   pretty (Left a) = PP.pretty a
