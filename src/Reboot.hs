@@ -54,6 +54,7 @@ import qualified Data.Text as T
 import qualified Language.JavaScript.AST as GP
 import qualified Language.JavaScript.Pretty as GP
 import qualified Text.PrettyPrint.Leijen as PP
+import qualified GHC.Exts as Exts
 
 data Universe
   = Number
@@ -105,6 +106,31 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
 -- Op :: Operation _ u -> ExprArrow g f u
 -- data Operation :: () -> Universe -> Type
 --   Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
+
+instance Exts.IsString (Value 'String) where
+  fromString = ValueString . Exts.fromString
+
+instance Exts.IsString (Expr f 'String) where
+  fromString = Literal . ValueString . Exts.fromString
+
+instance Num (Value 'Number) where
+  (ValueNumber a) + (ValueNumber b) = ValueNumber (a + b)
+  (ValueNumber a) - (ValueNumber b) = ValueNumber (a - b)
+  (ValueNumber a) * (ValueNumber b) = ValueNumber (a * b)
+  abs (ValueNumber a) = ValueNumber (abs a)
+  negate (ValueNumber a) = ValueNumber (negate a)
+  signum (ValueNumber a) = ValueNumber (signum a)
+  fromInteger i = ValueNumber (fromInteger i)
+
+-- FIXME: probably don't need to unsafeCoerce lol
+instance forall (f :: (Universe -> Type)). Num (Expr f 'Number) where
+  a + b = number (evaluateNumber (unsafeCoerce a) + evaluateNumber (unsafeCoerce b))
+  a - b = number (evaluateNumber (unsafeCoerce a) - evaluateNumber (unsafeCoerce b))
+  a * b = number (evaluateNumber (unsafeCoerce a) * evaluateNumber (unsafeCoerce b))
+  abs a = number $ abs (evaluateNumber (unsafeCoerce a))
+  negate a = number $ negate (evaluateNumber (unsafeCoerce a))
+  signum a = number $ signum (evaluateNumber (unsafeCoerce a))
+  fromInteger i = number $ fromInteger i
 
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
@@ -334,8 +360,8 @@ convertAST' !n !ss = \case
 
 mathy :: Expr f 'Number
 mathy =
-  let_ (Plus (number 5) (number 6)) $ \x ->
-  let_ (Plus (number 7) x) $ \y ->
+  let_ (Plus 5 6) $ \x ->
+  let_ (Plus 7 x) $ \y ->
   Plus x y
 
 -- mathy :: Expr f 'Number
@@ -353,7 +379,7 @@ loggy :: Effect f 'Unit
 loggy = 
   host $ \n0 ->
   host $ \n1 ->
-  consoleLog (string "foo") $ consoleLog (string "bar") $ consoleLog n0 $ consoleLog n1 noOp
+  consoleLog "foo" $ consoleLog "bar" $ consoleLog n0 $ consoleLog n1 noOp
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
