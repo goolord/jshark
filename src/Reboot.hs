@@ -315,6 +315,15 @@ effectfulAST' !n !ss = \case
           )
           (GP.Invocation [x'])
     in (o, EffComputation $ fmap Left ss' <> (Right logX <| as ))
+  -- document.getElementById(x)
+  -- LookupId x f ->
+    -- let documentGetElementById =  
+          -- (GP.ExprName $ fromRightE $ GP.name "document")
+          -- `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "getElementById")
+        -- (m, Computation x' ss') = convertAST' n ss x
+     -- in  undefined
+        -- vs = ss |> (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show n))) (Just windowLocationHost))
+     -- in effectfulAST' (n+1) vs (f (Const x))
   Lift (Literal ValueUnit) -> (n, EffComputation $ fmap Left ss)
   Lift x -> pureToEff $ convertAST' n ss x
 
