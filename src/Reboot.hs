@@ -26,6 +26,8 @@ module Reboot
   , let_
   , lambda
   , number
+  , plus
+  , apply
     -- Evaluation
   , evaluate
   , evaluateNumber
@@ -35,9 +37,10 @@ module Reboot
 -- This uses a higher-order PHOAS approach as described by
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
+import Prelude hiding (plus,apply)
+
 import Data.Tuple (snd)
 import Data.Char (Char)
-
 import Data.Functor.Const (Const(..))
 import Data.Functor.Compose (Compose(..))
 import Data.Proxy (Proxy(..))
@@ -91,6 +94,13 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
   SLiteral :: Value u -> Statement f u
   SFFI :: Text -> Statement f u
 
+-- newtype Expression :: (Universe -> Type) -> Universe -> Type where
+--   Expression :: ExprArrow (->) f u -> Expression f u
+
+-- Op :: Operation _ u -> ExprArrow g f u
+-- data Operation :: () -> Universe -> Type
+--   Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
+
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
 
@@ -108,16 +118,22 @@ host f = Host (f . Var)
 expr :: Expr f u -> Effect f u
 expr = Lift
 
+plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+plus a b = (Plus a b)
+
+apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
+apply g a = (Apply g a)
+
 let_ ::
      Expr f u
   -> (Expr f u -> Expr f v)
   -> Expr f v
-let_ e f = Let e (f . Var)
+let_ e f = (Let e (coerce f . Var))
 
 lambda :: 
      (Expr f u -> Expr f v)
   -> Expr f ('Function u v)
-lambda f = Lambda (f . Var)
+lambda f = Lambda (coerce f . Var)
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
@@ -131,7 +147,7 @@ evaluateNumber e = unNumber (evaluate e)
 evaluate :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Value u
-evaluate = go where
+evaluate e0 = go e0 where
   go :: forall v. Expr Value v -> Value v
   go = \case
     Literal v -> v
@@ -295,6 +311,37 @@ stringy =
   host $ \x ->
   expr (Concat x x)
 
+pretty :: forall (u :: Universe).
+     (forall (f :: Universe -> Type). Expr f u)
+  -> Text
+pretty e0 = getConst (go 0 e0) where
+  go :: forall v. Int -> Expr (Const Text) v -> Const Text v
+  go !n = \case
+    Literal v -> case v of
+      ValueNumber d -> Const $ T.pack (show d)
+      ValueString t -> Const $ T.pack (show t)
+      ValueFunction _ -> Const $ T.pack "<function>"
+    Plus x y -> Const ("plus (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
+    Var x -> x
+    Lambda g ->
+      let name = "x" <> T.pack (show n)
+       in Const  
+          $  "λ"
+          <> name
+          <> " -> "
+          <> getConst (go (n + 1) (g (Const name)))
+    Apply g x -> Const ("(" <> getConst (go n g) <> ") (" <> getConst (go n x) <> ")")
+    Let x g ->
+      let name = "x" <> T.pack (show n)
+       in Const
+          $  "let "
+          <> name
+          <> " = {"
+          <> getConst (go (n + 1) x)
+          <> "} in {"
+          <> getConst (go (n + 1) (g (Const name)))
+          <> "}"
+
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 
 -- testRefEquality :: STRef s a -> STRef s b -> Maybe (a :~: b)
@@ -324,33 +371,43 @@ stringy =
 -- data TupleRef :: Type -> Type -> Type -> Type where
 --   TupleRef :: STRef s x -> y -> TupleRef s x y
 
-identify :: ExprF (->) (Compose (STRef s) Proxy) u -> ST s (ExprF (,) (Compose (STRef s) Proxy) u)
-identify (LiteralF v) = pure (LiteralF v)
-identify (VarF v) = pure (VarF v)
-identify (LetF x g) = do
-  r <- newSTRef Proxy
-  x' <- identify x
-  g' <- identify (g (Compose r))
+identify ::
+     (forall (v :: Universe). g v)
+  -> ExprF (->) (Compose (STRef s) g) u
+  -> ST s (ExprF (,) (Compose (STRef s) g) u)
+identify _ (LiteralF v) = pure (LiteralF v)
+identify _ (VarF v) = pure (VarF v)
+identify z (LetF x g) = do
+  r <- newSTRef z
+  x' <- identify z x
+  g' <- identify z (g (Compose r))
   pure (LetF x' (Compose r,g'))
-identify (PlusF a b) = liftA2 PlusF (identify a) (identify b)
-identify (ApplyF g a) = liftA2 ApplyF (identify g) (identify a)
-identify (LambdaF g) = do
-  r <- newSTRef Proxy
-  g' <- identify (g (Compose r))
+identify z (PlusF a b) = liftA2 PlusF (identify z a) (identify z b)
+identify z (ApplyF g a) = liftA2 ApplyF (identify z g) (identify z a)
+identify z (LambdaF g) = do
+  r <- newSTRef z
+  g' <- identify z (g (Compose r))
   pure (LambdaF (Compose r,g'))
 
-data Together :: Type -> (Universe -> Type) -> Type where
-  Together :: STRef s (Proxy u) -> f u -> Together s f
+removeUnusedBindings :: 
+     (forall (g :: Universe -> Type). ExprF (->) g u)
+  -> ExprF (->) f u
+removeUnusedBindings e0 = runST $ do
+  e1 <- identify (Const (0 :: Int)) e0
+  pure (unidentify [] e1)
 
-match :: forall (f :: Universe -> Type) (s :: Type) (u :: Universe).
-  STRef s (Proxy u) -> [Together s f] -> f u
+data Together :: Type -> (Universe -> Type) -> (Universe -> Type) -> Type where
+  Together :: STRef s (g u) -> f u -> Together s g f
+
+match :: forall (f :: Universe -> Type) (g :: Universe -> Type) (s :: Type) (u :: Universe).
+  STRef s (g u) -> [Together s g f] -> f u
 match !_ [] = error "match: implementation error in unidentify"
 match !r (Together x v : xs) = if r == unsafeCoerce x
   then unsafeCoerce v
   else match r xs
 
-unidentify :: forall (f :: Universe -> Type) (s :: Type) (u :: Universe).
-  [Together s f]  -> ExprF (,) (Compose (STRef s) Proxy) u -> ExprF (->) f u
+unidentify :: forall (f :: Universe -> Type) (g :: Universe -> Type) (s :: Type) (u :: Universe).
+  [Together s g f]  -> ExprF (,) (Compose (STRef s) g) u -> ExprF (->) f u
 unidentify _ (LiteralF v) = LiteralF v
 unidentify rs (VarF (Compose v)) = VarF (match v rs)
 unidentify rs (LetF x (Compose ref,exprA)) =
