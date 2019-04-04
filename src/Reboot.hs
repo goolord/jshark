@@ -18,6 +18,7 @@
 {-# language TypeOperators #-}
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
+{-# options_ghc -fno-warn-orphans #-}
 
 module Reboot
   ( Expr(..)
@@ -37,18 +38,20 @@ module Reboot
 -- This uses a higher-order PHOAS approach as described by
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
-import Prelude hiding (plus,apply)
-
-import Data.Tuple (snd)
-import Data.Char (Char)
-import Data.Functor.Const (Const(..))
+import Control.Applicative
+import Control.Monad.ST
+import Data.Coerce
 import Data.Functor.Compose (Compose(..))
-import Data.Proxy (Proxy(..))
+import Data.Functor.Const (Const(..))
+import Data.Kind
+import Data.STRef
+import Data.Text
+import Data.Tuple (snd)
 import Unsafe.Coerce (unsafeCoerce)
+import qualified Data.List as List
+import qualified Data.Text as T
 import qualified Language.JavaScript.AST as GP
 import qualified Language.JavaScript.Pretty as GP
-import qualified Data.Text as T
-import qualified Data.List as List
 import qualified Text.PrettyPrint.Leijen as PP
 
 data Universe
@@ -65,6 +68,7 @@ data Value :: Universe -> Type where
   ValueString :: Text -> Value 'String
   ValueEffect :: (forall f. Effect f u) -> Value ('Effectful u)
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
+  ValueUnit :: Value 'Unit
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Host :: (f 'String -> Effect f u) -> Effect f u
@@ -114,6 +118,9 @@ host ::
      (Expr f 'String -> Effect f u)
   -> Effect f u
 host f = Host (f . Var)
+
+consoleLog :: Expr f 'String -> Effect f a -> Effect f a
+consoleLog str eff = Log str eff
 
 expr :: Expr f u -> Effect f u
 expr = Lift
@@ -225,6 +232,14 @@ data Optimization
           -- <> "}"
 
 data Computation = Computation GP.Expr [GP.VarStmt]
+newtype EffComputation = EffComputation [Either GP.VarStmt GP.Expr]
+
+instance PP.Pretty EffComputation where
+  pretty (EffComputation x) = PP.vcat (fmap PP.pretty (List.reverse x))
+
+instance (PP.Pretty a, PP.Pretty b) => PP.Pretty (Either a b) where
+  pretty (Left a) = PP.pretty a
+  pretty (Right a) = PP.pretty a
 
 printComputation :: Computation -> IO ()
 printComputation (Computation e ss) = do
@@ -233,38 +248,55 @@ printComputation (Computation e ss) = do
     <> GP.pretty (PP.text "\n")
     <> GP.pretty e
 
+printEffComputation :: EffComputation -> IO ()
+printEffComputation (effComp) = do
+  putStrLn $ show $ GP.pretty effComp
+
 simple :: [GP.VarStmt] -> GP.Expr -> Computation
 simple ss e = Computation e ss
+
+simpleEff :: [GP.VarStmt] -> GP.Expr -> EffComputation
+simpleEff ss eff = EffComputation $ Right eff : fmap Left ss 
+
+simpleEffs :: [GP.VarStmt] -> [GP.Expr] -> EffComputation
+simpleEffs ss effs = EffComputation $ fmap Right effs <> fmap Left ss
+
+pureToEff :: (Int, Computation) -> (Int, EffComputation)
+pureToEff (n, c) = (n, compToEff c)
+  where
+  compToEff (Computation ex vars) = EffComputation $ Right ex : fmap Left vars
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
 
 effectfulAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
-  -> Computation
-effectfulAST = effectfulAST' []
+  -> EffComputation
+effectfulAST = snd . effectfulAST' 0 []
 
-effectfulAST' :: [GP.VarStmt] -> Effect (Const Int) v -> Computation
-effectfulAST' !ss = \case
+effectfulAST' :: forall v. Int -> [GP.VarStmt] -> Effect (Const Int) v -> (Int, EffComputation)
+effectfulAST' !n !ss = \case
   -- window.location.host
-  -- Host f -> simple ss $
-    -- (GP.ExprName $ fromRightE $ GP.name "window")
-    -- `GP.ExprRefinement`
-    -- (GP.Property $ fromRightE $ GP.name "location")
-    -- `GP.ExprRefinement`
-    -- (GP.Property $ fromRightE $ GP.name "host")
+  Host f -> 
+    let windowLocationHost =  
+          (GP.ExprName $ fromRightE $ GP.name "window")
+          `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "location")
+          `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "host")
+        vs = (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show n))) (Just windowLocationHost)) : ss
+     in effectfulAST' (n+1) vs (f (Const n))
   -- console.log(x)
-  Log x y ->
-    let (_, Computation x' _) = convertAST' 0 ss x in
-    simple ss $
-    GP.ExprInvocation
-      ( (GP.ExprName $ fromRightE $ GP.name "console")
-        `GP.ExprRefinement`
-        (GP.Property $ fromRightE $ GP.name "log")
-      )
-      (GP.Invocation [x'])
-  Lift x -> snd $ convertAST' 0 ss x
-      
+  Log x eff ->
+    let (m, Computation x' ss') = convertAST' n ss x
+        (o, EffComputation as) = effectfulAST' m ss' eff
+        logX = GP.ExprInvocation
+          ( (GP.ExprName $ fromRightE $ GP.name "console")
+            `GP.ExprRefinement`
+            (GP.Property $ fromRightE $ GP.name "log")
+          )
+          (GP.Invocation [x'])
+    in (o, EffComputation $ Right logX : as)
+  Lift (Literal ValueUnit) -> (n, EffComputation $ fmap Left ss)
+  Lift x -> pureToEff $ convertAST' n ss x
 
 convertAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
@@ -279,7 +311,8 @@ convertAST' !n !ss = \case
     ValueString t -> (n,simple ss $ GP.ExprLit $ GP.LitString $ fromRightE $ GP.jsString (T.unpack t))
     -- v don't know what to do here
     ValueFunction _ -> (n,simple ss $ GP.ExprLit $ undefined)
-    ValueEffect eff -> (n,effectfulAST eff)
+    ValueEffect eff -> undefined --no longer works -- (n,effectfulAST eff)
+    ValueUnit -> (n, simple ss $ error "impossible: don't do this")
   Plus x y ->
     let (m,Computation exprX rs) = convertAST' n ss x
         (p,Computation exprY ts) = convertAST' m rs y
@@ -293,6 +326,9 @@ convertAST' !n !ss = \case
     let (m,Computation exprX rs) = convertAST' n ss x
         (p,Computation exprY ts) = convertAST' m rs y
      in (p,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
+  Lambda f ->
+    let _name = 'x':(show n) in
+    undefined
 
 mathy :: Expr f 'Number
 mathy =
@@ -311,6 +347,15 @@ stringy =
   host $ \x ->
   expr (Concat x x)
 
+loggy :: Effect f 'Unit
+loggy = 
+  host $ \n0 ->
+  host $ \n1 ->
+  consoleLog (string "foo") $ consoleLog n0 $ consoleLog n1 noOp
+
+noOp :: Effect f 'Unit
+noOp = expr (Literal ValueUnit)
+
 pretty :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Text
@@ -321,7 +366,9 @@ pretty e0 = getConst (go 0 e0) where
       ValueNumber d -> Const $ T.pack (show d)
       ValueString t -> Const $ T.pack (show t)
       ValueFunction _ -> Const $ T.pack "<function>"
+      ValueEffect _ -> Const $ T.pack "<effect>"
     Plus x y -> Const ("plus (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
+    Concat x y -> Const ("concat (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
     Var x -> x
     Lambda g ->
       let name = "x" <> T.pack (show n)

@@ -7,6 +7,7 @@ module Identifier
   ) where
 
 import Control.Monad.Trans.State.Strict
+import Data.Int (Int64)
 
 newtype GenIdentifier a = GenIdentifier (State Int64 a)
   deriving newtype (Functor,Applicative,Monad)
