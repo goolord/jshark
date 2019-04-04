@@ -29,3 +29,6 @@ import GHC.Err as P (error,undefined)
 import GHC.Integer as P (Integer)
 import Data.Void as P (Void)
 import Text.Show as P
+import Data.String as P
+
+import System.IO as P

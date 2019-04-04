@@ -17,7 +17,8 @@
 {-# language TypeFamilyDependencies #-}
 {-# language TypeOperators #-}
 
-{-# options_ghc -Wall -fno-warn-unused-top-binds #-}
+-- {-# options_ghc -Wall -fno-warn-unused-top-binds #-}
+{-# options_ghc -w #-}
 
 module Javascript 
   (
