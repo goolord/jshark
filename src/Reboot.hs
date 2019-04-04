@@ -83,6 +83,11 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u
   Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
   Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+  Abs :: Expr f 'Number -> Expr f 'Number
+  Sign :: Expr f 'Number -> Expr f 'Number
+  Negate :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
@@ -107,30 +112,26 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
 -- data Operation :: () -> Universe -> Type
 --   Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
 
-instance Exts.IsString (Value 'String) where
-  fromString = ValueString . Exts.fromString
-
 instance Exts.IsString (Expr f 'String) where
   fromString = Literal . ValueString . Exts.fromString
 
-instance Num (Value 'Number) where
-  (ValueNumber a) + (ValueNumber b) = ValueNumber (a + b)
-  (ValueNumber a) - (ValueNumber b) = ValueNumber (a - b)
-  (ValueNumber a) * (ValueNumber b) = ValueNumber (a * b)
-  abs (ValueNumber a) = ValueNumber (abs a)
-  negate (ValueNumber a) = ValueNumber (negate a)
-  signum (ValueNumber a) = ValueNumber (signum a)
-  fromInteger i = ValueNumber (fromInteger i)
-
 -- FIXME: probably don't need to unsafeCoerce lol
-instance forall (f :: (Universe -> Type)). Num (Expr f 'Number) where
-  a + b = number (evaluateNumber (unsafeCoerce a) + evaluateNumber (unsafeCoerce b))
-  a - b = number (evaluateNumber (unsafeCoerce a) - evaluateNumber (unsafeCoerce b))
-  a * b = number (evaluateNumber (unsafeCoerce a) * evaluateNumber (unsafeCoerce b))
-  abs a = number $ abs (evaluateNumber (unsafeCoerce a))
-  negate a = number $ negate (evaluateNumber (unsafeCoerce a))
-  signum a = number $ signum (evaluateNumber (unsafeCoerce a))
-  fromInteger i = number $ fromInteger i
+-- instance forall (f :: (Universe -> Type)). Num (Expr f 'Number) where
+  -- a + b = number (evaluateNumber (unsafeCoerce a) + evaluateNumber (unsafeCoerce b))
+  -- a - b = number (evaluateNumber (unsafeCoerce a) - evaluateNumber (unsafeCoerce b))
+  -- a * b = number (evaluateNumber (unsafeCoerce a) * evaluateNumber (unsafeCoerce b))
+  -- abs a = number $ abs (evaluateNumber (unsafeCoerce a))
+  -- negate a = number $ negate (evaluateNumber (unsafeCoerce a))
+  -- signum a = number $ signum (evaluateNumber (unsafeCoerce a))
+  -- fromInteger i = number $ fromInteger i
+
+instance forall (f :: (Universe -> Type)) u. (u ~ 'Number) => Num (Expr f u) where
+  (+) = Plus
+  (*) = Times
+  (-) = Minus
+  abs = Abs
+  signum = Sign
+  fromInteger = number . fromInteger
 
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
