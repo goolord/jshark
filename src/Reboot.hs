@@ -87,7 +87,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
   Abs :: Expr f 'Number -> Expr f 'Number
   Sign :: Expr f 'Number -> Expr f 'Number
-  Negate :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+  Negate :: Expr f 'Number -> Expr f 'Number
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
@@ -114,16 +114,6 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
 
 instance Exts.IsString (Expr f 'String) where
   fromString = Literal . ValueString . Exts.fromString
-
--- FIXME: probably don't need to unsafeCoerce lol
--- instance forall (f :: (Universe -> Type)). Num (Expr f 'Number) where
-  -- a + b = number (evaluateNumber (unsafeCoerce a) + evaluateNumber (unsafeCoerce b))
-  -- a - b = number (evaluateNumber (unsafeCoerce a) - evaluateNumber (unsafeCoerce b))
-  -- a * b = number (evaluateNumber (unsafeCoerce a) * evaluateNumber (unsafeCoerce b))
-  -- abs a = number $ abs (evaluateNumber (unsafeCoerce a))
-  -- negate a = number $ negate (evaluateNumber (unsafeCoerce a))
-  -- signum a = number $ signum (evaluateNumber (unsafeCoerce a))
-  -- fromInteger i = number $ fromInteger i
 
 instance forall (f :: (Universe -> Type)) u. (u ~ 'Number) => Num (Expr f u) where
   (+) = Plus
@@ -192,6 +182,7 @@ evaluate e0 = go e0 where
     Apply g x -> unFunction (go g) (go x)
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
+    _ -> undefined -- just to get rid of errors for now
 
 -- pretty :: forall (u :: Universe).
      -- (forall (f :: Universe -> Type). Expr f u)
@@ -346,6 +337,23 @@ convertAST' !n !ss = \case
     let (m,Computation exprX rs) = convertAST' n ss x
         (p,Computation exprY ts) = convertAST' m rs y
      in (p,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
+  Minus x y ->
+    let (m,Computation exprX rs) = convertAST' n ss x
+        (p,Computation exprY ts) = convertAST' m rs y
+     in (p,Computation (GP.ExprInfix GP.Sub exprX exprY) ts)
+  Times x y ->
+    let (m,Computation exprX rs) = convertAST' n ss x
+        (p,Computation exprY ts) = convertAST' m rs y
+     in (p,Computation (GP.ExprInfix GP.Mul exprX exprY) ts)
+  Abs x ->
+    let (m,Computation exprX rs) = convertAST' n ss x
+     in (m,Computation (GP.ExprInvocation (GP.ExprName $ fromRightE $ GP.name "Math.abs") (GP.Invocation [exprX])) rs)
+  Negate x ->
+    let (m,Computation exprX rs) = convertAST' n ss x
+     in (m,Computation (GP.ExprPrefix GP.Negate exprX) rs)
+  Sign x ->
+    let (m,Computation exprX rs) = convertAST' n ss x
+     in (m,Computation (GP.ExprInvocation (GP.ExprName $ fromRightE $ GP.name "Math.sign") (GP.Invocation [exprX])) rs)
   Var (Const v) -> (n,simple ss $ GP.ExprName $ fromRightE $ GP.name ('n':(show v)))
   Let e g ->
     let (m,Computation exprE rs) = convertAST' n ss e
@@ -364,6 +372,9 @@ mathy =
   let_ (Plus 5 6) $ \x ->
   let_ (Plus 7 x) $ \y ->
   Plus x y
+
+mathy2 :: Expr f 'Number
+mathy2 = negate (-1)
 
 -- mathy :: Expr f 'Number
 -- mathy = do
