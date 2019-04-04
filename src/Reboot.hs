@@ -47,8 +47,10 @@ import Data.Kind
 import Data.STRef
 import Data.Text
 import Data.Tuple (snd)
+import qualified Data.Foldable as F
 import Unsafe.Coerce (unsafeCoerce)
-import qualified Data.List as List
+import Data.Sequence (Seq(..), (|>), (<|))
+-- import qualified Data.Sequence as Seq
 import qualified Data.Text as T
 import qualified Language.JavaScript.AST as GP
 import qualified Language.JavaScript.Pretty as GP
@@ -231,40 +233,41 @@ data Optimization
           -- <> getConst (go (n + 1) (g (Const name)))
           -- <> "}"
 
-data Computation = Computation GP.Expr [GP.VarStmt]
-newtype EffComputation = EffComputation [Either GP.VarStmt GP.Expr]
+data Computation = Computation GP.Expr (Seq GP.VarStmt)
+newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Expr))
 
 instance PP.Pretty EffComputation where
-  pretty (EffComputation x) = PP.vcat (fmap PP.pretty (List.reverse x))
+  pretty (EffComputation x) = F.foldr1 (PP.<$$>) (fmap PP.pretty x)
+
+instance PP.Pretty Computation where
+  pretty (Computation ex vars) = 
+    F.foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
 
 instance (PP.Pretty a, PP.Pretty b) => PP.Pretty (Either a b) where
   pretty (Left a) = PP.pretty a
   pretty (Right a) = PP.pretty a
 
 printComputation :: Computation -> IO ()
-printComputation (Computation e ss) = do
-  putStrLn $ show $ 
-       (GP.pretty $ GP.Program (List.reverse ss) [])
-    <> GP.pretty (PP.text "\n")
-    <> GP.pretty e
+printComputation (computation) = do
+  putStrLn $ show $ PP.pretty computation
 
 printEffComputation :: EffComputation -> IO ()
 printEffComputation (effComp) = do
   putStrLn $ show $ GP.pretty effComp
 
-simple :: [GP.VarStmt] -> GP.Expr -> Computation
+simple :: Seq (GP.VarStmt) -> GP.Expr -> Computation
 simple ss e = Computation e ss
 
-simpleEff :: [GP.VarStmt] -> GP.Expr -> EffComputation
-simpleEff ss eff = EffComputation $ Right eff : fmap Left ss 
+simpleEff :: Seq (GP.VarStmt) -> GP.Expr -> EffComputation
+simpleEff ss eff = EffComputation $ fmap Left ss |> Right eff
 
-simpleEffs :: [GP.VarStmt] -> [GP.Expr] -> EffComputation
-simpleEffs ss effs = EffComputation $ fmap Right effs <> fmap Left ss
+simpleEffs :: Seq (GP.VarStmt) -> Seq (GP.Expr) -> EffComputation
+simpleEffs ss effs = EffComputation $ fmap Left ss <> fmap Right effs
 
 pureToEff :: (Int, Computation) -> (Int, EffComputation)
 pureToEff (n, c) = (n, compToEff c)
   where
-  compToEff (Computation ex vars) = EffComputation $ Right ex : fmap Left vars
+  compToEff (Computation ex vars) = EffComputation $ fmap Left vars |> Right ex
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
@@ -272,9 +275,9 @@ fromRightE = either error id
 effectfulAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
   -> EffComputation
-effectfulAST = snd . effectfulAST' 0 []
+effectfulAST = snd . effectfulAST' 0 mempty
 
-effectfulAST' :: forall v. Int -> [GP.VarStmt] -> Effect (Const Int) v -> (Int, EffComputation)
+effectfulAST' :: forall v. Int -> Seq (GP.VarStmt) -> Effect (Const Int) v -> (Int, EffComputation)
 effectfulAST' !n !ss = \case
   -- window.location.host
   Host f -> 
@@ -282,28 +285,28 @@ effectfulAST' !n !ss = \case
           (GP.ExprName $ fromRightE $ GP.name "window")
           `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "location")
           `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "host")
-        vs = (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show n))) (Just windowLocationHost)) : ss
+        vs = ss |> (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show n))) (Just windowLocationHost))
      in effectfulAST' (n+1) vs (f (Const n))
   -- console.log(x)
   Log x eff ->
     let (m, Computation x' ss') = convertAST' n ss x
-        (o, EffComputation as) = effectfulAST' m ss' eff
+        (o, EffComputation as) = effectfulAST' m mempty eff
         logX = GP.ExprInvocation
           ( (GP.ExprName $ fromRightE $ GP.name "console")
             `GP.ExprRefinement`
             (GP.Property $ fromRightE $ GP.name "log")
           )
           (GP.Invocation [x'])
-    in (o, EffComputation $ Right logX : as)
+    in (o, EffComputation $ fmap Left ss' <> (Right logX <| as ))
   Lift (Literal ValueUnit) -> (n, EffComputation $ fmap Left ss)
   Lift x -> pureToEff $ convertAST' n ss x
 
 convertAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Computation
-convertAST = snd . convertAST' 0 []
+convertAST = snd . convertAST' 0 mempty
 
-convertAST' :: forall v. Int -> [GP.VarStmt] -> Expr (Const Int) v 
+convertAST' :: forall v. Int -> Seq (GP.VarStmt) -> Expr (Const Int) v 
    -> (Int,Computation)
 convertAST' !n !ss = \case
   Literal v -> case v of
@@ -320,7 +323,7 @@ convertAST' !n !ss = \case
   Var (Const v) -> (n,simple ss $ GP.ExprName $ fromRightE $ GP.name ('n':(show v)))
   Let e g ->
     let (m,Computation exprE rs) = convertAST' n ss e
-        vs = (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show m))) (Just exprE)) : rs
+        vs = rs |> (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show m))) (Just exprE))
      in convertAST' (m + 1) vs (g (Const m))
   Concat x y ->
     let (m,Computation exprX rs) = convertAST' n ss x
@@ -351,7 +354,7 @@ loggy :: Effect f 'Unit
 loggy = 
   host $ \n0 ->
   host $ \n1 ->
-  consoleLog (string "foo") $ consoleLog n0 $ consoleLog n1 noOp
+  consoleLog (string "foo") $ consoleLog (string "bar") $ consoleLog n0 $ consoleLog n1 noOp
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
