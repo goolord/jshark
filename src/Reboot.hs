@@ -292,9 +292,9 @@ lookupy =
 
 ffiey :: Effect f 'Unit
 ffiey =
-  exampleFFIFunc "bar" "baz"
+  exampleFFIFunc "bar" 2
 
-exampleFFIFunc :: Expr f 'String -> Expr f 'String -> Effect f 'Unit
+exampleFFIFunc :: Expr f 'String -> Expr f 'Number -> Effect f 'Unit
 exampleFFIFunc x y = ffi "foo" (x <: y <: RecNil)
 
 ffi :: String -> Rec (Expr f) (u' : us) -> Effect f v
