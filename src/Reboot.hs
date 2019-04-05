@@ -413,8 +413,15 @@ pretty e0 = getConst (go 0 e0) where
       ValueString t -> Const $ T.pack (show t)
       ValueFunction _ -> Const $ T.pack "<function>"
       ValueEffect _ -> Const $ T.pack "<effect>"
+      ValueUnit -> Const $ "()"
     Plus x y -> Const ("plus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Times x y -> Const ("times (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Minus x y -> Const ("minus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Concat x y -> Const ("concat (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Abs x -> Const ("abs (" <> getConst (go n0 x) <> ")")
+    Sign x -> Const ("sign (" <> getConst (go n0 x) <> ")")
+    Negate x -> Const ("negate (" <> getConst (go n0 x) <> ")")
+    Show x -> Const ("show (" <> getConst (go n0 x) <> ")")
     Var x -> x
     Lambda g ->
       let name = "x" <> T.pack (show n0)
