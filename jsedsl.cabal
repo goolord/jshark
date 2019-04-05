@@ -50,6 +50,7 @@ library
     , text >= 1.2 && < 1.3
     , js-good-parts
     , wl-pprint
+    , quantification
   hs-source-dirs:
     src
   default-language:
