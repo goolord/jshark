@@ -76,7 +76,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   Host :: (f 'String -> Effect f u) -> Effect f u
   Log :: Expr f u -> Effect f u' -> Effect f u'
   LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u
-  LookupClass :: Expr f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
+  LookupSelector :: Expr f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
   Lift :: Expr f u -> Effect f u
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
@@ -143,6 +143,12 @@ lookupId ::
   -> (Expr f 'Element -> Effect f u)
   -> Effect f u
 lookupId x f = LookupId x (f . Var)
+
+lookupSelctor :: 
+     Expr f 'String
+  -> (Expr f ('List 'Element) -> Effect f u)
+  -> Effect f u
+lookupSelctor x f = LookupSelector x (f . Var)
 
 consoleLog :: Expr f u -> Effect f a -> Effect f a
 consoleLog u eff = Log u eff
@@ -271,6 +277,15 @@ effectfulAST' !n !ss = \case
         varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show m)) (Just getX)
         (o, EffComputation as) = effectfulAST' (m + 1) mempty (f (Const m))
      in (o, EffComputation $ fmap Left ss <> (Left varX <| fmap Left ss') <> as)
+  LookupSelector x f ->
+    let documentQuerySelectorAll =  
+          (GP.ExprName $ name' "document")
+          `GP.ExprRefinement` (GP.Property $ name' "querySelectorAll")
+        (m, Computation x' ss') = convertAST' n mempty x
+        getX = GP.ExprInvocation documentQuerySelectorAll (GP.Invocation [x'])
+        varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show m)) (Just getX)
+        (o, EffComputation as) = effectfulAST' (m + 1) mempty (f (Const m))
+     in (o, EffComputation $ fmap Left ss <> (Left varX <| fmap Left ss') <> as)
   Lift (Literal ValueUnit) -> (n, EffComputation $ fmap Left ss)
   Lift x -> pureToEff $ convertAST' n ss x
 
@@ -356,7 +371,7 @@ lookupy :: Effect f 'Unit
 lookupy =
   lookupId "foo" $ \foo ->
   lookupId "bar" $ \bar ->
-  lookupId "baz" $ \baz ->
+  lookupSelctor ".baz" $ \baz ->
   consoleLog foo $
   consoleLog bar $
   consoleLog baz noOp
