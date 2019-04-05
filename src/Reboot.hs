@@ -13,8 +13,8 @@
 {-# language RankNTypes #-}
 {-# language ScopedTypeVariables #-}
 {-# language StandaloneDeriving #-}
-{-# language TypeInType #-}
 {-# language TypeFamilies #-}
+{-# language TypeInType #-}
 {-# language TypeOperators #-}
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
@@ -38,6 +38,7 @@ module Reboot
 -- This uses a higher-order PHOAS approach as described by
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
+-- import qualified Data.Sequence as Seq
 import Control.Applicative
 import Control.Monad.ST
 import Data.Coerce
@@ -45,16 +46,15 @@ import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
 import Data.STRef
+import Data.Sequence (Seq(..), (|>), (<|))
 import Data.Text (Text)
 import Data.Tuple (snd)
 import Unsafe.Coerce (unsafeCoerce)
-import Data.Sequence (Seq(..), (|>), (<|))
--- import qualified Data.Sequence as Seq
 import qualified Data.Text as T
+import qualified GHC.Exts as Exts
 import qualified Language.JavaScript.AST as GP
 import qualified Language.JavaScript.Pretty as GP
 import qualified Text.PrettyPrint.Leijen as PP
-import qualified GHC.Exts as Exts
 
 data Universe
   = Number
@@ -111,7 +111,7 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
 
 -- Op :: Operation _ u -> ExprArrow g f u
 -- data Operation :: () -> Universe -> Type
---   Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
+  -- Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
 
 instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
   fromString = Literal . ValueString . Exts.fromString
@@ -191,71 +191,9 @@ evaluate e0 = go e0 where
     Concat x y -> ValueString (unString (go x) <> unString (go y))
     _ -> undefined -- just to get rid of errors for now
 
--- pretty :: forall (u :: Universe).
-     -- (forall (f :: Universe -> Type). Expr f u)
-  -- -> Text
--- pretty = getConst . go 0 where
-  -- go :: forall v. Int -> Expr (Const Text) v -> Const Text v
-  -- go !n = \case
-    -- Literal v -> case v of
-      -- ValueNumber d -> Const $ T.pack (show d)
-      -- ValueString t -> Const $ T.pack (show t)
-      -- ValueFunction _ -> Const $ T.pack "<function>"
-    -- Plus x y -> Const ("plus (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
-    -- Var x -> x
-    -- Lambda g ->
-      -- let name = "x" <> T.pack (show n)
-       -- in Const  
-          -- $  "λ"
-          -- <> name
-          -- <> " -> "
-          -- <> getConst (go (n + 1) (g (Const name)))
-    -- Apply g x -> Const ("(" <> getConst (go n g) <> ") (" <> getConst (go n x) <> ")")
-    -- Let x g ->
-      -- let name = "x" <> T.pack (show n)
-       -- in Const
-          -- $  "let "
-          -- <> name
-          -- <> " = {"
-          -- <> getConst (go (n + 1) x)
-          -- <> "} in {"
-          -- <> getConst (go (n + 1) (g (Const name)))
-          -- <> "}"
-
 data Optimization 
   = ConstantFolding
   | UnusedBindings
-
--- prettyJS :: forall (u :: Universe).
-     -- (forall (f :: Universe -> Type). Expr f u)
-  -- -> String
--- prettyJS = getConst . go 0 where
-  -- go :: forall v. Int -> Expr (Const String) v -> Const String v
-  -- go !n = \case
-    -- Literal v -> case v of
-      -- ValueNumber d -> Const (show d)
-      -- ValueString t -> Const (show t)
-      -- ValueFunction _ -> Const "<function>"
-    -- Plus x y -> Const ("plus (" <> getConst (go n x) <> ") (" <> getConst (go n y) <> ")")
-    -- Var x -> x
-    -- Lambda g ->
-      -- let name = "x" <> (show n)
-       -- in Const  
-          -- $  "λ"
-          -- <> name
-          -- <> " -> "
-          -- <> getConst (go (n + 1) (g (Const name)))
-    -- Apply g x -> Const ("(" <> getConst (go n g) <> ") (" <> getConst (go n x) <> ")")
-    -- Let x g ->
-      -- let name = "x" <> (show n)
-       -- in Const
-          -- $  "let "
-          -- <> name
-          -- <> " = {"
-          -- <> getConst (go (n + 1) x)
-          -- <> "} in {"
-          -- <> getConst (go (n + 1) (g (Const name)))
-          -- <> "}"
 
 data Computation = Computation GP.Expr (Seq GP.VarStmt)
 newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Expr))
@@ -333,8 +271,6 @@ effectfulAST' !n !ss = \case
         varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show m)) (Just getX)
         (o, EffComputation as) = effectfulAST' (m + 1) mempty (f (Const m))
      in (o, EffComputation $ fmap Left ss <> (Left varX <| fmap Left ss') <> as)
-        -- vs = ss |> (GP.ConstStmt $ GP.VarDecl (name' ('n':(show n))) (Just windowLocationHost))
-     -- in effectfulAST' (n+1) vs (f (Const x))
   Lift (Literal ValueUnit) -> (n, EffComputation $ fmap Left ss)
   Lift x -> pureToEff $ convertAST' n ss x
 
