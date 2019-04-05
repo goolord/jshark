@@ -74,7 +74,7 @@ data Value :: Universe -> Type where
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Host :: (f 'String -> Effect f u) -> Effect f u
-  Log :: Expr f 'String -> Effect f u -> Effect f u
+  Log :: Expr f u -> Effect f u' -> Effect f u'
   LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u
   LookupClass :: Expr f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
   Lift :: Expr f u -> Effect f u
@@ -113,7 +113,7 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
 -- data Operation :: () -> Universe -> Type
 --   Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
 
-instance Exts.IsString (Expr f 'String) where
+instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
   fromString = Literal . ValueString . Exts.fromString
 
 instance forall (f :: (Universe -> Type)) u. (u ~ 'Number) => Num (Expr f u) where
@@ -144,8 +144,8 @@ lookupId ::
   -> Effect f u
 lookupId x f = LookupId x (f . Var)
 
-consoleLog :: Expr f 'String -> Effect f a -> Effect f a
-consoleLog str eff = Log str eff
+consoleLog :: Expr f u -> Effect f a -> Effect f a
+consoleLog u eff = Log u eff
 
 expr :: Expr f u -> Effect f u
 expr = Lift
@@ -421,7 +421,9 @@ lookupy =
   lookupId "foo" $ \foo ->
   lookupId "bar" $ \bar ->
   lookupId "baz" $ \baz ->
-  consoleLog (Show foo `Concat` Show bar `Concat` Show baz) noOp
+  consoleLog foo $
+  consoleLog bar $
+  consoleLog baz noOp
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
