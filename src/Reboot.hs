@@ -75,8 +75,8 @@ data Value :: Universe -> Type where
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Host :: (f 'String -> Effect f u) -> Effect f u
   Log :: Expr f 'String -> Effect f u -> Effect f u
-  LookupId :: f 'String -> (f 'Element -> Effect f u) -> Effect f u
-  LookupClass :: f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
+  LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u
+  LookupClass :: Expr f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
   Lift :: Expr f u -> Effect f u
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
@@ -91,6 +91,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
+  Show :: Expr f u -> Expr f 'String
   Var :: f u -> Expr f u
 
 data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
@@ -136,6 +137,12 @@ host ::
      (Expr f 'String -> Effect f u)
   -> Effect f u
 host f = Host (f . Var)
+
+lookupId ::
+     Expr f 'String
+  -> (Expr f 'Element -> Effect f u)
+  -> Effect f u
+lookupId x f = LookupId x (f . Var)
 
 consoleLog :: Expr f 'String -> Effect f a -> Effect f a
 consoleLog str eff = Log str eff
@@ -294,35 +301,39 @@ effectfulAST :: forall (u :: Universe).
   -> EffComputation
 effectfulAST = snd . effectfulAST' 0 mempty
 
+name' :: String -> GP.Name
+name' = fromRightE . GP.name
+
 effectfulAST' :: forall v. Int -> Seq (GP.VarStmt) -> Effect (Const Int) v -> (Int, EffComputation)
 effectfulAST' !n !ss = \case
   -- window.location.host
   Host f -> 
     let windowLocationHost =  
-          (GP.ExprName $ fromRightE $ GP.name "window")
-          `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "location")
-          `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "host")
-        vs = ss |> (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show n))) (Just windowLocationHost))
+          (GP.ExprName $ name' "window")
+          `GP.ExprRefinement` (GP.Property $ name' "location")
+          `GP.ExprRefinement` (GP.Property $ name' "host")
+        vs = ss |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show n)) (Just windowLocationHost))
      in effectfulAST' (n+1) vs (f (Const n))
   -- console.log(x)
   Log x eff ->
     let (m, Computation x' ss') = convertAST' n ss x
         (o, EffComputation as) = effectfulAST' m mempty eff
         logX = GP.ExprInvocation
-          ( (GP.ExprName $ fromRightE $ GP.name "console")
-            `GP.ExprRefinement`
-            (GP.Property $ fromRightE $ GP.name "log")
-          )
-          (GP.Invocation [x'])
+          ((GP.ExprName $ name' "console")
+           `GP.ExprRefinement` (GP.Property $ name' "log")
+          ) (GP.Invocation [x'])
     in (o, EffComputation $ fmap Left ss' <> (Right logX <| as ))
   -- document.getElementById(x)
-  -- LookupId x f ->
-    -- let documentGetElementById =  
-          -- (GP.ExprName $ fromRightE $ GP.name "document")
-          -- `GP.ExprRefinement` (GP.Property $ fromRightE $ GP.name "getElementById")
-        -- (m, Computation x' ss') = convertAST' n ss x
-     -- in  undefined
-        -- vs = ss |> (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show n))) (Just windowLocationHost))
+  LookupId x f ->
+    let documentGetElementById =  
+          (GP.ExprName $ name' "document")
+          `GP.ExprRefinement` (GP.Property $ name' "getElementById")
+        (m, Computation x' ss') = convertAST' n mempty x
+        getX = GP.ExprInvocation documentGetElementById (GP.Invocation [x'])
+        varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show m)) (Just getX)
+        (o, EffComputation as) = effectfulAST' (m + 1) mempty (f (Const m))
+     in (o, EffComputation $ fmap Left ss <> (Left varX <| fmap Left ss') <> as)
+        -- vs = ss |> (GP.ConstStmt $ GP.VarDecl (name' ('n':(show n))) (Just windowLocationHost))
      -- in effectfulAST' (n+1) vs (f (Const x))
   Lift (Literal ValueUnit) -> (n, EffComputation $ fmap Left ss)
   Lift x -> pureToEff $ convertAST' n ss x
@@ -356,25 +367,28 @@ convertAST' !n !ss = \case
      in (p,Computation (GP.ExprInfix GP.Mul exprX exprY) ts)
   Abs x ->
     let (m,Computation exprX rs) = convertAST' n ss x
-     in (m,Computation (GP.ExprInvocation (GP.ExprName $ fromRightE $ GP.name "Math.abs") (GP.Invocation [exprX])) rs)
+     in (m,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.abs") (GP.Invocation [exprX])) rs)
   Negate x ->
     let (m,Computation exprX rs) = convertAST' n ss x
      in (m,Computation (GP.ExprPrefix GP.Negate exprX) rs)
   Sign x ->
     let (m,Computation exprX rs) = convertAST' n ss x
-     in (m,Computation (GP.ExprInvocation (GP.ExprName $ fromRightE $ GP.name "Math.sign") (GP.Invocation [exprX])) rs)
-  Var (Const v) -> (n,simple ss $ GP.ExprName $ fromRightE $ GP.name ('n':(show v)))
+     in (m,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.sign") (GP.Invocation [exprX])) rs)
+  Var (Const v) -> (n,simple ss $ GP.ExprName $ name' ('n':show v))
   Let e g ->
     let (m,Computation exprE rs) = convertAST' n ss e
-        vs = rs |> (GP.ConstStmt $ GP.VarDecl (fromRightE $ GP.name ('n':(show m))) (Just exprE))
+        vs = rs |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show m)) (Just exprE))
      in convertAST' (m + 1) vs (g (Const m))
   Concat x y ->
     let (m,Computation exprX rs) = convertAST' n ss x
         (p,Computation exprY ts) = convertAST' m rs y
      in (p,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
   Lambda f ->
-    let _name = 'x':(show n) in
+    let _name = 'x':show n in
     undefined
+  Show x ->
+    let (m,Computation exprX rs) = convertAST' n ss x
+     in (m, Computation (GP.ExprInvocation (GP.ExprName $ name' "String") (GP.Invocation [exprX])) rs)
 
 mathy :: Expr f 'Number
 mathy =
@@ -401,6 +415,13 @@ loggy =
   host $ \n0 ->
   host $ \n1 ->
   consoleLog "foo" $ consoleLog "bar" $ consoleLog n0 $ consoleLog n1 noOp
+
+lookupy :: Effect f 'Unit
+lookupy =
+  lookupId "foo" $ \foo ->
+  lookupId "bar" $ \bar ->
+  lookupId "baz" $ \baz ->
+  consoleLog (Show foo `Concat` Show bar `Concat` Show baz) noOp
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
