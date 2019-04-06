@@ -23,22 +23,27 @@ data Universe
   | String
   | Unit
   | Element
-  | List Universe
+  | Array Universe
   | Effectful Universe
   | Function Universe Universe
+  | Option Universe
+  | Result Universe Universe
 
 data Value :: Universe -> Type where
+  ValueArray :: [Expr f u] -> Value ('Array u)
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
   ValueEffect :: (forall f. Effect f u) -> Value ('Effectful u)
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
+  ValueOption :: Maybe (Value u) -> Value ('Option u)
+  ValueResult :: Either (Value u) (Value v) -> Value ('Result u v)
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Host :: (f 'String -> Effect f u) -> Effect f u
   Log :: Expr f u -> Effect f u' -> Effect f u'
   LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u
-  LookupSelector :: Expr f 'String -> (f ('List 'Element) -> Effect f u) -> Effect f u
+  LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u
   Lift :: Expr f u -> Effect f u
   FFI :: String -> Rec (Expr f) (u' ': us) -> Effect f u
 
@@ -55,7 +60,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
   Show :: Expr f u -> Expr f 'String
-  Var :: f u -> Expr f u
+  Var :: f u -> Expr f u 
 
 data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
   LiteralF :: Value u -> ExprF g f u
@@ -79,6 +84,9 @@ instance forall (f :: (Universe -> Type)) u. (u ~ 'Number) => Num (Expr f u) whe
   abs = Abs
   signum = Sign
   fromInteger = Literal . ValueNumber . fromInteger
+
+fromList :: forall (f :: Universe -> Type) u. [Expr f u] -> Expr f ('Array u)
+fromList = Literal . ValueArray
 
 -- newtype Expression :: (Universe -> Type) -> Universe -> Type where
 --   Expression :: ExprArrow (->) f u -> Expression f u

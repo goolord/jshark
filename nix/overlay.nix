@@ -95,6 +95,20 @@ with rec {
        (hself.callPackage expr args)
        (orig: { src = rawPath; })));
 
+    js-good-parts = hsuper.callCabal2nix "js-good-parts"
+      (builtins.fetchGit {
+        url = "git@github.com:goolord/js-good-parts";
+        rev = "7ccb5043ba588de3049f889e73cf514db7843fe5";
+      })
+      { };
+      
+    quantification = hsuper.callCabal2nix "quantification"
+      (builtins.fetchGit {
+        url = "git@github.com:andrewthad/quantification";
+        rev = "aa6582f57fe2b68d8ba5d94325b53aca3e30ceea";
+      })
+      { };
+
     jsedsl = hself.callC2N {
       name = "jsedsl";
       path = ../.;

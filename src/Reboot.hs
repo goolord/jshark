@@ -68,7 +68,7 @@ lookupId x f = LookupId x (f . Var)
 
 lookupSelctor :: 
      Expr f 'String
-  -> (Expr f ('List 'Element) -> Effect f u)
+  -> (Expr f ('Array 'Element) -> Effect f u)
   -> Effect f u
 lookupSelctor x f = LookupSelector x (f . Var)
 
