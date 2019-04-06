@@ -56,6 +56,8 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Abs :: Expr f 'Number -> Expr f 'Number
   Sign :: Expr f 'Number -> Expr f 'Number
   Negate :: Expr f 'Number -> Expr f 'Number
+  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+  Recip :: Expr f 'Number -> Expr f 'Number
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
@@ -77,13 +79,18 @@ data Statement :: (Universe -> Type) -> Universe -> Type where
 instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
   fromString = Literal . ValueString . Exts.fromString
 
-instance forall (f :: (Universe -> Type)) u. (u ~ 'Number) => Num (Expr f u) where
+instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus
   abs = Abs
   signum = Sign
   fromInteger = Literal . ValueNumber . fromInteger
+
+instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u) where
+  (/) = FracDiv
+  recip = Recip
+  fromRational = Literal . ValueNumber . fromRational
 
 fromList :: forall (f :: Universe -> Type) u. [Expr f u] -> Expr f ('Array u)
 fromList = Literal . ValueArray
@@ -108,4 +115,3 @@ instance PP.Pretty EffComputation where
 instance PP.Pretty Computation where
   pretty (Computation ex vars) = 
     foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
-

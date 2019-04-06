@@ -112,12 +112,19 @@ evaluate e0 = go e0 where
   go = \case
     Literal v -> v
     Plus x y -> ValueNumber (unNumber (go x) + unNumber (go y))
+    Times x y -> ValueNumber (unNumber (go x) * unNumber (go y))
+    Minus x y -> ValueNumber (unNumber (go x) - unNumber (go y))
+    Abs x -> ValueNumber (abs (unNumber (go x)))
+    Sign x -> ValueNumber (signum (unNumber (go x)))
+    Negate x -> ValueNumber (negate (unNumber (go x)))
+    FracDiv x y -> ValueNumber (unNumber (go x) / unNumber (go y))
+    Recip x -> ValueNumber (recip (unNumber (go x)))
     Var x -> x
     Let x g -> go (g (go x))
     Apply g x -> unFunction (go g) (go x)
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
-    _ -> undefined -- just to get rid of errors for now
+    -- _ -> undefined -- just to get rid of errors for now
 
 printComputation :: Computation -> IO ()
 printComputation (computation) = do
