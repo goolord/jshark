@@ -39,6 +39,7 @@ extra-source-files:
 library
   exposed-modules:
     Reboot
+    Math
   build-depends:
     , base >= 4.10.1 && < 4.13
     , containers >= 0.5 && < 0.7
