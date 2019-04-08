@@ -300,6 +300,7 @@ pretty e0 = getConst (go 0 e0) where
     Literal v -> case v of
       ValueNumber d -> Const $ T.pack (show d)
       ValueString t -> Const $ T.pack (show t)
+      ValueArray xs -> Const $ "[" <> T.intercalate ", " (fmap (getConst . go n0 . Literal) xs) <> "]"
       ValueFunction _ -> Const $ T.pack "<function>"
       ValueUnit -> Const $ "()"
     Plus x y -> Const ("plus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
