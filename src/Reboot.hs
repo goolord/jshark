@@ -313,6 +313,7 @@ pretty e0 = getConst (go 0 e0) where
       ValueUnit -> Const $ "()"
     Plus x y -> Const ("plus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Times x y -> Const ("times (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    FracDiv x y -> Const ("div (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Minus x y -> Const ("minus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Concat x y -> Const ("concat (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Abs x -> Const ("abs (" <> getConst (go n0 x) <> ")")
