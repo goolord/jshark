@@ -2,14 +2,23 @@
 {-# language GADTs #-}
 
 module Math
-  (
+  ( inc
+  , e
+  , pi
+  , sqrt2
+  , sqrt1_2
+  , ln2
+  , ln10
+  , log2e
+  , log10e
   ) where
 
 import Types
 import Reboot
+import Prelude hiding (pi)
 
-succ :: Expr f ('Function 'Number 'Number)
-succ = lambda (+1)
+inc :: Expr f ('Function 'Number 'Number)
+inc = lambda (+1)
 
 e :: Expr f 'Number
 e = 2.718281828459045
