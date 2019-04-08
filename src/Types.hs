@@ -24,16 +24,14 @@ data Universe
   | Unit
   | Element
   | Array Universe
-  | Effectful Universe
   | Function Universe Universe
   | Option Universe
   | Result Universe Universe
 
 data Value :: Universe -> Type where
-  ValueArray :: [Expr f u] -> Value ('Array u)
+  ValueArray :: [Value u] -> Value ('Array u)
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
-  ValueEffect :: (forall f. Effect f u) -> Value ('Effectful u)
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
   ValueOption :: Maybe (Value u) -> Value ('Option u)
@@ -91,9 +89,6 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u
   (/) = FracDiv
   recip = Recip
   fromRational = Literal . ValueNumber . fromRational
-
-fromList :: forall (f :: Universe -> Type) u. [Expr f u] -> Expr f ('Array u)
-fromList = Literal . ValueArray
 
 -- newtype Expression :: (Universe -> Type) -> Universe -> Type where
 --   Expression :: ExprArrow (->) f u -> Expression f u

@@ -27,10 +27,10 @@ module Reboot
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
 -- import qualified Data.Sequence as Seq
-import Types
 import Control.Applicative
 import Control.Monad.ST
 import Data.Coerce
+import Data.Foldable (toList)
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
@@ -38,9 +38,10 @@ import Data.STRef
 import Data.Sequence (Seq(..), (|>), (<|))
 import Data.Text (Text)
 import Data.Tuple (snd)
-import Unsafe.Coerce (unsafeCoerce)
-import Topaz.Types
 import Topaz.Rec ((<:))
+import Topaz.Types
+import Types
+import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Text as T
 import qualified Language.JavaScript.AST as GP
 import qualified Language.JavaScript.Pretty as GP
@@ -124,6 +125,7 @@ evaluate e0 = go e0 where
     Apply g x -> unFunction (go g) (go x)
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
+    Show _x -> undefined -- FIXME: this might be complicated
     -- _ -> undefined -- just to get rid of errors for now
 
 printComputation :: Computation -> IO ()
@@ -221,9 +223,17 @@ convertAST' !n0 !ss0 = \case
   Literal v -> case v of
     ValueNumber d -> (n0,simple ss0 $ GP.ExprLit $ GP.LitNumber $ GP.Number d)
     ValueString t -> (n0,simple ss0 $ GP.ExprLit $ GP.LitString $ fromRightE $ GP.jsString (T.unpack t))
+    ValueArray xs -> 
+      let foo :: Int -> Seq GP.VarStmt -> [Value u] -> (Int, Seq GP.VarStmt, [GP.Expr])
+          foo n'0 ss'0 (x:xs') = 
+            let (n'1, Computation x' ss'1) = convertAST' n'0 ss'0 (Literal x)
+                (n'2, ss'2, cs) = foo n'1 ss'1 xs'
+             in (n'2, ss'2, x' : cs)
+          foo n' ss' [] = (n', ss', [])
+          (n1, ss1, exprs) = foo n0 ss0 (toList xs)
+       in (n1,simple ss1 $ GP.ExprLit $ GP.LitArray $ GP.ArrayLit $ exprs)
     -- v don't know what to do here
     ValueFunction _ -> (n0,simple ss0 $ GP.ExprLit $ undefined)
-    ValueEffect eff -> undefined --no longer works -- (n0,effectfulAST eff)
     ValueUnit -> (n0, simple ss0 $ error "impossible: don't do this")
   Plus x y ->
     let (n1,Computation exprX rs) = convertAST' n0 ss0 x
@@ -237,6 +247,10 @@ convertAST' !n0 !ss0 = \case
     let (n1,Computation exprX rs) = convertAST' n0 ss0 x
         (n2,Computation exprY ts) = convertAST' n1 rs y
      in (n2,Computation (GP.ExprInfix GP.Mul exprX exprY) ts)
+  FracDiv x y ->
+    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
+        (n2,Computation exprY ts) = convertAST' n1 rs y
+     in (n2,Computation (GP.ExprInfix GP.Div exprX exprY) ts)
   Abs x ->
     let (n1,Computation exprX rs) = convertAST' n0 ss0 x
      in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.abs") (GP.Invocation [exprX])) rs)
@@ -320,7 +334,6 @@ pretty e0 = getConst (go 0 e0) where
       ValueNumber d -> Const $ T.pack (show d)
       ValueString t -> Const $ T.pack (show t)
       ValueFunction _ -> Const $ T.pack "<function>"
-      ValueEffect _ -> Const $ T.pack "<effect>"
       ValueUnit -> Const $ "()"
     Plus x y -> Const ("plus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Times x y -> Const ("times (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
