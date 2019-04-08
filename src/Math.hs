@@ -3,6 +3,7 @@
 
 module Math
   ( inc
+  , dec
   , e
   , pi
   , sqrt2
@@ -19,6 +20,9 @@ import Prelude hiding (pi)
 
 inc :: Expr f ('Function 'Number 'Number)
 inc = lambda (+1)
+
+dec :: Expr f ('Function 'Number 'Number)
+dec = lambda (\x -> x - 1)
 
 e :: Expr f 'Number
 e = 2.718281828459045

@@ -12,26 +12,26 @@ module Reboot
   ( Expr(..)
   , Value(..)
     -- Operators
-  , let_
-  , lambda
-  , number
-  , plus
   , apply
-  , host
-  , expr
   , consoleLog
-  , noOp
+  , expr
+  , ffi
+  , host
+  , lambda
+  , let_
   , lookupId
   , lookupSelector
-  , ffi
+  , noOp
+  , number
+  , plus
     -- Evaluation
   , evaluate
   , evaluateNumber
   -- , pretty
-  , effectfulAST
   , convertAST
-  , printEffComputation
+  , effectfulAST
   , printComputation
+  , printEffComputation
   ) where
 
 -- This uses a higher-order PHOAS approach as described by
@@ -131,7 +131,6 @@ evaluate e0 = go e0 where
     Sign x -> ValueNumber (signum (unNumber (go x)))
     Negate x -> ValueNumber (negate (unNumber (go x)))
     FracDiv x y -> ValueNumber (unNumber (go x) / unNumber (go y))
-    Recip x -> ValueNumber (recip (unNumber (go x)))
     Var x -> x
     Let x g -> go (g (go x))
     Apply g x -> unFunction (go g) (go x)

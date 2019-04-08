@@ -55,7 +55,6 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
   FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
-  Recip :: Expr f 'Number -> Expr f 'Number -- ^ Recip primitvie: ?
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
@@ -87,7 +86,6 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
 
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u) where
   (/) = FracDiv
-  recip = Recip
   fromRational = Literal . ValueNumber . fromRational
 
 -- newtype Expression :: (Universe -> Type) -> Universe -> Type where

@@ -1,13 +1,13 @@
-{-# language TypeOperators #-}
 {-# language DataKinds #-}
 {-# language OverloadedStrings #-}
+{-# language TypeOperators #-}
 
 module Example where
 
 import Reboot
-import Types
-import Topaz.Types
 import Topaz.Rec ((<:))
+import Topaz.Types
+import Types
 import qualified Math
 
 mathy :: Expr f 'Number
