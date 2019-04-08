@@ -24,6 +24,11 @@ module Reboot
   , noOp
   , number
   , plus
+  , string
+  , classAdd
+  , classRemove
+  , classToggle
+  , forIn
     -- Evaluation
   , evaluate
   , evaluateNumber
@@ -52,6 +57,8 @@ import Data.Tuple (snd)
 import Topaz.Types
 import Types
 import Unsafe.Coerce (unsafeCoerce)
+import qualified Data.List as List
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 import qualified Language.JavaScript.AST as GP
 import qualified Text.PrettyPrint.Leijen as PP
@@ -69,6 +76,11 @@ host ::
      (Expr f 'String -> Effect f u)
   -> Effect f u
 host f = Host (f . Var)
+
+classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
+classAdd = ClassAdd
+classRemove = ClassRemove
+classToggle = ClassToggle
 
 lookupId ::
      Expr f 'String
@@ -114,6 +126,9 @@ number = Literal . ValueNumber
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
+forIn :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
+forIn arr f = ForIn arr (coerce f . Var)
+
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
 
@@ -143,15 +158,15 @@ simple :: Seq (GP.VarStmt) -> GP.Expr -> Computation
 simple ss e = Computation e ss
 
 simpleEff :: Seq (GP.VarStmt) -> GP.Expr -> EffComputation
-simpleEff ss eff = EffComputation $ fmap Left ss |> Right eff
+simpleEff ss eff = EffComputation $ fmap Left ss |> (Right . NonImperitive) eff
 
 simpleEffs :: Seq (GP.VarStmt) -> Seq (GP.Expr) -> EffComputation
-simpleEffs ss effs = EffComputation $ fmap Left ss <> fmap Right effs
+simpleEffs ss effs = EffComputation $ fmap Left ss <> fmap (Right . NonImperitive) effs
 
 pureToEff :: (Int, Computation) -> (Int, EffComputation)
 pureToEff (n, c) = (n, compToEff c)
   where
-  compToEff (Computation ex vars) = EffComputation $ fmap Left vars |> Right ex
+  compToEff (Computation ex vars) = EffComputation $ fmap Left vars |> (Right . NonImperitive) ex
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
@@ -188,7 +203,7 @@ effectfulAST' !n0 !ss0 = \case
           ((GP.ExprName $ name' "console")
            `GP.ExprRefinement` (GP.Property $ name' "log")
           ) (GP.Invocation [x'])
-    in (n2, EffComputation $ fmap Left ss' <> (Right logX <| as ))
+    in (n2, EffComputation $ fmap Left ss' <> ((Right . NonImperitive) logX <| as ))
   LookupId x f ->
     let documentGetElementById =  
           (GP.ExprName $ name' "document")
@@ -198,6 +213,24 @@ effectfulAST' !n0 !ss0 = \case
         varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show n1)) (Just getX)
         (n2, EffComputation as) = effectfulAST' (n1 + 1) mempty (f (Const n1))
      in (n2, EffComputation $ fmap Left ss0 <> (Left varX <| fmap Left ss') <> as)
+  ClassToggle x cl ->
+    let (n1, Computation x' ss1) = convertAST' n0 ss0 x
+        (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
+        xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "toggle")
+        toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
+     in (n2, EffComputation $ (fmap Left ss2) |> (Right . NonImperitive) toggleCl)
+  ClassAdd x cl ->
+    let (n1, Computation x' ss1) = convertAST' n0 ss0 x
+        (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
+        xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "add")
+        toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
+     in (n2, EffComputation $ (fmap Left ss2) |> (Right . NonImperitive) toggleCl)
+  ClassRemove x cl ->
+    let (n1, Computation x' ss1) = convertAST' n0 ss0 x
+        (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
+        xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "remove")
+        toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
+     in (n2, EffComputation $ (fmap Left ss2) |> (Right . NonImperitive) toggleCl)
   LookupSelector x f ->
     let documentQuerySelectorAll =  
           (GP.ExprName $ name' "document")
@@ -216,9 +249,24 @@ effectfulAST' !n0 !ss0 = \case
         foo n' ss' RecNil = (n',ss',[])
         (n1, ss1, lArgs) = foo n0 ss0 args
         foreignFunction = GP.ExprInvocation (GP.ExprName (name' fn)) (GP.Invocation lArgs)
-     in (n1, EffComputation (fmap Left ss1 |> Right foreignFunction))
+     in (n1, EffComputation (fmap Left ss1 |> (Right . NonImperitive) foreignFunction))
+  ForIn xs f ->
+    let (n1, Computation xs' ss1) = convertAST' n0 ss0 xs
+        (n2, EffComputation as) = effectfulAST' (n1+1) ss1 (f (Const n1+1))
+        foo = GP.StmtFor Nothing $ GP.ForStmtInStyle (name' $ 'n':(show $ n1+1)) xs' (List.concat $ fmap toStmt as)
+     in (n2, EffComputation $ as |> (Right . Imperitive) foo)
   Lift (Literal ValueUnit) -> (n0, EffComputation $ fmap Left ss0)
   Lift x -> pureToEff $ convertAST' n0 ss0 x
+
+toStmt :: Either GP.VarStmt Code -> [GP.Stmt]
+toStmt (Left (GP.VarStmt vars)) = fmap (GP.StmtExpr . varToAssign) (NE.toList vars)
+toStmt (Left (GP.ConstStmt vars)) = pure $ GP.StmtExpr $ varToAssign vars
+toStmt (Right (NonImperitive (GP.ExprInvocation (GP.ExprName name) inv))) = pure $ GP.StmtExpr $ GP.ESApply (pure $ GP.LValue name []) (GP.RVInvoke $ pure inv)
+toStmt (Right (NonImperitive x)) = [GP.StmtDisruptive $ GP.DSReturn $ GP.ReturnStmt $ Just x]
+toStmt (Right (Imperitive x)) = pure x
+
+varToAssign (GP.VarDecl name (Just ex)) = GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign ex)
+varToAssign (GP.VarDecl name Nothing) = GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign (GP.ExprName name))
 
 convertAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)

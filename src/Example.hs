@@ -26,6 +26,11 @@ mathy2 = negate (-1)
 --   y <- let_ (Plus (number 7) x)
 --   pure (Plus x y)
 
+classy :: Effect f 'Unit
+classy =
+  lookupId "id" $ \el ->
+  classToggle el "foo"
+
 stringy :: Effect f 'String
 stringy =
   host $ \x ->
@@ -52,3 +57,8 @@ ffiey = exampleFFIFunc "bar" 2
 exampleFFIFunc :: Expr f 'String -> Expr f 'Number -> Effect f 'Number
 exampleFFIFunc x y = ffi "foo" (x <: y <: RecNil)
 
+fory :: Effect f 'Unit
+fory =
+  lookupSelector ".foo" $ \foos ->
+  forIn foos $ \x ->
+  classToggle x "foo"
