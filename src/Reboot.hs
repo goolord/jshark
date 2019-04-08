@@ -28,6 +28,10 @@ module Reboot
   , evaluate
   , evaluateNumber
   -- , pretty
+  , effectfulAST
+  , convertAST
+  , printEffComputation
+  , printComputation
   ) where
 
 -- This uses a higher-order PHOAS approach as described by
@@ -136,14 +140,6 @@ evaluate e0 = go e0 where
     Show _x -> undefined -- FIXME: this might be complicated
     -- _ -> undefined -- just to get rid of errors for now
 
-printComputation :: Computation -> IO ()
-printComputation (computation) = do
-  putStrLn $ show $ PP.pretty computation
-
-printEffComputation :: EffComputation -> IO ()
-printEffComputation (effComp) = do
-  putStrLn $ show $ PP.pretty effComp
-
 simple :: Seq (GP.VarStmt) -> GP.Expr -> Computation
 simple ss e = Computation e ss
 
@@ -160,6 +156,14 @@ pureToEff (n, c) = (n, compToEff c)
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
+
+printComputation :: Computation -> IO ()
+printComputation (computation) = do
+  putStrLn $ show $ PP.pretty computation
+
+printEffComputation :: EffComputation -> IO ()
+printEffComputation (effComp) = do
+  putStrLn $ show $ PP.pretty effComp
 
 effectfulAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
