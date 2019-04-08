@@ -245,59 +245,59 @@ convertAST' !n0 !ss0 = \case
           (n1, ss1, exprs) = foo n0 ss0 (toList xs)
        in (n1,simple ss1 $ GP.ExprLit $ GP.LitArray $ GP.ArrayLit $ exprs)
     -- v don't know what to do here
-    ValueFunction _ -> (n0,simple ss0 $ GP.ExprLit $ undefined)
+    ValueFunction f -> (n0,simple ss0 $ GP.ExprLit $ undefined)
     ValueUnit -> (n0, simple ss0 $ error "impossible: don't do this")
   Plus x y ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-        (n2,Computation exprY ts) = convertAST' n1 rs y
-     in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
+     in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ss2)
   Minus x y ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-        (n2,Computation exprY ts) = convertAST' n1 rs y
-     in (n2,Computation (GP.ExprInfix GP.Sub exprX exprY) ts)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
+     in (n2,Computation (GP.ExprInfix GP.Sub exprX exprY) ss2)
   Times x y ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-        (n2,Computation exprY ts) = convertAST' n1 rs y
-     in (n2,Computation (GP.ExprInfix GP.Mul exprX exprY) ts)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
+     in (n2,Computation (GP.ExprInfix GP.Mul exprX exprY) ss2)
   FracDiv x y ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-        (n2,Computation exprY ts) = convertAST' n1 rs y
-     in (n2,Computation (GP.ExprInfix GP.Div exprX exprY) ts)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
+     in (n2,Computation (GP.ExprInfix GP.Div exprX exprY) ss2)
   Abs x ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.abs") (GP.Invocation [exprX])) rs)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.abs") (GP.Invocation [exprX])) ss1)
   Negate x ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprPrefix GP.Negate exprX) rs)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+     in (n1,Computation (GP.ExprPrefix GP.Negate exprX) ss1)
   Sign x ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.sign") (GP.Invocation [exprX])) rs)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.sign") (GP.Invocation [exprX])) ss1)
   Var (Const v) -> (n0,simple ss0 $ GP.ExprName $ name' ('n':show v))
   Let e g ->
-    let (n1,Computation exprE rs) = convertAST' n0 ss0 e
-        vs = rs |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show n1)) (Just exprE))
+    let (n1,Computation exprE ss1) = convertAST' n0 ss0 e
+        vs = ss1 |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show n1)) (Just exprE))
      in convertAST' (n1 + 1) vs (g (Const n1))
   Concat x y ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-        (n2,Computation exprY ts) = convertAST' n1 rs y
-     in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
+     in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ss2)
   Lambda f ->
-    let expr = f (Const n0)
-        (n1, Computation exprX rs) = convertAST' (n0 + 1) ss0 expr
+    let ex = f (Const n0)
+        (n1, Computation exprX ss1) = convertAST' (n0 + 1) ss0 ex
      in ( n1
         , Computation (GP.ExprLit $ GP.LitFn $ GP.FnLit 
             (Just $ name' ('n': show n1)) [name' $ 'n' : show n0] 
             (GP.FnBody [] [GP.StmtDisruptive $ GP.DSReturn $ GP.ReturnStmt $ Just exprX])
             ) 
-          rs
+          ss1
         )
-  Apply fexp exp ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 fexp
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 exp
+  Apply fex ex ->
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 fex
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 ex
      in (n2 + 2,Computation (GP.ExprInvocation (GP.ExprName $ name' $ 'n':show (n2+1)) (GP.Invocation [exprY])) (ss2 |> (GP.ConstStmt $ GP.VarDecl (name' $ 'n':show (n2+1)) (Just exprX))))
   Show x ->
-    let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "String") (GP.Invocation [exprX])) rs)
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
+     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "String") (GP.Invocation [exprX])) ss1)
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
@@ -409,13 +409,13 @@ match !r (Together x v : xs) = if r == unsafeCoerce x
 unidentify :: forall (f :: Universe -> Type) (g :: Universe -> Type) (s :: Type) (u :: Universe).
   [Together s g f]  -> ExprF (,) (Compose (STRef s) g) u -> ExprF (->) f u
 unidentify _ (LiteralF v) = LiteralF v
-unidentify rs (VarF (Compose v)) = VarF (match v rs)
-unidentify rs (LetF x (Compose ref,exprA)) =
-  LetF (unidentify rs x) (\z -> unidentify (Together ref z : rs) exprA)
-unidentify rs (PlusF a b) = PlusF (unidentify rs a) (unidentify rs b)
-unidentify rs (ApplyF g x) = ApplyF (unidentify rs g) (unidentify rs x)
-unidentify rs (LambdaF (Compose ref,exprA)) =
-  LambdaF (\z -> unidentify (Together ref z : rs) exprA)
+unidentify ss1 (VarF (Compose v)) = VarF (match v ss1)
+unidentify ss1 (LetF x (Compose ref,exprA)) =
+  LetF (unidentify ss1 x) (\z -> unidentify (Together ref z : ss1) exprA)
+unidentify ss1 (PlusF a b) = PlusF (unidentify ss1 a) (unidentify ss1 b)
+unidentify ss1 (ApplyF g x) = ApplyF (unidentify ss1 g) (unidentify ss1 x)
+unidentify ss1 (LambdaF (Compose ref,exprA)) =
+  LambdaF (\z -> unidentify (Together ref z : ss1) exprA)
 
 -- eliminateUnusedBindings :: forall (f :: Universe -> Type) (u :: Universe).
 --      (forall (g :: Universe -> Type). Expr g u)
