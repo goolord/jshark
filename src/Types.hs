@@ -38,29 +38,29 @@ data Value :: Universe -> Type where
   ValueResult :: Either (Value u) (Value v) -> Value ('Result u v)
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
-  Host :: (f 'String -> Effect f u) -> Effect f u
-  Log :: Expr f u -> Effect f u' -> Effect f u'
-  LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u
-  LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u
-  Lift :: Expr f u -> Effect f u
-  FFI :: String -> Rec (Expr f) (u' ': us) -> Effect f u
+  Host :: (f 'String -> Effect f u) -> Effect f u -- ^ window.location.host
+  Log :: Expr f u -> Effect f u' -> Effect f u' -- ^ console.log(x); <effect>
+  LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u -- ^ const n0 = document.getElementById(x); <effect n0>
+  LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u -- ^ const n0 = document.querySelectorAll(x); <effect n0>
+  Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
+  FFI :: String -> Rec (Expr f) (u' ': us) -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
-  Literal :: Value u -> Expr f u
-  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
-  Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Abs :: Expr f 'Number -> Expr f 'Number
-  Sign :: Expr f 'Number -> Expr f 'Number
-  Negate :: Expr f 'Number -> Expr f 'Number
-  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Recip :: Expr f 'Number -> Expr f 'Number
-  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
-  Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
-  Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
-  Show :: Expr f u -> Expr f 'String
-  Var :: f u -> Expr f u 
+  Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
+  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String -- ^ Concatenation primitive: Concat = +
+  Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Addition primitive: Plus = +
+  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Multiplication primitive: Times = *
+  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Subtraction primitive: Minus = -
+  Abs :: Expr f 'Number -> Expr f 'Number -- ^ Absolute value primitive: Abs x = Math.abs(x)
+  Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
+  Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
+  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
+  Recip :: Expr f 'Number -> Expr f 'Number -- ^ Recip primitvie: ?
+  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
+  Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
+  Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
+  Show :: Expr f u -> Expr f 'String -- ^ String casting: Show x = String(x)
+  Var :: f u -> Expr f u  -- ^ Assignment
 
 data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
   LiteralF :: Value u -> ExprF g f u

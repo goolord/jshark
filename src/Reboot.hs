@@ -175,7 +175,6 @@ name' = fromRightE . GP.name
 
 effectfulAST' :: forall v. Int -> Seq (GP.VarStmt) -> Effect (Const Int) v -> (Int, EffComputation)
 effectfulAST' !n0 !ss0 = \case
-  -- window.location.host
   Host f -> 
     let windowLocationHost =  
           (GP.ExprName $ name' "window")
@@ -183,7 +182,6 @@ effectfulAST' !n0 !ss0 = \case
           `GP.ExprRefinement` (GP.Property $ name' "host")
         vs = ss0 |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show n0)) (Just windowLocationHost))
      in effectfulAST' (n0+1) vs (f (Const n0))
-  -- console.log(x)
   Log x eff ->
     let (n1, Computation x' ss') = convertAST' n0 ss0 x
         (n2, EffComputation as) = effectfulAST' n1 mempty eff
@@ -192,7 +190,6 @@ effectfulAST' !n0 !ss0 = \case
            `GP.ExprRefinement` (GP.Property $ name' "log")
           ) (GP.Invocation [x'])
     in (n2, EffComputation $ fmap Left ss' <> (Right logX <| as ))
-  -- document.getElementById(x)
   LookupId x f ->
     let documentGetElementById =  
           (GP.ExprName $ name' "document")
