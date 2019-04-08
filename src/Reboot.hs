@@ -282,11 +282,22 @@ convertAST' !n0 !ss0 = \case
         (n2,Computation exprY ts) = convertAST' n1 rs y
      in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ts)
   Lambda f ->
-    let _name = 'x':show n0 in
-    undefined
+    let expr = f (Const n0)
+        (n1, Computation exprX rs) = convertAST' (n0 + 1) ss0 expr
+     in ( n1
+        , Computation (GP.ExprLit $ GP.LitFn $ GP.FnLit 
+            (Just $ name' ('n': show n1)) [name' $ 'n' : show n0] 
+            (GP.FnBody [] [GP.StmtDisruptive $ GP.DSReturn $ GP.ReturnStmt $ Just exprX])
+            ) 
+          rs
+        )
+  Apply fexp exp ->
+    let (n1,Computation exprX ss1) = convertAST' n0 ss0 fexp
+        (n2,Computation exprY ss2) = convertAST' n1 ss1 exp
+     in (n2 + 2,Computation (GP.ExprInvocation (GP.ExprName $ name' $ 'n':show (n2+1)) (GP.Invocation [exprY])) (ss2 |> (GP.ConstStmt $ GP.VarDecl (name' $ 'n':show (n2+1)) (Just exprX))))
   Show x ->
     let (n1,Computation exprX rs) = convertAST' n0 ss0 x
-     in (n1, Computation (GP.ExprInvocation (GP.ExprName $ name' "String") (GP.Invocation [exprX])) rs)
+     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "String") (GP.Invocation [exprX])) rs)
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)

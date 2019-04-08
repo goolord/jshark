@@ -8,12 +8,14 @@ import Reboot
 import Types
 import Topaz.Types
 import Topaz.Rec ((<:))
+import qualified Math
 
 mathy :: Expr f 'Number
 mathy =
   let_ (Plus 5 6) $ \x ->
   let_ (Plus 7 x) $ \y ->
-  Plus x y
+  let_ (Plus x y) $ \z ->
+  apply Math.inc z
 
 mathy2 :: Expr f 'Number
 mathy2 = negate (-1)
@@ -46,8 +48,6 @@ lookupy =
 
 ffiey :: Effect f 'Number
 ffiey = exampleFFIFunc "bar" 2
--- ffiey :: Effect f (w :: Universe)
--- ffiey = apply Math.inc (exampleFFIFunc "bar" 2)
 
 exampleFFIFunc :: Expr f 'String -> Expr f 'Number -> Effect f 'Number
 exampleFFIFunc x y = ffi "foo" (x <: y <: RecNil)
