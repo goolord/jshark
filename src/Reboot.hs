@@ -29,6 +29,7 @@ module Reboot
   , classRemove
   , classToggle
   , forEach
+  , bool
     -- Evaluation
   , evaluate
   , evaluateNumber
@@ -93,7 +94,7 @@ lookupSelector x f = LookupSelector x (f . Var)
 consoleLog :: Expr f u -> Effect f a -> Effect f a
 consoleLog u eff = Log u eff
 
-ffi :: String -> Rec (Expr f) (u' : us) -> Effect f v
+ffi :: String -> Rec (Expr f) us -> Effect f v
 ffi name args = FFI name args
 
 expr :: Expr f u -> Effect f u
@@ -118,6 +119,9 @@ lambda f = Lambda (coerce f . Var)
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
+
+bool :: Bool -> Expr f 'Bool
+bool = Literal . ValueBool
 
 string :: Text -> Expr f 'String
 string = Literal . ValueString
@@ -247,6 +251,8 @@ pureAST' !n0 = \case
     ValueOption (Just x) -> pureAST' n0 (Literal x)
     ValueOption Nothing -> (n0, "null") -- FIXME: is this correct
     ValueResult _ -> undefined
+    ValueBool True -> (n0, "true")
+    ValueBool False -> (n0, "false")
   Concat x y ->
     let (n1, x1) = pureAST' n0 x
         (n2, y1) = pureAST' n1 y

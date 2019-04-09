@@ -21,6 +21,7 @@ data Universe
   | Function Universe Universe
   | Option Universe
   | Result Universe Universe
+  | Bool
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -30,6 +31,7 @@ data Value :: Universe -> Type where
   ValueUnit :: Value 'Unit
   ValueOption :: Maybe (Value u) -> Value ('Option u)
   ValueResult :: Either (Value u) (Value v) -> Value ('Result u v)
+  ValueBool :: Bool -> Value 'Bool
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Host :: (f 'String -> Effect f u) -> Effect f u -- ^ window.location.host
@@ -37,7 +39,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u -- ^ const n0 = document.getElementById(x); <effect n0>
   LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u -- ^ const n0 = document.querySelectorAll(x); <effect n0>
   Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
-  FFI :: String -> Rec (Expr f) (u' ': us) -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
+  FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
   ClassToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.toggle(y)
   ClassAdd :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.add(y) 
   ClassRemove :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.remove(y) 
