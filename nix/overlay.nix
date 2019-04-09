@@ -98,7 +98,7 @@ with rec {
     js-good-parts = hsuper.callCabal2nix "js-good-parts"
       (builtins.fetchGit {
         url = "git@github.com:goolord/js-good-parts";
-        rev = "7ccb5043ba588de3049f889e73cf514db7843fe5";
+        rev = "11718069bc53f0a51d91c556602f5486724314df";
       })
       { };
       

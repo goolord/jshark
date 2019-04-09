@@ -28,7 +28,7 @@ module Reboot
   , classAdd
   , classRemove
   , classToggle
-  , forIn
+  , forEach
     -- Evaluation
   , evaluate
   , evaluateNumber
@@ -126,8 +126,8 @@ number = Literal . ValueNumber
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
-forIn :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
-forIn arr f = ForIn arr (coerce f . Var)
+forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
+forEach arr f = ForEach arr (coerce f . Var)
 
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -157,16 +157,19 @@ evaluate e0 = go e0 where
 simple :: Seq (GP.VarStmt) -> GP.Expr -> Computation
 simple ss e = Computation e ss
 
-simpleEff :: Seq (GP.VarStmt) -> GP.Expr -> EffComputation
-simpleEff ss eff = EffComputation $ fmap Left ss |> (Right . NonImperitive) eff
+simpleEff :: Seq (GP.VarStmt) -> GP.Stmt -> EffComputation
+simpleEff ss eff = EffComputation $ fmap Left ss |> Right eff
 
-simpleEffs :: Seq (GP.VarStmt) -> Seq (GP.Expr) -> EffComputation
-simpleEffs ss effs = EffComputation $ fmap Left ss <> fmap (Right . NonImperitive) effs
+simpleEffs :: Seq (GP.VarStmt) -> Seq (GP.Stmt) -> EffComputation
+simpleEffs ss effs = EffComputation $ fmap Left ss <> fmap Right effs
 
 pureToEff :: (Int, Computation) -> (Int, EffComputation)
 pureToEff (n, c) = (n, compToEff c)
   where
-  compToEff (Computation ex vars) = EffComputation $ fmap Left vars |> (Right . NonImperitive) ex
+  compToEff (Computation ex vars) = EffComputation $ fmap Left vars |> Right (stmtExpr ex)
+
+stmtExpr :: GP.Expr -> GP.Stmt
+stmtExpr = GP.StmtExpr . GP.ESExpr
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
@@ -203,7 +206,7 @@ effectfulAST' !n0 !ss0 = \case
           ((GP.ExprName $ name' "console")
            `GP.ExprRefinement` (GP.Property $ name' "log")
           ) (GP.Invocation [x'])
-    in (n2, EffComputation $ fmap Left ss' <> ((Right . NonImperitive) logX <| as ))
+    in (n2, EffComputation $ fmap Left ss' <> (Right (stmtExpr logX) <| as ))
   LookupId x f ->
     let documentGetElementById =  
           (GP.ExprName $ name' "document")
@@ -218,19 +221,19 @@ effectfulAST' !n0 !ss0 = \case
         (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
         xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "toggle")
         toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
-     in (n2, EffComputation $ (fmap Left ss2) |> (Right . NonImperitive) toggleCl)
+     in (n2, EffComputation $ (fmap Left ss2) |> Right (stmtExpr toggleCl))
   ClassAdd x cl ->
     let (n1, Computation x' ss1) = convertAST' n0 ss0 x
         (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
         xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "add")
         toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
-     in (n2, EffComputation $ (fmap Left ss2) |> (Right . NonImperitive) toggleCl)
+     in (n2, EffComputation $ (fmap Left ss2) |> Right (stmtExpr toggleCl))
   ClassRemove x cl ->
     let (n1, Computation x' ss1) = convertAST' n0 ss0 x
         (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
         xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "remove")
         toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
-     in (n2, EffComputation $ (fmap Left ss2) |> (Right . NonImperitive) toggleCl)
+     in (n2, EffComputation $ (fmap Left ss2) |> Right (stmtExpr toggleCl))
   LookupSelector x f ->
     let documentQuerySelectorAll =  
           (GP.ExprName $ name' "document")
@@ -249,24 +252,21 @@ effectfulAST' !n0 !ss0 = \case
         foo n' ss' RecNil = (n',ss',[])
         (n1, ss1, lArgs) = foo n0 ss0 args
         foreignFunction = GP.ExprInvocation (GP.ExprName (name' fn)) (GP.Invocation lArgs)
-     in (n1, EffComputation (fmap Left ss1 |> (Right . NonImperitive) foreignFunction))
-  ForIn xs f ->
+     in (n1, EffComputation (fmap Left ss1 |> Right (stmtExpr foreignFunction)))
+  ForEach xs f ->
     let (n1, Computation xs' ss1) = convertAST' n0 ss0 xs
-        (n2, EffComputation as) = effectfulAST' (n1+1) ss1 (f (Const n1+1))
-        foo = GP.StmtFor Nothing $ GP.ForStmtInStyle (name' $ 'n':(show $ n1+1)) xs' (List.concat $ fmap toStmt as)
-     in (n2, EffComputation $ as |> (Right . Imperitive) foo)
+        (n2, EffComputation as) = effectfulAST' n0 ss1 (f (Const n0))
+        bar (GP.ConstStmt x) = pure $ varToAssign x
+        bar (GP.VarStmt x) = varToAssign <$> x
+        forE = stmtExpr $ GP.ExprInvocation (xs'
+          `GP.ExprRefinement` (GP.Property $ name' "forEach")) (GP.Invocation $ pure $ GP.ExprLit $ GP.LitFn $ GP.FnLit Nothing [name' $ 'n': show n1] $ GP.FnBody [] (List.concat $ fmap (toList . (either bar pure)) as))
+     in (n2, EffComputation $ fmap Left ss1 |> Right forE)
   Lift (Literal ValueUnit) -> (n0, EffComputation $ fmap Left ss0)
   Lift x -> pureToEff $ convertAST' n0 ss0 x
 
-toStmt :: Either GP.VarStmt Code -> [GP.Stmt]
-toStmt (Left (GP.VarStmt vars)) = fmap (GP.StmtExpr . varToAssign) (NE.toList vars)
-toStmt (Left (GP.ConstStmt vars)) = pure $ GP.StmtExpr $ varToAssign vars
-toStmt (Right (NonImperitive (GP.ExprInvocation (GP.ExprName name) inv))) = pure $ GP.StmtExpr $ GP.ESApply (pure $ GP.LValue name []) (GP.RVInvoke $ pure inv)
-toStmt (Right (NonImperitive x)) = [GP.StmtDisruptive $ GP.DSReturn $ GP.ReturnStmt $ Just x]
-toStmt (Right (Imperitive x)) = pure x
-
-varToAssign (GP.VarDecl name (Just ex)) = GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign ex)
-varToAssign (GP.VarDecl name Nothing) = GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign (GP.ExprName name))
+varToAssign :: GP.VarDecl -> GP.Stmt
+varToAssign (GP.VarDecl name (Just ex)) = GP.StmtExpr $ GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign ex)
+varToAssign (GP.VarDecl name Nothing) = GP.StmtExpr $ GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign (GP.ExprName name))
 
 convertAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)

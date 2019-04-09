@@ -60,5 +60,5 @@ exampleFFIFunc x y = ffi "foo" (x <: y <: RecNil)
 fory :: Effect f 'Unit
 fory =
   lookupSelector ".foo" $ \foos ->
-  forIn foos $ \x ->
+  forEach foos $ \x ->
   classToggle x "foo"

@@ -3,7 +3,7 @@ packages: ./
 source-repository-package 
   type: git 
   location: https://github.com/goolord/js-good-parts
-  tag: 7ccb5043ba588de3049f889e73cf514db7843fe5
+  tag: 11718069bc53f0a51d91c556602f5486724314df
 
 source-repository-package 
   type: git 

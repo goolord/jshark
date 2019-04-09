@@ -45,7 +45,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ClassToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.toggle(y)
   ClassAdd :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.add(y) 
   ClassRemove :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.remove(y) 
-  ForIn :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
+  ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
@@ -102,13 +102,7 @@ data Optimization
   | UnusedBindings
 
 data Computation = Computation GP.Expr (Seq GP.VarStmt)
-newtype EffComputation = EffComputation (Seq (Either GP.VarStmt Code))
-
-data Code = NonImperitive GP.Expr | Imperitive GP.Stmt
-
-instance PP.Pretty Code where
-  pretty (NonImperitive x) = PP.pretty x
-  pretty (Imperitive x) = PP.pretty x
+newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Stmt))
 
 instance PP.Pretty EffComputation where
   pretty (EffComputation x) = foldr1 (PP.<$$>) (fmap (either PP.pretty PP.pretty) x)
