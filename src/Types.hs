@@ -11,7 +11,6 @@ import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
 import qualified GHC.Exts as Exts
--- import Text.PrettyPrint
 
 data Universe
   = Number
@@ -82,6 +81,7 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
   abs = Abs
   signum = Sign
   fromInteger = Literal . ValueNumber . fromInteger
+  negate = Negate
 
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u) where
   (/) = FracDiv
@@ -98,9 +98,3 @@ data Optimization
   = ConstantFolding
   | UnusedBindings
 
--- instance PP.Pretty EffComputation where
-  -- pretty (EffComputation x) = foldr1 (PP.<$$>) (fmap (either PP.pretty PP.pretty) x)
-
--- instance PP.Pretty Computation where
-  -- pretty (Computation ex vars) = 
-    -- foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
