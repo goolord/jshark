@@ -426,17 +426,3 @@ unidentify ss1 (ApplyF g x) = ApplyF (unidentify ss1 g) (unidentify ss1 x)
 unidentify ss1 (LambdaF (Compose ref,exprA)) =
   LambdaF (\z -> unidentify (Together ref z : ss1) exprA)
 
--- eliminateUnusedBindings :: forall (f :: Universe -> Type) (u :: Universe).
---      (forall (g :: Universe -> Type). Expr g u)
---   -> Expr f u
--- eliminateUnusedBindings e = case go e of
---   Nothing -> e
---   Just r -> r
---   where
---   go :: forall (v :: Universe). Expr (Compose Maybe f) v -> Maybe (f v -> Expr f v)
---   go (Let x g) = case go (g (Compose Nothing)) of
---     Nothing -> do
---       y <- go x
---       b <- go (g (Compose (Just y)))
---       Just (Let y b)
---     Just r -> Just r
