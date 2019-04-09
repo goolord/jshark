@@ -272,7 +272,7 @@ convertAST' !n0 = \case
      in (n1, "Math.sign" <> P.parens x1)
   Show x ->
     let (n1, x1) = convertAST' n0 x
-     in (n1, "Show" <> P.parens x1)
+     in (n1, "String" <> P.parens x1)
   Negate x ->
     let (n1, x1) = convertAST' n0 x
      in (n1, P.parens $ x1 <+> "*" <+> "-1")
