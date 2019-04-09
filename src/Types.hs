@@ -1,12 +1,15 @@
 {-# language DataKinds #-}
+{-# language DeriveFunctor #-}
 {-# language DerivingStrategies #-}
 {-# language GADTs #-}
 {-# language KindSignatures #-}
 {-# language RankNTypes #-}
+{-# language StandaloneDeriving #-}
 {-# language TypeOperators #-}
 
 module Types where
 
+import Control.Monad (ap)
 import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
@@ -44,6 +47,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ClassAdd :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.add(y) 
   ClassRemove :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.remove(y) 
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
+  Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
@@ -99,4 +103,39 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u
 data Optimization 
   = ConstantFolding
   | UnusedBindings
+
+-- This is a monadic interface to expressions that uses some tricks
+-- from https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf
+
+bindEffect :: Effect v a -> (v a -> Effect v b) -> Effect v b
+bindEffect = Bind
+
+-- Analogous to RelativeMSyntax in section 3.3.
+data EffectSyntax :: (Universe -> Type) -> Type -> Type where
+  EffectSyntaxPure :: a -> EffectSyntax v a
+  EffectSyntaxUnpure ::
+       Effect v a
+    -> (v a -> EffectSyntax v b)
+    -> EffectSyntax v b
+
+deriving instance Functor (EffectSyntax f)
+
+instance Applicative (EffectSyntax v) where
+  pure = EffectSyntaxPure
+  (<*>) = ap
+
+-- Analogous to the Monad instance for RelativeMSyntax in section 3.3.
+instance Monad (EffectSyntax f) where
+  EffectSyntaxPure x >>= g = g x
+  EffectSyntaxUnpure m g >>= h = EffectSyntaxUnpure m (\x -> g x >>= h)
+
+toSyntax :: Effect f v -> EffectSyntax f (f v)
+toSyntax m = EffectSyntaxUnpure m EffectSyntaxPure
+
+fromSyntax :: EffectSyntax f (f v) -> Effect f v
+fromSyntax (EffectSyntaxPure x) = Lift (Var x)
+fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
+
+hostM :: EffectSyntax f (f 'String)
+hostM = toSyntax (Host (Lift . Var))
 
