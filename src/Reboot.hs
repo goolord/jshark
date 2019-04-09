@@ -36,7 +36,6 @@ module Reboot
   , convertAST
   , effectfulAST
   , printComputation
-  , printEffComputation
   ) where
 
 -- This uses a higher-order PHOAS approach as described by
@@ -46,22 +45,19 @@ module Reboot
 import Control.Applicative
 import Control.Monad.ST
 import Data.Coerce
-import Data.Foldable (toList)
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
 import Data.STRef
-import Data.Sequence (Seq(..), (|>), (<|))
 import Data.Text (Text)
 import Data.Tuple (snd)
 import Topaz.Types
 import Types
 import Unsafe.Coerce (unsafeCoerce)
-import qualified Data.List as List
-import qualified Data.List.NonEmpty as NE
+import Numeric (showFFloat)
+import Text.PrettyPrint ((<+>), Doc, ($+$))
+import qualified Text.PrettyPrint as P
 import qualified Data.Text as T
-import qualified Language.JavaScript.AST as GP
-import qualified Text.PrettyPrint.Leijen as PP
 
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
@@ -154,194 +150,153 @@ evaluate e0 = go e0 where
     Show _x -> undefined -- FIXME: this might be complicated
     -- _ -> undefined -- just to get rid of errors for now
 
-simple :: Seq (GP.VarStmt) -> GP.Expr -> Computation
-simple ss e = Computation e ss
-
-simpleEff :: Seq (GP.VarStmt) -> GP.Stmt -> EffComputation
-simpleEff ss eff = EffComputation $ fmap Left ss |> Right eff
-
-simpleEffs :: Seq (GP.VarStmt) -> Seq (GP.Stmt) -> EffComputation
-simpleEffs ss effs = EffComputation $ fmap Left ss <> fmap Right effs
-
-pureToEff :: (Int, Computation) -> (Int, EffComputation)
-pureToEff (n, c) = (n, compToEff c)
-  where
-  compToEff (Computation ex vars) = EffComputation $ fmap Left vars |> Right (stmtExpr ex)
-
-stmtExpr :: GP.Expr -> GP.Stmt
-stmtExpr = GP.StmtExpr . GP.ESExpr
-
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
 
-printComputation :: Computation -> IO ()
+printComputation :: Doc -> IO ()
 printComputation (computation) = do
-  putStrLn $ show $ PP.pretty computation
-
-printEffComputation :: EffComputation -> IO ()
-printEffComputation (effComp) = do
-  putStrLn $ show $ PP.pretty effComp
+  putStrLn $ P.renderStyle P.style computation
 
 effectfulAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
-  -> EffComputation
-effectfulAST = snd . effectfulAST' 0 mempty
+  -> Doc
+effectfulAST = snd . effectfulAST' 0
 
-name' :: String -> GP.Name
-name' = fromRightE . GP.name
-
-effectfulAST' :: forall v. Int -> Seq (GP.VarStmt) -> Effect (Const Int) v -> (Int, EffComputation)
-effectfulAST' !n0 !ss0 = \case
+effectfulAST' :: forall v. Int -> Effect (Const Int) v -> (Int, Doc)
+effectfulAST' !n0 = \case
   Host f -> 
-    let windowLocationHost =  
-          (GP.ExprName $ name' "window")
-          `GP.ExprRefinement` (GP.Property $ name' "location")
-          `GP.ExprRefinement` (GP.Property $ name' "host")
-        vs = ss0 |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show n0)) (Just windowLocationHost))
-     in effectfulAST' (n0+1) vs (f (Const n0))
+    let windowLocationHost = ("const" <+> P.text ('n':show n0) <+> "=" <+> "window.location.host") <> P.semi
+        (n1, x) = effectfulAST' (n0+1) (f (Const n0))
+     in (n1, windowLocationHost $+$ x)
   Log x eff ->
-    let (n1, Computation x' ss') = convertAST' n0 ss0 x
-        (n2, EffComputation as) = effectfulAST' n1 mempty eff
-        logX = GP.ExprInvocation
-          ((GP.ExprName $ name' "console")
-           `GP.ExprRefinement` (GP.Property $ name' "log")
-          ) (GP.Invocation [x'])
-    in (n2, EffComputation $ fmap Left ss' <> (Right (stmtExpr logX) <| as ))
-  LookupId x f ->
-    let documentGetElementById =  
-          (GP.ExprName $ name' "document")
-          `GP.ExprRefinement` (GP.Property $ name' "getElementById")
-        (n1, Computation x' ss') = convertAST' n0 mempty x
-        getX = GP.ExprInvocation documentGetElementById (GP.Invocation [x'])
-        varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show n1)) (Just getX)
-        (n2, EffComputation as) = effectfulAST' (n1 + 1) mempty (f (Const n1))
-     in (n2, EffComputation $ fmap Left ss0 <> (Left varX <| fmap Left ss') <> as)
-  ClassToggle x cl ->
-    let (n1, Computation x' ss1) = convertAST' n0 ss0 x
-        (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
-        xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "toggle")
-        toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
-     in (n2, EffComputation $ (fmap Left ss2) |> Right (stmtExpr toggleCl))
-  ClassAdd x cl ->
-    let (n1, Computation x' ss1) = convertAST' n0 ss0 x
-        (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
-        xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "add")
-        toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
-     in (n2, EffComputation $ (fmap Left ss2) |> Right (stmtExpr toggleCl))
-  ClassRemove x cl ->
-    let (n1, Computation x' ss1) = convertAST' n0 ss0 x
-        (n2, Computation cl' ss2) = convertAST' n1 ss1 cl
-        xClassToggle =  x' `GP.ExprRefinement` (GP.Property $ name' "classList") `GP.ExprRefinement` (GP.Property $ name' "remove")
-        toggleCl = GP.ExprInvocation xClassToggle (GP.Invocation [cl'])
-     in (n2, EffComputation $ (fmap Left ss2) |> Right (stmtExpr toggleCl))
-  LookupSelector x f ->
-    let documentQuerySelectorAll =  
-          (GP.ExprName $ name' "document")
-          `GP.ExprRefinement` (GP.Property $ name' "querySelectorAll")
-        (n1, Computation x' ss') = convertAST' n0 mempty x
-        getX = GP.ExprInvocation documentQuerySelectorAll (GP.Invocation [x'])
-        varX = GP.ConstStmt $ GP.VarDecl (name' ('n':show n1)) (Just getX)
-        (n2, EffComputation as) = effectfulAST' (n1 + 1) mempty (f (Const n1))
-     in (n2, EffComputation $ fmap Left ss0 <> (Left varX <| fmap Left ss') <> as)
+    let (n1, x') = convertAST' n0 x
+        (n2, as) = effectfulAST' n1 eff
+        logX = "console.log" <> P.parens x' <> P.semi
+     in (n2, logX $+$ as)
+  Lift x -> convertAST' n0 x
   FFI fn args ->
-    let foo :: Int -> Seq (GP.VarStmt) -> Rec (Expr (Const Int)) u' -> (Int, Seq (GP.VarStmt), [GP.Expr])
-        foo n'0 ss'0 (RecCons x xs) = 
-          let (n'1, Computation x' ss'1) = convertAST' n'0 ss'0 x 
-              (n'2, ss'2, cs) = foo n'1 ss'1 xs
-           in (n'2, ss'2, x' : cs)
-        foo n' ss' RecNil = (n',ss',[])
-        (n1, ss1, lArgs) = foo n0 ss0 args
-        foreignFunction = GP.ExprInvocation (GP.ExprName (name' fn)) (GP.Invocation lArgs)
-     in (n1, EffComputation (fmap Left ss1 |> Right (stmtExpr foreignFunction)))
+    let foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [P.Doc])
+        foo n'0 (RecCons x xs) = 
+          let (n'1, x') = convertAST' n'0 x 
+              (n'2, cs) = foo n'1 xs
+           in (n'2, x' : cs)
+        foo n' RecNil = (n',[])
+        (n1, lArgs) = foo n0 args
+        foreignFunction = P.text fn <> P.parens (P.hcat (P.punctuate ", " lArgs))
+     in (n1, foreignFunction)
   ForEach xs f ->
-    let (n1, Computation xs' ss1) = convertAST' n0 ss0 xs
-        (n2, EffComputation as) = effectfulAST' n0 ss1 (f (Const n0))
-        bar (GP.ConstStmt x) = pure $ varToAssign x
-        bar (GP.VarStmt x) = varToAssign <$> x
-        forE = stmtExpr $ GP.ExprInvocation (xs'
-          `GP.ExprRefinement` (GP.Property $ name' "forEach")) (GP.Invocation $ pure $ GP.ExprLit $ GP.LitFn $ GP.FnLit Nothing [name' $ 'n': show n1] $ GP.FnBody [] (List.concat $ fmap (toList . (either bar pure)) as))
-     in (n2, EffComputation $ fmap Left ss1 |> Right forE)
-  Lift (Literal ValueUnit) -> (n0, EffComputation $ fmap Left ss0)
-  Lift x -> pureToEff $ convertAST' n0 ss0 x
-
-varToAssign :: GP.VarDecl -> GP.Stmt
-varToAssign (GP.VarDecl name (Just ex)) = GP.StmtExpr $ GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign ex)
-varToAssign (GP.VarDecl name Nothing) = GP.StmtExpr $ GP.ESApply (pure $ GP.LValue name []) (GP.RVAssign (GP.ExprName name))
+    let (n1, xs') = convertAST' n0 xs
+        (n2, as) = effectfulAST' n0 (f (Const n0))
+        forE = xs' <> ".forEach" <> (P.parens 
+               $ "function" <> P.parens (P.text ('n':show n1))
+               <> P.braces as)
+     in (n2, forE)
+  LookupSelector x f ->
+    let (n1, x') = convertAST' n0 x
+        getX = "document.querySelectorAll" <> P.parens x'
+        varX = ("const" <+> P.text ('n':show n1) <+> "=" <+> getX) <> P.semi
+        (n2, as) = effectfulAST' (n1 + 1) (f (Const n1))
+     in (n2, varX $+$ as)
+  LookupId x f ->
+    let (n1, x') = convertAST' n0 x
+        getX = "document.getElementById" <> P.parens x'
+        varX = ("const" <+> P.text ('n':show n1) <+> "=" <+> getX) <> P.semi
+        (n2, as) = effectfulAST' (n1 + 1) (f (Const n1))
+     in (n2, varX $+$ as)
+  ClassToggle x cl ->
+    let (n1, x') = convertAST' n0 x
+        (n2, cl') = convertAST' n1 cl
+        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
+     in (n2, toggleCl)
+  ClassAdd x cl ->
+    let (n1, x') = convertAST' n0 x
+        (n2, cl') = convertAST' n1 cl
+        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
+     in (n2, toggleCl)
+  ClassRemove x cl ->
+    let (n1, x') = convertAST' n0 x
+        (n2, cl') = convertAST' n1 cl
+        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
+     in (n2, toggleCl)
 
 convertAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
-  -> Computation
-convertAST = snd . convertAST' 0 mempty
+  -> Doc
+convertAST = snd . convertAST' 0
 
-convertAST' :: forall v. Int -> Seq (GP.VarStmt) -> Expr (Const Int) v 
-   -> (Int,Computation)
-convertAST' !n0 !ss0 = \case
+convertAST' :: forall v. Int -> Expr (Const Int) v 
+   -> (Int,Doc)
+convertAST' !n0 = \case
   Literal v -> case v of
-    ValueNumber d -> (n0,simple ss0 $ GP.ExprLit $ GP.LitNumber $ GP.Number d)
-    ValueString t -> (n0,simple ss0 $ GP.ExprLit $ GP.LitString $ fromRightE $ GP.jsString (T.unpack t))
-    ValueArray xs -> 
-      let foo :: Int -> Seq GP.VarStmt -> [Value u] -> (Int, Seq GP.VarStmt, [GP.Expr])
-          foo n'0 ss'0 (x:xs') = 
-            let (n'1, Computation x' ss'1) = convertAST' n'0 ss'0 (Literal x)
-                (n'2, ss'2, cs) = foo n'1 ss'1 xs'
-             in (n'2, ss'2, x' : cs)
-          foo n' ss' [] = (n', ss', [])
-          (n1, ss1, exprs) = foo n0 ss0 (toList xs)
-       in (n1,simple ss1 $ GP.ExprLit $ GP.LitArray $ GP.ArrayLit $ exprs)
-    -- v don't know what to do here
-    ValueFunction f -> (n0,simple ss0 $ GP.ExprLit $ undefined)
-    ValueUnit -> (n0, simple ss0 $ error "impossible: don't do this")
-  Plus x y ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
-     in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ss2)
-  Minus x y ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
-     in (n2,Computation (GP.ExprInfix GP.Sub exprX exprY) ss2)
-  Times x y ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
-     in (n2,Computation (GP.ExprInfix GP.Mul exprX exprY) ss2)
-  FracDiv x y ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
-     in (n2,Computation (GP.ExprInfix GP.Div exprX exprY) ss2)
-  Abs x ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.abs") (GP.Invocation [exprX])) ss1)
-  Negate x ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprPrefix GP.Negate exprX) ss1)
-  Sign x ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "Math.sign") (GP.Invocation [exprX])) ss1)
-  Var (Const v) -> (n0,simple ss0 $ GP.ExprName $ name' ('n':show v))
-  Let e g ->
-    let (n1,Computation exprE ss1) = convertAST' n0 ss0 e
-        vs = ss1 |> (GP.ConstStmt $ GP.VarDecl (name' ('n':show n1)) (Just exprE))
-     in convertAST' (n1 + 1) vs (g (Const n1))
+    ValueNumber d -> (n0,(P.text $ showFFloat Nothing d ""))
+    ValueArray xs ->       
+      let foo :: Int -> [Value u] -> (Int, [Doc])
+          foo n'0 (x:xs') = 
+            let (n'1, x') = convertAST' n'0 (Literal x)
+                (n'2, cs) = foo n'1 xs'
+             in (n'2, x' : cs)
+          foo n' [] = (n', [])
+          (n1, exprs) = foo n0 xs
+       in (n1, P.brackets (P.hcat $ P.punctuate ", " exprs))
+    ValueString s -> (n0, P.doubleQuotes (P.text $ T.unpack s))
+    ValueFunction _f -> undefined
+    ValueUnit -> (n0, mempty) -- FIXME: is this correct
+    ValueOption (Just x) -> convertAST' n0 (Literal x)
+    ValueOption Nothing -> (n0, "null") -- FIXME: is this correct
+    ValueResult _ -> undefined
   Concat x y ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 y
-     in (n2,Computation (GP.ExprInfix GP.Add exprX exprY) ss2)
+    let (n1, x1) = convertAST' n0 x
+        (n2, y1) = convertAST' n1 y
+     in (n2, x1 <+> "+" <+> y1)
+  Plus x y ->
+    let (n1, x1) = convertAST' n0 x
+        (n2, y1) = convertAST' n1 y
+     in (n2, x1 <+> "+" <+> y1)
+  Times x y ->
+    let (n1, x1) = convertAST' n0 x
+        (n2, y1) = convertAST' n1 y
+     in (n2, x1 <+> "*" <+> y1)
+  FracDiv x y ->
+    let (n1, x1) = convertAST' n0 x
+        (n2, y1) = convertAST' n1 y
+     in (n2, x1 <+> "/" <+> y1)
+  Minus x y ->
+    let (n1, x1) = convertAST' n0 x
+        (n2, y1) = convertAST' n1 y
+     in (n2, x1 <+> "-" <+> y1)
+  Abs x ->
+    let (n1, x1) = convertAST' n0 x
+     in (n1, "Math.abs" <> P.parens x1)
+  Sign x ->
+    let (n1, x1) = convertAST' n0 x
+     in (n1, "Math.sign" <> P.parens x1)
+  Show x ->
+    let (n1, x1) = convertAST' n0 x
+     in (n1, "Show" <> P.parens x1)
+  Negate x ->
+    let (n1, x1) = convertAST' n0 x
+     in (n1, P.parens $ x1 <+> "*" <+> "-1")
+  Let x g ->
+    let (n1, x1) = convertAST' n0 x
+        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
+        (n2, x2) = convertAST' (n1 + 1) (g (Const n1))
+     in (n2, constX $+$ x2)
   Lambda f ->
     let ex = f (Const n0)
-        (n1, Computation exprX ss1) = convertAST' (n0 + 1) ss0 ex
+        (n1, exprX ) = convertAST' (n0) ex
      in ( n1
-        , Computation (GP.ExprLit $ GP.LitFn $ GP.FnLit 
-            (Just $ name' ('n': show n1)) [name' $ 'n' : show n0] 
-            (GP.FnBody [] [GP.StmtDisruptive $ GP.DSReturn $ GP.ReturnStmt $ Just exprX])
-            ) 
-          ss1
+        ,     "function" 
+          <+> P.parens (P.text $ 'n':show n0)
+          <+> P.braces ("return" <+> (P.parens exprX))
         )
   Apply fex ex ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 fex
-        (n2,Computation exprY ss2) = convertAST' n1 ss1 ex
-     in (n2 + 2,Computation (GP.ExprInvocation (GP.ExprName $ name' $ 'n':show (n2+1)) (GP.Invocation [exprY])) (ss2 |> (GP.ConstStmt $ GP.VarDecl (name' $ 'n':show (n2+1)) (Just exprX))))
-  Show x ->
-    let (n1,Computation exprX ss1) = convertAST' n0 ss0 x
-     in (n1,Computation (GP.ExprInvocation (GP.ExprName $ name' "String") (GP.Invocation [exprX])) ss1)
+    let (n1, exprX) = convertAST' n0 fex
+        (n2, exprY) = convertAST' n1 ex
+     in ( n2+2
+        , ("const" <+> (P.text $ 'n':show (n2+1)) <+> "=" <+> exprX) <> P.semi
+        $+$ (P.text ('n':show (n2+1)) <> P.parens exprY) 
+        )
+  Var (Const x) -> (n0, P.text ('n':show x))
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)

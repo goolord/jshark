@@ -8,13 +8,10 @@
 module Types where
 
 import Data.Kind
-import Data.Sequence (Seq(..), (|>))
 import Data.Text (Text)
 import Topaz.Types
 import qualified GHC.Exts as Exts
-import qualified Language.JavaScript.AST as GP
-import qualified Language.JavaScript.Pretty as GP
-import qualified Text.PrettyPrint.Leijen as PP
+-- import Text.PrettyPrint
 
 data Universe
   = Number
@@ -101,12 +98,9 @@ data Optimization
   = ConstantFolding
   | UnusedBindings
 
-data Computation = Computation GP.Expr (Seq GP.VarStmt)
-newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Stmt))
+-- instance PP.Pretty EffComputation where
+  -- pretty (EffComputation x) = foldr1 (PP.<$$>) (fmap (either PP.pretty PP.pretty) x)
 
-instance PP.Pretty EffComputation where
-  pretty (EffComputation x) = foldr1 (PP.<$$>) (fmap (either PP.pretty PP.pretty) x)
-
-instance PP.Pretty Computation where
-  pretty (Computation ex vars) = 
-    foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
+-- instance PP.Pretty Computation where
+  -- pretty (Computation ex vars) = 
+    -- foldr1 (PP.<$$>) ( fmap PP.pretty vars |> PP.pretty ex)
