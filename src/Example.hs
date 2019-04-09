@@ -63,3 +63,6 @@ fory =
   forEach foos $ \x ->
   consoleLog x $
   classToggle x "foo"
+
+arrayey :: Expr f ('Array 'Number)
+arrayey = Literal $ ValueArray [ValueNumber 100000000000000000000, ValueNumber 2, ValueNumber 3]
