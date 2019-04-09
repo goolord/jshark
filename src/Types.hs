@@ -5,8 +5,6 @@
 {-# language RankNTypes #-}
 {-# language TypeOperators #-}
 
-{-# options_ghc -fno-warn-unused-top-binds #-}
-
 module Types where
 
 import Data.Kind
@@ -24,45 +22,46 @@ data Universe
   | Unit
   | Element
   | Array Universe
-  | Effectful Universe
   | Function Universe Universe
   | Option Universe
   | Result Universe Universe
 
 data Value :: Universe -> Type where
-  ValueArray :: [Expr f u] -> Value ('Array u)
+  ValueArray :: [Value u] -> Value ('Array u)
   ValueNumber :: Double -> Value 'Number
   ValueString :: Text -> Value 'String
-  ValueEffect :: (forall f. Effect f u) -> Value ('Effectful u)
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
   ValueOption :: Maybe (Value u) -> Value ('Option u)
   ValueResult :: Either (Value u) (Value v) -> Value ('Result u v)
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
-  Host :: (f 'String -> Effect f u) -> Effect f u
-  Log :: Expr f u -> Effect f u' -> Effect f u'
-  LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u
-  LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u
-  Lift :: Expr f u -> Effect f u
-  FFI :: String -> Rec (Expr f) (u' ': us) -> Effect f u
+  Host :: (f 'String -> Effect f u) -> Effect f u -- ^ window.location.host
+  Log :: Expr f u -> Effect f u' -> Effect f u' -- ^ console.log(x); <effect>
+  LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u -- ^ const n0 = document.getElementById(x); <effect n0>
+  LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u -- ^ const n0 = document.querySelectorAll(x); <effect n0>
+  Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
+  FFI :: String -> Rec (Expr f) (u' ': us) -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
+  ClassToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.toggle(y)
+  ClassAdd :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.add(y) 
+  ClassRemove :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.remove(y) 
+  ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
-  Literal :: Value u -> Expr f u
-  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
-  Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Abs :: Expr f 'Number -> Expr f 'Number
-  Sign :: Expr f 'Number -> Expr f 'Number
-  Negate :: Expr f 'Number -> Expr f 'Number
-  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-  Recip :: Expr f 'Number -> Expr f 'Number
-  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v
-  Lambda :: (f u -> Expr f v) -> Expr f ('Function u v)
-  Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
-  Show :: Expr f u -> Expr f 'String
-  Var :: f u -> Expr f u 
+  Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
+  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String -- ^ Concatenation primitive: Concat = +
+  Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Addition primitive: Plus = +
+  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Multiplication primitive: Times = *
+  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Subtraction primitive: Minus = -
+  Abs :: Expr f 'Number -> Expr f 'Number -- ^ Absolute value primitive: Abs x = Math.abs(x)
+  Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
+  Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
+  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
+  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
+  Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
+  Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
+  Show :: Expr f u -> Expr f 'String -- ^ String casting: Show x = String(x)
+  Var :: f u -> Expr f u  -- ^ Assignment
 
 data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
   LiteralF :: Value u -> ExprF g f u
@@ -89,11 +88,7 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
 
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u) where
   (/) = FracDiv
-  recip = Recip
   fromRational = Literal . ValueNumber . fromRational
-
-fromList :: forall (f :: Universe -> Type) u. [Expr f u] -> Expr f ('Array u)
-fromList = Literal . ValueArray
 
 -- newtype Expression :: (Universe -> Type) -> Universe -> Type where
 --   Expression :: ExprArrow (->) f u -> Expression f u
@@ -107,7 +102,7 @@ data Optimization
   | UnusedBindings
 
 data Computation = Computation GP.Expr (Seq GP.VarStmt)
-newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Expr))
+newtype EffComputation = EffComputation (Seq (Either GP.VarStmt GP.Stmt))
 
 instance PP.Pretty EffComputation where
   pretty (EffComputation x) = foldr1 (PP.<$$>) (fmap (either PP.pretty PP.pretty) x)

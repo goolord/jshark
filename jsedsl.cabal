@@ -40,6 +40,9 @@ library
   exposed-modules:
     Reboot
     Math
+    Types
+  other-modules:
+    Example
   build-depends:
     , base >= 4.10.1 && < 4.13
     , containers >= 0.5 && < 0.7
