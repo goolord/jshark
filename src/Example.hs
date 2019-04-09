@@ -61,4 +61,5 @@ fory :: Effect f 'Unit
 fory =
   lookupSelector ".foo" $ \foos ->
   forEach foos $ \x ->
+  consoleLog x $
   classToggle x "foo"
