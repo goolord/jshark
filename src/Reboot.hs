@@ -189,7 +189,7 @@ effectfulAST' !n0 = \case
         (n2, as) = effectfulAST' n0 (f (Const n0))
         forE = xs' <> ".forEach" <> (P.parens 
                $ "function" <> P.parens (P.text ('n':show n1))
-               <> P.braces as)
+               <> P.braces as) <> P.semi
      in (n2, forE)
   LookupSelector x f ->
     let (n1, x') = convertAST' n0 x
