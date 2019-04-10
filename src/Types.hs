@@ -9,7 +9,7 @@
 
 module Types where
 
-import Control.Monad (ap)
+import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
@@ -25,6 +25,7 @@ data Universe
   | Option Universe
   | Result Universe Universe
   | Bool
+  | forall a. Object a
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -37,17 +38,20 @@ data Value :: Universe -> Type where
   ValueBool :: Bool -> Value 'Bool
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
-  Host :: (f 'String -> Effect f u) -> Effect f u -- ^ window.location.host
-  Log :: Expr f u -> Effect f u' -> Effect f u' -- ^ console.log(x); <effect>
+  Host :: Effect f 'String -- ^ window.location.host
+  Log :: Expr f u -> Effect f 'Unit -- ^ console.log(x)
   LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u -- ^ const n0 = document.getElementById(x); <effect n0>
   LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u -- ^ const n0 = document.querySelectorAll(x); <effect n0>
   Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
   FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
+  UnsafeObject :: Expr f ('Object a) -> String -> Effect f u -- ^ Don't currently know how to construct an object
+  ObjectFFI :: Expr f ('Object a) -> Effect f b -> Effect f u
   ClassToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.toggle(y)
   ClassAdd :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.add(y) 
   ClassRemove :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.remove(y) 
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
+  SpaceShip :: Effect f u -> Effect f v -> Effect f v
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
@@ -123,6 +127,7 @@ deriving instance Functor (EffectSyntax f)
 instance Applicative (EffectSyntax v) where
   pure = EffectSyntaxPure
   (<*>) = ap
+  (*>) = spaceShip
 
 -- Analogous to the Monad instance for RelativeMSyntax in section 3.3.
 instance Monad (EffectSyntax f) where
@@ -132,10 +137,14 @@ instance Monad (EffectSyntax f) where
 toSyntax :: Effect f v -> EffectSyntax f (f v)
 toSyntax m = EffectSyntaxUnpure m EffectSyntaxPure
 
+toSyntax_ :: Effect f v -> EffectSyntax f ()
+toSyntax_ = void . toSyntax
+
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
 
-hostM :: EffectSyntax f (f 'String)
-hostM = toSyntax (Host (Lift . Var))
-
+spaceShip :: EffectSyntax v a -> EffectSyntax v b -> EffectSyntax v b
+spaceShip _ (EffectSyntaxPure b) = EffectSyntaxPure b
+spaceShip EffectSyntaxPure{} (EffectSyntaxUnpure m g) = EffectSyntaxUnpure m g
+spaceShip (EffectSyntaxUnpure n _) (EffectSyntaxUnpure m g) = EffectSyntaxUnpure (n `SpaceShip` m) g

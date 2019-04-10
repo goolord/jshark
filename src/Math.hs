@@ -15,7 +15,7 @@ module Math
   ) where
 
 import Types
-import Reboot
+import Api
 import Prelude hiding (pi)
 
 inc :: Expr f ('Function 'Number 'Number)

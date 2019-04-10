@@ -39,6 +39,7 @@ extra-source-files:
 library
   exposed-modules:
     Reboot
+    Api
     Math
     Types
     Ajax

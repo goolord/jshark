@@ -11,25 +11,6 @@
 module Reboot
   ( Expr(..)
   , Value(..)
-    -- Operators
-  , apply
-  , consoleLog
-  , expr
-  , ffi
-  , host
-  , lambda
-  , let_
-  , lookupId
-  , lookupSelector
-  , noOp
-  , number
-  , plus
-  , string
-  , classAdd
-  , classRemove
-  , classToggle
-  , forEach
-  , bool
     -- Evaluation
   , evaluate
   , evaluateNumber
@@ -45,7 +26,6 @@ module Reboot
 
 import Control.Applicative
 import Control.Monad.ST
-import Data.Coerce
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
@@ -68,66 +48,6 @@ unString (ValueString s) = s
 
 unFunction :: Value ('Function u v) -> Value u -> Value v
 unFunction (ValueFunction f) = f
-
-host ::
-     (Expr f 'String -> Effect f u)
-  -> Effect f u
-host f = Host (f . Var)
-
-classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
-classAdd = ClassAdd
-classRemove = ClassRemove
-classToggle = ClassToggle
-
-lookupId ::
-     Expr f 'String
-  -> (Expr f 'Element -> Effect f u)
-  -> Effect f u
-lookupId x f = LookupId x (f . Var)
-
-lookupSelector :: 
-     Expr f 'String
-  -> (Expr f ('Array 'Element) -> Effect f u)
-  -> Effect f u
-lookupSelector x f = LookupSelector x (f . Var)
-
-consoleLog :: Expr f u -> Effect f a -> Effect f a
-consoleLog u eff = Log u eff
-
-ffi :: String -> Rec (Expr f) us -> Effect f v
-ffi name args = FFI name args
-
-expr :: Expr f u -> Effect f u
-expr = Lift
-
-plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plus a b = (Plus a b)
-
-apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
-apply g a = (Apply g a)
-
-let_ ::
-     Expr f u
-  -> (Expr f u -> Expr f v)
-  -> Expr f v
-let_ e f = (Let e (coerce f . Var))
-
-lambda :: 
-     (Expr f u -> Expr f v)
-  -> Expr f ('Function u v)
-lambda f = Lambda (coerce f . Var)
-
-number :: Double -> Expr f 'Number
-number = Literal . ValueNumber
-
-bool :: Bool -> Expr f 'Bool
-bool = Literal . ValueBool
-
-string :: Text -> Expr f 'String
-string = Literal . ValueString
-
-forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
-forEach arr f = ForEach arr (coerce f . Var)
 
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -171,15 +91,13 @@ effectfulAST = snd . effectfulAST' 0
 
 effectfulAST' :: forall v. Int -> Effect (Const Int) v -> (Int, Doc)
 effectfulAST' !n0 = \case
-  Host f -> 
+  Host -> 
     let windowLocationHost = ("const" <+> P.text ('n':show n0) <+> "=" <+> "window.location.host") <> P.semi
-        (n1, x) = effectfulAST' (n0+1) (f (Const n0))
-     in (n1, windowLocationHost $+$ x)
-  Log x eff ->
+     in (n0+1, windowLocationHost)
+  Log x ->
     let (n1, x') = pureAST' n0 x
-        (n2, as) = effectfulAST' n1 eff
-        logX = "console.log" <> P.parens x' <> P.semi
-     in (n2, logX $+$ as)
+        logX = "console.log" <> P.parens x'
+     in (n1, logX)
   Lift x -> pureAST' n0 x
   FFI fn args ->
     let foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [P.Doc])
@@ -225,6 +143,22 @@ effectfulAST' !n0 = \case
         (n2, cl') = pureAST' n1 cl
         toggleCl = x' <> ".classList.toggle" <> P.parens cl'
      in (n2, toggleCl)
+  Bind x f ->
+    let (n1, x1) = effectfulAST' n0 x
+        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
+        (n2, x2) = effectfulAST' (n1 + 1) (f (Const n1))
+     in (n2, constX $+$ x2)
+  UnsafeObject x string ->
+    let (n1, x1) = pureAST' n0 x
+    in (n1, x1 <> "." <> P.text string)
+  ObjectFFI x ffi ->
+    let (n1, x1) = pureAST' n0 x
+        (n2, ffi1) = effectfulAST' n1 ffi
+    in (n2, x1 <> "." <> ffi1)
+  SpaceShip a b ->
+    let (n1, a1) = effectfulAST' n0 a
+        (n2, b1) = effectfulAST' n1 b
+     in (n2, a1 $+$ b1)
 
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
@@ -306,9 +240,6 @@ pureAST' !n0 = \case
         $+$ (P.text ('n':show (n2+1)) <> P.parens exprY) 
         )
   Var (Const x) -> (n0, P.text ('n':show x))
-
-noOp :: Effect f 'Unit
-noOp = expr (Literal ValueUnit)
 
 pretty :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
