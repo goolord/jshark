@@ -67,7 +67,6 @@ evaluate e0 = go e0 where
     Negate x -> ValueNumber (negate (unNumber (go x)))
     FracDiv x y -> ValueNumber (unNumber (go x) / unNumber (go y))
     Var x -> x
-    Let x g -> go (g (go x))
     Apply g x -> unFunction (go g) (go x)
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
@@ -159,6 +158,9 @@ effectfulAST' !n0 = \case
     let (n1, a1) = effectfulAST' n0 a
         (n2, b1) = effectfulAST' n1 b
      in (n2, a1 $+$ b1)
+  UnEffectful x -> 
+    let (n1, a1) = pureAST' n0 x
+     in (n1, a1)
 
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
@@ -219,11 +221,6 @@ pureAST' !n0 = \case
   Negate x ->
     let (n1, x1) = pureAST' n0 x
      in (n1, "-" <> P.parens x1)
-  Let x g ->
-    let (n1, x1) = pureAST' n0 x
-        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
-        (n2, x2) = pureAST' (n1 + 1) (g (Const n1))
-     in (n2, constX $+$ x2)
   Lambda f ->
     let ex = f (Const n0)
         (n1, exprX ) = pureAST' (n0) ex
@@ -271,16 +268,6 @@ pretty e0 = getConst (go 0 e0) where
           <> " -> "
           <> getConst (go (n0 + 1) (g (Const name)))
     Apply g x -> Const ("(" <> getConst (go n0 g) <> ") (" <> getConst (go n0 x) <> ")")
-    Let x g ->
-      let name = "x" <> T.pack (show n0)
-       in Const
-          $  "let "
-          <> name
-          <> " = {"
-          <> getConst (go (n0 + 1) x)
-          <> "} in {"
-          <> getConst (go (n0 + 1) (g (Const name)))
-          <> "}"
 
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 

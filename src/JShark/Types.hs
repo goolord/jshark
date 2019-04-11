@@ -7,12 +7,14 @@
 {-# language StandaloneDeriving #-}
 {-# language TypeOperators #-}
 
-module JShark.Types where
-
+module JShark.Types where 
 import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
+import Text.PrettyPrint (Doc)
+import Data.Sequence (Seq)
+import Data.Coerce (coerce)
 import qualified GHC.Exts as Exts
 
 data Universe
@@ -25,7 +27,8 @@ data Universe
   | Option Universe
   | Result Universe Universe
   | Bool
-  | forall a. Object a
+  | Object Type
+  | Effectful Universe
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -52,6 +55,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
   SpaceShip :: Effect f u -> Effect f v -> Effect f v
+  UnEffectful :: Expr f ('Effectful u) -> Effect f u
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
@@ -63,7 +67,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
   FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
-  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
+  -- Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
   Show :: Expr f u -> Expr f 'String -- ^ String casting: Show x = String(x)
@@ -148,3 +152,10 @@ spaceShip :: EffectSyntax v a -> EffectSyntax v b -> EffectSyntax v b
 spaceShip _ (EffectSyntaxPure b) = EffectSyntaxPure b
 spaceShip EffectSyntaxPure{} (EffectSyntaxUnpure m g) = EffectSyntaxUnpure m g
 spaceShip (EffectSyntaxUnpure n _) (EffectSyntaxUnpure m g) = EffectSyntaxUnpure (n `SpaceShip` m) g
+
+renderCode :: Code -> Doc
+renderCode (Code x) = foldMap (either coerce coerce) x
+
+newtype Code = Code (Seq (Either VarStmt ExprStmt))
+newtype VarStmt = VarStmt Doc
+newtype ExprStmt = ExprStmt Doc

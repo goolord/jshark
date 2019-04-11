@@ -28,8 +28,11 @@ lookupSelector ::
   -> Effect f u
 lookupSelector x f = LookupSelector x (f . Var)
 
-consoleLog :: Expr f u -> Effect f 'Unit
-consoleLog u = Log u
+consoleLog :: Expr f u -> EffectSyntax f ()
+consoleLog u = toSyntax (Log u) *> pure ()
+
+unEffectful :: Expr f ('Effectful u) -> Effect f u
+unEffectful = UnEffectful
 
 ffi :: String -> Rec (Expr f) us -> Effect f v
 ffi name args = FFI name args
@@ -48,12 +51,6 @@ plus a b = (Plus a b)
 
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
 apply g a = (Apply g a)
-
-let_ ::
-     Expr f u
-  -> (Expr f u -> Expr f v)
-  -> Expr f v
-let_ e f = (Let e (coerce f . Var))
 
 lambda :: 
      (Expr f u -> Expr f v)
