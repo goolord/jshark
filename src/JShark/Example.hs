@@ -2,7 +2,7 @@
 {-# language OverloadedStrings #-}
 {-# language TypeOperators #-}
 
-module Example where
+module JShark.Example where
 
 -- import Reboot
 -- import Topaz.Rec ((<:))

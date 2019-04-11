@@ -1,12 +1,12 @@
 {-# language DataKinds #-}
 {-# language GADTs #-}
 
-module Api where
+module JShark.Api where
 
 import Topaz.Types
 import Data.Text (Text)
 import Data.Coerce (coerce)
-import Types
+import JShark.Types
 
 host :: Effect f 'String
 host = Host 

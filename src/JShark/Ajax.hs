@@ -4,11 +4,11 @@
 {-# language GADTs #-}
 {-# language BangPatterns #-}
 
-module Ajax where
+module JShark.Ajax where
 
-import Types
-import Reboot
-import Api
+import JShark.Types
+import JShark
+import JShark.Api
 import Network.HTTP.Types
 import Topaz.Rec ((<:))
 import Topaz.Types

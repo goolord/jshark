@@ -1,7 +1,7 @@
 {-# language DataKinds #-}
 {-# language GADTs #-}
 
-module Math
+module JShark.Math
   ( inc
   , dec
   , e
@@ -14,8 +14,8 @@ module Math
   , log10e
   ) where
 
-import Types
-import Api
+import JShark.Types
+import JShark.Api
 import Prelude hiding (pi)
 
 inc :: Expr f ('Function 'Number 'Number)

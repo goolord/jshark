@@ -7,7 +7,7 @@
 {-# language StandaloneDeriving #-}
 {-# language TypeOperators #-}
 
-module Types where
+module JShark.Types where
 
 import Control.Monad (ap, void)
 import Data.Kind

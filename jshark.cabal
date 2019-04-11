@@ -38,13 +38,13 @@ extra-source-files:
 
 library
   exposed-modules:
-    Reboot
-    Api
-    Math
-    Types
-    Ajax
+    JShark
+    JShark.Api
+    JShark.Math
+    JShark.Types
+    JShark.Ajax
   other-modules:
-    Example
+    JShark.Example
   build-depends:
     , base >= 4.10.1 && < 4.13
     , containers >= 0.5 && < 0.7

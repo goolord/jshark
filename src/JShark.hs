@@ -8,7 +8,7 @@
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
 
-module Reboot
+module JShark
   ( Expr(..)
   , Value(..)
     -- Evaluation
@@ -35,7 +35,7 @@ import Data.Tuple (snd)
 import Numeric (showFFloat)
 import Text.PrettyPrint ((<+>), Doc, ($+$))
 import Topaz.Types
-import Types
+import JShark.Types
 import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Text as T
 import qualified Text.PrettyPrint as P
