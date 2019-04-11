@@ -102,8 +102,8 @@ with rec {
       })
       { };
 
-    jsedsl = hself.callC2N {
-      name = "jsedsl";
+    jshark = hself.callC2N {
+      name = "jshark";
       path = ../.;
       apply = [ hlib.dontHaddock hlib.dontCheck ] ++
       ( if profiling
