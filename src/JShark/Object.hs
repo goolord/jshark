@@ -1,0 +1,31 @@
+{-# language AllowAmbiguousTypes #-}
+{-# language DataKinds #-}
+{-# language OverloadedStrings #-}
+{-# language ScopedTypeVariables #-}
+{-# language TypeFamilies #-}
+
+module JShark.Object where
+
+import Data.Kind
+import Data.Proxy
+import GHC.TypeLits
+import JShark
+import JShark.Types
+
+type family Field (r :: Type) (k :: Symbol) :: Universe
+
+get :: forall k r f. KnownSymbol k => Expr f ('Object r) -> EffectSyntax f (Expr f (Field r k))
+get x = fmap Var $ toSyntax $ UnsafeObject x (symbolVal (Proxy :: Proxy k))
+
+call :: Expr f ('Effectful u) -> EffectSyntax f (Expr f u)
+call e = do
+  x <- toSyntax (Lift e)
+  y <- toSyntax (UnEffectful (Var x))
+  pure $ Var y
+
+call_ :: Expr f ('Effectful 'Unit) -> EffectSyntax f ()
+call_ e = do
+  x <- toSyntax (Lift e)
+  _ <- toSyntax $ UnEffectful (Var x)
+  pure ()
+
