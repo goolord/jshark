@@ -43,3 +43,9 @@ ex = do
 
 ex2 :: IO ()
 ex2 = printComputation $ effectfulAST (fromSyntax ex)
+
+readyStateDone :: Effect f 'Number
+readyStateDone = expr 4
+
+statusOK :: Effect f 'Number
+statusOK = expr 200
