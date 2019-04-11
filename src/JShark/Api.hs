@@ -72,3 +72,9 @@ forEach arr f = ForEach arr (coerce f . Var)
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
+
+let_ ::
+     Expr f u
+  -> (Expr f u -> Expr f v)
+  -> Expr f v
+let_ e f = (Let e (coerce f . Var)) 

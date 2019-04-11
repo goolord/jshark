@@ -67,7 +67,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
   FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
-  -- Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
+  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
   Show :: Expr f u -> Expr f 'String -- ^ String casting: Show x = String(x)

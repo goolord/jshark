@@ -71,6 +71,7 @@ evaluate e0 = go e0 where
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
     Show _x -> undefined -- FIXME: this might be complicated
+    Let x g -> go (g (go x)) 
     -- _ -> undefined -- just to get rid of errors for now
 
 fromRightE :: Either [Char] c -> c
@@ -229,6 +230,11 @@ pureAST' !n0 = \case
           <+> P.parens (P.text $ 'n':show n0)
           <+> P.braces ("return" <+> (P.parens exprX))
         )
+  Let x g ->
+    let (n1, x1) = pureAST' n0 x
+        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
+        (n2, x2) = pureAST' (n1 + 1) (g (Const n1))
+     in (n2, constX $+$ x2) 
   Apply fex ex ->
     let (n1, exprX) = pureAST' n0 fex
         (n2, exprY) = pureAST' n1 ex
@@ -260,6 +266,16 @@ pretty e0 = getConst (go 0 e0) where
     Negate x -> Const ("negate (" <> getConst (go n0 x) <> ")")
     Show x -> Const ("show (" <> getConst (go n0 x) <> ")")
     Var x -> x
+    Let x g ->
+      let name = "x" <> T.pack (show n0)
+       in Const
+          $  "let "
+          <> name
+          <> " = {"
+          <> getConst (go (n0 + 1) x)
+          <> "} in {"
+          <> getConst (go (n0 + 1) (g (Const name)))
+          <> "}" 
     Lambda g ->
       let name = "x" <> T.pack (show n0)
        in Const  
