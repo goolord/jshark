@@ -1,5 +1,7 @@
 {-# language DataKinds #-}
 {-# language GADTs #-}
+{-# language TypeApplications #-}
+{-# language TypeFamilies #-}
 
 module JShark.Api where
 
@@ -7,29 +9,36 @@ import Topaz.Types
 import Data.Text (Text)
 import Data.Coerce (coerce)
 import JShark.Types
+import JShark.Object
+import Topaz.Rec ((<:))
 
-host :: Effect f 'String
-host = Host 
+data Window
+type instance Field Window "locatioin.host" = 'String
+window :: Expr f ('Object Window)
+window = undefined
 
-classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
-classAdd = ClassAdd
-classRemove = ClassRemove
-classToggle = ClassToggle
+-- host :: EffectSyntax f (Expr f 'String)
+-- host = get @"location.host" window
 
-lookupId ::
-     Expr f 'String
-  -> (Expr f 'Element -> Effect f u)
-  -> Effect f u
-lookupId x f = LookupId x (f . Var)
+-- classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
+-- classAdd = ClassAdd
+-- classRemove = ClassRemove
+-- classToggle = ClassToggle
 
-lookupSelector :: 
-     Expr f 'String
-  -> (Expr f ('Array 'Element) -> Effect f u)
-  -> Effect f u
-lookupSelector x f = LookupSelector x (f . Var)
+-- lookupId ::
+     -- Expr f 'String
+  -- -> (Expr f 'Element -> Effect f u)
+  -- -> Effect f u
+-- lookupId x f = LookupId x (f . Var)
+
+-- lookupSelector :: 
+     -- Expr f 'String
+  -- -> (Expr f ('Array 'Element) -> Effect f u)
+  -- -> Effect f u
+-- lookupSelector x f = LookupSelector x (f . Var)
 
 consoleLog :: Expr f u -> EffectSyntax f ()
-consoleLog u = toSyntax (Log u) *> pure ()
+consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()
 
 unEffectful :: Expr f ('Effectful u) -> Effect f u
 unEffectful = UnEffectful

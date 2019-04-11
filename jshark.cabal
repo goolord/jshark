@@ -43,6 +43,7 @@ library
     JShark.Math
     JShark.Types
     JShark.Ajax
+    JShark.Object
   other-modules:
     JShark.Example
   build-depends:

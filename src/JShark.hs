@@ -91,13 +91,6 @@ effectfulAST = snd . effectfulAST' 0
 
 effectfulAST' :: forall v. Int -> Effect (Const Int) v -> (Int, Doc)
 effectfulAST' !n0 = \case
-  Host -> 
-    let windowLocationHost = ("const" <+> P.text ('n':show n0) <+> "=" <+> "window.location.host") <> P.semi
-     in (n0+1, windowLocationHost)
-  Log x ->
-    let (n1, x') = pureAST' n0 x
-        logX = "console.log" <> P.parens x'
-     in (n1, logX)
   Lift x -> pureAST' n0 x
   FFI fn args ->
     let foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [P.Doc])
@@ -116,33 +109,6 @@ effectfulAST' !n0 = \case
                $ "function" <> P.parens (P.text ('n':show n1))
                <> P.braces as) <> P.semi
      in (n2, forE)
-  LookupSelector x f ->
-    let (n1, x') = pureAST' n0 x
-        getX = "document.querySelectorAll" <> P.parens x'
-        varX = ("const" <+> P.text ('n':show n1) <+> "=" <+> getX) <> P.semi
-        (n2, as) = effectfulAST' (n1 + 1) (f (Const n1))
-     in (n2, varX $+$ as)
-  LookupId x f ->
-    let (n1, x') = pureAST' n0 x
-        getX = "document.getElementById" <> P.parens x'
-        varX = ("const" <+> P.text ('n':show n1) <+> "=" <+> getX) <> P.semi
-        (n2, as) = effectfulAST' (n1 + 1) (f (Const n1))
-     in (n2, varX $+$ as)
-  ClassToggle x cl ->
-    let (n1, x') = pureAST' n0 x
-        (n2, cl') = pureAST' n1 cl
-        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
-     in (n2, toggleCl)
-  ClassAdd x cl ->
-    let (n1, x') = pureAST' n0 x
-        (n2, cl') = pureAST' n1 cl
-        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
-     in (n2, toggleCl)
-  ClassRemove x cl ->
-    let (n1, x') = pureAST' n0 x
-        (n2, cl') = pureAST' n1 cl
-        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
-     in (n2, toggleCl)
   Bind x f ->
     let (n1, x1) = effectfulAST' n0 x
         constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
