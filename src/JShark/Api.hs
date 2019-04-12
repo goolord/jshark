@@ -56,10 +56,10 @@ expr :: Expr f u -> Effect f u
 expr = Lift
 
 plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plus a b = (Plus a b)
+plus = Plus
 
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
-apply g a = (Apply g a)
+apply = Apply
 
 lambda :: 
      (Expr f u -> Expr f v)
