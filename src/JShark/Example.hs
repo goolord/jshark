@@ -4,10 +4,10 @@
 
 module JShark.Example where
 
--- import qualified JShark.Math as Math
--- import JShark
--- import JShark.Api
--- import JShark.Types
+import qualified JShark.Math as Math
+import JShark
+import JShark.Api
+import JShark.Types
 
 -- mathy :: EffectSyntax f (f 'Number)
 -- mathy = do
@@ -17,13 +17,13 @@ module JShark.Example where
       -- w = let k = 6 + 7 in k + 5
   -- toSyntax $ expr $ apply Math.inc w
 
--- mathy :: Expr f 'Number
--- mathy =
-  -- let_ (Plus 5 6) $ \x ->
-  -- let_ (Plus 7 x) $ \y ->
-  -- let_ (Plus x y) $ \z ->
-  -- let_ (Plus (let_ (Plus 6 7) $ \k -> k) 5) $ \w ->
-  -- apply Math.inc z
+mathy :: Expr f 'Number
+mathy =
+  let_ (Plus 5 6) $ \x ->
+  let_ (Plus 7 x) $ \y ->
+  let_ (Plus x y) $ \z ->
+  let_ (Plus (let_ (Plus 6 7) $ \k -> k) 5) $ \w ->
+  apply Math.inc z
 
 -- mathy2 :: (Expr f 'Number -> Expr f 'Number) -> Expr f 'Number
 -- mathy2 = do

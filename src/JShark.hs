@@ -109,6 +109,7 @@ effectfulAST' !n0 = \case
                $ "function" <> P.parens (P.text ('n':show n1))
                <> P.braces as) <> P.semi
      in (n2, forE)
+  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0-1) (f (Const (n0 -1)))
   Bind x f ->
     let (n1, x1) = effectfulAST' n0 x
         constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
@@ -121,10 +122,6 @@ effectfulAST' !n0 = \case
     let (n1, x1) = pureAST' n0 x
         (n2, ffi1) = effectfulAST' n1 ffi
     in (n2, x1 <> "." <> ffi1)
-  SpaceShip a b ->
-    let (n1, a1) = effectfulAST' n0 a
-        (n2, b1) = effectfulAST' n1 b
-     in (n2, a1 $+$ b1)
   UnEffectful x -> 
     let (n1, a1) = pureAST' n0 x
      in (n1, a1)

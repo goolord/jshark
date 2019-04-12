@@ -47,7 +47,6 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ObjectFFI :: Expr f ('Object a) -> Effect f b -> Effect f u
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
-  SpaceShip :: Effect f u -> Effect f v -> Effect f v
   UnEffectful :: Expr f ('Effectful u) -> Effect f u
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
@@ -124,7 +123,6 @@ deriving instance Functor (EffectSyntax f)
 instance Applicative (EffectSyntax v) where
   pure = EffectSyntaxPure
   (<*>) = ap
-  (*>) = spaceShip
 
 -- Analogous to the Monad instance for RelativeMSyntax in section 3.3.
 instance Monad (EffectSyntax f) where
@@ -140,11 +138,6 @@ toSyntax_ = void . toSyntax
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
-
-spaceShip :: EffectSyntax v a -> EffectSyntax v b -> EffectSyntax v b
-spaceShip _ (EffectSyntaxPure b) = EffectSyntaxPure b
-spaceShip EffectSyntaxPure{} (EffectSyntaxUnpure m g) = EffectSyntaxUnpure m g
-spaceShip (EffectSyntaxUnpure n _) (EffectSyntaxUnpure m g) = EffectSyntaxUnpure (n `SpaceShip` m) g
 
 renderCode :: Code -> Doc
 renderCode (Code x) = foldMap (either coerce coerce) x

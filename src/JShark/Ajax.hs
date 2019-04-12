@@ -5,6 +5,7 @@
 {-# language BangPatterns #-}
 {-# language TypeApplications #-}
 {-# language TypeFamilies #-}
+{-# language ScopedTypeVariables #-}
 
 module JShark.Ajax where
 
