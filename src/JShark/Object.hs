@@ -19,13 +19,11 @@ get x = fmap Var $ toSyntax $ UnsafeObject x (symbolVal (Proxy :: Proxy k))
 
 call :: Expr f ('Effectful u) -> EffectSyntax f (Expr f u)
 call e = do
-  x <- toSyntax (Lift e)
-  y <- toSyntax (UnEffectful (Var x))
-  pure $ Var y
+  x <- toSyntax (UnEffectful e)
+  pure (Var x)
 
 call_ :: Expr f ('Effectful 'Unit) -> EffectSyntax f ()
 call_ e = do
-  x <- toSyntax (Lift e)
-  _ <- toSyntax $ UnEffectful (Var x)
+  _ <- toSyntax $ UnEffectful e
   pure ()
 

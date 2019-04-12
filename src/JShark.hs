@@ -131,8 +131,8 @@ effectfulAST' !n0 = \case
         (n2, (Code ffi1Decl ffi1Ref)) = effectfulAST' n1 ffi
     in (n2, Code (x1Decl $$ ffi1Decl) $ x1Ref <> "." <> ffi1Ref)
   UnEffectful x -> 
-    let (n1, a1) = pureAST' n0 x
-     in (n1, a1)
+    let (n1, (Code a1Decl a1Ref)) = pureAST' n0 x
+     in (n1, (Code a1Decl $ a1Ref <> P.parens mempty))
 
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
