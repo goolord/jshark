@@ -26,7 +26,10 @@ open :: StdMethod -> BS.ByteString -> Bool -> (Expr f ('Object (XHR))) -> Effect
 open method url async x = toSyntax_ (objectFfi x $ ffi "open" (string (T.decodeUtf8 (renderStdMethod method)) <: string (T.decodeUtf8 url) <: bool async <: RecNil))
 
 send :: Expr f ('Object XHR) -> EffectSyntax f ()
-send x = get @"send" x >>= call_
+send x = getCall @"send" x *> pure ()
+
+sendPost :: Expr f ('Object XHR) -> Expr f 'String -> EffectSyntax f ()
+sendPost x y = toSyntax (objectFfi x (Lift y)) *> pure ()
 
 data XHR
 
