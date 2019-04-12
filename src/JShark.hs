@@ -72,7 +72,6 @@ evaluate e0 = go e0 where
     Concat x y -> ValueString (unString (go x) <> unString (go y))
     Show _x -> undefined -- FIXME: this might be complicated
     Let x g -> go (g (go x)) 
-    -- _ -> undefined -- just to get rid of errors for now
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
