@@ -13,12 +13,12 @@ import JShark.Object
 import Topaz.Rec ((<:))
 
 data Window
-type instance Field Window "locatioin.host" = 'String
+type instance Field Window "location.host" = 'String
 window :: Expr f ('Object Window)
 window = undefined
 
--- host :: EffectSyntax f (Expr f 'String)
--- host = get @"location.host" window
+host :: EffectSyntax f (Expr f 'String)
+host = get @"location.host" window
 
 -- classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
 -- classAdd = ClassAdd
@@ -80,7 +80,6 @@ forEach arr f = ForEach arr (coerce f . Var)
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
-
 
 let_ ::
      Expr f u
