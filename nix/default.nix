@@ -15,10 +15,10 @@ with rec {
 
   make = name: pkgs.haskell.packages.${compiler}.${name};
 
-  jsedsl = make "jsedsl";
+  jshark = make "jshark";
 };
 
 rec {
   inherit pkgs;
-  inherit jsedsl;
+  inherit jshark;
 }

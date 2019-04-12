@@ -8,28 +8,9 @@
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
 
-module Reboot
+module JShark
   ( Expr(..)
   , Value(..)
-    -- Operators
-  , apply
-  , consoleLog
-  , expr
-  , ffi
-  , host
-  , lambda
-  , let_
-  , lookupId
-  , lookupSelector
-  , noOp
-  , number
-  , plus
-  , string
-  , classAdd
-  , classRemove
-  , classToggle
-  , forEach
-  , bool
     -- Evaluation
   , evaluate
   , evaluateNumber
@@ -45,7 +26,6 @@ module Reboot
 
 import Control.Applicative
 import Control.Monad.ST
-import Data.Coerce
 import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
@@ -53,9 +33,9 @@ import Data.STRef
 import Data.Text (Text)
 import Data.Tuple (snd)
 import Numeric (showFFloat)
-import Text.PrettyPrint ((<+>), Doc, ($+$))
+import Text.PrettyPrint ((<+>), Doc, ($$))
 import Topaz.Types
-import Types
+import JShark.Types
 import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Text as T
 import qualified Text.PrettyPrint as P
@@ -63,71 +43,14 @@ import qualified Text.PrettyPrint as P
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
 
+unBool :: Value 'Bool -> Bool
+unBool (ValueBool b) = b
+
 unString :: Value 'String -> Text
 unString (ValueString s) = s
 
 unFunction :: Value ('Function u v) -> Value u -> Value v
 unFunction (ValueFunction f) = f
-
-host ::
-     (Expr f 'String -> Effect f u)
-  -> Effect f u
-host f = Host (f . Var)
-
-classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
-classAdd = ClassAdd
-classRemove = ClassRemove
-classToggle = ClassToggle
-
-lookupId ::
-     Expr f 'String
-  -> (Expr f 'Element -> Effect f u)
-  -> Effect f u
-lookupId x f = LookupId x (f . Var)
-
-lookupSelector :: 
-     Expr f 'String
-  -> (Expr f ('Array 'Element) -> Effect f u)
-  -> Effect f u
-lookupSelector x f = LookupSelector x (f . Var)
-
-consoleLog :: Expr f u -> Effect f a -> Effect f a
-consoleLog u eff = Log u eff
-
-ffi :: String -> Rec (Expr f) us -> Effect f v
-ffi name args = FFI name args
-
-expr :: Expr f u -> Effect f u
-expr = Lift
-
-plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plus a b = (Plus a b)
-
-apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
-apply g a = (Apply g a)
-
-let_ ::
-     Expr f u
-  -> (Expr f u -> Expr f v)
-  -> Expr f v
-let_ e f = (Let e (coerce f . Var))
-
-lambda :: 
-     (Expr f u -> Expr f v)
-  -> Expr f ('Function u v)
-lambda f = Lambda (coerce f . Var)
-
-number :: Double -> Expr f 'Number
-number = Literal . ValueNumber
-
-bool :: Bool -> Expr f 'Bool
-bool = Literal . ValueBool
-
-string :: Text -> Expr f 'String
-string = Literal . ValueString
-
-forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
-forEach arr f = ForEach arr (coerce f . Var)
 
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -147,12 +70,19 @@ evaluate e0 = go e0 where
     Negate x -> ValueNumber (negate (unNumber (go x)))
     FracDiv x y -> ValueNumber (unNumber (go x) / unNumber (go y))
     Var x -> x
-    Let x g -> go (g (go x))
     Apply g x -> unFunction (go g) (go x)
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
     Show _x -> undefined -- FIXME: this might be complicated
-    -- _ -> undefined -- just to get rid of errors for now
+    And x y -> ValueBool (unBool (go x) && unBool (go y))
+    Or x y -> ValueBool (unBool (go x) || unBool (go y))
+    Eq _ _ -> undefined -- Value doesn't have an Eq instance because of ValueFunction
+    NEq _ _ -> undefined 
+    GTh _ _ -> undefined 
+    LTh _ _ -> undefined 
+    GTEq _ _ -> undefined 
+    LTEq _ _ -> undefined 
+    Let x g -> go (g (go x)) 
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
@@ -164,151 +94,170 @@ printComputation (computation) = do
 renderJS :: Doc -> String
 renderJS = P.renderStyle P.style
 
+renderCode :: Code -> Doc
+renderCode (Code a b) = a $$ b
+
+partitionCode :: [Code] -> ([Doc], [Doc])
+partitionCode ((Code a b):cs) = let (as,bs) = partitionCode cs in ((a:as),(b:bs))
+partitionCode [] = ([], [])
+
 effectfulAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
   -> Doc
-effectfulAST = snd . effectfulAST' 0
+effectfulAST = renderCode . snd . effectfulAST' 0
 
-effectfulAST' :: forall v. Int -> Effect (Const Int) v -> (Int, Doc)
+effectfulAST' :: forall v. Int -> Effect (Const Int) v -> (Int, Code)
 effectfulAST' !n0 = \case
-  Host f -> 
-    let windowLocationHost = ("const" <+> P.text ('n':show n0) <+> "=" <+> "window.location.host") <> P.semi
-        (n1, x) = effectfulAST' (n0+1) (f (Const n0))
-     in (n1, windowLocationHost $+$ x)
-  Log x eff ->
-    let (n1, x') = pureAST' n0 x
-        (n2, as) = effectfulAST' n1 eff
-        logX = "console.log" <> P.parens x' <> P.semi
-     in (n2, logX $+$ as)
   Lift x -> pureAST' n0 x
   FFI fn args ->
-    let foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [P.Doc])
+    let foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [Code])
         foo n'0 (RecCons x xs) = 
           let (n'1, x') = pureAST' n'0 x 
               (n'2, cs) = foo n'1 xs
            in (n'2, x' : cs)
         foo n' RecNil = (n',[])
-        (n1, lArgs) = foo n0 args
+        (n1, lArgs') = foo n0 args
+        (lVars, lArgs) = partitionCode lArgs'
         foreignFunction = P.text fn <> P.parens (P.hcat (P.punctuate ", " lArgs))
-     in (n1, foreignFunction)
+     in (n1, Code (P.vcat lVars) foreignFunction)
   ForEach xs f ->
-    let (n1, xs') = pureAST' n0 xs
-        (n2, as) = effectfulAST' n0 (f (Const n0))
-        forE = xs' <> ".forEach" <> (P.parens 
+    let (n1, (Code xsDecl xsRef)) = pureAST' n0 xs
+        (n2, (Code asDecl asRef)) = effectfulAST' n0 (f (Const n0))
+        forE = xsRef <> ".forEach" <> (P.parens 
                $ "function" <> P.parens (P.text ('n':show n1))
-               <> P.braces as) <> P.semi
-     in (n2, forE)
-  LookupSelector x f ->
-    let (n1, x') = pureAST' n0 x
-        getX = "document.querySelectorAll" <> P.parens x'
-        varX = ("const" <+> P.text ('n':show n1) <+> "=" <+> getX) <> P.semi
-        (n2, as) = effectfulAST' (n1 + 1) (f (Const n1))
-     in (n2, varX $+$ as)
-  LookupId x f ->
-    let (n1, x') = pureAST' n0 x
-        getX = "document.getElementById" <> P.parens x'
-        varX = ("const" <+> P.text ('n':show n1) <+> "=" <+> getX) <> P.semi
-        (n2, as) = effectfulAST' (n1 + 1) (f (Const n1))
-     in (n2, varX $+$ as)
-  ClassToggle x cl ->
-    let (n1, x') = pureAST' n0 x
-        (n2, cl') = pureAST' n1 cl
-        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
-     in (n2, toggleCl)
-  ClassAdd x cl ->
-    let (n1, x') = pureAST' n0 x
-        (n2, cl') = pureAST' n1 cl
-        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
-     in (n2, toggleCl)
-  ClassRemove x cl ->
-    let (n1, x') = pureAST' n0 x
-        (n2, cl') = pureAST' n1 cl
-        toggleCl = x' <> ".classList.toggle" <> P.parens cl'
-     in (n2, toggleCl)
+               <> P.braces (P.nest 2 asRef)) <> P.semi
+     in (n2, Code (xsDecl $$ asDecl) forE)
+  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0-1) (f (Const (n0 -1)))
+  Bind x f ->
+    let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
+        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
+        (n2, (Code x2Decl x2Ref)) = effectfulAST' (n1 + 1) (f (Const n1))
+     in (n2, Code (x1Decl $$ constX $$ x2Decl) x2Ref)
+  UnsafeObject x string ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+    in (n1, Code x1Decl $ x1Ref <> "." <> P.text string)
+  ObjectFFI x ffi ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code ffi1Decl ffi1Ref)) = effectfulAST' n1 ffi
+    in (n2, Code (x1Decl $$ ffi1Decl) $ x1Ref <> "." <> ffi1Ref)
+  UnEffectful x -> 
+    let (n1, (Code a1Decl a1Ref)) = pureAST' n0 x
+     in (n1, (Code a1Decl $ a1Ref <> P.parens mempty))
 
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Doc
-pureAST = snd . pureAST' 0
+pureAST = renderCode . snd . pureAST' 0
 
 pureAST' :: forall v. Int -> Expr (Const Int) v 
-   -> (Int,Doc)
+   -> (Int, Code)
 pureAST' !n0 = \case
   Literal v -> case v of
-    ValueNumber d -> (n0,(P.text $ showFFloat Nothing d ""))
+    ValueNumber d -> (n0,Code mempty (P.text $ showFFloat Nothing d ""))
     ValueArray xs ->       
-      let foo :: Int -> [Value u] -> (Int, [Doc])
+      let foo :: Int -> [Value u] -> (Int, [Code])
           foo n'0 (x:xs') = 
             let (n'1, x') = pureAST' n'0 (Literal x)
                 (n'2, cs) = foo n'1 xs'
              in (n'2, x' : cs)
           foo n' [] = (n', [])
           (n1, exprs) = foo n0 xs
-       in (n1, P.brackets (P.hcat $ P.punctuate ", " exprs))
-    ValueString s -> (n0, P.doubleQuotes (P.text $ T.unpack s))
+          (exprDecls, exprRefs) = partitionCode exprs
+       in (n1, Code (P.vcat exprDecls) $ P.brackets (P.hcat $ P.punctuate ", " exprRefs))
+    ValueString s -> (n0, Code mempty $ P.doubleQuotes (P.text $ T.unpack s))
     ValueFunction _f -> undefined
     ValueUnit -> (n0, mempty) -- FIXME: is this correct
     ValueOption (Just x) -> pureAST' n0 (Literal x)
-    ValueOption Nothing -> (n0, "null") -- FIXME: is this correct
+    ValueOption Nothing -> (n0, Code mempty "null") -- FIXME: is this correct
     ValueResult _ -> undefined
-    ValueBool True -> (n0, "true")
-    ValueBool False -> (n0, "false")
+    ValueBool True -> (n0, Code mempty "true")
+    ValueBool False -> (n0, Code mempty "false")
   Concat x y ->
-    let (n1, x1) = pureAST' n0 x
-        (n2, y1) = pureAST' n1 y
-     in (n2, x1 <+> "+" <+> y1)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "+" <+> y1Ref)
   Plus x y ->
-    let (n1, x1) = pureAST' n0 x
-        (n2, y1) = pureAST' n1 y
-     in (n2, x1 <+> "+" <+> y1)
-  Times x y ->
-    let (n1, x1) = pureAST' n0 x
-        (n2, y1) = pureAST' n1 y
-     in (n2, x1 <+> "*" <+> y1)
-  FracDiv x y ->
-    let (n1, x1) = pureAST' n0 x
-        (n2, y1) = pureAST' n1 y
-     in (n2, x1 <+> "/" <+> y1)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "+" <+> y1Ref)
   Minus x y ->
-    let (n1, x1) = pureAST' n0 x
-        (n2, y1) = pureAST' n1 y
-     in (n2, x1 <+> "-" <+> y1)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "+" <+> y1Ref)
+  Times x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "*" <+> y1Ref)
+  FracDiv x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "/" <+> y1Ref)
   Abs x ->
-    let (n1, x1) = pureAST' n0 x
-     in (n1, "Math.abs" <> P.parens x1)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+     in (n1, Code x1Decl $ "Math.abs" <> P.parens x1Ref)
   Sign x ->
-    let (n1, x1) = pureAST' n0 x
-     in (n1, "Math.sign" <> P.parens x1)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+     in (n1, Code x1Decl $ "Math.sign" <> P.parens x1Ref)
   Show x ->
-    let (n1, x1) = pureAST' n0 x
-     in (n1, "String" <> P.parens x1)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+     in (n1, Code x1Decl $ "String" <> P.parens x1Ref)
   Negate x ->
-    let (n1, x1) = pureAST' n0 x
-     in (n1, "-" <> P.parens x1)
-  Let x g ->
-    let (n1, x1) = pureAST' n0 x
-        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1) <> P.semi
-        (n2, x2) = pureAST' (n1 + 1) (g (Const n1))
-     in (n2, constX $+$ x2)
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+     in (n1, Code x1Decl $ "-" <> P.parens x1Ref)
   Lambda f ->
     let ex = f (Const n0)
-        (n1, exprX ) = pureAST' (n0) ex
+        (n1, (Code exprXDecl exprXRef)) = pureAST' n0 ex
      in ( n1
-        ,     "function" 
-          <+> P.parens (P.text $ 'n':show n0)
-          <+> P.braces ("return" <+> (P.parens exprX))
+        , Code exprXDecl 
+            $ "function" 
+            <+> P.parens (P.text $ 'n':show n0)
+            <+> P.braces ("return" <+> (P.parens exprXRef))
         )
+  And x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "&&" <+> y1Ref)
+  Or x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "||" <+> y1Ref)
+  Eq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "===" <+> y1Ref)
+  NEq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "!==" <+> y1Ref)
+  GTh x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> ">" <+> y1Ref)
+  LTh x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "<" <+> y1Ref)
+  GTEq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> ">=" <+> y1Ref)
+  LTEq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "<=" <+> y1Ref)
+  Let x g ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
+        (n2, (Code x2Decl x2Ref)) = pureAST' (n1 + 1) (g (Const n1))
+     in (n2, Code (x1Decl $$ constX $$ x2Decl) (x2Ref))
   Apply fex ex ->
-    let (n1, exprX) = pureAST' n0 fex
-        (n2, exprY) = pureAST' n1 ex
+    let (n1, (Code exprXDecl exprXRef)) = pureAST' n0 fex
+        (n2, (Code exprYDecl exprYRef)) = pureAST' n1 ex
      in ( n2+2
-        , ("const" <+> (P.text $ 'n':show (n2+1)) <+> "=" <+> exprX) <> P.semi
-        $+$ (P.text ('n':show (n2+1)) <> P.parens exprY) 
+        , Code (exprXDecl $$ exprYDecl $$ ("const" <+> (P.text $ 'n':show (n2+1)) <+> "=" <+> exprXRef) <> P.semi)
+            (P.text ('n':show (n2+1)) <> P.parens exprYRef)
         )
-  Var (Const x) -> (n0, P.text ('n':show x))
-
-noOp :: Effect f 'Unit
-noOp = expr (Literal ValueUnit)
+  Var (Const x) -> (n0, Code mempty $ P.text ('n':show x))
 
 pretty :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
@@ -320,6 +269,7 @@ pretty e0 = getConst (go 0 e0) where
       ValueNumber d -> Const $ T.pack (show d)
       ValueString t -> Const $ T.pack (show t)
       ValueArray xs -> Const $ "[" <> T.intercalate ", " (fmap (getConst . go n0 . Literal) xs) <> "]"
+      ValueBool b -> Const $ if b then "true" else "false"
       ValueFunction _ -> Const $ T.pack "<function>"
       ValueUnit -> Const $ "()"
     Plus x y -> Const ("plus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
@@ -327,19 +277,19 @@ pretty e0 = getConst (go 0 e0) where
     FracDiv x y -> Const ("div (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Minus x y -> Const ("minus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Concat x y -> Const ("concat (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    And x y -> Const ("(&&) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Or x y -> Const ("(||) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    GTh x y -> Const ("(>) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    LTh x y -> Const ("(<) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    GTEq x y -> Const ("(>=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    LTEq x y -> Const ("(<=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Eq x y -> Const ("(==) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    NEq x y -> Const ("(!=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Abs x -> Const ("abs (" <> getConst (go n0 x) <> ")")
     Sign x -> Const ("sign (" <> getConst (go n0 x) <> ")")
     Negate x -> Const ("negate (" <> getConst (go n0 x) <> ")")
     Show x -> Const ("show (" <> getConst (go n0 x) <> ")")
     Var x -> x
-    Lambda g ->
-      let name = "x" <> T.pack (show n0)
-       in Const  
-          $  "λ"
-          <> name
-          <> " -> "
-          <> getConst (go (n0 + 1) (g (Const name)))
-    Apply g x -> Const ("(" <> getConst (go n0 g) <> ") (" <> getConst (go n0 x) <> ")")
     Let x g ->
       let name = "x" <> T.pack (show n0)
        in Const
@@ -349,7 +299,15 @@ pretty e0 = getConst (go 0 e0) where
           <> getConst (go (n0 + 1) x)
           <> "} in {"
           <> getConst (go (n0 + 1) (g (Const name)))
-          <> "}"
+          <> "}" 
+    Lambda g ->
+      let name = "x" <> T.pack (show n0)
+       in Const  
+          $  "λ"
+          <> name
+          <> " -> "
+          <> getConst (go (n0 + 1) (g (Const name)))
+    Apply g x -> Const ("(" <> getConst (go n0 g) <> ") (" <> getConst (go n0 x) <> ")")
 
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 

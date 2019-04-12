@@ -1,15 +1,15 @@
 cabal-version: 2.2
 name:
-  jsedsl
+  jshark
 version:
   0.1
 synopsis:
   Safe Javascript EDSL
 -- description:
 homepage:
-  https://github.com/goolord/jsedsl
+  https://github.com/goolord/jshark
 bug-reports:
-  https://github.com/goolord/jsedsl/issues
+  https://github.com/goolord/jshark/issues
 license:
   BSD-3-Clause
 license-file:
@@ -38,12 +38,14 @@ extra-source-files:
 
 library
   exposed-modules:
-    Reboot
-    Math
-    Types
-    Ajax
+    JShark
+    JShark.Api
+    JShark.Math
+    JShark.Types
+    JShark.Ajax
+    JShark.Object
   other-modules:
-    Example
+    JShark.Example
   build-depends:
     , base >= 4.10.1 && < 4.13
     , containers >= 0.5 && < 0.7

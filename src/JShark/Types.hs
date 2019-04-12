@@ -7,12 +7,12 @@
 {-# language StandaloneDeriving #-}
 {-# language TypeOperators #-}
 
-module Types where
-
-import Control.Monad (ap)
+module JShark.Types where 
+import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
+import Text.PrettyPrint (Doc)
 import qualified GHC.Exts as Exts
 
 data Universe
@@ -25,6 +25,8 @@ data Universe
   | Option Universe
   | Result Universe Universe
   | Bool
+  | Object Type
+  | Effectful Universe
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -37,17 +39,13 @@ data Value :: Universe -> Type where
   ValueBool :: Bool -> Value 'Bool
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
-  Host :: (f 'String -> Effect f u) -> Effect f u -- ^ window.location.host
-  Log :: Expr f u -> Effect f u' -> Effect f u' -- ^ console.log(x); <effect>
-  LookupId :: Expr f 'String -> (f 'Element -> Effect f u) -> Effect f u -- ^ const n0 = document.getElementById(x); <effect n0>
-  LookupSelector :: Expr f 'String -> (f ('Array 'Element) -> Effect f u) -> Effect f u -- ^ const n0 = document.querySelectorAll(x); <effect n0>
   Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
   FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
-  ClassToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.toggle(y)
-  ClassAdd :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.add(y) 
-  ClassRemove :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit -- ^ x.classList.remove(y) 
+  UnsafeObject :: Expr f ('Object a) -> String -> Effect f u
+  ObjectFFI :: Expr f ('Object a) -> Effect f b -> Effect f u
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
+  UnEffectful :: Expr f ('Effectful u) -> Effect f u
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
@@ -59,6 +57,14 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
   FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
+  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+  Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+  Eq :: Expr f a -> Expr f a -> Expr f 'Bool
+  NEq :: Expr f a -> Expr f a -> Expr f 'Bool
+  GTh :: Expr f a -> Expr f a -> Expr f 'Bool
+  LTh :: Expr f a -> Expr f a -> Expr f 'Bool
+  GTEq :: Expr f a -> Expr f a -> Expr f 'Bool
+  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
@@ -132,10 +138,20 @@ instance Monad (EffectSyntax f) where
 toSyntax :: Effect f v -> EffectSyntax f (f v)
 toSyntax m = EffectSyntaxUnpure m EffectSyntaxPure
 
+toSyntax_ :: Effect f v -> EffectSyntax f ()
+toSyntax_ = void . toSyntax
+
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
 
-hostM :: EffectSyntax f (f 'String)
-hostM = toSyntax (Host (Lift . Var))
+data Code = Code 
+  { codeDecl :: Doc 
+  , codeRef :: Doc
+  }
 
+instance Semigroup Code where
+  (Code a b) <> (Code x y) = Code (a <> b) (x <> y)
+
+instance Monoid Code where
+  mempty = Code mempty mempty

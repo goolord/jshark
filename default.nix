@@ -1,3 +1,3 @@
 { }:
 
-(import ./nix/default.nix { }).jsedsl
+(import ./nix/default.nix { }).jshark
