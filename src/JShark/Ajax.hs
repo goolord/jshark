@@ -33,18 +33,10 @@ data XHR
 type instance Field XHR "send" = 'Effectful 'Unit
 type instance Field XHR "responseText" = 'String
 
--- ex :: EffectSyntax f (f 'Unit)
--- ex = do 
-  -- xhrObj <- new
-  -- open GET "foo.com" True xhrObj
-  -- xhr <- sendGet xhrObj
-  -- foo <- toSyntax (responseText xhr)
-  -- toSyntax $ consoleLog (Var foo)
-
 ex :: EffectSyntax f (f 'Unit)
 ex = do 
   xhrObj <- new
-  open GET "foo.com" True xhrObj
+  open GET "https://postman-echo.com/get?foo1=bar1&foo2=bar2" True xhrObj
   send xhrObj
   foo <- get @"responseText" xhrObj
   consoleLog foo
