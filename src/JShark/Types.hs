@@ -12,6 +12,7 @@ import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
+import Text.PrettyPrint (Doc)
 import qualified GHC.Exts as Exts
 
 data Universe
@@ -136,3 +137,13 @@ fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
 
+data Code = Code 
+  { codeDecl :: Doc 
+  , codeRef :: Doc
+  }
+
+instance Semigroup Code where
+  (Code a b) <> (Code x y) = Code (a <> b) (x <> y)
+
+instance Monoid Code where
+  mempty = Code mempty mempty

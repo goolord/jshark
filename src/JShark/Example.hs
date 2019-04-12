@@ -23,7 +23,7 @@ module JShark.Example where
   -- let_ (Plus 7 x) $ \y ->
   -- let_ (Plus x y) $ \z ->
   -- let_ (Plus (let_ (Plus 6 7) $ \k -> k) 5) $ \w ->
-  -- apply Math.inc z
+  -- apply Math.inc (w + z)
 
 -- mathy2 :: (Expr f 'Number -> Expr f 'Number) -> Expr f 'Number
 -- mathy2 = do
