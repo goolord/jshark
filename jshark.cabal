@@ -44,6 +44,7 @@ library
     JShark.Types
     JShark.Ajax
     JShark.Object
+    JShark.Dom
   other-modules:
     JShark.Example
   build-depends:
