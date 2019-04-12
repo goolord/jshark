@@ -152,3 +152,4 @@ renderCode (Code x) = foldMap (either coerce coerce) x
 newtype Code = Code (Seq (Either VarStmt ExprStmt))
 newtype VarStmt = VarStmt Doc
 newtype ExprStmt = ExprStmt Doc
+

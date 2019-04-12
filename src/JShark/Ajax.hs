@@ -32,7 +32,6 @@ data XHR
 type instance Field XHR "send" = 'Effectful 'Unit
 type instance Field XHR "responseText" = 'String
 
-
 -- ex :: EffectSyntax f (f 'Unit)
 -- ex = do 
   -- xhrObj <- new
