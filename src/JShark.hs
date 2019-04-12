@@ -43,6 +43,9 @@ import qualified Text.PrettyPrint as P
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
 
+unBool :: Value 'Bool -> Bool
+unBool (ValueBool b) = b
+
 unString :: Value 'String -> Text
 unString (ValueString s) = s
 
@@ -71,6 +74,14 @@ evaluate e0 = go e0 where
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
     Show _x -> undefined -- FIXME: this might be complicated
+    And x y -> ValueBool (unBool (go x) && unBool (go y))
+    Or x y -> ValueBool (unBool (go x) || unBool (go y))
+    Eq _ _ -> undefined -- Value doesn't have an Eq instance because of ValueFunction
+    NEq _ _ -> undefined 
+    GTh _ _ -> undefined 
+    LTh _ _ -> undefined 
+    GTEq _ _ -> undefined 
+    LTEq _ _ -> undefined 
     Let x g -> go (g (go x)) 
 
 fromRightE :: Either [Char] c -> c
@@ -202,6 +213,38 @@ pureAST' !n0 = \case
             <+> P.parens (P.text $ 'n':show n0)
             <+> P.braces ("return" <+> (P.parens exprXRef))
         )
+  And x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "&&" <+> y1Ref)
+  Or x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "||" <+> y1Ref)
+  Eq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "===" <+> y1Ref)
+  NEq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "!==" <+> y1Ref)
+  GTh x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> ">" <+> y1Ref)
+  LTh x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "<" <+> y1Ref)
+  GTEq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> ">=" <+> y1Ref)
+  LTEq x y ->
+    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "<=" <+> y1Ref)
   Let x g ->
     let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
         constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
@@ -234,6 +277,14 @@ pretty e0 = getConst (go 0 e0) where
     FracDiv x y -> Const ("div (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Minus x y -> Const ("minus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Concat x y -> Const ("concat (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    And x y -> Const ("(&&) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Or x y -> Const ("(||) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    GTh x y -> Const ("(>) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    LTh x y -> Const ("(<) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    GTEq x y -> Const ("(>=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    LTEq x y -> Const ("(<=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    Eq x y -> Const ("(==) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
+    NEq x y -> Const ("(!=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
     Abs x -> Const ("abs (" <> getConst (go n0 x) <> ")")
     Sign x -> Const ("sign (" <> getConst (go n0 x) <> ")")
     Negate x -> Const ("negate (" <> getConst (go n0 x) <> ")")
