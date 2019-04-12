@@ -12,9 +12,6 @@ import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
 import Topaz.Types
-import Text.PrettyPrint (Doc)
-import Data.Sequence (Seq)
-import Data.Coerce (coerce)
 import qualified GHC.Exts as Exts
 
 data Universe
@@ -138,11 +135,4 @@ toSyntax_ = void . toSyntax
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
-
-renderCode :: Code -> Doc
-renderCode (Code x) = foldMap (either coerce coerce) x
-
-newtype Code = Code (Seq (Either VarStmt ExprStmt))
-newtype VarStmt = VarStmt Doc
-newtype ExprStmt = ExprStmt Doc
 
