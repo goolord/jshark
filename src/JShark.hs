@@ -134,14 +134,14 @@ effectfulAST' !n0 = \case
         (n2, (Code x2Decl x2Ref)) = effectfulAST' (n1 + 1) (f (Const n1))
      in (n2, Code (x1Decl $$ constX $$ x2Decl) x2Ref)
   UnsafeObject x string ->
-    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+    let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
     in (n1, Code x1Decl $ x1Ref <> "." <> P.text string)
   UnsafeObjectAssign x y ->
     let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
         (n2, (Code y1Decl y1Ref)) = effectfulAST' n1 y
     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref )
   ObjectFFI x ffi ->
-    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+    let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
         (n2, (Code ffi1Decl ffi1Ref)) = effectfulAST' n1 ffi
     in (n2, Code (x1Decl $$ ffi1Decl) $ x1Ref <> "." <> ffi1Ref)
   UnEffectful x -> 

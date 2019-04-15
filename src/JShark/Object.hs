@@ -14,10 +14,10 @@ import JShark.Types
 
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
-get :: forall k r f. KnownSymbol k => Expr f ('Object r) -> EffectSyntax f (Expr f (Field r k))
+get :: forall k r f. KnownSymbol k => Effect f ('Object r) -> EffectSyntax f (Expr f (Field r k))
 get x = fmap Var $ toSyntax $ UnsafeObject x (symbolVal (Proxy :: Proxy k))
 
-getCall :: forall k r f u. (KnownSymbol k, Field r k ~ 'Effectful u) => Expr f ('Object r) -> EffectSyntax f (Expr f u)
+getCall :: forall k r f u. (KnownSymbol k, Field r k ~ 'Effectful u) => Effect f ('Object r) -> EffectSyntax f (Expr f u)
 getCall x = fmap Var $ toSyntax $ UnsafeObject x $ (symbolVal (Proxy :: Proxy k)) <> "()"
 
 call :: Expr f ('Effectful u) -> EffectSyntax f (Expr f u)

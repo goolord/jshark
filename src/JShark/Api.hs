@@ -14,13 +14,13 @@ import Topaz.Rec ((<:))
 
 data Window
 type instance Field Window "location.host" = 'String
-window :: Expr f ('Object Window)
+window :: Effect f ('Object Window)
 window = undefined
 
 host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
-onClick :: Expr f 'Element -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
+onClick :: Effect f 'Element -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
 onClick el f = pure (unsafeObjectAssign (unsafeObject el "onClick") (Bind noOp f)) *> pure ()
 
 consoleLog :: Expr f u -> EffectSyntax f ()
@@ -32,13 +32,13 @@ unEffectful = UnEffectful
 ffi :: String -> Rec (Expr f) us -> Effect f v
 ffi name args = FFI name args
 
-unsafeObject :: Expr f object -> String -> Effect f u
+unsafeObject :: Effect f object -> String -> Effect f u
 unsafeObject = UnsafeObject
 
 unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
 unsafeObjectAssign = UnsafeObjectAssign
 
-objectFfi :: Expr f object -> Effect f b -> Effect f u
+objectFfi :: Effect f object -> Effect f b -> Effect f u
 objectFfi = ObjectFFI
 
 expr :: Expr f u -> Effect f u

@@ -19,16 +19,16 @@ import Topaz.Types
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 
-new :: EffectSyntax f (Expr f ('Object (XHR)))
-new = fmap Var $ toSyntax $ ffi "new XMLHttpRequest" RecNil
+new :: EffectSyntax f (Effect f ('Object (XHR)))
+new = fmap (expr . Var) $ toSyntax $ ffi "new XMLHttpRequest" RecNil
 
-open :: StdMethod -> BS.ByteString -> Bool -> (Expr f ('Object (XHR))) -> EffectSyntax f ()
+open :: StdMethod -> BS.ByteString -> Bool -> Effect f ('Object (XHR)) -> EffectSyntax f ()
 open method url async x = toSyntax_ (objectFfi x $ ffi "open" (string (T.decodeUtf8 (renderStdMethod method)) <: string (T.decodeUtf8 url) <: bool async <: RecNil))
 
-send :: Expr f ('Object XHR) -> EffectSyntax f ()
+send :: Effect f ('Object XHR) -> EffectSyntax f ()
 send x = getCall @"send" x *> pure ()
 
-sendPost :: Expr f ('Object XHR) -> Expr f 'String -> EffectSyntax f ()
+sendPost :: Effect f ('Object XHR) -> Expr f 'String -> EffectSyntax f ()
 sendPost x y = toSyntax (objectFfi x (Lift y)) *> pure ()
 
 data XHR
