@@ -127,7 +127,7 @@ effectfulAST' !n0 = \case
                $ "function" <> P.parens (P.text ('n':show n1))
                <> P.braces (P.nest 2 asRef)) <> P.semi
      in (n2, Code (xsDecl $$ asDecl) forE)
-  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0) (f (Const (n0)))
+  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0-1) (f (Const (n0-1)))
   Bind x f ->
     let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
         constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
@@ -150,11 +150,11 @@ effectfulAST' !n0 = \case
   LambdaE f ->
     let ex = f (Const n0)
         (n1, (Code exprXDecl exprXRef)) = effectfulAST' n0 ex
-     in ( n1
-        , Code exprXDecl 
+     in ( n1 + 1
+        , Code mempty
             $ "function" 
-            <+> P.parens (P.text $ 'n':show n0)
-            <+> P.braces ("return" <+> (P.parens exprXRef))
+            <+> P.parens (P.text $ 'n':show (n1))
+            <+> P.braces ( (exprXDecl $$ "return" <+> exprXRef) )
         )
   ApplyE fex ex ->
     let (n1, (Code exprXDecl exprXRef)) = effectfulAST' n0 fex

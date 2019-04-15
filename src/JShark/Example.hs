@@ -4,11 +4,11 @@
 
 module JShark.Example where
 
--- import qualified JShark.Math as Math
--- import JShark
--- import JShark.Api
--- import JShark.Types
--- import JShark.Dom
+import qualified JShark.Math as Math
+import JShark
+import JShark.Api
+import JShark.Types
+import JShark.Dom
 
 -- mathy :: EffectSyntax f (f 'Number)
 -- mathy = do
@@ -81,11 +81,11 @@ module JShark.Example where
 -- arrayey = Literal $ ValueArray [ValueNumber 100000000000000000000, ValueNumber 2, ValueNumber 3]
 --
 
--- mainJS :: EffectSyntax f (f 'Unit)
--- mainJS = do
-  -- nav <- lookupId "nav"
-  -- collapse <- lookupId "collapse"
-  -- onClick collapse $ \_ -> fromSyntax $ do
-    -- classToggle nav "is-collapsed"
-  -- toSyntax noOp
+mainJS :: EffectSyntax f (f 'Unit)
+mainJS = do
+  nav <- lookupId "nav"
+  collapse <- lookupId "collapse"
+  onClick collapse $ \_ -> fromSyntax $ do
+    classToggle nav "is-collapsed"
+  toSyntax noOp
 
