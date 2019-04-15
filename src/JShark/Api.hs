@@ -21,7 +21,7 @@ host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
 onClick :: Effect f 'Element -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
-onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObject el "onClick") (Bind noOp f)
+onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObject el "onClick") (LambdaE f)
 
 consoleLog :: Expr f u -> EffectSyntax f ()
 consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()

@@ -47,6 +47,8 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
   UnEffectful :: Expr f ('Effectful u) -> Effect f u
+  LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ A function, not *necessarily* anonymous
+  ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v -- ^ Apply a function
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc

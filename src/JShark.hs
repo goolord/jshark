@@ -147,6 +147,22 @@ effectfulAST' !n0 = \case
   UnEffectful x -> 
     let (n1, (Code a1Decl a1Ref)) = pureAST' n0 x
      in (n1, (Code a1Decl $ a1Ref <> P.parens mempty))
+  LambdaE f ->
+    let ex = f (Const n0)
+        (n1, (Code exprXDecl exprXRef)) = effectfulAST' n0 ex
+     in ( n1
+        , Code exprXDecl 
+            $ "function" 
+            <+> P.parens (P.text $ 'n':show n0)
+            <+> P.braces ("return" <+> (P.parens exprXRef))
+        )
+  ApplyE fex ex ->
+    let (n1, (Code exprXDecl exprXRef)) = effectfulAST' n0 fex
+        (n2, (Code exprYDecl exprYRef)) = effectfulAST' n1 ex
+     in ( n2+2
+        , Code (exprXDecl $$ exprYDecl $$ ("const" <+> (P.text $ 'n':show (n2+1)) <+> "=" <+> exprXRef) <> P.semi)
+            (P.text ('n':show (n2+1)) <> P.parens exprYRef)
+        )
 
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
