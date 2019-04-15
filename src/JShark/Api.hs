@@ -20,8 +20,8 @@ window = undefined
 host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
-onClick :: Effect f 'Element -> (f event -> Effect f a) -> EffectSyntax f ()
-onClick _el _f = undefined
+onClick :: Effect f 'Element -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
+onClick el f = pure (unsafeObjectAssign (unsafeObject el "onClick") (Bind noOp f)) *> pure ()
 
 consoleLog :: Expr f u -> EffectSyntax f ()
 consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()
