@@ -55,6 +55,11 @@ lambda ::
   -> Expr f ('Function u v)
 lambda f = Lambda (coerce f . Var)
 
+lambdaE :: 
+    (Effect f u -> Effect f v) 
+  -> Effect f ('Function u v)
+lambdaE f = LambdaE (coerce f . Lift . Var)
+
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
 
