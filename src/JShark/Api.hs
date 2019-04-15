@@ -14,28 +14,14 @@ import Topaz.Rec ((<:))
 
 data Window
 type instance Field Window "location.host" = 'String
-window :: Expr f ('Object Window)
+window :: Effect f ('Object Window)
 window = undefined
 
 host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
--- classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
--- classAdd = ClassAdd
--- classRemove = ClassRemove
--- classToggle = ClassToggle
-
--- lookupId ::
-     -- Expr f 'String
-  -- -> (Expr f 'Element -> Effect f u)
-  -- -> Effect f u
--- lookupId x f = LookupId x (f . Var)
-
--- lookupSelector :: 
-     -- Expr f 'String
-  -- -> (Expr f ('Array 'Element) -> Effect f u)
-  -- -> Effect f u
--- lookupSelector x f = LookupSelector x (f . Var)
+onClick :: Effect f 'Element -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
+onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObject el "onClick") (LambdaE f)
 
 consoleLog :: Expr f u -> EffectSyntax f ()
 consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()
@@ -46,10 +32,13 @@ unEffectful = UnEffectful
 ffi :: String -> Rec (Expr f) us -> Effect f v
 ffi name args = FFI name args
 
-unsafeObject :: Expr f ('Object a) -> String -> Effect f u
+unsafeObject :: Effect f object -> String -> Effect f u
 unsafeObject = UnsafeObject
 
-objectFfi :: Expr f ('Object a) -> Effect f b -> Effect f u
+unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
+unsafeObjectAssign = UnsafeObjectAssign
+
+objectFfi :: Effect f object -> Effect f b -> Effect f u
 objectFfi = ObjectFFI
 
 expr :: Expr f u -> Effect f u
@@ -65,6 +54,11 @@ lambda ::
      (Expr f u -> Expr f v)
   -> Expr f ('Function u v)
 lambda f = Lambda (coerce f . Var)
+
+lambdaE :: 
+    (Effect f u -> Effect f v) 
+  -> Effect f ('Function u v)
+lambdaE f = LambdaE (coerce f . Lift . Var)
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber

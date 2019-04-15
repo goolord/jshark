@@ -4,10 +4,11 @@
 
 module JShark.Example where
 
--- import qualified JShark.Math as Math
--- import JShark
--- import JShark.Api
--- import JShark.Types
+import qualified JShark.Math as Math
+import JShark
+import JShark.Api
+import JShark.Types
+import JShark.Dom
 
 -- mathy :: EffectSyntax f (f 'Number)
 -- mathy = do
@@ -57,14 +58,11 @@ module JShark.Example where
   -- host $ \n1 ->
   -- consoleLog "foo" $ consoleLog "bar" $ consoleLog n0 $ consoleLog n1 noOp
 
--- lookupy :: Effect f 'Unit
--- lookupy =
-  -- lookupId "foo" $ \foo ->
-  -- lookupId "bar" $ \bar ->
-  -- lookupSelector ".baz" $ \baz ->
-  -- consoleLog foo $
-  -- consoleLog bar $
-  -- consoleLog baz noOp
+-- lookupy :: EffectSyntax f (f 'Unit)
+-- lookupy = do
+  -- foo <- lookupId "foo"
+  -- onClick foo $ \_ -> classToggle foo "foo"
+  -- toSyntax noOp
 
 -- ffiey :: Effect f 'Number
 -- ffiey = exampleFFIFunc "bar" 2
@@ -81,3 +79,13 @@ module JShark.Example where
 
 -- arrayey :: Expr f ('Array 'Number)
 -- arrayey = Literal $ ValueArray [ValueNumber 100000000000000000000, ValueNumber 2, ValueNumber 3]
+--
+
+mainJS :: EffectSyntax f (f 'Unit)
+mainJS = do
+  nav <- lookupId "nav"
+  collapse <- lookupId "collapse"
+  onClick collapse $ \_ -> fromSyntax $ do
+    classToggle nav "is-collapsed"
+  toSyntax noOp
+

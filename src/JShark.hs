@@ -127,22 +127,42 @@ effectfulAST' !n0 = \case
                $ "function" <> P.parens (P.text ('n':show n1))
                <> P.braces (P.nest 2 asRef)) <> P.semi
      in (n2, Code (xsDecl $$ asDecl) forE)
-  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0-1) (f (Const (n0 -1)))
+  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0-1) (f (Const (n0-1)))
   Bind x f ->
     let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
         constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
         (n2, (Code x2Decl x2Ref)) = effectfulAST' (n1 + 1) (f (Const n1))
      in (n2, Code (x1Decl $$ constX $$ x2Decl) x2Ref)
   UnsafeObject x string ->
-    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+    let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
     in (n1, Code x1Decl $ x1Ref <> "." <> P.text string)
+  UnsafeObjectAssign x y ->
+    let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
+        (n2, (Code y1Decl y1Ref)) = effectfulAST' n1 y
+    in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref )
   ObjectFFI x ffi ->
-    let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
+    let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
         (n2, (Code ffi1Decl ffi1Ref)) = effectfulAST' n1 ffi
     in (n2, Code (x1Decl $$ ffi1Decl) $ x1Ref <> "." <> ffi1Ref)
   UnEffectful x -> 
     let (n1, (Code a1Decl a1Ref)) = pureAST' n0 x
      in (n1, (Code a1Decl $ a1Ref <> P.parens mempty))
+  LambdaE f ->
+    let ex = f (Const n0)
+        (n1, (Code exprXDecl exprXRef)) = effectfulAST' n0 ex
+     in ( n1 + 1
+        , Code mempty
+            $ "function" 
+            <+> P.parens (P.text $ 'n':show (n1))
+            <+> P.braces ( (exprXDecl $$ "return" <+> exprXRef) )
+        )
+  ApplyE fex ex ->
+    let (n1, (Code exprXDecl exprXRef)) = effectfulAST' n0 fex
+        (n2, (Code exprYDecl exprYRef)) = effectfulAST' n1 ex
+     in ( n2+2
+        , Code (exprXDecl $$ exprYDecl $$ ("const" <+> (P.text $ 'n':show (n2+1)) <+> "=" <+> exprXRef) <> P.semi)
+            (P.text ('n':show (n2+1)) <> P.parens exprYRef)
+        )
 
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
