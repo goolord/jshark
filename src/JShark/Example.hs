@@ -79,3 +79,13 @@ module JShark.Example where
 
 -- arrayey :: Expr f ('Array 'Number)
 -- arrayey = Literal $ ValueArray [ValueNumber 100000000000000000000, ValueNumber 2, ValueNumber 3]
+--
+
+-- mainJS :: EffectSyntax f (f 'Unit)
+-- mainJS = do
+  -- nav <- lookupId "nav"
+  -- collapse <- lookupId "collapse"
+  -- onClick collapse $ \_ -> fromSyntax $ do
+    -- classToggle nav "is-collapsed"
+  -- toSyntax noOp
+
