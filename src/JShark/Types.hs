@@ -41,8 +41,8 @@ data Value :: Universe -> Type where
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
   FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
-  UnsafeObject :: Expr f ('Object a) -> String -> Effect f u
-  ObjectFFI :: Expr f ('Object a) -> Effect f b -> Effect f u
+  UnsafeObject :: Expr f object -> String -> Effect f u
+  ObjectFFI :: Expr f object -> Effect f b -> Effect f u
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
   UnEffectful :: Expr f ('Effectful u) -> Effect f u
@@ -56,15 +56,15 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Abs :: Expr f 'Number -> Expr f 'Number -- ^ Absolute value primitive: Abs x = Math.abs(x)
   Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
-  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = /
-  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-  Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-  Eq :: Expr f a -> Expr f a -> Expr f 'Bool
-  NEq :: Expr f a -> Expr f a -> Expr f 'Bool
-  GTh :: Expr f a -> Expr f a -> Expr f 'Bool
-  LTh :: Expr f a -> Expr f a -> Expr f 'Bool
-  GTEq :: Expr f a -> Expr f a -> Expr f 'Bool
-  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool
+  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = (/)
+  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical And. And = (&)
+  Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical Or. Or = (||)
+  Eq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Equality. Eq = (==)
+  NEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality. NEq = (/=)
+  GTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. GTh = (>)
+  LTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTh = (<) 
+  GTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. GTEq = (>=) 
+  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTEq = (>=) 
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function

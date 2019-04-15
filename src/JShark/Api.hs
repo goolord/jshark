@@ -20,22 +20,20 @@ window = undefined
 host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
--- classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
--- classAdd = ClassAdd
--- classRemove = ClassRemove
--- classToggle = ClassToggle
+classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
+classAdd el x = objectFfi el (ffi "classList.add" (x <: RecNil))
+classRemove el x = objectFfi el (ffi "classList.remove" (x <: RecNil))
+classToggle el x = objectFfi el (ffi "classList.toggle" (x <: RecNil))
 
--- lookupId ::
-     -- Expr f 'String
-  -- -> (Expr f 'Element -> Effect f u)
-  -- -> Effect f u
--- lookupId x f = LookupId x (f . Var)
+lookupId ::
+     Expr f 'String
+  -> EffectSyntax f (Expr f 'Element)
+lookupId x = Var <$> toSyntax (ffi "document.getElementById" (x <: RecNil))
 
--- lookupSelector :: 
-     -- Expr f 'String
-  -- -> (Expr f ('Array 'Element) -> Effect f u)
-  -- -> Effect f u
--- lookupSelector x f = LookupSelector x (f . Var)
+lookupSelector ::
+     Expr f 'String
+  -> EffectSyntax f (Expr f ('Array 'Element))
+lookupSelector x = Var <$> toSyntax (ffi "document.querySelectorAll" (x <: RecNil))
 
 consoleLog :: Expr f u -> EffectSyntax f ()
 consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()
@@ -49,7 +47,7 @@ ffi name args = FFI name args
 unsafeObject :: Expr f ('Object a) -> String -> Effect f u
 unsafeObject = UnsafeObject
 
-objectFfi :: Expr f ('Object a) -> Effect f b -> Effect f u
+objectFfi :: Expr f object -> Effect f b -> Effect f u
 objectFfi = ObjectFFI
 
 expr :: Expr f u -> Effect f u
