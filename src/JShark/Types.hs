@@ -42,6 +42,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
   FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
   UnsafeObject :: Expr f object -> String -> Effect f u
+  UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
   ObjectFFI :: Expr f object -> Effect f b -> Effect f u
   ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v

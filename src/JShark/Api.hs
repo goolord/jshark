@@ -20,20 +20,8 @@ window = undefined
 host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
-classAdd, classRemove, classToggle :: Expr f 'Element -> Expr f 'String -> Effect f 'Unit
-classAdd el x = objectFfi el (ffi "classList.add" (x <: RecNil))
-classRemove el x = objectFfi el (ffi "classList.remove" (x <: RecNil))
-classToggle el x = objectFfi el (ffi "classList.toggle" (x <: RecNil))
-
-lookupId ::
-     Expr f 'String
-  -> EffectSyntax f (Expr f 'Element)
-lookupId x = Var <$> toSyntax (ffi "document.getElementById" (x <: RecNil))
-
-lookupSelector ::
-     Expr f 'String
-  -> EffectSyntax f (Expr f ('Array 'Element))
-lookupSelector x = Var <$> toSyntax (ffi "document.querySelectorAll" (x <: RecNil))
+onClick :: Expr f 'Element -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
+onClick el f = pure (unsafeObjectAssign (unsafeObject el "onClick") (Bind noOp f)) *> pure ()
 
 consoleLog :: Expr f u -> EffectSyntax f ()
 consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()
@@ -44,8 +32,11 @@ unEffectful = UnEffectful
 ffi :: String -> Rec (Expr f) us -> Effect f v
 ffi name args = FFI name args
 
-unsafeObject :: Expr f ('Object a) -> String -> Effect f u
+unsafeObject :: Expr f object -> String -> Effect f u
 unsafeObject = UnsafeObject
+
+unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
+unsafeObjectAssign = UnsafeObjectAssign
 
 objectFfi :: Expr f object -> Effect f b -> Effect f u
 objectFfi = ObjectFFI
