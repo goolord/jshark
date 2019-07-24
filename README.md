@@ -1,3 +1,5 @@
+## 🦈 JShark
+
 JShark is a typed subset of javascript.
 The goals are as follows:
 - Have a haskelly user interface
