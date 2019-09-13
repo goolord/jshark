@@ -133,7 +133,8 @@ effectfulAST' !n0 = \case
         constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
         (n2, (Code x2Decl x2Ref)) = effectfulAST' (n1 + 1) (f (Const n1))
      in (n2, Code (x1Decl $$ constX $$ x2Decl) x2Ref)
-  UnsafeObject x string ->
+  UnsafeObject obj -> (n0, Code mempty $ P.text $ T.unpack obj)
+  UnsafeObjectGet x string ->
     let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
     in (n1, Code x1Decl $ x1Ref <> "." <> P.text string)
   UnsafeObjectAssign x y ->
@@ -278,56 +279,6 @@ pureAST' !n0 = \case
             (P.text ('n':show (n2+1)) <> P.parens exprYRef)
         )
   Var (Const x) -> (n0, Code mempty $ P.text ('n':show x))
-
-pretty :: forall (u :: Universe).
-     (forall (f :: Universe -> Type). Expr f u)
-  -> Text
-pretty e0 = getConst (go 0 e0) where
-  go :: forall v. Int -> Expr (Const Text) v -> Const Text v
-  go !n0 = \case
-    Literal v -> case v of
-      ValueNumber d -> Const $ T.pack (show d)
-      ValueString t -> Const $ T.pack (show t)
-      ValueArray xs -> Const $ "[" <> T.intercalate ", " (fmap (getConst . go n0 . Literal) xs) <> "]"
-      ValueBool b -> Const $ if b then "true" else "false"
-      ValueFunction _ -> Const $ T.pack "<function>"
-      ValueUnit -> Const $ "()"
-    Plus x y -> Const ("plus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    Times x y -> Const ("times (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    FracDiv x y -> Const ("div (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    Minus x y -> Const ("minus (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    Concat x y -> Const ("concat (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    And x y -> Const ("(&&) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    Or x y -> Const ("(||) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    GTh x y -> Const ("(>) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    LTh x y -> Const ("(<) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    GTEq x y -> Const ("(>=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    LTEq x y -> Const ("(<=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    Eq x y -> Const ("(==) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    NEq x y -> Const ("(!=) (" <> getConst (go n0 x) <> ") (" <> getConst (go n0 y) <> ")")
-    Abs x -> Const ("abs (" <> getConst (go n0 x) <> ")")
-    Sign x -> Const ("sign (" <> getConst (go n0 x) <> ")")
-    Negate x -> Const ("negate (" <> getConst (go n0 x) <> ")")
-    Show x -> Const ("show (" <> getConst (go n0 x) <> ")")
-    Var x -> x
-    Let x g ->
-      let name = "x" <> T.pack (show n0)
-       in Const
-          $  "let "
-          <> name
-          <> " = {"
-          <> getConst (go (n0 + 1) x)
-          <> "} in {"
-          <> getConst (go (n0 + 1) (g (Const name)))
-          <> "}" 
-    Lambda g ->
-      let name = "x" <> T.pack (show n0)
-       in Const  
-          $  "λ"
-          <> name
-          <> " -> "
-          <> getConst (go (n0 + 1) (g (Const name)))
-    Apply g x -> Const ("(" <> getConst (go n0 g) <> ") (" <> getConst (go n0 x) <> ")")
 
 -- data Ref s a = Ref !Addr !(STRef s a)
 -- 
