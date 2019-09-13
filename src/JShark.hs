@@ -204,7 +204,7 @@ pureAST' !n0 = \case
   Minus x y ->
     let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
         (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
-     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "+" <+> y1Ref)
+     in (n2, Code (x1Decl $$ y1Decl) $ x1Ref <+> "-" <+> y1Ref)
   Times x y ->
     let (n1, (Code x1Decl x1Ref)) = pureAST' n0 x
         (n2, (Code y1Decl y1Ref)) = pureAST' n1 y
