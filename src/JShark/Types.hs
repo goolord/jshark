@@ -92,6 +92,17 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   MathBinary :: Text -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Call a binary @Math@ function: @Math.fn(x, y)@.
   UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
 
+-- | First-order fragment used by the original unused-binding experiment
+-- ('JShark.ExprF'). Only 'Literal'/'Plus'/'Let'/'Lambda'/'Apply'/'Var'.
+-- Full-program optimization uses 'JShark.optimize' on 'Expr' instead.
+data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
+  LiteralF :: Value u -> ExprF g f u
+  PlusF :: ExprF g f 'Number -> ExprF g f 'Number -> ExprF g f 'Number
+  LetF :: ExprF g f u -> g (f u) (ExprF g f v) -> ExprF g f v
+  LambdaF :: g (f u) (ExprF g f v) -> ExprF g f ('Function u v)
+  ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
+  VarF :: f u -> ExprF g f u
+
 instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
   fromString = Literal . ValueString . Exts.fromString
 

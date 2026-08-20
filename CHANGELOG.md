@@ -16,6 +16,14 @@
 * Codegen inlines single-use `let`/`Bind` assignments in both readable
   and minified output, so `let x = e in x + 1` becomes `e + 1` while
   `let x = e in x + x` still emits `const n0 = e`.
+* Codegen runs a constant-folding / dead-binding pass first: arithmetic,
+  boolean, and string ops on literals, `if_`/`ifE` of a constant
+  condition, `while false`, beta-reduction of `Apply Lambda`, and
+  `optionCase`/`resultCase` of known constructors. Cheap literals
+  (numbers, strings, bools, unit, nested option/result — not arrays)
+  are propagated even under lambdas; unused pure bindings are dropped;
+  unused FFI/method/property expressions are kept so their effects
+  still run.
 * Modernized the build: dropped the pinned GHC 8.6.5 / `base < 4.13` bounds
   in favor of a modern GHC (tested with 9.14). The original `quantification`
   dependency was pinned to an unreleased git commit; it (and its `Topaz.Rec`
@@ -96,12 +104,16 @@
   create a new, distinct element on every use of the "same" handle). They
   now bind the result once via `toSyntax`, matching the pattern already
   used by `JShark.Ajax.new`.
-* Removed dead code: the unused `Optimization`, `ExprF`, and `Statement`
-  types, and an unfinished/unwired `STRef`-based unused-binding-elimination
-  pass (`identify`/`unidentify`/`removeUnusedBindings`/`match`/`Together`)
-  that relied on `unsafeCoerce`, was never called from anywhere, and
-  predates the test suite. A proper constant-folding/dead-binding
-  optimization pass remains out of scope for this round of work.
+* Reintroduced the original `ExprF` fragment and finished its unused-binding
+  pass as `JShark.ExprF`: identify installs a unique binder id, a bottom-up
+  pass drops dead `LetF`s (so inner DCE can free outer binders), then
+  unidentify rebuilds. Binder ids replace the original `STRef` pointer
+  equality. `toExprF` converts `Expr (Const Int)` once per binder (no
+  deferred re-entry after coerce); `removeUnusedBindingsExpr` runs a
+  parallel `Const Int` DCE without `repoly`. Covers only
+  Literal/Plus/Let/Lambda/Apply/Var — full-program codegen still uses the
+  `Expr`/`Effect` pass above. The empty `Statement` / `Optimization` stubs
+  stay deleted.
 * Fixed a bug in `evaluate`'s `MathUnary "round"` case: it used Haskell's
   `round` (banker's rounding to even, e.g. `round 2.5 == 2`), which
   diverges from JS's `Math.round` (rounds half-way values toward

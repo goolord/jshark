@@ -6,6 +6,7 @@
 {-# language PolyKinds #-}
 {-# language RankNTypes #-}
 {-# language ScopedTypeVariables #-}
+{-# language TupleSections #-}
 {-# language TypeOperators #-}
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
@@ -17,6 +18,10 @@ module JShark
   , evaluate
   , evaluateNumber
   , evaluateCached
+    -- Optimization
+  , optimize
+  , optimizeEffect
+    -- Codegen
   , pureAST
   , effectfulAST
   , pureProgram
@@ -105,40 +110,107 @@ jsShowNumber d
   where
   isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
 
+isFiniteDouble :: Double -> Bool
+isFiniteDouble d = not (isNaN d) && not (isInfinite d)
+
 -- | Implements the unary @Math@ functions supported by 'MathUnary'.
-mathUnaryFn :: Text -> Double -> Double
-mathUnaryFn name = case name of
-  "sin" -> sin
-  "cos" -> cos
-  "tan" -> tan
-  "asin" -> asin
-  "acos" -> acos
-  "atan" -> atan
-  "sqrt" -> sqrt
-  "cbrt" -> \x -> signum x * (abs x ** (1 / 3))
-  "exp" -> exp
-  "log" -> log
-  "log2" -> logBase 2
-  "log10" -> logBase 10
-  "floor" -> fromIntegral . (floor :: Double -> Integer)
-  "ceil" -> fromIntegral . (ceiling :: Double -> Integer)
+mathUnaryOp :: Text -> Maybe (Double -> Double)
+mathUnaryOp = \case
+  "sin" -> Just sin
+  "cos" -> Just cos
+  "tan" -> Just tan
+  "asin" -> Just asin
+  "acos" -> Just acos
+  "atan" -> Just atan
+  "sqrt" -> Just sqrt
+  "cbrt" -> Just (\x -> signum x * (abs x ** (1 / 3)))
+  "exp" -> Just exp
+  "log" -> Just log
+  "log2" -> Just (logBase 2)
+  "log10" -> Just (logBase 10)
+  "floor" -> Just (fromIntegral . (floor :: Double -> Integer))
+  "ceil" -> Just (fromIntegral . (ceiling :: Double -> Integer))
   -- JS's Math.round rounds half-way values toward +Infinity (e.g.
   -- Math.round(2.5) === 3, Math.round(-2.5) === -2), unlike Haskell's
   -- 'round' (banker's rounding to even: round 2.5 == 2). floor(x + 0.5)
   -- matches JS's semantics.
-  "round" -> fromIntegral . (floor :: Double -> Integer) . (+ 0.5)
-  "trunc" -> fromIntegral . (truncate :: Double -> Integer)
-  _ -> error ("evaluate: unknown Math unary function " ++ T.unpack name)
+  "round" -> Just (fromIntegral . (floor :: Double -> Integer) . (+ 0.5))
+  "trunc" -> Just (fromIntegral . (truncate :: Double -> Integer))
+  _ -> Nothing
+
+mathUnaryFn :: Text -> Double -> Double
+mathUnaryFn name = case mathUnaryOp name of
+  Just f -> f
+  Nothing -> error ("evaluate: unknown Math unary function " ++ T.unpack name)
 
 -- | Implements the binary @Math@ functions supported by 'MathBinary'.
+mathBinaryOp :: Text -> Maybe (Double -> Double -> Double)
+mathBinaryOp = \case
+  "pow" -> Just (**)
+  "atan2" -> Just atan2
+  "max" -> Just max
+  "min" -> Just min
+  "hypot" -> Just (\x y -> sqrt (x * x + y * y))
+  _ -> Nothing
+
 mathBinaryFn :: Text -> Double -> Double -> Double
-mathBinaryFn name = case name of
-  "pow" -> (**)
-  "atan2" -> atan2
-  "max" -> max
-  "min" -> min
-  "hypot" -> \x y -> sqrt (x * x + y * y)
-  _ -> error ("evaluate: unknown Math binary function " ++ T.unpack name)
+mathBinaryFn name = case mathBinaryOp name of
+  Just f -> f
+  Nothing -> error ("evaluate: unknown Math binary function " ++ T.unpack name)
+
+-- | Fold @Math.*@ only when the Haskell result is known to match JS.
+-- Transcendentals (@sin(1)@, @cbrt@, @pow@, …) stay in JS.
+exactMathUnary :: Text -> Double -> Maybe Double
+exactMathUnary n a = case n of
+  "sin" | a == 0 -> Just 0
+  "cos" | a == 0 -> Just 1
+  "tan" | a == 0 -> Just 0
+  "sqrt" | a >= 0, let r = sqrt a, r * r == a -> Just r
+  "floor" | isFiniteDouble a -> Just (fromIntegral (floor a :: Integer))
+  "ceil" | isFiniteDouble a -> Just (fromIntegral (ceiling a :: Integer))
+  "round" | isFiniteDouble a -> Just (fromIntegral (floor (a + 0.5) :: Integer))
+  "trunc" | isFiniteDouble a -> Just (fromIntegral (truncate a :: Integer))
+  _ -> Nothing
+
+exactMathBinary :: Text -> Double -> Double -> Maybe Double
+exactMathBinary _ _ _ = Nothing
+
+isOrderableValue :: Value u -> Bool
+isOrderableValue = \case
+  ValueNumber{} -> True
+  ValueString{} -> True
+  ValueBool{} -> True
+  _ -> False
+
+eqFoldableValue :: Value u -> Bool
+eqFoldableValue ValueFunction{} = False
+eqFoldableValue _ = True
+
+-- | Rewrite packed option/result literals to the same constructors the
+-- rest of the pass matches on.
+optLiteral :: Value u -> Expr (Const Int) u
+optLiteral = \case
+  ValueOption Nothing -> None
+  ValueOption (Just v) -> Some (optLiteral v)
+  ValueResult (Left v) -> Ok (optLiteral v)
+  ValueResult (Right v) -> Err (optLiteral v)
+  v -> Literal v
+
+peelOption :: Expr (Const Int) ('Option u) -> Maybe (Maybe (Expr (Const Int) u))
+peelOption = \case
+  None -> Just Nothing
+  Some x -> Just (Just x)
+  Literal (ValueOption Nothing) -> Just Nothing
+  Literal (ValueOption (Just v)) -> Just (Just (Literal v))
+  _ -> Nothing
+
+peelResult :: Expr (Const Int) ('Result u v) -> Maybe (Either (Expr (Const Int) u) (Expr (Const Int) v))
+peelResult = \case
+  Ok x -> Just (Left x)
+  Err x -> Just (Right x)
+  Literal (ValueResult (Left v)) -> Just (Left (Literal v))
+  Literal (ValueResult (Right v)) -> Just (Right (Literal v))
+  _ -> Nothing
 
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -359,13 +431,13 @@ renderIIFE (Code decls ref) =
 pureProgram :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Doc
-pureProgram = renderIIFE . snd . pureAST' startCG
+pureProgram e = renderIIFE . snd . pureAST' startCG $ optimize e
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
   -> Doc
-effectfulProgram = renderIIFE . snd . effectfulAST' startCG
+effectfulProgram e = renderIIFE . snd . effectfulAST' startCG $ optimizeEffect e
 
 partitionCode :: [Code] -> ([Doc], [Doc])
 partitionCode ((Code a b):cs) = let (as,bs) = partitionCode cs in ((a:as),(b:bs))
@@ -565,6 +637,666 @@ substEffect t r = goE
       IfE c u v -> IfE (substExpr t r c) (goE u) (goE v)
       While c b -> While (substExpr t r c) (goE b)
 
+-- | Constant-fold and drop dead pure bindings. Applied automatically by
+-- codegen. Literals are propagated even under lambdas; effectful or
+-- non-cheap bindings follow the same strict-use rule as inlining.
+optimize :: (forall (f :: Universe -> Type). Expr f u) -> Expr (Const Int) u
+optimize e = snd (optExpr (-2) e)
+
+optimizeEffect :: (forall (f :: Universe -> Type). Effect f u) -> Effect (Const Int) u
+optimizeEffect e = snd (optEffect (-2) e)
+
+optUnder :: Int -> (Const Int u -> Expr (Const Int) v) -> (Int, Int, Expr (Const Int) v)
+optUnder t0 f =
+  let tag = t0
+      (t1, body) = optExpr (t0 - 1) (f (Const tag))
+   in (t1, tag, body)
+
+optUnderE :: Int -> (Const Int u -> Effect (Const Int) v) -> (Int, Int, Effect (Const Int) v)
+optUnderE t0 f =
+  let tag = t0
+      (t1, body) = optEffect (t0 - 1) (f (Const tag))
+   in (t1, tag, body)
+
+rebind :: forall (u :: Universe) (v :: Universe).
+  Int -> Expr (Const Int) v -> (Const Int u -> Expr (Const Int) v)
+rebind tag body b = substExpr tag (Var b) body
+
+rebindE :: forall (u :: Universe) (v :: Universe).
+  Int -> Effect (Const Int) v -> (Const Int u -> Effect (Const Int) v)
+rebindE tag body b = substEffect tag (Var b) body
+
+isCheapValue :: Value u -> Bool
+isCheapValue = \case
+  ValueNumber{} -> True
+  ValueString{} -> True
+  ValueBool{} -> True
+  ValueUnit -> True
+  ValueOption Nothing -> True
+  ValueOption (Just v) -> isCheapValue v
+  ValueResult (Left v) -> isCheapValue v
+  ValueResult (Right v) -> isCheapValue v
+  ValueArray{} -> False
+  ValueFunction{} -> False
+
+isCheap :: Expr (Const Int) u -> Bool
+isCheap = \case
+  Literal v -> isCheapValue v
+  None -> True
+  Some x -> isCheap x
+  Ok x -> isCheap x
+  Err x -> isCheap x
+  _ -> False
+
+isCheapEffect :: Effect (Const Int) u -> Bool
+isCheapEffect = \case
+  Lift x -> isCheap x
+  UnsafeObject{} -> True
+  _ -> False
+
+isPureExpr :: Expr (Const Int) u -> Bool
+isPureExpr = \case
+  Literal{} -> True
+  Var{} -> True
+  None -> True
+  Concat x y -> isPureExpr x && isPureExpr y
+  Plus x y -> isPureExpr x && isPureExpr y
+  Times x y -> isPureExpr x && isPureExpr y
+  Minus x y -> isPureExpr x && isPureExpr y
+  Abs x -> isPureExpr x
+  Sign x -> isPureExpr x
+  Negate x -> isPureExpr x
+  FracDiv x y -> isPureExpr x && isPureExpr y
+  And x y -> isPureExpr x && isPureExpr y
+  Or x y -> isPureExpr x && isPureExpr y
+  Eq x y -> isPureExpr x && isPureExpr y
+  NEq x y -> isPureExpr x && isPureExpr y
+  GTh x y -> isPureExpr x && isPureExpr y
+  LTh x y -> isPureExpr x && isPureExpr y
+  GTEq x y -> isPureExpr x && isPureExpr y
+  LTEq x y -> isPureExpr x && isPureExpr y
+  Let x g -> isPureExpr x && isPureExpr (g nestedDummy)
+  Lambda g -> isPureExpr (g nestedDummy)
+  Apply f x -> isPureExpr f && isPureExpr x
+  Show x -> isPureExpr x
+  If c t e -> isPureExpr c && isPureExpr t && isPureExpr e
+  Some x -> isPureExpr x
+  OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s nestedDummy)
+  Ok x -> isPureExpr x
+  Err x -> isPureExpr x
+  ResultCase r okF errF ->
+    isPureExpr r && isPureExpr (okF nestedDummy) && isPureExpr (errF nestedDummy)
+  UnsafeEffectExpr _ -> False
+  ExprFFI{} -> False
+  ExprProp{} -> False
+  ExprMethod{} -> False
+  ExprMethodCallback{} -> False
+  ExprIndex x i -> isPureExpr x && isPureExpr i
+  MathUnary _ x -> isPureExpr x
+  MathBinary _ x y -> isPureExpr x && isPureExpr y
+  UnsafeNullable x -> isPureExpr x
+
+isPureEffect :: Effect (Const Int) u -> Bool
+isPureEffect = \case
+  Lift x -> isPureExpr x
+  FFI{} -> False
+  UnsafeObject{} -> True
+  UnsafeObjectGet{} -> False
+  UnsafeObjectAssign{} -> False
+  ObjectFFI{} -> False
+  ForEach{} -> False
+  Bind x f -> isPureEffect x && isPureEffect (f nestedDummy)
+  UnEffectful{} -> False
+  LambdaE f -> isPureEffect (f nestedDummy)
+  ApplyE{} -> False
+  IfE c t e -> isPureExpr c && isPureEffect t && isPureEffect e
+  While{} -> False
+
+optRec :: Int -> Rec (Expr (Const Int)) us -> (Int, Rec (Expr (Const Int)) us)
+optRec t RecNil = (t, RecNil)
+optRec t (RecCons x xs) =
+  let (t1, x') = optExpr t x
+      (t2, xs') = optRec t1 xs
+   in (t2, RecCons x' xs')
+
+foldNum1 :: (Double -> Double) -> (Expr (Const Int) 'Number -> Expr (Const Int) 'Number) -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
+foldNum1 f k = \case
+  Literal (ValueNumber a) -> Literal (ValueNumber (f a))
+  x -> k x
+
+foldNum2 :: (Double -> Double -> Double) -> (Expr (Const Int) 'Number -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number) -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
+foldNum2 f k x y = case (x, y) of
+  (Literal (ValueNumber a), Literal (ValueNumber b)) -> Literal (ValueNumber (f a b))
+  _ -> k x y
+
+foldConcat :: Expr (Const Int) 'String -> Expr (Const Int) 'String -> Expr (Const Int) 'String
+foldConcat x y = case (x, y) of
+  (Literal (ValueString a), Literal (ValueString b)) -> Literal (ValueString (a <> b))
+  _ -> Concat x y
+
+foldAnd :: Expr (Const Int) 'Bool -> Expr (Const Int) 'Bool -> Expr (Const Int) 'Bool
+foldAnd x y = case (x, y) of
+  (Literal (ValueBool False), _) -> Literal (ValueBool False)
+  (Literal (ValueBool True), y') -> y'
+  (_, Literal (ValueBool True)) -> x
+  (x', Literal (ValueBool False)) | isPureExpr x' -> Literal (ValueBool False)
+  _ -> And x y
+
+foldOr :: Expr (Const Int) 'Bool -> Expr (Const Int) 'Bool -> Expr (Const Int) 'Bool
+foldOr x y = case (x, y) of
+  (Literal (ValueBool True), _) -> Literal (ValueBool True)
+  (Literal (ValueBool False), y') -> y'
+  (_, Literal (ValueBool False)) -> x
+  (x', Literal (ValueBool True)) | isPureExpr x' -> Literal (ValueBool True)
+  _ -> Or x y
+
+foldEq :: Expr (Const Int) u -> Expr (Const Int) u -> Expr (Const Int) 'Bool
+foldEq x y = case (x, y) of
+  (Literal a, Literal b)
+    | eqFoldableValue a && eqFoldableValue b -> Literal (ValueBool (valueEq a b))
+  _ -> Eq x y
+
+foldNEq :: Expr (Const Int) u -> Expr (Const Int) u -> Expr (Const Int) 'Bool
+foldNEq x y = case (x, y) of
+  (Literal a, Literal b)
+    | eqFoldableValue a && eqFoldableValue b -> Literal (ValueBool (not (valueEq a b)))
+  _ -> NEq x y
+
+foldOrd :: Ordering -> (Expr (Const Int) u -> Expr (Const Int) u -> Expr (Const Int) 'Bool) -> Expr (Const Int) u -> Expr (Const Int) u -> Expr (Const Int) 'Bool
+foldOrd ord k x y = case (x, y) of
+  (Literal a, Literal b)
+    | isOrderableValue a && isOrderableValue b -> Literal (ValueBool (valueCompare a b == ord))
+  _ -> k x y
+
+foldOrdNeq :: Ordering -> (Expr (Const Int) u -> Expr (Const Int) u -> Expr (Const Int) 'Bool) -> Expr (Const Int) u -> Expr (Const Int) u -> Expr (Const Int) 'Bool
+foldOrdNeq ord k x y = case (x, y) of
+  (Literal a, Literal b)
+    | isOrderableValue a && isOrderableValue b -> Literal (ValueBool (valueCompare a b /= ord))
+  _ -> k x y
+
+foldShow :: Expr (Const Int) u -> Expr (Const Int) 'String
+foldShow x = case x of
+  Literal (ValueFunction _) -> Show x
+  Literal v -> Literal (ValueString (jsShow v))
+  _ -> Show x
+
+foldIndex :: Expr (Const Int) ('Array u) -> Expr (Const Int) 'Number -> Expr (Const Int) u
+foldIndex arr idx = case (arr, idx) of
+  (Literal (ValueArray vs), Literal (ValueNumber d))
+    | let i = truncate d :: Int
+    , i >= 0 && i < length vs -> Literal (vs !! i)
+  _ -> ExprIndex arr idx
+
+foldMathUnary :: Text -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
+foldMathUnary n x = case x of
+  Literal (ValueNumber a)
+    | Just r <- exactMathUnary n a -> Literal (ValueNumber r)
+  _ -> MathUnary n x
+
+foldMathBinary :: Text -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
+foldMathBinary n x y = case (x, y) of
+  (Literal (ValueNumber a), Literal (ValueNumber b))
+    | Just r <- exactMathBinary n a b -> Literal (ValueNumber r)
+  _ -> MathBinary n x y
+
+optLet :: Int -> Expr (Const Int) u -> (Const Int u -> Expr (Const Int) v) -> (Int, Expr (Const Int) v)
+optLet t0 x f =
+  let (t1, x') = optExpr t0 x
+      (t2, tag, body) = optUnder t1 f
+   in elimLetFrom t2 x' tag body
+
+-- Count/subst only. Algebraic fold of the substituted body is a single
+-- `foldExpr` walk so a chain of lets does not re-run let-elim on the
+-- whole remainder (that was O(n²)).
+elimLetFrom :: Int -> Expr (Const Int) u -> Int -> Expr (Const Int) v -> (Int, Expr (Const Int) v)
+elimLetFrom t x tag body =
+  let uses = countExpr tag body
+      rebuild = Let x (rebind tag body)
+   in case uses of
+        -- uses==1 is always a single strict use: countExpr already
+        -- treats lambda/loop/?:/&&-|| RHS positions as 2.
+        0 | isPureExpr x -> (t, body)
+        0 -> (t, rebuild)
+        1 -> foldExpr t (substExpr tag x body)
+        _ | isCheap x -> foldExpr t (substExpr tag x body)
+        _ -> (t, rebuild)
+
+boundAsExpr :: Effect (Const Int) u -> Expr (Const Int) u
+boundAsExpr (Lift e) = e
+boundAsExpr e = UnsafeEffectExpr e
+
+optBind :: Int -> Effect (Const Int) u -> (Const Int u -> Effect (Const Int) v) -> (Int, Effect (Const Int) v)
+optBind t0 x f =
+  let (t1, x') = optEffect t0 x
+      (t2, tag, body) = optUnderE t1 f
+   in elimBindFrom t2 x' tag body
+
+elimBindFrom :: Int -> Effect (Const Int) u -> Int -> Effect (Const Int) v -> (Int, Effect (Const Int) v)
+elimBindFrom t x tag body =
+  let uses = countEffect tag body
+      rebuild = Bind x (rebindE tag body)
+      inline = foldEffect t (substEffect tag (boundAsExpr x) body)
+   in case uses of
+        0 | isPureEffect x -> (t, body)
+        0 -> (t, rebuild)
+        1 -> inline
+        _ | isCheapEffect x -> inline
+        _ -> (t, rebuild)
+
+optExpr :: Int -> Expr (Const Int) u -> (Int, Expr (Const Int) u)
+optExpr t0 = \case
+  Literal v -> (t0, optLiteral v)
+  Var v -> (t0, Var v)
+  None -> (t0, None)
+  Concat x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldConcat x' y')
+  Plus x y -> binNum (+) Plus x y
+  Times x y -> binNum (*) Times x y
+  Minus x y -> binNum (-) Minus x y
+  FracDiv x y -> binNum (/) FracDiv x y
+  Abs x -> unNum abs Abs x
+  Sign x -> unNum signum Sign x
+  Negate x -> unNum negate Negate x
+  And x y ->
+    let (t1, x') = optExpr t0 x
+     in case x' of
+          -- JS && short-circuits: `false && e` does not evaluate `e`.
+          Literal (ValueBool False) -> (t1, Literal (ValueBool False))
+          Literal (ValueBool True) -> optExpr t1 y
+          _ ->
+            let (t2, y') = optExpr t1 y
+             in (t2, foldAnd x' y')
+  Or x y ->
+    let (t1, x') = optExpr t0 x
+     in case x' of
+          Literal (ValueBool True) -> (t1, Literal (ValueBool True))
+          Literal (ValueBool False) -> optExpr t1 y
+          _ ->
+            let (t2, y') = optExpr t1 y
+             in (t2, foldOr x' y')
+  Eq x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldEq x' y')
+  NEq x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldNEq x' y')
+  GTh x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldOrd GT GTh x' y')
+  LTh x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldOrd LT LTh x' y')
+  GTEq x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldOrdNeq LT GTEq x' y')
+  LTEq x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldOrdNeq GT LTEq x' y')
+  Let x f -> optLet t0 x f
+  Lambda f ->
+    let (t1, tag, body) = optUnder t0 f
+     in (t1, Lambda (rebind tag body))
+  Apply f x ->
+    let (t1, f') = optExpr t0 f
+        (t2, x') = optExpr t1 x
+     in case f' of
+          Lambda g -> optLet t2 x' g
+          _ -> (t2, Apply f' x')
+  Show x ->
+    let (t1, x') = optExpr t0 x
+     in (t1, foldShow x')
+  If c t e ->
+    let (t1, c') = optExpr t0 c
+     in case c' of
+          Literal (ValueBool True) -> optExpr t1 t
+          Literal (ValueBool False) -> optExpr t1 e
+          _ ->
+            let (t2, t') = optExpr t1 t
+                (t3, e') = optExpr t2 e
+             in (t3, If c' t' e')
+  Some x -> fmap Some (optExpr t0 x)
+  OptionCase o n s ->
+    let (t1, o') = optExpr t0 o
+     in case peelOption o' of
+          Just Nothing -> optExpr t1 n
+          Just (Just x) ->
+            let (t2, tag, body) = optUnder t1 s
+             in elimLetFrom t2 x tag body
+          Nothing ->
+            let (t2, n') = optExpr t1 n
+                (t3, tag, body) = optUnder t2 s
+             in (t3, OptionCase o' n' (rebind tag body))
+  Ok x -> fmap Ok (optExpr t0 x)
+  Err x -> fmap Err (optExpr t0 x)
+  ResultCase r okF errF ->
+    let (t1, r') = optExpr t0 r
+     in case peelResult r' of
+          Just (Left x) ->
+            let (t2, tagOk, okBody) = optUnder t1 okF
+             in elimLetFrom t2 x tagOk okBody
+          Just (Right x) ->
+            let (t2, tagErr, errBody) = optUnder t1 errF
+             in elimLetFrom t2 x tagErr errBody
+          Nothing ->
+            let (t2, tagOk, okBody) = optUnder t1 okF
+                (t3, tagErr, errBody) = optUnder t2 errF
+             in (t3, ResultCase r' (rebind tagOk okBody) (rebind tagErr errBody))
+  UnsafeEffectExpr e ->
+    let (t1, e') = optEffect t0 e
+     in case e' of
+          Lift x -> (t1, x)
+          _ -> (t1, UnsafeEffectExpr e')
+  ExprFFI n args -> fmap (ExprFFI n) (optRec t0 args)
+  ExprProp x n ->
+    let (t1, x') = optExpr t0 x
+     in (t1, ExprProp x' n)
+  ExprMethod x n args ->
+    let (t1, x') = optExpr t0 x
+        (t2, args') = optRec t1 args
+     in (t2, ExprMethod x' n args')
+  ExprMethodCallback x n f ->
+    let (t1, x') = optExpr t0 x
+        (t2, tag, body) = optUnder t1 f
+     in (t2, ExprMethodCallback x' n (rebind tag body))
+  ExprIndex arr idx ->
+    let (t1, arr') = optExpr t0 arr
+        (t2, idx') = optExpr t1 idx
+     in (t2, foldIndex arr' idx')
+  MathUnary n x ->
+    let (t1, x') = optExpr t0 x
+     in (t1, foldMathUnary n x')
+  MathBinary n x y ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, foldMathBinary n x' y')
+  UnsafeNullable x -> fmap UnsafeNullable (optExpr t0 x)
+  where
+    binNum f k x y =
+      let (t1, x') = optExpr t0 x
+          (t2, y') = optExpr t1 y
+       in (t2, foldNum2 f k x' y')
+    unNum f k x =
+      let (t1, x') = optExpr t0 x
+       in (t1, foldNum1 f k x')
+
+optEffect :: Int -> Effect (Const Int) u -> (Int, Effect (Const Int) u)
+optEffect t0 = \case
+  Lift x ->
+    let (t1, x') = optExpr t0 x
+     in case x' of
+          UnsafeEffectExpr e -> (t1, e)
+          _ -> (t1, Lift x')
+  FFI n args -> fmap (FFI n) (optRec t0 args)
+  UnsafeObject o -> (t0, UnsafeObject o)
+  UnsafeObjectGet x s ->
+    let (t1, x') = optEffect t0 x
+     in (t1, UnsafeObjectGet x' s)
+  UnsafeObjectAssign x y ->
+    let (t1, x') = optEffect t0 x
+        (t2, y') = optEffect t1 y
+     in (t2, UnsafeObjectAssign x' y')
+  ObjectFFI x y ->
+    let (t1, x') = optEffect t0 x
+        (t2, y') = optEffect t1 y
+     in (t2, ObjectFFI x' y')
+  ForEach xs f ->
+    let (t1, xs') = optExpr t0 xs
+        (t2, tag, body) = optUnderE t1 f
+     in (t2, ForEach xs' (rebindE tag body))
+  Bind x f -> optBind t0 x f
+  UnEffectful x -> fmap UnEffectful (optExpr t0 x)
+  LambdaE f ->
+    let (t1, tag, body) = optUnderE t0 f
+     in (t1, LambdaE (rebindE tag body))
+  ApplyE f x ->
+    let (t1, f') = optEffect t0 f
+        (t2, x') = optEffect t1 x
+     in case f' of
+          LambdaE g -> optBind t2 x' g
+          _ -> (t2, ApplyE f' x')
+  IfE c t e ->
+    let (t1, c') = optExpr t0 c
+     in case c' of
+          Literal (ValueBool True) -> optEffect t1 t
+          Literal (ValueBool False) -> optEffect t1 e
+          _ ->
+            let (t2, t') = optEffect t1 t
+                (t3, e') = optEffect t2 e
+             in (t3, IfE c' t' e')
+  While c b ->
+    let (t1, c') = optExpr t0 c
+     in case c' of
+          Literal (ValueBool False) -> (t1, Lift (Literal ValueUnit))
+          _ ->
+            let (t2, b') = optEffect t1 b
+             in (t2, While c' b')
+
+-- Algebraic fold only (no let/bind inlining). Used after subst so we
+-- still collapse `5+5` without re-running the full optExpr walk.
+foldUnder :: Int -> (Const Int u -> Expr (Const Int) v) -> (Int, Int, Expr (Const Int) v)
+foldUnder t0 f =
+  let tag = t0
+      (t1, body) = foldExpr (t0 - 1) (f (Const tag))
+   in (t1, tag, body)
+
+foldUnderE :: Int -> (Const Int u -> Effect (Const Int) v) -> (Int, Int, Effect (Const Int) v)
+foldUnderE t0 f =
+  let tag = t0
+      (t1, body) = foldEffect (t0 - 1) (f (Const tag))
+   in (t1, tag, body)
+
+foldRec :: Int -> Rec (Expr (Const Int)) us -> (Int, Rec (Expr (Const Int)) us)
+foldRec t RecNil = (t, RecNil)
+foldRec t (RecCons x xs) =
+  let (t1, x') = foldExpr t x
+      (t2, xs') = foldRec t1 xs
+   in (t2, RecCons x' xs')
+
+foldExpr :: Int -> Expr (Const Int) u -> (Int, Expr (Const Int) u)
+foldExpr t0 = \case
+  Literal v -> (t0, optLiteral v)
+  Var v -> (t0, Var v)
+  None -> (t0, None)
+  Concat x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldConcat x' y')
+  Plus x y -> bin (+) Plus x y
+  Times x y -> bin (*) Times x y
+  Minus x y -> bin (-) Minus x y
+  FracDiv x y -> bin (/) FracDiv x y
+  Abs x -> un abs Abs x
+  Sign x -> un signum Sign x
+  Negate x -> un negate Negate x
+  And x y ->
+    let (t1, x') = foldExpr t0 x
+     in case x' of
+          Literal (ValueBool False) -> (t1, Literal (ValueBool False))
+          Literal (ValueBool True) -> foldExpr t1 y
+          _ ->
+            let (t2, y') = foldExpr t1 y
+             in (t2, foldAnd x' y')
+  Or x y ->
+    let (t1, x') = foldExpr t0 x
+     in case x' of
+          Literal (ValueBool True) -> (t1, Literal (ValueBool True))
+          Literal (ValueBool False) -> foldExpr t1 y
+          _ ->
+            let (t2, y') = foldExpr t1 y
+             in (t2, foldOr x' y')
+  Eq x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldEq x' y')
+  NEq x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldNEq x' y')
+  GTh x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldOrd GT GTh x' y')
+  LTh x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldOrd LT LTh x' y')
+  GTEq x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldOrdNeq LT GTEq x' y')
+  LTEq x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldOrdNeq GT LTEq x' y')
+  Let x f ->
+    let (t1, x') = foldExpr t0 x
+        (t2, tag, body) = foldUnder t1 f
+     in (t2, Let x' (rebind tag body))
+  Lambda f ->
+    let (t1, tag, body) = foldUnder t0 f
+     in (t1, Lambda (rebind tag body))
+  Apply f x ->
+    let (t1, f') = foldExpr t0 f
+        (t2, x') = foldExpr t1 x
+     in (t2, Apply f' x')
+  Show x ->
+    let (t1, x') = foldExpr t0 x
+     in (t1, foldShow x')
+  If c t e ->
+    let (t1, c') = foldExpr t0 c
+     in case c' of
+          Literal (ValueBool True) -> foldExpr t1 t
+          Literal (ValueBool False) -> foldExpr t1 e
+          _ ->
+            let (t2, t') = foldExpr t1 t
+                (t3, e') = foldExpr t2 e
+             in (t3, If c' t' e')
+  Some x -> fmap Some (foldExpr t0 x)
+  OptionCase o n s ->
+    let (t1, o') = foldExpr t0 o
+     in case peelOption o' of
+          Just Nothing -> foldExpr t1 n
+          Just (Just x) ->
+            let (t2, tag, body) = foldUnder t1 s
+             in elimLetFrom t2 x tag body
+          Nothing ->
+            let (t2, n') = foldExpr t1 n
+                (t3, tag, body) = foldUnder t2 s
+             in (t3, OptionCase o' n' (rebind tag body))
+  Ok x -> fmap Ok (foldExpr t0 x)
+  Err x -> fmap Err (foldExpr t0 x)
+  ResultCase r okF errF ->
+    let (t1, r') = foldExpr t0 r
+     in case peelResult r' of
+          Just (Left x) ->
+            let (t2, tagOk, okBody) = foldUnder t1 okF
+             in elimLetFrom t2 x tagOk okBody
+          Just (Right x) ->
+            let (t2, tagErr, errBody) = foldUnder t1 errF
+             in elimLetFrom t2 x tagErr errBody
+          Nothing ->
+            let (t2, tagOk, okBody) = foldUnder t1 okF
+                (t3, tagErr, errBody) = foldUnder t2 errF
+             in (t3, ResultCase r' (rebind tagOk okBody) (rebind tagErr errBody))
+  UnsafeEffectExpr e ->
+    let (t1, e') = foldEffect t0 e
+     in case e' of
+          Lift x -> (t1, x)
+          _ -> (t1, UnsafeEffectExpr e')
+  ExprFFI n args -> fmap (ExprFFI n) (foldRec t0 args)
+  ExprProp x n ->
+    let (t1, x') = foldExpr t0 x
+     in (t1, ExprProp x' n)
+  ExprMethod x n args ->
+    let (t1, x') = foldExpr t0 x
+        (t2, args') = foldRec t1 args
+     in (t2, ExprMethod x' n args')
+  ExprMethodCallback x n f ->
+    let (t1, x') = foldExpr t0 x
+        (t2, tag, body) = foldUnder t1 f
+     in (t2, ExprMethodCallback x' n (rebind tag body))
+  ExprIndex arr idx ->
+    let (t1, arr') = foldExpr t0 arr
+        (t2, idx') = foldExpr t1 idx
+     in (t2, foldIndex arr' idx')
+  MathUnary n x ->
+    let (t1, x') = foldExpr t0 x
+     in (t1, foldMathUnary n x')
+  MathBinary n x y ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+     in (t2, foldMathBinary n x' y')
+  UnsafeNullable x -> fmap UnsafeNullable (foldExpr t0 x)
+  where
+    bin f k x y =
+      let (t1, x') = foldExpr t0 x
+          (t2, y') = foldExpr t1 y
+       in (t2, foldNum2 f k x' y')
+    un f k x =
+      let (t1, x') = foldExpr t0 x
+       in (t1, foldNum1 f k x')
+
+foldEffect :: Int -> Effect (Const Int) u -> (Int, Effect (Const Int) u)
+foldEffect t0 = \case
+  Lift x ->
+    let (t1, x') = foldExpr t0 x
+     in case x' of
+          UnsafeEffectExpr e -> (t1, e)
+          _ -> (t1, Lift x')
+  FFI n args -> fmap (FFI n) (foldRec t0 args)
+  UnsafeObject o -> (t0, UnsafeObject o)
+  UnsafeObjectGet x s ->
+    let (t1, x') = foldEffect t0 x
+     in (t1, UnsafeObjectGet x' s)
+  UnsafeObjectAssign x y ->
+    let (t1, x') = foldEffect t0 x
+        (t2, y') = foldEffect t1 y
+     in (t2, UnsafeObjectAssign x' y')
+  ObjectFFI x y ->
+    let (t1, x') = foldEffect t0 x
+        (t2, y') = foldEffect t1 y
+     in (t2, ObjectFFI x' y')
+  ForEach xs f ->
+    let (t1, xs') = foldExpr t0 xs
+        (t2, tag, body) = foldUnderE t1 f
+     in (t2, ForEach xs' (rebindE tag body))
+  Bind x f ->
+    let (t1, x') = foldEffect t0 x
+        (t2, tag, body) = foldUnderE t1 f
+     in (t2, Bind x' (rebindE tag body))
+  UnEffectful x -> fmap UnEffectful (foldExpr t0 x)
+  LambdaE f ->
+    let (t1, tag, body) = foldUnderE t0 f
+     in (t1, LambdaE (rebindE tag body))
+  ApplyE f x ->
+    let (t1, f') = foldEffect t0 f
+        (t2, x') = foldEffect t1 x
+     in (t2, ApplyE f' x')
+  IfE c t e ->
+    let (t1, c') = foldExpr t0 c
+     in case c' of
+          Literal (ValueBool True) -> foldEffect t1 t
+          Literal (ValueBool False) -> foldEffect t1 e
+          _ ->
+            let (t2, t') = foldEffect t1 t
+                (t3, e') = foldEffect t2 e
+             in (t3, IfE c' t' e')
+  While c b ->
+    let (t1, c') = foldExpr t0 c
+     in case c' of
+          Literal (ValueBool False) -> (t1, Lift (Literal ValueUnit))
+          _ ->
+            let (t2, b') = foldEffect t1 b
+             in (t2, While c' b')
+
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
 -- becomes `getEl().foo()`); when never, keep it as a statement.
@@ -601,7 +1333,7 @@ bindEffectCode s0 x f =
 effectfulAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Effect f u)
   -> Doc
-effectfulAST = renderCode . snd . effectfulAST' startCG
+effectfulAST e = renderCode . snd . effectfulAST' startCG $ optimizeEffect e
 
 effectfulAST' :: forall v. CG -> Effect (Const Int) v -> (CG, Code)
 effectfulAST' !s0 = \case
@@ -687,7 +1419,7 @@ effectfulAST' !s0 = \case
 pureAST :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Doc
-pureAST = renderCode . snd . pureAST' startCG
+pureAST e = renderCode . snd . pureAST' startCG $ optimize e
 
 pureAST' :: forall v. CG -> Expr (Const Int) v
    -> (CG, Code)

@@ -6,7 +6,7 @@ The goals are as follows:
 - Have an easy to use ffi
 - Compile to idiomatic JavaScript
 
-Codegen inlines single-use bindings (so you don't get `const n0 = x; n0` everywhere). For a pretty snippet, compile with `readableConfig`. For production, `defaultCompilerConfig` wraps an IIFE and minifies. The default backend is [esbuild](https://esbuild.github.io) — much faster than Google Closure Compiler, and the right default in 2026. Closure is still available if you want its `ADVANCED` whole-program renaming (you'll need externs for DOM/FFI). Terser is there too.
+Codegen constant-folds literals and drops dead pure bindings, then inlines single-use bindings (so you don't get `const n0 = x; n0` everywhere). For a pretty snippet, compile with `readableConfig`. For production, `defaultCompilerConfig` wraps an IIFE and minifies. The default backend is [esbuild](https://esbuild.github.io) — much faster than Google Closure Compiler, and the right default in 2026. Closure is still available if you want its `ADVANCED` whole-program renaming (you'll need externs for DOM/FFI). Terser is there too.
 
 ```haskell
 import qualified Data.Text.IO as TIO
