@@ -5,7 +5,6 @@ version:
   0.1
 synopsis:
   Safe Javascript EDSL
--- description:
 homepage:
   https://github.com/goolord/jshark
 bug-reports:
@@ -40,25 +39,27 @@ library
   exposed-modules:
     JShark
     JShark.Api
+    JShark.Array
+    JShark.Console
+    JShark.Json
     JShark.Math
+    JShark.Promise
+    JShark.Storage
+    JShark.String
+    JShark.Timers
     JShark.Types
     JShark.Ajax
     JShark.Object
     JShark.Dom
+    JShark.Rec
   other-modules:
     JShark.Example
   build-depends:
-    , base >= 4.10.1 && < 4.13
-    , containers >= 0.5 && < 0.7
-    , free >= 5 && < 6
-    , integer-gmp >= 1 && < 1.1
-    , semirings >= 0.3 && < 0.4
-    , transformers >= 0.5 && < 0.6
-    , text >= 1.2 && < 1.3
-    , quantification
-    , pretty
-    , http-types
-    , bytestring
+    , base >= 4.14 && < 5
+    , text >= 1.2 && < 2.2
+    , pretty >= 1.1 && < 1.2
+    , http-types >= 0.12 && < 0.13
+    , bytestring >= 0.10 && < 0.13
   hs-source-dirs:
     src
   default-language:
@@ -66,3 +67,21 @@ library
   ghc-options:
     -Wall
     -O2
+
+test-suite jshark-test
+  type:
+    exitcode-stdio-1.0
+  main-is:
+    Main.hs
+  hs-source-dirs:
+    test
+  build-depends:
+    , base
+    , jshark
+    , tasty
+    , tasty-hunit
+    , text
+  default-language:
+    Haskell2010
+  ghc-options:
+    -Wall
