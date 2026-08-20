@@ -31,6 +31,9 @@
   Also dropped several unused dependencies
   (`containers`, `free`, `integer-gmp`, `semirings`, `transformers`).
 * Added a real test suite (`cabal test`) using `tasty`/`tasty-hunit`.
+  When `bun` is on `PATH`, generated JS is `JSON.stringify`'d and checked
+  against `evaluate`; otherwise the bun-on-PATH check fails and the rest
+  of that group is skipped.
 * Completed the reference interpreter (`evaluate`): `Show`, `Eq`, `NEq`,
   `GTh`, `LTh`, `GTEq`, and `LTEq` no longer throw `undefined`.
 * Added control flow: a ternary conditional (`If`/`if_`) for pure

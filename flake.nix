@@ -51,7 +51,7 @@
         in {
           default = pkgs.haskellPackages.shellFor {
             packages = p: [ p.jshark ];
-            nativeBuildInputs = [ pkgs.cabal-install pkgs.esbuild ];
+            nativeBuildInputs = [ pkgs.cabal-install pkgs.esbuild pkgs.bun ];
           };
         });
     };

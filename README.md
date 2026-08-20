@@ -21,11 +21,12 @@ main = do
   TIO.putStrLn minified
 ```
 
-`compilePure readableConfig` / `compileEffect readableConfig` emit a human-readable snippet: single-use lets and effect binds are inlined, nothing is wrapped in an IIFE, and minifiers are skipped (`OutputStyle` `Readable` forces `Passthrough`). `Minified` (the default) wraps an IIFE so a minifier cannot dead-code-eliminate the result, then runs the configured backend. `compileJS` does not wrap: a bare expression can minify to empty. Results are cached in memory by default (`MemoryCache`, capped); pass `DiskCache dir` or `NoCache` via `compileWith`. Named backends (`compileEsbuild` etc.) throw if the tool is missing; `defaultCompilerConfig` (`Auto`) logs to stderr and returns the unminified source. Use `tryCompileWith` for an `Either`. `nix develop` puts `esbuild` on `PATH`.
+`compilePure readableConfig` / `compileEffect readableConfig` emit a human-readable snippet: single-use lets and effect binds are inlined, nothing is wrapped in an IIFE, and minifiers are skipped (`OutputStyle` `Readable` forces `Passthrough`). `Minified` (the default) wraps an IIFE so a minifier cannot dead-code-eliminate the result, then runs the configured backend. `compileJS` does not wrap: a bare expression can minify to empty. Results are cached in memory by default (`MemoryCache`, capped); pass `DiskCache dir` or `NoCache` via `compileWith`. Named backends (`compileEsbuild` etc.) throw if the tool is missing; `defaultCompilerConfig` (`Auto`) logs to stderr and returns the unminified source. Use `tryCompileWith` for an `Either`. `nix develop` puts `esbuild` and `bun` on `PATH`.
 
 ### Building
 
 JShark builds with a modern GHC. just `cabal build` / `cabal test`.
+Tests that check generated JS against the reference interpreter need [bun](https://bun.sh) on `PATH`. If it is missing, the `bun is on PATH` check fails and the rest of that group is skipped. `nix develop` puts `esbuild` and `bun` on `PATH`.
 
 ### Status
 

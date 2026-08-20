@@ -1,11 +1,15 @@
 {-# language DataKinds #-}
 {-# language GADTs #-}
+{-# language LambdaCase #-}
 {-# language OverloadedStrings #-}
 {-# language RankNTypes #-}
 {-# language TypeApplications #-}
 
 module Main (main) where
 
+import Control.Exception (IOException, bracket, catch)
+import Data.Char (isSpace)
+import Data.List (dropWhileEnd, intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
@@ -17,9 +21,13 @@ import System.Directory
   , findExecutable
   , getTemporaryDirectory
   , listDirectory
+  , removeFile
   , removePathForcibly
   )
+import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.IO (hClose, hPutStr, openTempFile)
+import System.Process (readProcessWithExitCode)
 import Test.Tasty
 import Test.Tasty.HUnit
 import qualified JShark.Array as Array
@@ -40,6 +48,7 @@ tests = testGroup "jshark"
   , controlFlowTests
   , stdlibTests
   , compilerTests
+  , bunEvalTests
   ]
 
 evaluatorTests :: TestTree
@@ -315,3 +324,152 @@ compilerTests = testGroup "compiler"
       out <- compileWith cfg src
       out @?= src
   ]
+
+-- Run generated JS with bun and compare JSON.stringify of the result to
+-- `evaluate`. If bun is missing, the PATH check fails and the eval cases
+-- are skipped (not reported as passing).
+bunEvalTests :: TestTree
+bunEvalTests =
+  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+    testGroup "bun agrees with evaluate"
+      [ testCase "bun is on PATH" $ do
+          m <- getBun
+          case m of
+            Just _ -> pure ()
+            Nothing ->
+              assertFailure "bun not found on PATH; install https://bun.sh"
+      , after AllSucceed "bun is on PATH" $
+          testGroup "eval"
+            [ bunCase getBun "addition" (plus (number 1) (number 2))
+            , bunCase getBun "subtraction" ((number 5 :: Expr f 'Number) - number 2)
+            , bunCase getBun "multiplication and division"
+                ((number 6 :: Expr f 'Number) * number 7 / number 2)
+            , bunCase getBun "abs and negate" (abs (negate (number 5) :: Expr f 'Number))
+            , bunCase getBun "let used twice" (let_ (number 21) (\x -> x + x))
+            , bunCase getBun "nested single-use lets"
+                (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x)))
+            , bunCase getBun "lambda application"
+                (apply (lambda (\x -> x * 2)) (number 21))
+            , bunCase getBun "if_ true" (if_ (bool True) (number 1) (number 2))
+            , bunCase getBun "if_ false" (if_ (bool False) (number 1) (number 2))
+            , bunCase getBun "&& short-circuit false"
+                (And (bool False) (bool True))
+            , bunCase getBun "|| short-circuit true"
+                (Or (bool True) (bool False))
+            , bunCase getBun "let on && LHS" (let_ (bool True) (\x -> And x (bool False)))
+            , bunCase getBun "let on && RHS" (let_ (bool True) (\x -> And (bool False) x))
+            , bunCase getBun "let in if_ branch"
+                (let_ (number 5) (\x -> if_ (bool True) x (number 0)))
+            , bunCase getBun "optionCase Some"
+                (optionCase (JShark.Api.some (number 5) :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1))
+            , bunCase getBun "optionCase None"
+                (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1))
+            , bunCase getBun "some is the wrapped value"
+                (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
+            , bunCase getBun "none is null" (none :: Expr f ('Option 'Number))
+            , bunCase getBun "resultCase Ok"
+                (resultCase (ok (number 5) :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1)))
+            , bunCase getBun "resultCase Err"
+                (resultCase (err (string "bad") :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1)))
+            , bunCase getBun "ok is a tagged pair"
+                (ok (number 5) :: Expr f ('Result 'Number 'String))
+            , bunCase getBun "err is a tagged pair"
+                (err (string "bad") :: Expr f ('Result 'Number 'String))
+            , bunCase getBun "string concat" (Concat (string "a") (string "b"))
+            , bunCase getBun "Show number" (Show (number 3))
+            , bunCase getBun "Eq numbers" (Eq (number 1) (number 1))
+            , bunCase getBun "NEq numbers" (NEq (number 1) (number 2))
+            , bunCase getBun "array index" (Array.index numArray (number 1))
+            , bunCase getBun "Math.sqrt" (Math.sqrt (number 9))
+            , bunCase getBun "Math.round half toward +Infinity" (Math.round (number 2.5))
+            , bunCase getBun "Math.round negative half" (Math.round (number (-2.5)))
+            , bunCase getBun "Math.pow" (Math.pow (number 2) (number 10))
+            , bunCase getBun "Math.sin 0" (Math.sin (number 0))
+            ]
+      ]
+
+bunCase :: IO (Maybe FilePath) -> String -> (forall f. Expr f u) -> TestTree
+bunCase getBun name e = testCase name $ do
+  m <- getBun
+  case m of
+    Nothing -> assertFailure "bun not found on PATH"
+    Just bun -> assertBunAgrees bun e
+
+assertBunAgrees :: FilePath -> (forall f. Expr f u) -> IO ()
+assertBunAgrees bun e = do
+  let expected = encodeJSValue (evaluate e)
+      program = renderJS (pureProgram e)
+  got <- bunJSONStringify bun program
+  assertEqual
+    ("evaluate JSON: " <> expected <> "\nbun JSON: " <> got <> "\njs:\n" <> program)
+    expected
+    got
+
+-- Evaluate a JS expression (typically a `pureProgram` IIFE) with bun and
+-- return JSON.stringify of its result, without a trailing newline.
+-- `JSON.stringify(undefined)` is `undefined`; we print the word `undefined`
+-- so unit values have a stable encoding.
+bunJSONStringify :: FilePath -> String -> IO String
+bunJSONStringify bun js = do
+  tmp <- getTemporaryDirectory
+  let script =
+        unlines
+          [ "const $jshark = (" ++ js ++ ");"
+          , "const $json = JSON.stringify($jshark);"
+          , "console.log($json === undefined ? \"undefined\" : $json);"
+          ]
+  bracket
+    (openTempFile tmp "jshark-bun.js")
+    (\(path, h) -> do
+        hClose h `catch` ignoreIO
+        removeFile path `catch` ignoreIO)
+    $ \(path, h) -> do
+      hPutStr h script
+      hClose h
+      (ex, out, errOut) <- readProcessWithExitCode bun [path] ""
+      case ex of
+        ExitSuccess -> pure (dropWhileEnd isSpace out)
+        ExitFailure n ->
+          assertFailure $
+            "bun exited " <> show n
+              <> "\nstderr:\n" <> errOut
+              <> "\njs:\n" <> js
+
+-- Encoding of the JS runtime representation `evaluate` uses, matching
+-- `JSON.stringify` (non-finite numbers become null; Option Some is the
+-- payload; Result is a [okFlag, payload] pair).
+encodeJSValue :: Value u -> String
+encodeJSValue = \case
+  ValueNumber d -> encodeJSNumber d
+  ValueBool True -> "true"
+  ValueBool False -> "false"
+  ValueString s -> encodeJSString (T.unpack s)
+  ValueUnit -> "undefined"
+  ValueArray xs -> "[" ++ intercalate "," (map encodeJSValue xs) ++ "]"
+  ValueOption Nothing -> "null"
+  ValueOption (Just x) -> encodeJSValue x
+  ValueResult (Left x) -> "[true," ++ encodeJSValue x ++ "]"
+  ValueResult (Right x) -> "[false," ++ encodeJSValue x ++ "]"
+  ValueFunction _ -> error "encodeJSValue: functions are not JSON"
+
+-- JSON.stringify of a finite number; NaN/Infinity stringify to null.
+encodeJSNumber :: Double -> String
+encodeJSNumber d
+  | isNaN d || isInfinite d = "null"
+  | isInt = show (truncate d :: Integer)
+  | otherwise = show d
+  where
+    isInt = d == fromInteger (truncate d)
+
+encodeJSString :: String -> String
+encodeJSString s = '"' : concatMap esc s ++ "\""
+  where
+    esc '"' = "\\\""
+    esc '\\' = "\\\\"
+    esc '\n' = "\\n"
+    esc '\r' = "\\r"
+    esc '\t' = "\\t"
+    esc c = [c]
+
+ignoreIO :: IOException -> IO ()
+ignoreIO _ = pure ()

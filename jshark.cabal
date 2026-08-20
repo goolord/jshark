@@ -88,6 +88,7 @@ test-suite jshark-test
     , text
     , directory
     , filepath
+    , process
   default-language:
     Haskell2010
   ghc-options:
