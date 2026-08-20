@@ -6,7 +6,20 @@ The goals are as follows:
 - Have an easy to use ffi
 - Compile to idiomatic JavaScript
 
-ATM JShark is usable, but I would recommend running the output through [Google Closure Compiler](https://github.com/google/closure-compiler) in order to produce idiomatic JavaScript
+Generated JS is a bit verbose (`const n0 = ...`). Run it through `JShark.Compiler` to minify. The default backend is [esbuild](https://esbuild.github.io) — much faster than Google Closure Compiler, and the right default in 2026. Closure is still available if you want its `ADVANCED` whole-program renaming (you'll need externs for DOM/FFI). Terser is there too.
+
+```haskell
+import qualified Data.Text.IO as TIO
+import JShark.Api (number, plus)
+import JShark.Compiler
+
+main :: IO ()
+main = do
+  js <- compilePure defaultCompilerConfig (plus (number 1) (number 2))
+  TIO.putStrLn js
+```
+
+`compileEffect` / `compilePure` wrap the snippet in an IIFE so a minifier cannot dead-code-eliminate the result. `compileJS` does not wrap: a bare expression can minify to empty. Results are cached in memory by default (`MemoryCache`, capped); pass `DiskCache dir` or `NoCache` via `compileWith`. Named backends (`compileEsbuild` etc.) throw if the tool is missing; `defaultCompilerConfig` (`Auto`) logs to stderr and returns the unminified source. Use `tryCompileWith` for an `Either`. `nix develop` puts `esbuild` on `PATH`.
 
 ### Building
 

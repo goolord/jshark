@@ -5,6 +5,7 @@
 {-# language OverloadedStrings #-}
 {-# language PolyKinds #-}
 {-# language RankNTypes #-}
+{-# language ScopedTypeVariables #-}
 {-# language TypeOperators #-}
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
@@ -15,8 +16,11 @@ module JShark
     -- Evaluation
   , evaluate
   , evaluateNumber
+  , evaluateCached
   , pureAST
   , effectfulAST
+  , pureProgram
+  , effectfulProgram
   , printComputation
   , renderJS
   ) where
@@ -25,10 +29,18 @@ module JShark
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
 import Data.Functor.Const (Const(..))
+import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as IM
 import Data.Kind
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
+import GHC.Exts (Any)
 import Numeric (showFFloat)
+import System.IO.Unsafe (unsafePerformIO)
+import System.Mem.StableName (StableName, eqStableName, hashStableName, makeStableName)
 import Text.PrettyPrint ((<+>), Doc, ($$))
+import Unsafe.Coerce (unsafeCoerce)
 import JShark.Rec
 import JShark.Types
 import qualified Data.Text as T
@@ -131,45 +143,48 @@ mathBinaryFn name = case name of
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
 
+-- | Pure reference interpreter. Shared Haskell heap nodes are walked
+-- once per occurrence (no memo table). Use 'evaluateCached' when host-level
+-- sharing should be observed.
 evaluate :: forall (u :: Universe).
      (forall (f :: Universe -> Type). Expr f u)
   -> Value u
-evaluate e0 = go e0 where
-  go :: forall v. Expr Value v -> Value v
-  go = \case
+evaluate e0 = eval e0 where
+  eval :: forall v. Expr Value v -> Value v
+  eval = \case
     Literal v -> v
-    Plus x y -> ValueNumber (unNumber (go x) + unNumber (go y))
-    Times x y -> ValueNumber (unNumber (go x) * unNumber (go y))
-    Minus x y -> ValueNumber (unNumber (go x) - unNumber (go y))
-    Abs x -> ValueNumber (abs (unNumber (go x)))
-    Sign x -> ValueNumber (signum (unNumber (go x)))
-    Negate x -> ValueNumber (negate (unNumber (go x)))
-    FracDiv x y -> ValueNumber (unNumber (go x) / unNumber (go y))
+    Plus x y -> ValueNumber (unNumber (eval x) + unNumber (eval y))
+    Times x y -> ValueNumber (unNumber (eval x) * unNumber (eval y))
+    Minus x y -> ValueNumber (unNumber (eval x) - unNumber (eval y))
+    Abs x -> ValueNumber (abs (unNumber (eval x)))
+    Sign x -> ValueNumber (signum (unNumber (eval x)))
+    Negate x -> ValueNumber (negate (unNumber (eval x)))
+    FracDiv x y -> ValueNumber (unNumber (eval x) / unNumber (eval y))
     Var x -> x
-    Apply g x -> unFunction (go g) (go x)
-    Lambda g -> ValueFunction (go . g)
-    Concat x y -> ValueString (unString (go x) <> unString (go y))
-    Show x -> ValueString (jsShow (go x))
-    And x y -> ValueBool (unBool (go x) && unBool (go y))
-    Or x y -> ValueBool (unBool (go x) || unBool (go y))
-    Eq x y -> ValueBool (valueEq (go x) (go y))
-    NEq x y -> ValueBool (not (valueEq (go x) (go y)))
-    GTh x y -> ValueBool (valueCompare (go x) (go y) == GT)
-    LTh x y -> ValueBool (valueCompare (go x) (go y) == LT)
-    GTEq x y -> ValueBool (valueCompare (go x) (go y) /= LT)
-    LTEq x y -> ValueBool (valueCompare (go x) (go y) /= GT)
-    Let x g -> go (g (go x))
-    If c t e -> if unBool (go c) then go t else go e
-    Some x -> ValueOption (Just (go x))
+    Apply g x -> unFunction (eval g) (eval x)
+    Lambda g -> ValueFunction (eval . g)
+    Concat x y -> ValueString (unString (eval x) <> unString (eval y))
+    Show x -> ValueString (jsShow (eval x))
+    And x y -> ValueBool (unBool (eval x) && unBool (eval y))
+    Or x y -> ValueBool (unBool (eval x) || unBool (eval y))
+    Eq x y -> ValueBool (valueEq (eval x) (eval y))
+    NEq x y -> ValueBool (not (valueEq (eval x) (eval y)))
+    GTh x y -> ValueBool (valueCompare (eval x) (eval y) == GT)
+    LTh x y -> ValueBool (valueCompare (eval x) (eval y) == LT)
+    GTEq x y -> ValueBool (valueCompare (eval x) (eval y) /= LT)
+    LTEq x y -> ValueBool (valueCompare (eval x) (eval y) /= GT)
+    Let x g -> eval (g (eval x))
+    If c t e -> if unBool (eval c) then eval t else eval e
+    Some x -> ValueOption (Just (eval x))
     None -> ValueOption Nothing
-    OptionCase opt none' someF -> case go opt of
-      ValueOption Nothing -> go none'
-      ValueOption (Just x) -> go (someF x)
-    Ok x -> ValueResult (Left (go x))
-    Err y -> ValueResult (Right (go y))
-    ResultCase r okF errF -> case go r of
-      ValueResult (Left x) -> go (okF x)
-      ValueResult (Right y) -> go (errF y)
+    OptionCase opt none' someF -> case eval opt of
+      ValueOption Nothing -> eval none'
+      ValueOption (Just x) -> eval (someF x)
+    Ok x -> ValueResult (Left (eval x))
+    Err y -> ValueResult (Right (eval y))
+    ResultCase r okF errF -> case eval r of
+      ValueResult (Left x) -> eval (okF x)
+      ValueResult (Right y) -> eval (errF y)
     UnsafeEffectExpr _ ->
       error "evaluate: cannot evaluate an embedded Effect (UnsafeEffectExpr)"
     ExprFFI name _ ->
@@ -180,7 +195,7 @@ evaluate e0 = go e0 where
       error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
     ExprMethodCallback _ name _ ->
       error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
-    ExprIndex xs i -> case go xs of
+    ExprIndex xs i -> case eval xs of
       ValueArray vs ->
         -- JS array indexing truncates the index toward zero (as part of
         -- ToIntegerOrInfinity) rather than rounding, and returns @undefined@
@@ -188,14 +203,137 @@ evaluate e0 = go e0 where
         -- @undefined@ generically here (there's no 'Value' inhabitant for
         -- an arbitrary universe @u@), so out-of-bounds access is a hard
         -- error in the reference interpreter.
-        let idx = truncate (unNumber (go i)) :: Int
+        let idx = truncate (unNumber (eval i)) :: Int
          in if idx >= 0 && idx < length vs
               then vs !! idx
               else error "evaluate: array index out of bounds"
-    MathUnary name x -> ValueNumber (mathUnaryFn name (unNumber (go x)))
-    MathBinary name x y -> ValueNumber (mathBinaryFn name (unNumber (go x)) (unNumber (go y)))
+    MathUnary name x -> ValueNumber (mathUnaryFn name (unNumber (eval x)))
+    MathBinary name x y -> ValueNumber (mathBinaryFn name (unNumber (eval x)) (unNumber (eval y)))
     UnsafeNullable _ ->
       error "evaluate: cannot evaluate UnsafeNullable (an FFI-derived Option)"
+
+-- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
+-- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
+-- interpreted once. Object-language 'Let' already preserves sharing on its
+-- own; this cache is what makes the two coincide.
+type EvalCache = IORef (IntMap [(StableName (), Any)])
+
+-- | Like 'evaluate', but memoizes shared heap nodes via 'StableName'.
+-- In 'IO' because observable sharing is inherently effectful.
+evaluateCached :: forall (u :: Universe).
+     (forall (f :: Universe -> Type). Expr f u)
+  -> IO (Value u)
+evaluateCached e0 = do
+  cache <- newIORef IM.empty
+  go cache e0
+
+go :: forall v. EvalCache -> Expr Value v -> IO (Value v)
+go cache e = do
+  sn <- makeStableName $! e
+  m <- readIORef cache
+  case lookupCache sn (IM.lookup (hashStableName sn) m) of
+    Just v -> pure v
+    Nothing -> do
+      v <- goNode cache e
+      modifyIORef' cache
+        (IM.insertWith (++) (hashStableName sn) [(snToUnit sn, toAny v)])
+      pure v
+
+lookupCache :: StableName (Expr Value v) -> Maybe [(StableName (), Any)] -> Maybe (Value v)
+lookupCache sn ments = do
+  entries <- ments
+  toAnyVal <- listToMaybe [ a | (sn', a) <- entries, eqStableName (snToUnit sn) sn' ]
+  pure (fromAny toAnyVal)
+
+snToUnit :: StableName a -> StableName ()
+snToUnit = unsafeCoerce
+
+toAny :: a -> Any
+toAny = unsafeCoerce
+
+fromAny :: Any -> a
+fromAny = unsafeCoerce
+
+-- Named and NOINLINE so GHC cannot CSE applications at different 'v'.
+applyCached :: EvalCache -> (Value u -> Expr Value v) -> Value u -> Value v
+applyCached cache g v = unsafePerformIO (go cache (g v))
+{-# NOINLINE applyCached #-}
+
+goNode :: forall v. EvalCache -> Expr Value v -> IO (Value v)
+goNode cache = \case
+  Literal v -> pure v
+  Plus x y -> num2 (+) x y
+  Times x y -> num2 (*) x y
+  Minus x y -> num2 (-) x y
+  Abs x -> num1 abs x
+  Sign x -> num1 signum x
+  Negate x -> num1 negate x
+  FracDiv x y -> num2 (/) x y
+  Var x -> pure x
+  Apply g x -> unFunction <$> go cache g <*> go cache x
+  Lambda g -> pure (ValueFunction (applyCached cache g))
+  Concat x y -> do
+    a <- go cache x
+    b <- go cache y
+    pure (ValueString (unString a <> unString b))
+  Show x -> ValueString . jsShow <$> go cache x
+  And x y -> do
+    a <- go cache x
+    if unBool a then go cache y else pure (ValueBool False)
+  Or x y -> do
+    a <- go cache x
+    if unBool a then pure (ValueBool True) else go cache y
+  Eq x y -> ValueBool <$> (valueEq <$> go cache x <*> go cache y)
+  NEq x y -> ValueBool . not <$> (valueEq <$> go cache x <*> go cache y)
+  GTh x y -> ValueBool . (== GT) <$> (valueCompare <$> go cache x <*> go cache y)
+  LTh x y -> ValueBool . (== LT) <$> (valueCompare <$> go cache x <*> go cache y)
+  GTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> go cache x <*> go cache y)
+  LTEq x y -> ValueBool . (/= GT) <$> (valueCompare <$> go cache x <*> go cache y)
+  Let x g -> go cache x >>= go cache . g
+  If c t e -> do
+    cv <- go cache c
+    if unBool cv then go cache t else go cache e
+  Some x -> ValueOption . Just <$> go cache x
+  None -> pure (ValueOption Nothing)
+  OptionCase opt none' someF -> do
+    ov <- go cache opt
+    case ov of
+      ValueOption Nothing -> go cache none'
+      ValueOption (Just x) -> go cache (someF x)
+  Ok x -> ValueResult . Left <$> go cache x
+  Err y -> ValueResult . Right <$> go cache y
+  ResultCase r okF errF -> do
+    rv <- go cache r
+    case rv of
+      ValueResult (Left x) -> go cache (okF x)
+      ValueResult (Right y) -> go cache (errF y)
+  UnsafeEffectExpr _ ->
+    error "evaluate: cannot evaluate an embedded Effect (UnsafeEffectExpr)"
+  ExprFFI name _ ->
+    error ("evaluate: cannot evaluate a foreign function call: " ++ T.unpack name)
+  ExprProp _ name ->
+    error ("evaluate: cannot evaluate a foreign property access: " ++ T.unpack name)
+  ExprMethod _ name _ ->
+    error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
+  ExprMethodCallback _ name _ ->
+    error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
+  ExprIndex xs i -> do
+    arr <- go cache xs
+    iv <- go cache i
+    case arr of
+      ValueArray vs ->
+        let idx = truncate (unNumber iv) :: Int
+         in if idx >= 0 && idx < length vs
+              then pure (vs !! idx)
+              else error "evaluate: array index out of bounds"
+  MathUnary name x -> ValueNumber . mathUnaryFn name . unNumber <$> go cache x
+  MathBinary name x y ->
+    ValueNumber <$> (mathBinaryFn name <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
+  UnsafeNullable _ ->
+    error "evaluate: cannot evaluate UnsafeNullable (an FFI-derived Option)"
+  where
+    num1 f x = ValueNumber . f . unNumber <$> go cache x
+    num2 f x y = ValueNumber <$> (f <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
@@ -209,6 +347,25 @@ renderJS = P.renderStyle P.style
 
 renderCode :: Code -> Doc
 renderCode (Code a b) = a $$ b
+
+-- | Wrap generated decls + result in an IIFE so a minifier treats the
+-- result as live (plain expression statements get DCE'd).
+renderIIFE :: Code -> Doc
+renderIIFE (Code decls ref) =
+  let body = if P.isEmpty ref then decls else decls $$ (("return" <+> ref) <> P.semi)
+   in "(() => {" $$ P.nest 2 body $$ "})()"
+
+-- | Pure expression compiled to a self-contained JS program (IIFE).
+pureProgram :: forall (u :: Universe).
+     (forall (f :: Universe -> Type). Expr f u)
+  -> Doc
+pureProgram = renderIIFE . snd . pureAST' 0
+
+-- | Effectful computation compiled to a self-contained JS program (IIFE).
+effectfulProgram :: forall (u :: Universe).
+     (forall (f :: Universe -> Type). Effect f u)
+  -> Doc
+effectfulProgram = renderIIFE . snd . effectfulAST' 0
 
 partitionCode :: [Code] -> ([Doc], [Doc])
 partitionCode ((Code a b):cs) = let (as,bs) = partitionCode cs in ((a:as),(b:bs))

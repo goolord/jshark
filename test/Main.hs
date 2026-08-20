@@ -1,13 +1,25 @@
 {-# language DataKinds #-}
+{-# language GADTs #-}
 {-# language OverloadedStrings #-}
 {-# language RankNTypes #-}
 {-# language TypeApplications #-}
 
 module Main (main) where
 
+import Data.Text (Text)
+import qualified Data.Text as T
 import JShark
 import JShark.Api
+import JShark.Compiler
 import JShark.Types
+import System.Directory
+  ( createDirectoryIfMissing
+  , findExecutable
+  , getTemporaryDirectory
+  , listDirectory
+  , removePathForcibly
+  )
+import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
 import qualified JShark.Array as Array
@@ -27,6 +39,7 @@ tests = testGroup "jshark"
   , codegenTests
   , controlFlowTests
   , stdlibTests
+  , compilerTests
   ]
 
 evaluatorTests :: TestTree
@@ -43,6 +56,14 @@ evaluatorTests = testGroup "evaluate"
       evaluateNumber (let_ (number 21) (\x -> x + x)) @?= 42
   , testCase "lambda application" $
       evaluateNumber (apply (lambda (\x -> x * 2)) (number 21)) @?= 42
+  , testCase "evaluateCached agrees with evaluate on a shared heap node" $ do
+      let x = plus (number 21) (number 21)
+          e = x + x
+      cached <- evaluateCached e
+      case cached of
+        ValueNumber n -> do
+          n @?= evaluateNumber e
+          n @?= 84
   ]
 
 codegenTests :: TestTree
@@ -55,6 +76,9 @@ codegenTests = testGroup "codegen"
   , testCase "lambda application renders as an IIFE-style call" $
       renderJS (pureAST (apply (lambda (\x -> x * 2)) (number 21)))
         @?= "const n1 = function (n0) {return (n0 * 2.0)};\nn1(21.0)"
+  , testCase "pureProgram wraps decls and the result in a JS IIFE" $
+      renderJS (pureProgram (let_ (number 5) (\x -> x + x)))
+        @?= "(() => {\n  const n0 = 5.0;\n  return n0 + n0;\n})()"
   , testCase "effectful console.log FFI call" $
       renderJS (effectfulAST (fromSyntax (consoleLog (string "hi" :: Expr f 'String) *> toSyntax noOp)))
         @?= "const n0 = console.log(\"hi\");\nn0"
@@ -137,4 +161,106 @@ stdlibTests = testGroup "stdlib"
         v <- Storage.getItem Storage.localStorage (string "k")
         toSyntax (expr (optionCase v (string "missing") (\x -> x))))))
         @?= "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\nconst n2 = (n1 === null ? \"missing\" : n1);\nn2"
+  ]
+
+compilerTests :: TestTree
+compilerTests = testGroup "compiler"
+  [ testCase "passthrough is identity" $ do
+      clearCompilerCache
+      let src = "const x = 1 + 2;" :: Text
+      out <- compileWith passthroughConfig src
+      out @?= src
+  , testCase "memory cache returns the same payload" $ do
+      clearCompilerCache
+      let cfg = CompilerConfig Passthrough MemoryCache False
+          src = "const x = 1 + 2;" :: Text
+      a <- compileWith cfg src
+      b <- compileWith cfg src
+      a @?= b
+      a @?= src
+      clearCompilerCache
+  , testCase "compilePure passthrough emits an IIFE" $ do
+      clearCompilerCache
+      out <- compilePure passthroughConfig (plus (number 1) (number 2))
+      out @?= T.pack (renderJS (pureProgram (plus (number 1) (number 2))))
+      assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
+      assertBool "result is returned so minifiers cannot DCE it" ("return" `T.isInfixOf` out)
+  , testCase "disk cache roundtrips passthrough output" $ do
+      clearCompilerCache
+      tmp <- getTemporaryDirectory
+      let dir = tmp </> "jshark-compiler-disk-test"
+      removePathForcibly dir
+      createDirectoryIfMissing True dir
+      let cfg = CompilerConfig Passthrough (DiskCache dir) False
+          src = "const x = 1 + 2;" :: Text
+      a <- compileWith cfg src
+      b <- compileWith cfg src
+      a @?= src
+      b @?= src
+      files <- listDirectory dir
+      assertBool "wrote a cache file" (not (null files))
+      removePathForcibly dir
+  , testCase "disk cache ignores a file whose stored key does not match" $ do
+      clearCompilerCache
+      tmp <- getTemporaryDirectory
+      let dir = tmp </> "jshark-compiler-disk-mismatch"
+      removePathForcibly dir
+      createDirectoryIfMissing True dir
+      let cfg = CompilerConfig Passthrough (DiskCache dir) False
+      _ <- compileWith cfg "const a = 1;"
+      files <- listDirectory dir
+      mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
+      out <- compileWith cfg "const b = 2;"
+      out @?= "const b = 2;"
+      removePathForcibly dir
+  , testCase "esbuild minifies an IIFE when on PATH" $ do
+      clearCompilerCache
+      m <- findExecutable "esbuild"
+      case m of
+        Nothing -> pure ()
+        Just _ -> do
+          let snippet = plus (number 1) (number 2)
+              raw = T.pack (renderJS (pureProgram snippet))
+              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False
+          out <- compilePure cfg snippet
+          assertBool "non-empty" (not (T.null out))
+          assertBool "minifier changed the IIFE" (out /= raw)
+  , testCase "tryCompileWith reports missing esbuild" $ do
+      clearCompilerCache
+      mExe <- findExecutable "esbuild"
+      mNpx <- findExecutable "npx"
+      case (mExe, mNpx) of
+        (Nothing, Nothing) -> do
+          res <- tryCompileWith (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False) "1+2;"
+          case res of
+            Left _ -> pure ()
+            Right _ -> assertFailure "expected Left when esbuild is missing"
+        _ -> pure ()
+  , testCase "configFallback False surfaces minifier errors" $ do
+      clearCompilerCache
+      m <- findExecutable "esbuild"
+      case m of
+        Nothing -> pure ()
+        Just _ -> do
+          let cfg = CompilerConfig
+                (Esbuild defaultEsbuildConfig { esbuildExtraArgs = ["--definitely-not-a-flag"] })
+                NoCache
+                False
+          res <- tryCompileWith cfg "(() => { return 1; })();"
+          case res of
+            Left _ -> pure ()
+            Right out -> assertFailure ("expected Left, got " <> T.unpack out)
+  , testCase "configFallback True returns the original source" $ do
+      clearCompilerCache
+      m <- findExecutable "esbuild"
+      case m of
+        Nothing -> pure ()
+        Just _ -> do
+          let src = "(() => { return 1; })();" :: Text
+              cfg = CompilerConfig
+                (Esbuild defaultEsbuildConfig { esbuildExtraArgs = ["--definitely-not-a-flag"] })
+                NoCache
+                True
+          out <- compileWith cfg src
+          out @?= src
   ]

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+* `evaluate` is a pure tree walk. Host-language sharing (Haskell
+  `let x = e in x + x`) is recovered by `evaluateCached` via
+  `StableName` memoization in `IO`.
+* Added `JShark.Compiler` to minify generated JS. Default backend is
+  esbuild (Closure Compiler and Terser are still selectable).
+  `compilePure`/`compileEffect` emit an IIFE so minifiers keep the result,
+  and cache outputs in memory (optional on-disk cache, key-verified).
+  Named backends throw on failure; `Auto` may fall back and logs to
+  stderr. `tryCompileWith` returns `Either`. `nix develop` provides
+  `esbuild`.
 * Modernized the build: dropped the pinned GHC 8.6.5 / `base < 4.13` bounds
   in favor of a modern GHC (tested with 9.14). The original `quantification`
   dependency was pinned to an unreleased git commit; it (and its `Topaz.Rec`
