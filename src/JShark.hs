@@ -1,9 +1,10 @@
 {-# language BangPatterns #-}
+{-# language DataKinds #-}
 {-# language GADTs #-}
 {-# language LambdaCase #-}
 {-# language OverloadedStrings #-}
+{-# language PolyKinds #-}
 {-# language RankNTypes #-}
-{-# language TypeInType #-}
 {-# language TypeOperators #-}
 
 {-# options_ghc -fno-warn-unused-top-binds #-}
@@ -14,7 +15,6 @@ module JShark
     -- Evaluation
   , evaluate
   , evaluateNumber
-  -- , pretty
   , pureAST
   , effectfulAST
   , printComputation
@@ -24,19 +24,13 @@ module JShark
 -- This uses a higher-order PHOAS approach as described by
 -- https://www.reddit.com/r/haskell/comments/85een6/sharing_from_phoas_multiple_interpreters_from_free/dvxhlba
 
-import Control.Applicative
-import Control.Monad.ST
-import Data.Functor.Compose (Compose(..))
 import Data.Functor.Const (Const(..))
 import Data.Kind
-import Data.STRef
 import Data.Text (Text)
-import Data.Tuple (snd)
 import Numeric (showFFloat)
 import Text.PrettyPrint ((<+>), Doc, ($$))
-import Topaz.Types
+import JShark.Rec
 import JShark.Types
-import Unsafe.Coerce (unsafeCoerce)
 import qualified Data.Text as T
 import qualified Text.PrettyPrint as P
 
@@ -51,6 +45,88 @@ unString (ValueString s) = s
 
 unFunction :: Value ('Function u v) -> Value u -> Value v
 unFunction (ValueFunction f) = f
+
+valueEq :: Value u -> Value u -> Bool
+valueEq (ValueNumber a) (ValueNumber b) = a == b
+valueEq (ValueString a) (ValueString b) = a == b
+valueEq (ValueBool a) (ValueBool b) = a == b
+valueEq ValueUnit ValueUnit = True
+valueEq (ValueArray as) (ValueArray bs) =
+  length as == length bs && and (zipWith valueEq as bs)
+valueEq (ValueOption a) (ValueOption b) = case (a, b) of
+  (Nothing, Nothing) -> True
+  (Just x, Just y) -> valueEq x y
+  _ -> False
+valueEq (ValueResult a) (ValueResult b) = case (a, b) of
+  (Left x, Left y) -> valueEq x y
+  (Right x, Right y) -> valueEq x y
+  _ -> False
+valueEq (ValueFunction _) (ValueFunction _) =
+  error "evaluate: functions cannot be compared for equality"
+
+-- | Only numbers, strings, and booleans support ordering comparisons.
+valueCompare :: Value u -> Value u -> Ordering
+valueCompare (ValueNumber a) (ValueNumber b) = compare a b
+valueCompare (ValueString a) (ValueString b) = compare a b
+valueCompare (ValueBool a) (ValueBool b) = compare a b
+valueCompare _ _ =
+  error "evaluate: only numbers, strings, and booleans support ordering comparisons"
+
+-- | Mimics JS's @String(x)@ coercion closely enough for the reference interpreter.
+jsShow :: Value u -> Text
+jsShow (ValueNumber d) = T.pack (jsShowNumber d)
+jsShow (ValueString s) = s
+jsShow (ValueBool True) = "true"
+jsShow (ValueBool False) = "false"
+jsShow ValueUnit = "undefined"
+jsShow (ValueArray xs) = T.intercalate "," (map jsShow xs)
+jsShow (ValueOption Nothing) = "null"
+jsShow (ValueOption (Just x)) = jsShow x
+jsShow (ValueResult (Left x)) = "true," <> jsShow x
+jsShow (ValueResult (Right x)) = "false," <> jsShow x
+jsShow (ValueFunction _) = error "evaluate: cannot show a function"
+
+jsShowNumber :: Double -> String
+jsShowNumber d
+  | isInt = show (truncate d :: Integer)
+  | otherwise = show d
+  where
+  isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
+
+-- | Implements the unary @Math@ functions supported by 'MathUnary'.
+mathUnaryFn :: Text -> Double -> Double
+mathUnaryFn name = case name of
+  "sin" -> sin
+  "cos" -> cos
+  "tan" -> tan
+  "asin" -> asin
+  "acos" -> acos
+  "atan" -> atan
+  "sqrt" -> sqrt
+  "cbrt" -> \x -> signum x * (abs x ** (1 / 3))
+  "exp" -> exp
+  "log" -> log
+  "log2" -> logBase 2
+  "log10" -> logBase 10
+  "floor" -> fromIntegral . (floor :: Double -> Integer)
+  "ceil" -> fromIntegral . (ceiling :: Double -> Integer)
+  -- JS's Math.round rounds half-way values toward +Infinity (e.g.
+  -- Math.round(2.5) === 3, Math.round(-2.5) === -2), unlike Haskell's
+  -- 'round' (banker's rounding to even: round 2.5 == 2). floor(x + 0.5)
+  -- matches JS's semantics.
+  "round" -> fromIntegral . (floor :: Double -> Integer) . (+ 0.5)
+  "trunc" -> fromIntegral . (truncate :: Double -> Integer)
+  _ -> error ("evaluate: unknown Math unary function " ++ T.unpack name)
+
+-- | Implements the binary @Math@ functions supported by 'MathBinary'.
+mathBinaryFn :: Text -> Double -> Double -> Double
+mathBinaryFn name = case name of
+  "pow" -> (**)
+  "atan2" -> atan2
+  "max" -> max
+  "min" -> min
+  "hypot" -> \x y -> sqrt (x * x + y * y)
+  _ -> error ("evaluate: unknown Math binary function " ++ T.unpack name)
 
 evaluateNumber :: (forall (f :: Universe -> Type). Expr f 'Number) -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -73,16 +149,53 @@ evaluate e0 = go e0 where
     Apply g x -> unFunction (go g) (go x)
     Lambda g -> ValueFunction (go . g)
     Concat x y -> ValueString (unString (go x) <> unString (go y))
-    Show _x -> undefined -- FIXME: this might be complicated
+    Show x -> ValueString (jsShow (go x))
     And x y -> ValueBool (unBool (go x) && unBool (go y))
     Or x y -> ValueBool (unBool (go x) || unBool (go y))
-    Eq _ _ -> undefined -- Value doesn't have an Eq instance because of ValueFunction
-    NEq _ _ -> undefined 
-    GTh _ _ -> undefined 
-    LTh _ _ -> undefined 
-    GTEq _ _ -> undefined 
-    LTEq _ _ -> undefined 
-    Let x g -> go (g (go x)) 
+    Eq x y -> ValueBool (valueEq (go x) (go y))
+    NEq x y -> ValueBool (not (valueEq (go x) (go y)))
+    GTh x y -> ValueBool (valueCompare (go x) (go y) == GT)
+    LTh x y -> ValueBool (valueCompare (go x) (go y) == LT)
+    GTEq x y -> ValueBool (valueCompare (go x) (go y) /= LT)
+    LTEq x y -> ValueBool (valueCompare (go x) (go y) /= GT)
+    Let x g -> go (g (go x))
+    If c t e -> if unBool (go c) then go t else go e
+    Some x -> ValueOption (Just (go x))
+    None -> ValueOption Nothing
+    OptionCase opt none' someF -> case go opt of
+      ValueOption Nothing -> go none'
+      ValueOption (Just x) -> go (someF x)
+    Ok x -> ValueResult (Left (go x))
+    Err y -> ValueResult (Right (go y))
+    ResultCase r okF errF -> case go r of
+      ValueResult (Left x) -> go (okF x)
+      ValueResult (Right y) -> go (errF y)
+    UnsafeEffectExpr _ ->
+      error "evaluate: cannot evaluate an embedded Effect (UnsafeEffectExpr)"
+    ExprFFI name _ ->
+      error ("evaluate: cannot evaluate a foreign function call: " ++ T.unpack name)
+    ExprProp _ name ->
+      error ("evaluate: cannot evaluate a foreign property access: " ++ T.unpack name)
+    ExprMethod _ name _ ->
+      error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
+    ExprMethodCallback _ name _ ->
+      error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
+    ExprIndex xs i -> case go xs of
+      ValueArray vs ->
+        -- JS array indexing truncates the index toward zero (as part of
+        -- ToIntegerOrInfinity) rather than rounding, and returns @undefined@
+        -- out of bounds rather than crashing; we can't represent
+        -- @undefined@ generically here (there's no 'Value' inhabitant for
+        -- an arbitrary universe @u@), so out-of-bounds access is a hard
+        -- error in the reference interpreter.
+        let idx = truncate (unNumber (go i)) :: Int
+         in if idx >= 0 && idx < length vs
+              then vs !! idx
+              else error "evaluate: array index out of bounds"
+    MathUnary name x -> ValueNumber (mathUnaryFn name (unNumber (go x)))
+    MathBinary name x y -> ValueNumber (mathBinaryFn name (unNumber (go x)) (unNumber (go y)))
+    UnsafeNullable _ ->
+      error "evaluate: cannot evaluate UnsafeNullable (an FFI-derived Option)"
 
 fromRightE :: Either [Char] c -> c
 fromRightE = either error id
@@ -123,16 +236,49 @@ effectfulAST' !n0 = \case
   ForEach xs f ->
     let (n1, (Code xsDecl xsRef)) = pureAST' n0 xs
         (n2, (Code asDecl asRef)) = effectfulAST' n0 (f (Const n0))
+        bodyStmt = if P.isEmpty asRef then asDecl else asDecl $$ (asRef <> P.semi)
         forE = xsRef <> ".forEach" <> (P.parens 
                $ "function" <> P.parens (P.text ('n':show n1))
-               <> P.braces (P.nest 2 asRef)) <> P.semi
-     in (n2, Code (xsDecl $$ asDecl) forE)
-  Bind (Lift (Literal ValueUnit)) f -> effectfulAST' (n0-1) (f (Const (n0-1)))
+               <> P.braces (P.nest 2 bodyStmt)) <> P.semi
+     in (n2, Code xsDecl forE)
+  IfE c t e ->
+    -- We always render this as an if/else statement (rather than trying to
+    -- special-case a ternary expression) because an effectful branch's
+    -- rendered "ref" may be a leftover 'Unit' placeholder rather than a
+    -- genuinely-empty Doc, which made an emptiness-based heuristic unsound
+    -- (it could produce a ternary with an empty branch, e.g. `c ? x : `).
+    -- Using a shared `let`-bound result variable, assigned in both
+    -- branches, is correct regardless of whether the branches are 'Unit'
+    -- or carry a real value.
+    let (n1, Code cDecl cRef) = pureAST' n0 c
+        resultVar = 'n' : show n1
+        (n2, Code tDecl tRef) = effectfulAST' (n1 + 1) t
+        (n3, Code eDecl eRef) = effectfulAST' n2 e
+        assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
+        ifStmt = ("let" <+> P.text resultVar) <> P.semi
+          $$ ("if" <+> P.parens cRef <+> P.braces (P.nest 2 (tDecl $$ assign tRef)))
+          $$ ("else" <+> P.braces (P.nest 2 (eDecl $$ assign eRef)))
+     in (n3, Code (cDecl $$ ifStmt) (P.text resultVar))
+  While cond body ->
+    let (n1, Code condDecl condRef) = pureAST' n0 cond
+        (n2, Code bodyDecl bodyRef) = effectfulAST' n1 body
+        bodyStmt = if P.isEmpty bodyRef then bodyDecl else bodyDecl $$ (bodyRef <> P.semi)
+        whileStmt = "while" <+> P.parens condRef <+> P.braces (P.nest 2 bodyStmt)
+     in (n2, Code (condDecl $$ whileStmt) mempty)
   Bind x f ->
     let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
-        constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
-        (n2, (Code x2Decl x2Ref)) = effectfulAST' (n1 + 1) (f (Const n1))
-     in (n2, Code (x1Decl $$ constX $$ x2Decl) x2Ref)
+     in if P.isEmpty x1Ref
+          -- x produced no meaningful value (e.g. a 'Unit'-typed effect like
+          -- 'noOp' or 'While'), so don't allocate a fresh (and undeclared!)
+          -- binding for it; reuse whichever variable was last legitimately
+          -- declared, since the placeholder is never actually inspected.
+          then
+            let (n2, (Code x2Decl x2Ref)) = effectfulAST' n1 (f (Const (n1 - 1)))
+             in (n2, Code (x1Decl $$ x2Decl) x2Ref)
+          else
+            let constX = ("const" <+> P.text ('n':show n1) <+> "=" <+> x1Ref) <> P.semi
+                (n2, (Code x2Decl x2Ref)) = effectfulAST' (n1 + 1) (f (Const n1))
+             in (n2, Code (x1Decl $$ constX $$ x2Decl) x2Ref)
   UnsafeObject obj -> (n0, Code mempty $ P.text $ T.unpack obj)
   UnsafeObjectGet x string ->
     let (n1, (Code x1Decl x1Ref)) = effectfulAST' n0 x
@@ -187,10 +333,15 @@ pureAST' !n0 = \case
        in (n1, Code (P.vcat exprDecls) $ P.brackets (P.hcat $ P.punctuate ", " exprRefs))
     ValueString s -> (n0, Code mempty $ P.doubleQuotes (P.text $ T.unpack s))
     ValueFunction _f -> undefined
-    ValueUnit -> (n0, mempty) -- FIXME: is this correct
+    ValueUnit -> (n0, mempty)
     ValueOption (Just x) -> pureAST' n0 (Literal x)
-    ValueOption Nothing -> (n0, Code mempty "null") -- FIXME: is this correct
-    ValueResult _ -> undefined
+    ValueOption Nothing -> (n0, Code mempty "null")
+    ValueResult (Left x) ->
+      let (n1, Code xDecl xRef) = pureAST' n0 (Literal x)
+       in (n1, Code xDecl (P.brackets ("true" <> ", " <> xRef)))
+    ValueResult (Right x) ->
+      let (n1, Code xDecl xRef) = pureAST' n0 (Literal x)
+       in (n1, Code xDecl (P.brackets ("false" <> ", " <> xRef)))
     ValueBool True -> (n0, Code mempty "true")
     ValueBool False -> (n0, Code mempty "false")
   Concat x y ->
@@ -279,79 +430,86 @@ pureAST' !n0 = \case
             (P.text ('n':show (n2+1)) <> P.parens exprYRef)
         )
   Var (Const x) -> (n0, Code mempty $ P.text ('n':show x))
-
--- data Ref s a = Ref !Addr !(STRef s a)
--- 
--- testRefEquality :: STRef s a -> STRef s b -> Maybe (a :~: b)
-
--- newtype Detector :: (Universe -> Type) -> Universe -> Type where
---   Detector :: (f u -> _) -> Detector f u
-
--- eliminateUnusedBindings :: forall (f :: Universe -> Type) (u :: Universe).
---      (forall (g :: Universe -> Type). Expr g u)
---   -> Expr f u
--- eliminateUnusedBindings e = case go e of
---   Nothing -> e
---   Just r -> r
---   where
---   go :: forall (v :: Universe). Expr (Compose Maybe f) v -> Maybe (Expr f v)
---   go (Literal v) = pure (Literal v)
---   go (Var (Compose v)) = case v of
---     Just w -> Just (Var w)
---     Nothing -> Nothing
---   go (Let x g) = case go (g (Compose Nothing)) of
---     Nothing -> do
---       y <- go x
---       b <- go (g (Compose (Just _)))
---       Just (Let y h)
---     Just r -> Just r
-
--- data TupleRef :: Type -> Type -> Type -> Type where
---   TupleRef :: STRef s x -> y -> TupleRef s x y
-
-identify ::
-     (forall (v :: Universe). g v)
-  -> ExprF (->) (Compose (STRef s) g) u
-  -> ST s (ExprF (,) (Compose (STRef s) g) u)
-identify _ (LiteralF v) = pure (LiteralF v)
-identify _ (VarF v) = pure (VarF v)
-identify z (LetF x g) = do
-  r <- newSTRef z
-  x' <- identify z x
-  g' <- identify z (g (Compose r))
-  pure (LetF x' (Compose r,g'))
-identify z (PlusF a b) = liftA2 PlusF (identify z a) (identify z b)
-identify z (ApplyF g a) = liftA2 ApplyF (identify z g) (identify z a)
-identify z (LambdaF g) = do
-  r <- newSTRef z
-  g' <- identify z (g (Compose r))
-  pure (LambdaF (Compose r,g'))
-
-removeUnusedBindings :: 
-     (forall (g :: Universe -> Type). ExprF (->) g u)
-  -> ExprF (->) f u
-removeUnusedBindings e0 = runST $ do
-  e1 <- identify (Const (0 :: Int)) e0
-  pure (unidentify [] e1)
-
-data Together :: Type -> (Universe -> Type) -> (Universe -> Type) -> Type where
-  Together :: STRef s (g u) -> f u -> Together s g f
-
-match :: forall (f :: Universe -> Type) (g :: Universe -> Type) (s :: Type) (u :: Universe).
-  STRef s (g u) -> [Together s g f] -> f u
-match !_ [] = error "match: implementation error in unidentify"
-match !r (Together x v : xs) = if r == unsafeCoerce x
-  then unsafeCoerce v
-  else match r xs
-
-unidentify :: forall (f :: Universe -> Type) (g :: Universe -> Type) (s :: Type) (u :: Universe).
-  [Together s g f]  -> ExprF (,) (Compose (STRef s) g) u -> ExprF (->) f u
-unidentify _ (LiteralF v) = LiteralF v
-unidentify ss1 (VarF (Compose v)) = VarF (match v ss1)
-unidentify ss1 (LetF x (Compose ref,exprA)) =
-  LetF (unidentify ss1 x) (\z -> unidentify (Together ref z : ss1) exprA)
-unidentify ss1 (PlusF a b) = PlusF (unidentify ss1 a) (unidentify ss1 b)
-unidentify ss1 (ApplyF g x) = ApplyF (unidentify ss1 g) (unidentify ss1 x)
-unidentify ss1 (LambdaF (Compose ref,exprA)) =
-  LambdaF (\z -> unidentify (Together ref z : ss1) exprA)
+  If c t e ->
+    let (n1, Code cDecl cRef) = pureAST' n0 c
+        (n2, Code tDecl tRef) = pureAST' n1 t
+        (n3, Code eDecl eRef) = pureAST' n2 e
+     in (n3, Code (cDecl $$ tDecl $$ eDecl) (P.parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef)))
+  Some x -> pureAST' n0 x
+  None -> (n0, Code mempty "null")
+  OptionCase opt none' someF ->
+    let (n1, Code optDecl optRef) = pureAST' n0 opt
+        optVar = 'n' : show n1
+        constOpt = ("const" <+> P.text optVar <+> "=" <+> optRef) <> P.semi
+        (n2, Code noneDecl noneRef) = pureAST' (n1 + 1) none'
+        (n3, Code someDecl someRef) = pureAST' n2 (someF (Const n1))
+     in ( n3
+        , Code (optDecl $$ constOpt $$ noneDecl $$ someDecl)
+            (P.parens (P.text optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef))
+        )
+  Ok x ->
+    let (n1, Code xDecl xRef) = pureAST' n0 x
+     in (n1, Code xDecl (P.brackets ("true" <> ", " <> xRef)))
+  Err x ->
+    let (n1, Code xDecl xRef) = pureAST' n0 x
+     in (n1, Code xDecl (P.brackets ("false" <> ", " <> xRef)))
+  ResultCase r okF errF ->
+    let (n1, Code rDecl rRef) = pureAST' n0 r
+        rVar = 'n' : show n1
+        constR = ("const" <+> P.text rVar <+> "=" <+> rRef) <> P.semi
+        payloadVar = 'n' : show (n1 + 1)
+        constPayload = ("const" <+> P.text payloadVar <+> "=" <+> (P.text rVar <> P.brackets "1")) <> P.semi
+        (n2, Code okDecl okRef) = pureAST' (n1 + 2) (okF (Const (n1 + 1)))
+        (n3, Code errDecl errRef) = pureAST' n2 (errF (Const (n1 + 1)))
+     in ( n3
+        , Code (rDecl $$ constR $$ constPayload $$ okDecl $$ errDecl)
+            (P.parens ((P.text rVar <> P.brackets "0") <+> "?" <+> okRef <+> ":" <+> errRef))
+        )
+  UnsafeEffectExpr eff -> effectfulAST' n0 eff
+  ExprFFI fn args ->
+    let foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [Code])
+        foo n'0 (RecCons x xs) =
+          let (n'1, x') = pureAST' n'0 x
+              (n'2, cs) = foo n'1 xs
+           in (n'2, x' : cs)
+        foo n' RecNil = (n', [])
+        (n1, lArgs') = foo n0 args
+        (lVars, lArgs) = partitionCode lArgs'
+        call = P.text (T.unpack fn) <> P.parens (P.hcat (P.punctuate ", " lArgs))
+     in (n1, Code (P.vcat lVars) call)
+  ExprProp recv name ->
+    let (n1, Code rDecl rRef) = pureAST' n0 recv
+     in (n1, Code rDecl (rRef <> "." <> P.text (T.unpack name)))
+  ExprMethod recv name args ->
+    let (n1, Code rDecl rRef) = pureAST' n0 recv
+        foo :: Int -> Rec (Expr (Const Int)) u' -> (Int, [Code])
+        foo n'0 (RecCons x xs) =
+          let (n'1, x') = pureAST' n'0 x
+              (n'2, cs) = foo n'1 xs
+           in (n'2, x' : cs)
+        foo n' RecNil = (n', [])
+        (n2, lArgs') = foo n1 args
+        (lVars, lArgs) = partitionCode lArgs'
+        call = rRef <> "." <> P.text (T.unpack name) <> P.parens (P.hcat (P.punctuate ", " lArgs))
+     in (n2, Code (rDecl $$ P.vcat lVars) call)
+  ExprMethodCallback recv name f ->
+    let (n1, Code rDecl rRef) = pureAST' n0 recv
+        ex = f (Const n1)
+        (n2, Code exDecl exRef) = pureAST' (n1 + 1) ex
+        paramName = 'n' : show n1
+        callback = "function" <+> P.parens (P.text paramName) <+> P.braces (exDecl $$ "return" <+> exRef)
+        call = rRef <> "." <> P.text (T.unpack name) <> P.parens callback
+     in (n2, Code rDecl call)
+  ExprIndex arr idx ->
+    let (n1, Code aDecl aRef) = pureAST' n0 arr
+        (n2, Code iDecl iRef) = pureAST' n1 idx
+     in (n2, Code (aDecl $$ iDecl) (aRef <> P.brackets iRef))
+  MathUnary name x ->
+    let (n1, Code xDecl xRef) = pureAST' n0 x
+     in (n1, Code xDecl ("Math." <> P.text (T.unpack name) <> P.parens xRef))
+  MathBinary name x y ->
+    let (n1, Code xDecl xRef) = pureAST' n0 x
+        (n2, Code yDecl yRef) = pureAST' n1 y
+     in (n2, Code (xDecl $$ yDecl) ("Math." <> P.text (T.unpack name) <> P.parens (xRef <> ", " <> yRef)))
+  UnsafeNullable x -> pureAST' n0 x
 

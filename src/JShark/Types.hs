@@ -11,7 +11,7 @@ module JShark.Types where
 import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
-import Topaz.Types
+import JShark.Rec
 import Text.PrettyPrint (Doc)
 import qualified GHC.Exts as Exts
 
@@ -19,7 +19,6 @@ data Universe
   = Number
   | String
   | Unit
-  | Element
   | Array Universe
   | Function Universe Universe
   | Option Universe
@@ -40,7 +39,7 @@ data Value :: Universe -> Type where
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
-  FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface. Takes the name of the function as a String, and then a Rec of its arguments. This is unsafe, but if you supply the correct types in a helper function, the type checker will enforce these types on the user.
+  FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface: @FFI name args@.
   UnsafeObject :: Text -> Effect f ('Object x)
   UnsafeObjectGet :: Effect f object -> String -> Effect f u
   UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
@@ -50,6 +49,8 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   UnEffectful :: Expr f ('Effectful u) -> Effect f u
   LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ A function, not *necessarily* anonymous
   ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v -- ^ Apply a function
+  IfE :: Expr f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. NB: the condition expression is currently assumed to require no intermediate declarations (i.e. no nested 'Let'); see 'While' for the same caveat.
+  While :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. NB: the condition is re-checked by emitting the *same* rendered expression into the generated @while@ test on every iteration, so it must not depend on declarations ('Let') that only run once.
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
@@ -61,31 +62,35 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
   FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = (/)
-  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical And. And = (&)
+  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical And. And = (&&)
   Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical Or. Or = (||)
   Eq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Equality. Eq = (==)
   NEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality. NEq = (/=)
   GTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. GTh = (>)
   LTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTh = (<) 
   GTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. GTEq = (>=) 
-  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTEq = (>=) 
+  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTEq = (<=) 
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
   Show :: Expr f u -> Expr f 'String -- ^ String casting: Show x = String(x)
-  Var :: f u -> Expr f u  -- ^ Assignment
-
-data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
-  LiteralF :: Value u -> ExprF g f u
-  PlusF :: ExprF g f 'Number -> ExprF g f 'Number -> ExprF g f 'Number
-  LetF :: ExprF g f u -> g (f u) (ExprF g f v) -> ExprF g f v
-  LambdaF :: g (f u) (ExprF g f v) -> ExprF g f ('Function u v)
-  ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
-  VarF :: f u -> ExprF g f u
-
-data Statement :: (Universe -> Type) -> Universe -> Type where
-  SLiteral :: Value u -> Statement f u
-  SFFI :: Text -> Statement f u
+  Var :: f u -> Expr f u  -- ^ Variable reference
+  If :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u -- ^ Ternary conditional: If c t e = c ? t : e
+  Some :: Expr f u -> Expr f ('Option u) -- ^ Option introduction. Represented at runtime as the wrapped value itself (see 'None').
+  None :: Expr f ('Option u) -- ^ Option introduction: the absence of a value, represented as JS @null@.
+  OptionCase :: Expr f ('Option u) -> Expr f v -> (f u -> Expr f v) -> Expr f v -- ^ Eliminate an 'Option', analogous to 'maybe'.
+  Ok :: Expr f u -> Expr f ('Result u v) -- ^ Result introduction for the success case. Represented at runtime as @[true, x]@.
+  Err :: Expr f v -> Expr f ('Result u v) -- ^ Result introduction for the failure case. Represented at runtime as @[false, x]@.
+  ResultCase :: Expr f ('Result u v) -> (f u -> Expr f w) -> (f v -> Expr f w) -> Expr f w -- ^ Eliminate a 'Result', analogous to 'either'.
+  UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Embed an 'Effect' as a pure 'Expr'. Unsafe: only sound when the embedded effect is self-contained.
+  ExprFFI :: Text -> Rec (Expr f) us -> Expr f v -- ^ Call a named global JS function: @fnName(args...)@.
+  ExprProp :: Expr f u -> Text -> Expr f v -- ^ Property access: @receiver.prop@.
+  ExprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v -- ^ Method call: @receiver.method(args...)@.
+  ExprMethodCallback :: Expr f u -> Text -> (f a -> Expr f b) -> Expr f v -- ^ Method call taking a callback, e.g. @receiver.map(function(x){...})@.
+  ExprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u -- ^ Array indexing: @arr[i]@.
+  MathUnary :: Text -> Expr f 'Number -> Expr f 'Number -- ^ Call a unary @Math@ function: @Math.fn(x)@.
+  MathBinary :: Text -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Call a binary @Math@ function: @Math.fn(x, y)@.
+  UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
 
 instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
   fromString = Literal . ValueString . Exts.fromString
@@ -103,19 +108,8 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u
   (/) = FracDiv
   fromRational = Literal . ValueNumber . fromRational
 
--- newtype Expression :: (Universe -> Type) -> Universe -> Type where
---   Expression :: ExprArrow (->) f u -> Expression f u
-
--- Op :: Operation _ u -> ExprArrow g f u
--- data Operation :: () -> Universe -> Type
-  -- Plus :: Operation f 'Number -> Operation f 'Number -> Operation f 'Number
-
-data Optimization 
-  = ConstantFolding
-  | UnusedBindings
-
--- This is a monadic interface to expressions that uses some tricks
--- from https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf
+-- Monadic interface to expressions based on KeyMonad
+-- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).
 
 bindEffect :: Effect v a -> (v a -> Effect v b) -> Effect v b
 bindEffect = Bind

@@ -3,6 +3,7 @@
 {-# language OverloadedStrings #-}
 {-# language ScopedTypeVariables #-}
 {-# language TypeFamilies #-}
+{-# language TypeOperators #-}
 
 module JShark.Object where
 
