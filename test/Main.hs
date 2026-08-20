@@ -70,18 +70,33 @@ codegenTests :: TestTree
 codegenTests = testGroup "codegen"
   [ testCase "pure arithmetic" $
       renderJS (pureAST (plus (number 1) (number 2))) @?= "1.0 + 2.0"
-  , testCase "let renders as a const binding" $
+  , testCase "nested single-use lets are both inlined" $
+      renderJS (pureAST (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x))))
+        @?= "2.0 + 1.0"
+  , testCase "let used more than once renders as a const binding" $
       renderJS (pureAST (let_ (number 5) (\x -> x + x)))
         @?= "const n0 = 5.0;\nn0 + n0"
-  , testCase "lambda application renders as an IIFE-style call" $
+  , testCase "let used once under a lambda is not inlined" $
+      renderJS (pureAST (let_ (number 5) (\x -> lambda (\_ -> x + number 1))))
+        @?= "const n0 = 5.0;\nfunction (n1) {return (n0 + 1.0)}"
+  , testCase "let used once in an if_ branch is not inlined" $
+      renderJS (pureAST (let_ (number 5) (\x -> if_ (bool True) x (number 0))))
+        @?= "const n0 = 5.0;\n(true ? n0 : 0.0)"
+  , testCase "let used once on the && RHS is not inlined" $
+      renderJS (pureAST (let_ (bool True) (\x -> And (bool False) x)))
+        @?= "const n0 = true;\nfalse && n0"
+  , testCase "let used once on the && LHS is inlined" $
+      renderJS (pureAST (let_ (bool True) (\x -> And x (bool False))))
+        @?= "true && false"
+  , testCase "lambda application renders as a direct call" $
       renderJS (pureAST (apply (lambda (\x -> x * 2)) (number 21)))
-        @?= "const n1 = function (n0) {return (n0 * 2.0)};\nn1(21.0)"
+        @?= "(function (n0) {return (n0 * 2.0)})(21.0)"
   , testCase "pureProgram wraps decls and the result in a JS IIFE" $
       renderJS (pureProgram (let_ (number 5) (\x -> x + x)))
         @?= "(() => {\n  const n0 = 5.0;\n  return n0 + n0;\n})()"
   , testCase "effectful console.log FFI call" $
       renderJS (effectfulAST (fromSyntax (consoleLog (string "hi" :: Expr f 'String) *> toSyntax noOp)))
-        @?= "const n0 = console.log(\"hi\");\nn0"
+        @?= "console.log(\"hi\");"
   ]
 
 controlFlowTests :: TestTree
@@ -103,10 +118,10 @@ controlFlowTests = testGroup "control flow"
       evaluateNumber (resultCase (err (string "bad") :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1))) @?= (-1)
   , testCase "ifE renders an if/else statement with a shared result variable" $
       renderJS (effectfulAST (fromSyntax (toSyntax (ifE (bool True) (expr (number 1)) (expr (number 2))) *> toSyntax noOp)))
-        @?= "let n0;\nif (true) {n0 = 1.0;}\nelse {n0 = 2.0;}\nconst n1 = n0;\nn1"
+        @?= "let n0;\nif (true) {n0 = 1.0;}\nelse {n0 = 2.0;}"
   , testCase "while_ renders a while loop" $
       renderJS (effectfulAST (fromSyntax (toSyntax_ (while_ (bool False) (Bind (expr (number 1)) (\_ -> Lift (Literal ValueUnit)))) *> toSyntax noOp)))
-        @?= "while (false) {const n0 = 1.0;}\nn0"
+        @?= "while (false) {1.0;}"
   ]
 
 numArray :: forall f. Expr f ('Array 'Number)
@@ -124,15 +139,15 @@ stdlibTests = testGroup "stdlib"
   , testCase "Array.map_ renders as .map with a callback" $
       renderJS (pureAST (Array.map_ numArray (\x -> x + number 1)))
         @?= "[1.0, 2.0].map(function (n0) {return n0 + 1.0})"
-  , testCase "Array.map_ callback with an internal let doesn't collide with the parameter" $
+  , testCase "Array.map_ callback with an internal let is inlined when used once" $
       renderJS (pureAST (Array.map_ numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
-        @?= "[1.0, 2.0].map(function (n0) {const n1 = n0 + 1.0;\n                              return n1 * 2.0})"
+        @?= "[1.0, 2.0].map(function (n0) {return (n0 + 1.0) * 2.0})"
   , testCase "Array.join renders as .join" $
       renderJS (pureAST (Array.join numArray (string ",")))
         @?= "[1.0, 2.0].join(\",\")"
   , testCase "Array.push renders as a mutating .push call" $
       renderJS (effectfulAST (fromSyntax (toSyntax (Array.push numArray (number 3)) *> toSyntax noOp)))
-        @?= "const n0 = [1.0, 2.0].push(3.0);\nn0"
+        @?= "[1.0, 2.0].push(3.0);"
   , testCase "String.toUpper renders as .toUpperCase()" $
       renderJS (pureAST (Str.toUpper (string "hi"))) @?= "\"hi\".toUpperCase()"
   , testCase "Math.sin renders as Math.sin(x)" $
@@ -148,19 +163,28 @@ stdlibTests = testGroup "stdlib"
       renderJS (pureAST (Json.stringify (number 1))) @?= "JSON.stringify(1.0)"
   , testCase "Console.log renders as console.log(x)" $
       renderJS (effectfulAST (fromSyntax (Console.log (string "hi" :: Expr f 'String) *> toSyntax noOp)))
-        @?= "const n0 = console.log(\"hi\");\nn0"
-  , testCase "Dom appendChild reuses bound handles instead of re-running lookups" $
+        @?= "console.log(\"hi\");"
+  , testCase "Dom appendChild inlines single-use handles" $
       renderJS (effectfulAST (fromSyntax (do
         p <- Dom.lookupId (string "p")
         c <- Dom.createElement (string "div")
         _ <- Dom.appendChild p c
         toSyntax noOp)))
-        @?= "const n0 = document.getElementById(\"p\");\nconst n1 = document.createElement(\"div\");\nconst n2 = n0.appendChild(n1);\nn2"
+        @?= "document.getElementById(\"p\").appendChild(document.createElement(\"div\"));"
+  , testCase "Dom appendChild keeps a handle that is used more than once" $
+      renderJS (effectfulAST (fromSyntax (do
+        p <- Dom.lookupId (string "p")
+        c1 <- Dom.createElement (string "div")
+        c2 <- Dom.createElement (string "span")
+        _ <- Dom.appendChild p c1
+        _ <- Dom.appendChild p c2
+        toSyntax noOp)))
+        @?= "const n0 = document.getElementById(\"p\");\nn0.appendChild(document.createElement(\"div\"));\nn0.appendChild(document.createElement(\"span\"));"
   , testCase "Storage.getItem is typed as an Option and dispatches via optionCase" $
       renderJS (effectfulAST (fromSyntax (do
         v <- Storage.getItem Storage.localStorage (string "k")
         toSyntax (expr (optionCase v (string "missing") (\x -> x))))))
-        @?= "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\nconst n2 = (n1 === null ? \"missing\" : n1);\nn2"
+        @?= "const n0 = localStorage.getItem(\"k\");\n(n0 === null ? \"missing\" : n0)"
   ]
 
 compilerTests :: TestTree
@@ -172,7 +196,7 @@ compilerTests = testGroup "compiler"
       out @?= src
   , testCase "memory cache returns the same payload" $ do
       clearCompilerCache
-      let cfg = CompilerConfig Passthrough MemoryCache False
+      let cfg = CompilerConfig Passthrough MemoryCache False Minified
           src = "const x = 1 + 2;" :: Text
       a <- compileWith cfg src
       b <- compileWith cfg src
@@ -191,7 +215,7 @@ compilerTests = testGroup "compiler"
       let dir = tmp </> "jshark-compiler-disk-test"
       removePathForcibly dir
       createDirectoryIfMissing True dir
-      let cfg = CompilerConfig Passthrough (DiskCache dir) False
+      let cfg = CompilerConfig Passthrough (DiskCache dir) False Minified
           src = "const x = 1 + 2;" :: Text
       a <- compileWith cfg src
       b <- compileWith cfg src
@@ -206,7 +230,7 @@ compilerTests = testGroup "compiler"
       let dir = tmp </> "jshark-compiler-disk-mismatch"
       removePathForcibly dir
       createDirectoryIfMissing True dir
-      let cfg = CompilerConfig Passthrough (DiskCache dir) False
+      let cfg = CompilerConfig Passthrough (DiskCache dir) False Minified
       _ <- compileWith cfg "const a = 1;"
       files <- listDirectory dir
       mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
@@ -221,7 +245,7 @@ compilerTests = testGroup "compiler"
         Just _ -> do
           let snippet = plus (number 1) (number 2)
               raw = T.pack (renderJS (pureProgram snippet))
-              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False
+              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified
           out <- compilePure cfg snippet
           assertBool "non-empty" (not (T.null out))
           assertBool "minifier changed the IIFE" (out /= raw)
@@ -231,7 +255,7 @@ compilerTests = testGroup "compiler"
       mNpx <- findExecutable "npx"
       case (mExe, mNpx) of
         (Nothing, Nothing) -> do
-          res <- tryCompileWith (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False) "1+2;"
+          res <- tryCompileWith (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified) "1+2;"
           case res of
             Left _ -> pure ()
             Right _ -> assertFailure "expected Left when esbuild is missing"
@@ -246,6 +270,7 @@ compilerTests = testGroup "compiler"
                 (Esbuild defaultEsbuildConfig { esbuildExtraArgs = ["--definitely-not-a-flag"] })
                 NoCache
                 False
+                Minified
           res <- tryCompileWith cfg "(() => { return 1; })();"
           case res of
             Left _ -> pure ()
@@ -261,6 +286,32 @@ compilerTests = testGroup "compiler"
                 (Esbuild defaultEsbuildConfig { esbuildExtraArgs = ["--definitely-not-a-flag"] })
                 NoCache
                 True
+                Minified
           out <- compileWith cfg src
           out @?= src
+  , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
+      clearCompilerCache
+      out <- compileEffect readableConfig
+        (fromSyntax (consoleLog (string "hi" :: Expr f 'String) *> toSyntax noOp))
+      out @?= "console.log(\"hi\");"
+  , testCase "readableConfig compilePure has no IIFE and inlines single-use lets" $ do
+      clearCompilerCache
+      out <- compilePure readableConfig (let_ (number 5) (\x -> x + number 1))
+      out @?= "5.0 + 1.0"
+  , testCase "readableConfig keeps multi-use lets as const" $ do
+      clearCompilerCache
+      out <- compilePure readableConfig (let_ (number 5) (\x -> x + x))
+      out @?= "const n0 = 5.0;\nn0 + n0"
+  , testCase "Readable style skips the minifier even when a backend is set" $ do
+      clearCompilerCache
+      out <- compilePure
+        (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable)
+        (plus (number 1) (number 2))
+      out @?= "1.0 + 2.0"
+  , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
+      clearCompilerCache
+      let src = "const x = 1 + 2;" :: Text
+          cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable
+      out <- compileWith cfg src
+      out @?= src
   ]

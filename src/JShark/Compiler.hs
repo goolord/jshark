@@ -6,7 +6,7 @@
 {-# language RankNTypes #-}
 {-# language ScopedTypeVariables #-}
 
--- | Post-process generated JavaScript: minify, and cache the result.
+-- | Post-process generated JavaScript: pretty-print or minify, and cache.
 --
 -- Google Closure Compiler is no longer the best default. Its Advanced
 -- mode is still unique for whole-program property renaming, but it is a
@@ -15,12 +15,18 @@
 -- (fast, ubiquitous, what this module uses for 'Auto'). Terser remains
 -- as the more aggressive size-oriented option; Closure is still available
 -- when you actually want Advanced.
+--
+-- Use 'readableConfig' for a human-readable snippet (single-use bindings
+-- inlined, no IIFE, no minifier). 'defaultCompilerConfig' wraps an IIFE
+-- and minifies.
 module JShark.Compiler
   ( -- * Compiler Configuration
     CompilerConfig(..)
   , defaultCompilerConfig
   , passthroughConfig
+  , readableConfig
   , CompilerBackend(..)
+  , OutputStyle(..)
   , ClosureLevel(..)
   , CompilerClosureConfig(..)
   , defaultClosureConfig
@@ -73,8 +79,9 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
 
-import JShark (effectfulProgram, pureProgram, renderJS)
+import JShark (effectfulAST, effectfulProgram, pureAST, pureProgram, renderJS)
 import JShark.Types (Effect, Expr, Universe)
+import Text.PrettyPrint (Doc)
 
 -- | Compilation level for Google Closure Compiler.
 -- Encoded as the long names ('SIMPLE_OPTIMIZATIONS' /
@@ -148,6 +155,14 @@ data CacheStrategy
   | DiskCache FilePath
   deriving (Show, Eq, Ord)
 
+-- | How to present compiled JavaScript.
+data OutputStyle
+  = -- | Pretty-print, do not minify. Not wrapped in an IIFE.
+    Readable
+  | -- | Wrap in an IIFE and run the configured minifier.
+    Minified
+  deriving (Show, Eq, Ord)
+
 -- | Top-level compiler configuration.
 data CompilerConfig = CompilerConfig
   { configBackend :: CompilerBackend
@@ -157,18 +172,21 @@ data CompilerConfig = CompilerConfig
   -- 'False', 'compileWith' throws. Named helpers ('compileEsbuild' etc.)
   -- set this to 'False'.
   , configFallback :: Bool
+  , configStyle :: OutputStyle
   } deriving (Show, Eq, Ord)
 
--- | Auto backend, in-memory cache, fall back to the unminified source if
--- no minifier is installed (or if it crashes). Failures are logged to
--- stderr. Prefer 'tryCompileWith' if you need to distinguish success
--- from fallback.
+-- | Auto backend, minified output, in-memory cache, fall back to the
+-- unminified source if no minifier is installed (or if it crashes).
 defaultCompilerConfig :: CompilerConfig
-defaultCompilerConfig = CompilerConfig Auto MemoryCache True
+defaultCompilerConfig = CompilerConfig Auto MemoryCache True Minified
 
--- | Skip minification entirely. Useful in tests.
+-- | Skip minification entirely. Useful in tests of the IIFE wrapper.
 passthroughConfig :: CompilerConfig
-passthroughConfig = CompilerConfig Passthrough NoCache False
+passthroughConfig = CompilerConfig Passthrough NoCache False Minified
+
+-- | Human-readable JS: assignment elimination, no minifier, no IIFE.
+readableConfig :: CompilerConfig
+readableConfig = CompilerConfig Passthrough NoCache False Readable
 
 cacheFormatVersion :: Text
 cacheFormatVersion = "jshark-minify-1"
@@ -197,7 +215,10 @@ hashText t = showHex (fnv1a64 (TE.encodeUtf8 t)) ""
 
 cacheKey :: CompilerConfig -> Text -> Text
 cacheKey cfg source =
-  cacheFormatVersion <> ":" <> T.pack (show (configBackend cfg)) <> ":" <> source
+  cacheFormatVersion
+  <> ":" <> T.pack (show (configBackend cfg))
+  <> ":" <> T.pack (show (configStyle cfg))
+  <> ":" <> source
 
 insertBounded :: Text -> Text -> Map Text Text -> Map Text Text
 insertBounded k v m =
@@ -231,9 +252,12 @@ compileWith cfg source = do
 
 -- | Minify without fallback or throwing on minifier failure.
 -- Cache is consulted only for successful results (fallback source is
--- never stored).
+-- never stored). 'Readable' forces 'Passthrough' so a minifying backend
+-- cannot run.
 tryCompileWith :: CompilerConfig -> Text -> IO (Either String Text)
-tryCompileWith cfg source = case configCache cfg of
+tryCompileWith cfg0 source =
+  let cfg = styleConfig cfg0
+   in case configCache cfg of
   NoCache -> tryRunCompile cfg source
   MemoryCache -> do
     let key = cacheKey cfg source
@@ -308,29 +332,45 @@ atomicWriteFile dest bytes = do
 -- Throws if the compiler is missing or fails ('configFallback' is false).
 compileClosure :: ClosureLevel -> Text -> IO Text
 compileClosure lvl =
-  compileWith (CompilerConfig (Closure (CompilerClosureConfig lvl [])) MemoryCache False)
+  compileWith (CompilerConfig (Closure (CompilerClosureConfig lvl [])) MemoryCache False Minified)
 
 -- | Minify with esbuild. Throws if esbuild is missing or fails.
 compileEsbuild :: Text -> IO Text
-compileEsbuild = compileWith (CompilerConfig (Esbuild defaultEsbuildConfig) MemoryCache False)
+compileEsbuild = compileWith (CompilerConfig (Esbuild defaultEsbuildConfig) MemoryCache False Minified)
 
 -- | Minify with Terser. Throws if terser is missing or fails.
 compileTerser :: Text -> IO Text
-compileTerser = compileWith (CompilerConfig (Terser defaultTerserConfig) MemoryCache False)
+compileTerser = compileWith (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified)
 
--- | Compile an effectful JShark computation to an IIFE, then minify.
+-- | Compile an effectful JShark computation. 'Readable' emits a pretty
+-- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 compileEffect :: forall (u :: Universe).
      CompilerConfig
   -> (forall (f :: Universe -> Type). Effect f u)
   -> IO Text
-compileEffect cfg eff = compileWith cfg (T.pack (renderJS (effectfulProgram eff)))
+compileEffect cfg eff = compileWith cfg
+  (T.pack (renderJS (effectDoc (configStyle cfg) eff)))
 
--- | Compile a pure JShark expression to an IIFE, then minify.
+-- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: forall (u :: Universe).
      CompilerConfig
   -> (forall (f :: Universe -> Type). Expr f u)
   -> IO Text
-compilePure cfg e = compileWith cfg (T.pack (renderJS (pureProgram e)))
+compilePure cfg e = compileWith cfg
+  (T.pack (renderJS (pureDoc (configStyle cfg) e)))
+
+styleConfig :: CompilerConfig -> CompilerConfig
+styleConfig cfg = case configStyle cfg of
+  Readable -> cfg { configBackend = Passthrough }
+  Minified -> cfg
+
+pureDoc :: OutputStyle -> (forall (f :: Universe -> Type). Expr f u) -> Doc
+pureDoc Readable e = pureAST e
+pureDoc Minified e = pureProgram e
+
+effectDoc :: OutputStyle -> (forall (f :: Universe -> Type). Effect f u) -> Doc
+effectDoc Readable e = effectfulAST e
+effectDoc Minified e = effectfulProgram e
 
 tryRunCompile :: CompilerConfig -> Text -> IO (Either String Text)
 tryRunCompile cfg source = case configBackend cfg of

@@ -11,7 +11,11 @@
   and cache outputs in memory (optional on-disk cache, key-verified).
   Named backends throw on failure; `Auto` may fall back and logs to
   stderr. `tryCompileWith` returns `Either`. `nix develop` provides
-  `esbuild`.
+  `esbuild`. Pass `readableConfig` (or `OutputStyle` `Readable`) for a
+  pretty, non-minified snippet with no IIFE.
+* Codegen inlines single-use `let`/`Bind` assignments in both readable
+  and minified output, so `let x = e in x + 1` becomes `e + 1` while
+  `let x = e in x + x` still emits `const n0 = e`.
 * Modernized the build: dropped the pinned GHC 8.6.5 / `base < 4.13` bounds
   in favor of a modern GHC (tested with 9.14). The original `quantification`
   dependency was pinned to an unreleased git commit; it (and its `Topaz.Rec`

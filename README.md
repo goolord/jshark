@@ -6,7 +6,7 @@ The goals are as follows:
 - Have an easy to use ffi
 - Compile to idiomatic JavaScript
 
-Generated JS is a bit verbose (`const n0 = ...`). Run it through `JShark.Compiler` to minify. The default backend is [esbuild](https://esbuild.github.io) — much faster than Google Closure Compiler, and the right default in 2026. Closure is still available if you want its `ADVANCED` whole-program renaming (you'll need externs for DOM/FFI). Terser is there too.
+Codegen inlines single-use bindings (so you don't get `const n0 = x; n0` everywhere). For a pretty snippet, compile with `readableConfig`. For production, `defaultCompilerConfig` wraps an IIFE and minifies. The default backend is [esbuild](https://esbuild.github.io) — much faster than Google Closure Compiler, and the right default in 2026. Closure is still available if you want its `ADVANCED` whole-program renaming (you'll need externs for DOM/FFI). Terser is there too.
 
 ```haskell
 import qualified Data.Text.IO as TIO
@@ -15,11 +15,13 @@ import JShark.Compiler
 
 main :: IO ()
 main = do
-  js <- compilePure defaultCompilerConfig (plus (number 1) (number 2))
-  TIO.putStrLn js
+  pretty <- compilePure readableConfig (plus (number 1) (number 2))
+  minified <- compilePure defaultCompilerConfig (plus (number 1) (number 2))
+  TIO.putStrLn pretty
+  TIO.putStrLn minified
 ```
 
-`compileEffect` / `compilePure` wrap the snippet in an IIFE so a minifier cannot dead-code-eliminate the result. `compileJS` does not wrap: a bare expression can minify to empty. Results are cached in memory by default (`MemoryCache`, capped); pass `DiskCache dir` or `NoCache` via `compileWith`. Named backends (`compileEsbuild` etc.) throw if the tool is missing; `defaultCompilerConfig` (`Auto`) logs to stderr and returns the unminified source. Use `tryCompileWith` for an `Either`. `nix develop` puts `esbuild` on `PATH`.
+`compilePure readableConfig` / `compileEffect readableConfig` emit a human-readable snippet: single-use lets and effect binds are inlined, nothing is wrapped in an IIFE, and minifiers are skipped (`OutputStyle` `Readable` forces `Passthrough`). `Minified` (the default) wraps an IIFE so a minifier cannot dead-code-eliminate the result, then runs the configured backend. `compileJS` does not wrap: a bare expression can minify to empty. Results are cached in memory by default (`MemoryCache`, capped); pass `DiskCache dir` or `NoCache` via `compileWith`. Named backends (`compileEsbuild` etc.) throw if the tool is missing; `defaultCompilerConfig` (`Auto`) logs to stderr and returns the unminified source. Use `tryCompileWith` for an `Either`. `nix develop` puts `esbuild` on `PATH`.
 
 ### Building
 
