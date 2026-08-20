@@ -1,5 +1,6 @@
 {-# language DataKinds #-}
 {-# language GADTs #-}
+{-# language OverloadedStrings #-}
 
 module JShark.Math
   ( inc
@@ -12,11 +13,34 @@ module JShark.Math
   , ln10
   , log2e
   , log10e
+  , sin
+  , cos
+  , tan
+  , asin
+  , acos
+  , atan
+  , sqrt
+  , cbrt
+  , exp
+  , log
+  , log2
+  , log10
+  , floor
+  , ceil
+  , round
+  , trunc
+  , pow
+  , atan2
+  , max_
+  , min_
+  , hypot
+  , random
   ) where
 
 import JShark.Types
 import JShark.Api
-import Prelude hiding (pi)
+import JShark.Rec (Rec(..))
+import Prelude hiding (pi, sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, log, floor, round, max, min)
 
 inc :: Expr f ('Function 'Number 'Number)
 inc = lambda (+1)
@@ -47,3 +71,34 @@ log2e = 1.4426950408889634
 
 log10e :: Expr f 'Number
 log10e = 0.4342944819032518
+
+sin, cos, tan, asin, acos, atan, sqrt, cbrt, exp, log, log2, log10, floor, ceil, round, trunc
+  :: Expr f 'Number -> Expr f 'Number
+sin = mathUnary "sin"
+cos = mathUnary "cos"
+tan = mathUnary "tan"
+asin = mathUnary "asin"
+acos = mathUnary "acos"
+atan = mathUnary "atan"
+sqrt = mathUnary "sqrt"
+cbrt = mathUnary "cbrt"
+exp = mathUnary "exp"
+log = mathUnary "log"
+log2 = mathUnary "log2"
+log10 = mathUnary "log10"
+floor = mathUnary "floor"
+ceil = mathUnary "ceil"
+round = mathUnary "round"
+trunc = mathUnary "trunc"
+
+pow, atan2, max_, min_, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pow = mathBinary "pow"
+atan2 = mathBinary "atan2"
+max_ = mathBinary "max"
+min_ = mathBinary "min"
+hypot = mathBinary "hypot"
+
+-- | @Math.random()@. Not pure (yields a different value each call), so
+-- it's an 'Effect'.
+random :: Effect f 'Number
+random = ffi "Math.random" RecNil

@@ -14,8 +14,7 @@ import JShark.Api
 import JShark.Object
 import JShark.Types
 import Network.HTTP.Types
-import Topaz.Rec ((<:))
-import Topaz.Types
+import JShark.Rec (Rec(..), (<:))
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 
@@ -53,4 +52,18 @@ readyStateDone = expr 4
 
 statusOK :: Effect f 'Number
 statusOK = expr 200
+
+-- Fetch -------------------------------------------------------------------
+
+-- | Opaque tag for the object returned by @fetch@. Simplified: hands back
+-- the resolved response's handle directly instead of modeling a Promise
+-- of Response, and has no body-streaming/JSON-decoding methods.
+data FetchResponse
+
+type instance Field FetchResponse "ok" = 'Bool
+type instance Field FetchResponse "status" = 'Number
+
+-- | @fetch(url)@
+fetch :: Expr f 'String -> EffectSyntax f (Effect f ('Object FetchResponse))
+fetch url = fmap (expr . Var) $ toSyntax $ ffi "fetch" (url <: RecNil)
 
