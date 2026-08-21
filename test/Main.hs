@@ -17,7 +17,7 @@ import JShark
 import JShark.Api
 import JShark.Compiler
 import qualified JShark.ExprF as ExprF
-import JShark.Rec (Rec(..))
+import JShark.Rec (Rec(..), (<:))
 import JShark.Types
 import System.Directory
   ( createDirectoryIfMissing
@@ -209,6 +209,25 @@ stdlibTests = testGroup "stdlib"
         v <- Storage.getItem Storage.localStorage (string "k")
         toSyntax (expr (optionCase v (string "missing") (\x -> x))))))
         @?= "const n0 = localStorage.getItem(\"k\");\n(n0 === null ? \"missing\" : n0)"
+  , testCase "multi-use UnsafeObject stays one const (identity)" $
+      renderJS (effectfulAST (fromSyntax (do
+        o <- fmap (expr . Var) $ toSyntax $ UnsafeObject "{}"
+        toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "a") (Lift (number 1))
+        toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "b") (Lift (number 2))
+        toSyntax noOp)))
+        @?= "const n0 = {};\nn0.a = 1.0;\nn0.b = 2.0;"
+  , testCase "forEach param name matches body uses" $
+      renderJS (effectfulAST (fromSyntax (do
+        toSyntax_ $ forEach numArray (\x -> ffi "foo" (x <: RecNil))
+        toSyntax noOp)))
+        @?= "[1.0, 2.0].forEach(function(n0){foo(n0);});;"
+  , testCase "onClick assigns the DOM onclick property" $
+      T.isInfixOf ".onclick ="
+        (T.pack $ renderJS (effectfulAST (fromSyntax (do
+          el <- Dom.lookupId (string "b")
+          onClick el $ \_ -> noOp
+          toSyntax noOp))))
+        @?= True
   ]
 
 optimizeTests :: TestTree
@@ -359,12 +378,16 @@ compilerTests = testGroup "compiler"
       case m of
         Nothing -> pure ()
         Just _ -> do
+          -- Constant-folded to a pure literal IIFE; esbuild DCE's that
+          -- unless Compiler re-anchors via export default and strips it.
           let snippet = plus (number 1) (number 2)
               raw = T.pack (renderJS (pureProgram snippet))
               cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified
           out <- compilePure cfg snippet
           assertBool "non-empty" (not (T.null out))
           assertBool "minifier changed the IIFE" (out /= raw)
+          assertBool "stripped ESM export anchor" (not ("export" `T.isInfixOf` out))
+          assertBool "result still an expression (no var binding left)" (not ("var " `T.isPrefixOf` out))
   , testCase "tryCompileWith reports missing esbuild" $ do
       clearCompilerCache
       mExe <- findExecutable "esbuild"

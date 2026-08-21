@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+* Added a `todo-mvc` executable: Scotty serves Lucid HTML with client
+  behaviour compiled from JShark (`cabal run todo-mvc`). Client script
+  is at `/app.js`; filter is hash-driven; corrupt `localStorage` is ignored.
+* `UnsafeObject` is no longer treated as a cheap binding: inlining
+  duplicated object literals and broke shared mutable state.
+* `LambdaE` / `ForEach` codegen allocate one parameter name and use it
+  in both the parameter list and the body (previously they could disagree).
+* `onClick` assigns the DOM `onclick` property (not `onClick`).
 * `evaluate` is a pure tree walk. Host-language sharing (Haskell
   `let x = e in x + x`) is recovered by `evaluateCached` via
   `StableName` memoization in `IO`.
@@ -23,7 +31,9 @@
   (numbers, strings, bools, unit, nested option/result — not arrays)
   are propagated even under lambdas; unused pure bindings are dropped;
   unused FFI/method/property expressions are kept so their effects
-  still run.
+  still run. esbuild may DCE a pure IIFE of a folded literal to empty;
+  `JShark.Compiler` retries those as `export default (…)` / ESM and
+  strips the export so `compilePure` still returns an expression.
 * Modernized the build: dropped the pinned GHC 8.6.5 / `base < 4.13` bounds
   in favor of a modern GHC (tested with 9.14). The original `quantification`
   dependency was pinned to an unreleased git commit; it (and its `Topaz.Rec`

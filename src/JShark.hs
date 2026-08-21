@@ -691,7 +691,8 @@ isCheap = \case
 isCheapEffect :: Effect (Const Int) u -> Bool
 isCheapEffect = \case
   Lift x -> isCheap x
-  UnsafeObject{} -> True
+  -- Object literals are identity-sensitive (mutation / shared state).
+  UnsafeObject{} -> False
   _ -> False
 
 isPureExpr :: Expr (Const Int) u -> Bool
@@ -1350,14 +1351,14 @@ effectfulAST' !s0 = \case
         foreignFunction = P.text fn <> P.parens (P.hcat (P.punctuate ", " lArgs))
      in (s1, Code (P.vcat lVars) foreignFunction)
   ForEach xs f ->
-    let ident0 = cgIdent s0
-        (s1, Code xsDecl xsRef) = pureAST' s0 xs
-        (s2, Code asDecl asRef) = effectfulAST' s0 (f (Const ident0))
+    let (s1, Code xsDecl xsRef) = pureAST' s0 xs
+        (nParam, s2) = allocIdent s1
+        (s3, Code asDecl asRef) = effectfulAST' s2 (f (Const nParam))
         bodyStmt = if P.isEmpty asRef then asDecl else asDecl $$ (asRef <> P.semi)
         forE = xsRef <> ".forEach" <> (P.parens
-               $ "function" <> P.parens (P.text ('n':show (cgIdent s1)))
+               $ "function" <> P.parens (P.text ('n':show nParam))
                <> P.braces (P.nest 2 bodyStmt)) <> P.semi
-     in (s2, Code xsDecl forE)
+     in (s3, Code xsDecl forE)
   IfE c t e ->
     -- We always render this as an if/else statement (rather than trying to
     -- special-case a ternary expression) because an effectful branch's
@@ -1400,15 +1401,12 @@ effectfulAST' !s0 = \case
     let (s1, Code a1Decl a1Ref) = pureAST' s0 x
      in (s1, Code a1Decl $ a1Ref <> P.parens mempty)
   LambdaE f ->
-    let ident0 = cgIdent s0
-        ex = f (Const ident0)
-        (s1, Code exprXDecl exprXRef) = effectfulAST' s0 ex
-        param = cgIdent s1
-        (_, s2) = allocIdent s1
+    let (nParam, s1) = allocIdent s0
+        (s2, Code exprXDecl exprXRef) = effectfulAST' s1 (f (Const nParam))
      in ( s2
         , Code mempty
             $ "function"
-            <+> P.parens (P.text $ 'n':show param)
+            <+> P.parens (P.text $ 'n':show nParam)
             <+> P.braces ( (exprXDecl $$ "return" <+> exprXRef) )
         )
   ApplyE fex ex ->

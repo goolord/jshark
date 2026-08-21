@@ -28,6 +28,14 @@ main = do
 JShark builds with a modern GHC. just `cabal build` / `cabal test`.
 Tests that check generated JS against the reference interpreter need [bun](https://bun.sh) on `PATH`. If it is missing, the `bun is on PATH` check fails and the rest of that group is skipped. `nix develop` puts `esbuild` and `bun` on `PATH`.
 
+### TodoMVC demo
+
+```
+cabal run todo-mvc
+```
+
+Opens a classic TodoMVC UI on [http://localhost:3000](http://localhost:3000): Scotty serves Lucid HTML, and the client behaviour is compiled from JShark (`app/todo-mvc`).
+
 ### Status
 
 The core language currently supports:

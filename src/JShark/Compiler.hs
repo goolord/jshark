@@ -189,7 +189,7 @@ readableConfig :: CompilerConfig
 readableConfig = CompilerConfig Passthrough NoCache False Readable
 
 cacheFormatVersion :: Text
-cacheFormatVersion = "jshark-minify-1"
+cacheFormatVersion = "jshark-minify-2"
 
 memoryCacheMaxEntries :: Int
 memoryCacheMaxEntries = 256
@@ -412,9 +412,58 @@ runEsbuild cfg source = do
         ++ maybe [] (\t -> ["--target=" ++ t]) (esbuildTarget cfg)
         ++ esbuildExtraArgs cfg
   case (mDirect, mNpx) of
-    (Just exe, _) -> executeProcess exe args source
-    (Nothing, Just npxExe) -> executeProcess npxExe (["--no-install", "esbuild"] ++ args) source
+    (Just exe, _) -> run exe args
+    (Nothing, Just npxExe) -> run npxExe (["--no-install", "esbuild"] ++ args)
     (Nothing, Nothing) -> pure (Left "esbuild executable not found on PATH")
+  where
+  -- A pure IIFE (or bare expression) is an unused statement to esbuild, so
+  -- '--minify' can DCE it to empty — especially after constant folding turns
+  -- 'return 1+2' into 'return 3'. Re-run as 'export default (…)' / ESM so the
+  -- value is live, then strip the export to leave an expression again.
+  run exe args = do
+    first <- executeProcessRaw exe args source
+    case first of
+      Left err -> pure (Left err)
+      Right out
+        | not (T.null out) || T.null (T.strip source) -> pure (Right out)
+        | otherwise -> do
+            let wrapped = "export default (" <> dropTrailingSemis (T.strip source) <> ")\n"
+                args' = args ++ ["--format=esm"]
+            second <- executeProcessRaw exe args' wrapped
+            case second of
+              Left err -> pure (Left err)
+              Right out' ->
+                let stripped = stripExportDefault out'
+                 in if T.null stripped
+                      then pure (Left "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)")
+                      else pure (Right stripped)
+
+dropTrailingSemis :: Text -> Text
+dropTrailingSemis = T.dropWhileEnd (\c -> c == ';' || c == ' ' || c == '\n' || c == '\r' || c == '\t')
+
+-- | Undo the 'export default (…)' / ESM anchor. esbuild '--minify' often
+-- rewrites 'export default EXPR' to 'var e=EXPR;export{e as default};'.
+stripExportDefault :: Text -> Text
+stripExportDefault t =
+  let t' = T.strip t
+   in case stripVarAsDefault t' of
+        Just v -> v
+        Nothing -> case T.stripPrefix "export default" t' of
+          Just rest -> dropTrailingSemis (T.strip rest)
+          Nothing -> t'
+
+-- | 'var name=VALUE;export{name as default};' → VALUE
+stripVarAsDefault :: Text -> Maybe Text
+stripVarAsDefault t = do
+  afterVar <- T.stripPrefix "var " t
+  let (name0, rest0) = T.break (== '=') afterVar
+  rest1 <- T.stripPrefix "=" rest0
+  let name = T.strip name0
+      suffix = ";export{" <> name <> " as default}"
+      body = T.strip rest1
+  case T.stripSuffix (suffix <> ";") body of
+    Just v -> Just (dropTrailingSemis (T.strip v))
+    Nothing -> fmap (dropTrailingSemis . T.strip) (T.stripSuffix suffix body)
 
 runClosure :: CompilerClosureConfig -> Text -> IO (Either String Text)
 runClosure cfg source = do
@@ -450,15 +499,22 @@ runTerser cfg source = do
     (Nothing, Nothing) -> pure (Left "terser executable not found on PATH")
 
 executeProcess :: FilePath -> [String] -> Text -> IO (Either String Text)
-executeProcess cmd args source =
+executeProcess cmd args source = do
+  res <- executeProcessRaw cmd args source
+  case res of
+    Right out
+      | T.null out && not (T.null (T.strip source)) ->
+          pure (Left "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)")
+    _ -> pure res
+
+-- | Like 'executeProcess' but allows empty stdout (used when esbuild may DCE
+-- a pure expression and we want to retry with an ESM export anchor).
+executeProcessRaw :: FilePath -> [String] -> Text -> IO (Either String Text)
+executeProcessRaw cmd args source =
   (do
     (code, stdoutStr, stderrStr) <- readProcessWithExitCode cmd args (T.unpack source)
     case code of
-      ExitSuccess ->
-        let out = T.strip (T.pack stdoutStr)
-         in if T.null out && not (T.null (T.strip source))
-              then pure (Left "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)")
-              else pure (Right out)
+      ExitSuccess -> pure (Right (T.strip (T.pack stdoutStr)))
       ExitFailure c ->
         pure (Left (if null stderrStr then "Process exited with code " ++ show c else stderrStr))
   ) `catch` (\(e :: SomeException) -> pure (Left (show e)))

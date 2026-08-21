@@ -74,6 +74,26 @@ library
     -Wall
     -O2
 
+executable todo-mvc
+  main-is:
+    Main.hs
+  other-modules:
+    Client
+    Page
+  hs-source-dirs:
+    app/todo-mvc
+  build-depends:
+    , base
+    , jshark
+    , lucid >= 2.11.20260427 && < 2.12
+    , scotty >= 0.30 && < 0.31
+    , text
+  default-language:
+    Haskell2010
+  ghc-options:
+    -Wall
+    -threaded
+
 test-suite jshark-test
   type:
     exitcode-stdio-1.0

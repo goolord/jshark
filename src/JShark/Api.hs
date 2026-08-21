@@ -22,7 +22,7 @@ host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
 onClick :: Effect f ('Object obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
-onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "onClick") (LambdaE f)
+onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "onclick") (LambdaE f)
 
 consoleLog :: Expr f u -> EffectSyntax f ()
 consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()

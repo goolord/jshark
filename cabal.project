@@ -1,1 +1,8 @@
 packages: ./
+
+-- Hackage scotty-0.30 still caps containers < 0.8 (blocks GHC 9.14 boot
+-- containers-0.8). Drop this pin once a release allows containers >= 0.8.
+source-repository-package
+  type: git
+  location: https://github.com/scotty-web/scotty.git
+  tag: b5f4dfbdbd6c94f3d21492ac7925e699c3b54e87
