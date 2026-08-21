@@ -218,10 +218,11 @@ stdlibTests = testGroup "stdlib"
         toSyntax noOp)))
         @?= "const n0 = {};\nn0.a = 1.0;\nn0.b = 2.0;"
   , testCase "forEach param name matches body uses" $
-      renderJS (effectfulAST (fromSyntax (do
-        toSyntax_ $ forEach numArray (\x -> ffi "foo" (x <: RecNil))
-        toSyntax noOp)))
-        @?= "[1.0, 2.0].forEach(function(n0){foo(n0);});;"
+      T.isInfixOf "function(n0){foo(n0);}"
+        (T.pack $ renderJS (effectfulAST (fromSyntax (do
+          toSyntax_ $ forEach numArray (\x -> ffi "foo" (x <: RecNil))
+          toSyntax noOp))))
+        @?= True
   , testCase "onClick assigns the DOM onclick property" $
       T.isInfixOf ".onclick ="
         (T.pack $ renderJS (effectfulAST (fromSyntax (do

@@ -10,7 +10,7 @@
   , TupleSections
   , TypeOperators
 #-}
-{-# options_ghc -fno-warn-unused-top-binds #-}
+{-# OPTIONS_GHC -fno-warn-unused-top-binds #-}
 
 module JShark
   ( Expr(..)

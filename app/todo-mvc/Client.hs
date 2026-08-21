@@ -32,12 +32,13 @@ getProp obj name = fmap Var $ toSyntax $ unsafeObjectGet obj name
 setProp :: Effect f ('Object a) -> String -> Expr f u -> EffectSyntax f ()
 setProp obj name v = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet obj name) (Lift v)
 
--- | @JSON.parse@ that becomes 'None' on throw (corrupt localStorage).
-tryParse :: Expr f 'String -> Expr f ('Option u)
-tryParse s =
+-- | Parse persisted state. 'None' on throw, non-object JSON, or arrays.
+-- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
+tryParseState :: Expr f 'String -> Expr f ('Option ('Object ()))
+tryParseState s =
   unsafeNullable $
     exprFfi
-      "(function(s){try{return JSON.parse(s)}catch(e){return null}})"
+      "(function(s){try{var o=JSON.parse(s);if(!o||typeof o!==\"object\"||Array.isArray(o))return null;return{todos:Array.isArray(o.todos)?o.todos:[],nextId:(typeof o.nextId===\"number\"&&isFinite(o.nextId))?o.nextId:1,filter:(o.filter===\"active\"||o.filter===\"completed\")?o.filter:\"all\"};}catch(e){return null;}})"
       (s <: RecNil)
 
 -- | Invoke @state.render()@. Stored on the state object so the render
@@ -54,6 +55,11 @@ mkTodo title tid = do
   setProp (Lift (Var o)) "completed" (bool False)
   setProp (Lift (Var o)) "id" tid
   pure (Var o)
+
+hashRecognized :: Expr f 'String -> Expr f 'Bool
+hashRecognized hash =
+  Or (Eq hash (string "#/active"))
+     (Or (Eq hash (string "#/completed")) (Eq hash (string "#/")))
 
 applyHashFilter :: Effect f ('Object a) -> Expr f 'String -> Effect f 'Unit
 applyHashFilter state hash =
@@ -82,7 +88,7 @@ mainJS = do
   state <- fmap (expr . Var) $ toSyntax $ unsafeObject "{todos:[],filter:\"all\",nextId:1}"
 
   saved <- Storage.getItem Storage.localStorage storageKey
-  let optBlob = optionCase saved none tryParse
+  let optBlob = optionCase saved none tryParseState
       hasBlob = optionCase optBlob (bool False) (\_ -> bool True)
   toSyntax_ $ when_ hasBlob $ fromSyntax $ do
     blob <- fmap (expr . Var) $ toSyntax $ Lift $
@@ -216,8 +222,10 @@ mainJS = do
         <: unsafeEffectExpr
           ( LambdaE $ \_ -> fromSyntax $ do
               hash <- fmap Var $ toSyntax $ unsafeObjectGet (unsafeObject "location") "hash"
-              toSyntax_ $ applyHashFilter state hash
-              callRender state
+              toSyntax_ $ when_ (hashRecognized hash) $ fromSyntax $ do
+                toSyntax_ $ applyHashFilter state hash
+                callRender state
+                toSyntax noOp
               toSyntax noOp
           )
         <: RecNil
