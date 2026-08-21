@@ -56,6 +56,11 @@ lambdaE ::
   -> Effect f ('Function u v)
 lambdaE f = LambdaE (coerce f . Lift . Var)
 
+-- | Embed a 'Double' as a number literal.
+--
+-- Integer literals can use the 'Num' instance on 'Expr' directly
+-- (@3 :: Expr f 'Number@). Prefer 'number' when you already have a
+-- runtime 'Double' (including non-integers).
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
 

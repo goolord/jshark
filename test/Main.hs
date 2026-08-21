@@ -126,6 +126,15 @@ codegenTests = testGroup "codegen"
       renderJS (pureAST ("hi" :: Expr f 'String)) @?= "\"hi\""
   , testCase "OverloadedStrings Value via Literal" $
       renderJS (pureAST (Literal ("hi" :: Value 'String))) @?= "\"hi\""
+  , testCase "Num Value literal via Literal" $
+      renderJS (pureAST (Literal (3 :: Value 'Number))) @?= "3.0"
+  , testCase "Num Expr literal" $
+      renderJS (pureAST (3 :: Expr f 'Number)) @?= "3.0"
+  , testCase "Num Value host arithmetic" $
+      case ((1 + 2 * 3) :: Value 'Number) of
+        ValueNumber n -> n @?= 7
+  , testCase "Fractional Value via Literal" $
+      renderJS (pureAST (Literal ((1 / 2) :: Value 'Number))) @?= "0.5"
   ]
 
 controlFlowTests :: TestTree

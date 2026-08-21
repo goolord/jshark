@@ -104,7 +104,7 @@ data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type w
   ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
   VarF :: f u -> ExprF g f u
 
--- | 'IsString' for JS string literals at each AST layer:
+-- | 'IsString' for JS string literals at each pure AST layer:
 --
 -- * @Value 'String@ — @"hi"@
 -- * @Expr f 'String@ — @"hi"@ as 'Literal'
@@ -121,18 +121,48 @@ instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Exp
 instance forall g (f :: Universe -> Type) u. (u ~ 'String) => Exts.IsString (ExprF g f u) where
   fromString s = LiteralF (Exts.fromString s)
 
+-- | 'Num' / 'Fractional' for JS numbers at each pure AST layer that
+-- supports them:
+--
+-- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
+--   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
+-- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
+--   ('Plus'/'Times'/…) and fold later in codegen
+--
+-- 'ExprF' only has 'PlusF', so it has no 'Num' instance. Prefer a
+-- signature when the hole is ambiguous. Use 'JShark.Api.number' for
+-- arbitrary runtime 'Double's (integer literals can use 'Num' directly).
+instance forall u. (u ~ 'Number) => Num (Value u) where
+  (+) = liftValue2 (+)
+  (*) = liftValue2 (*)
+  (-) = liftValue2 (-)
+  abs = liftValue1 abs
+  signum = liftValue1 signum
+  fromInteger = ValueNumber . fromInteger
+  negate = liftValue1 negate
+
+instance forall u. (u ~ 'Number) => Fractional (Value u) where
+  (/) = liftValue2 (/)
+  fromRational = ValueNumber . fromRational
+
+liftValue1 :: (Double -> Double) -> Value 'Number -> Value 'Number
+liftValue1 f (ValueNumber a) = ValueNumber (f a)
+
+liftValue2 :: (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
+liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
+
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus
   abs = Abs
   signum = Sign
-  fromInteger = Literal . ValueNumber . fromInteger
+  fromInteger n = Literal (fromInteger n)
   negate = Negate
 
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u) where
   (/) = FracDiv
-  fromRational = Literal . ValueNumber . fromRational
+  fromRational r = Literal (fromRational r)
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).
