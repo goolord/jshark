@@ -1,6 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 -- | Wrappers over the JS timer functions.
 module JShark.Timers
   ( setTimeout

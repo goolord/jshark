@@ -1,6 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 -- | Minimal @JSON@ wrapper.
 module JShark.Json
   ( stringify

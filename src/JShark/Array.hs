@@ -1,6 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 -- | JS @Array.prototype@ wrappers. Opaque to 'JShark.evaluate' except 'index'.
 module JShark.Array
   ( index

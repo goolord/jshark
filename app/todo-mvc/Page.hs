@@ -1,5 +1,6 @@
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    OverloadedStrings
+#-}
 module Page (page) where
 
 import Lucid

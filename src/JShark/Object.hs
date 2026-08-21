@@ -1,10 +1,11 @@
-{-# language AllowAmbiguousTypes #-}
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-{-# language ScopedTypeVariables #-}
-{-# language TypeFamilies #-}
-{-# language TypeOperators #-}
-
+{-# LANGUAGE
+    AllowAmbiguousTypes
+  , DataKinds
+  , OverloadedStrings
+  , ScopedTypeVariables
+  , TypeFamilies
+  , TypeOperators
+#-}
 module JShark.Object where
 
 import Data.Kind

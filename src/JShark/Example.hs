@@ -1,6 +1,8 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-{-# language TypeOperators #-}
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+  , TypeOperators
+#-}
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 
 module JShark.Example where

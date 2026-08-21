@@ -1,11 +1,12 @@
-{-# language BangPatterns #-}
-{-# language DataKinds #-}
-{-# language GADTs #-}
-{-# language LambdaCase #-}
-{-# language PolyKinds #-}
-{-# language RankNTypes #-}
-{-# language ScopedTypeVariables #-}
-
+{-# LANGUAGE
+    BangPatterns
+  , DataKinds
+  , GADTs
+  , LambdaCase
+  , PolyKinds
+  , RankNTypes
+  , ScopedTypeVariables
+#-}
 -- | Finished form of the original unused-binding experiment.
 --
 -- The 2019 code allocated an 'STRef' per binder and round-tripped through

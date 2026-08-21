@@ -1,6 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 -- | Wrappers over the JS @console@ object.
 module JShark.Console
   ( log

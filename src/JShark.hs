@@ -1,14 +1,15 @@
-{-# language BangPatterns #-}
-{-# language DataKinds #-}
-{-# language GADTs #-}
-{-# language LambdaCase #-}
-{-# language OverloadedStrings #-}
-{-# language PolyKinds #-}
-{-# language RankNTypes #-}
-{-# language ScopedTypeVariables #-}
-{-# language TupleSections #-}
-{-# language TypeOperators #-}
-
+{-# LANGUAGE
+    BangPatterns
+  , DataKinds
+  , GADTs
+  , LambdaCase
+  , OverloadedStrings
+  , PolyKinds
+  , RankNTypes
+  , ScopedTypeVariables
+  , TupleSections
+  , TypeOperators
+#-}
 {-# options_ghc -fno-warn-unused-top-binds #-}
 
 module JShark

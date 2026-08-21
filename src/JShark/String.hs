@@ -1,6 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 -- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
 module JShark.String
   ( length_

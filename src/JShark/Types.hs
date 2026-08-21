@@ -1,12 +1,13 @@
-{-# language DataKinds #-}
-{-# language DeriveFunctor #-}
-{-# language DerivingStrategies #-}
-{-# language GADTs #-}
-{-# language KindSignatures #-}
-{-# language RankNTypes #-}
-{-# language StandaloneDeriving #-}
-{-# language TypeOperators #-}
-
+{-# LANGUAGE
+    DataKinds
+  , DeriveFunctor
+  , DerivingStrategies
+  , GADTs
+  , KindSignatures
+  , RankNTypes
+  , StandaloneDeriving
+  , TypeOperators
+#-}
 module JShark.Types where 
 import Control.Monad (ap, void)
 import Data.Kind

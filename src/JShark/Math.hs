@@ -1,7 +1,8 @@
-{-# language DataKinds #-}
-{-# language GADTs #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , GADTs
+  , OverloadedStrings
+#-}
 module JShark.Math
   ( inc
   , dec

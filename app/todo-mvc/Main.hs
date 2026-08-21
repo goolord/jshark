@@ -1,5 +1,6 @@
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    OverloadedStrings
+#-}
 module Main where
 
 import Client (mainJS)

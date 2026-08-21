@@ -1,12 +1,13 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-{-# language ExistentialQuantification #-}
-{-# language GADTs #-}
-{-# language BangPatterns #-}
-{-# language TypeApplications #-}
-{-# language TypeFamilies #-}
-{-# language ScopedTypeVariables #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+  , ExistentialQuantification
+  , GADTs
+  , BangPatterns
+  , TypeApplications
+  , TypeFamilies
+  , ScopedTypeVariables
+#-}
 module JShark.Ajax where
 
 import JShark

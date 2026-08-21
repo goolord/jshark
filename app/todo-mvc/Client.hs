@@ -1,5 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Client-side TodoMVC written in JShark.

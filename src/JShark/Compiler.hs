@@ -1,11 +1,12 @@
-{-# language BangPatterns #-}
-{-# language DataKinds #-}
-{-# language KindSignatures #-}
-{-# language LambdaCase #-}
-{-# language OverloadedStrings #-}
-{-# language RankNTypes #-}
-{-# language ScopedTypeVariables #-}
-
+{-# LANGUAGE
+    BangPatterns
+  , DataKinds
+  , KindSignatures
+  , LambdaCase
+  , OverloadedStrings
+  , RankNTypes
+  , ScopedTypeVariables
+#-}
 -- | Post-process generated JavaScript: pretty-print or minify, and cache.
 --
 -- Google Closure Compiler is no longer the best default. Its Advanced

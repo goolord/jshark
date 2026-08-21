@@ -1,6 +1,7 @@
-{-# language DataKinds #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , OverloadedStrings
+#-}
 -- | Wrappers over the JS Web Storage API (@localStorage@/@sessionStorage@).
 module JShark.Storage
   ( Storage

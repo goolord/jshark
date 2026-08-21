@@ -1,9 +1,10 @@
-{-# language DataKinds #-}
-{-# language GADTs #-}
-{-# language TypeApplications #-}
-{-# language TypeFamilies #-}
-{-# language OverloadedStrings #-}
-
+{-# LANGUAGE
+    DataKinds
+  , GADTs
+  , TypeApplications
+  , TypeFamilies
+  , OverloadedStrings
+#-}
 module JShark.Api where
 
 import Data.Text (Text)

@@ -1,10 +1,11 @@
-{-# language DataKinds #-}
-{-# language GADTs #-}
-{-# language LambdaCase #-}
-{-# language OverloadedStrings #-}
-{-# language RankNTypes #-}
-{-# language TypeApplications #-}
-
+{-# LANGUAGE
+    DataKinds
+  , GADTs
+  , LambdaCase
+  , OverloadedStrings
+  , RankNTypes
+  , TypeApplications
+#-}
 module Main (main) where
 
 import Control.Exception (IOException, bracket, catch)
