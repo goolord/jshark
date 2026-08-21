@@ -23,17 +23,16 @@ new :: EffectSyntax f (Effect f ('Object (XHR)))
 new = hold $ ffi "new XMLHttpRequest" RecNil
 
 open :: StdMethod -> BS.ByteString -> Bool -> Effect f ('Object (XHR)) -> EffectSyntax f ()
-open method url async x = toSyntax_ (objectFfi x $ ffi "open" (string (T.decodeUtf8 (renderStdMethod method)) <: string (T.decodeUtf8 url) <: bool async <: RecNil))
+open method url async x = toSyntax_ (callMethod x "open" (arg (string (T.decodeUtf8 (renderStdMethod method))) <: arg (string (T.decodeUtf8 url)) <: arg (bool async) <: RecNil))
 
 send :: Effect f ('Object XHR) -> EffectSyntax f ()
-send x = getCall @"send" x *> pure ()
+send x = toSyntax_ $ callMethod x "send" RecNil
 
 sendPost :: Effect f ('Object XHR) -> Expr f 'String -> EffectSyntax f ()
-sendPost x y = toSyntax (objectFfi x (Lift y)) *> pure ()
+sendPost x y = toSyntax_ $ callMethod x "send" (arg y <: RecNil)
 
 data XHR
 
-type instance Field XHR "send" = 'Effectful 'Unit
 type instance Field XHR "responseText" = 'String
 
 ex :: EffectSyntax f (f 'Unit)
@@ -66,5 +65,5 @@ type instance Field FetchResponse "status" = 'Number
 
 -- | @fetch(url)@
 fetch :: Expr f 'String -> EffectSyntax f (Effect f ('Object FetchResponse))
-fetch url = fmap (expr . Var) $ toSyntax $ ffi "fetch" (url <: RecNil)
+fetch url = hold $ ffi "fetch" (arg url <: RecNil)
 

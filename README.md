@@ -1,6 +1,6 @@
 ## 🦈 JShark
 
-JShark is a typed subset of javascript.
+JShark is a typed subset of javascript: a **pure** PHOAS expression tree (`Expr`) and an **impure** effect tree (`Effect`). Closed terms are `forall f` (Kmett's PHOAS end). FFI arguments are `Arg` (expression or effect); method calls are `CallMethod`. `UnsafeEffectExpr` is an optimizer splice, not the FFI path. Equality is `===` / `!==`; bindings are `const`.
 The goals are as follows:
 - Have a haskelly user interface
 - Have an easy to use ffi
@@ -41,13 +41,14 @@ Opens a classic TodoMVC UI on [http://localhost:3000](http://localhost:3000): Sc
 The core language currently supports:
 - Arithmetic, string, and boolean expressions (`+`, `-`, `*`, `/`, `&&`, `||`, comparisons, `Show`/`String()` casting)
 - `let`, lambdas/application, and a ternary conditional (`if_`)
-- `Option`/`Result` types with `optionCase`/`resultCase` eliminators (`maybe`/`either`-style)
+- `Option` type with `optionCase` (`maybe`-style); `some`/`none` are library wrappers over a nullable cast and JS `null`
 - Effectful statements: `let`-style binding (`EffectSyntax`), `forEach`, effectful conditionals (`ifE`/`when_`) and `while_` loops, and an escape hatch FFI for calling into arbitrary JS
 - A small typed object/property-access mechanism (`Field`) used by the `Dom` and `Ajax` modules
-- Generic escape hatches for calling arbitrary JS from pure expressions
-  (`exprFfi`, `exprProp`, `exprMethod`, `exprMethodCallback`, `exprIndex`),
-  and for embedding an effect (e.g. a callback) inside a pure expression
-  (`unsafeEffectExpr`)
+- Untyped JS on the pure tree is marked `Unsafe*` (`unsafeExprFfi`,
+  `unsafeExprProp`, `unsafeExprMethod`, `unsafeExprMethodCallback`).
+  Effectful calls use `ffi` / `callMethod`. `exprIndex` and `Math.*` stay
+  on `Expr` because their JS names are fixed. `UnsafeEffectExpr` is an
+  optimizer splice, not an FFI path.
 
 Stdlib/browser wrappers built on top of the core language:
 - `JShark.Array`: `index`, `length_`, `map_`, `filter_`, `includes`, `concat_`, `join`, `push`

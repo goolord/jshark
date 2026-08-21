@@ -21,12 +21,12 @@ log = consoleLog
 
 -- | @console.warn(x)@
 warn :: Expr f u -> EffectSyntax f ()
-warn x = toSyntax_ (ffi "console.warn" (x <: RecNil))
+warn x = toSyntax_ (ffi "console.warn" (arg x <: RecNil))
 
 -- | @console.error(x)@
 error_ :: Expr f u -> EffectSyntax f ()
-error_ x = toSyntax_ (ffi "console.error" (x <: RecNil))
+error_ x = toSyntax_ (ffi "console.error" (arg x <: RecNil))
 
 -- | @console.info(x)@
 info :: Expr f u -> EffectSyntax f ()
-info x = toSyntax_ (ffi "console.info" (x <: RecNil))
+info x = toSyntax_ (ffi "console.info" (arg x <: RecNil))

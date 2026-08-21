@@ -29,16 +29,16 @@ sessionStorage = unsafeObject "sessionStorage"
 
 -- | @storage.getItem(key)@. Returns 'None' instead of a raw @null@.
 getItem :: Effect f ('Object Storage) -> Expr f 'String -> EffectSyntax f (Expr f ('Option 'String))
-getItem s key = fmap (unsafeNullable . Var) $ toSyntax $ objectFfi s (ffi "getItem" (key <: RecNil))
+getItem s key = fmap (unsafeNullable . Var) $ toSyntax $ callMethod s "getItem" (arg key <: RecNil)
 
 -- | @storage.setItem(key, value)@
 setItem :: Effect f ('Object Storage) -> Expr f 'String -> Expr f 'String -> EffectSyntax f (f 'Unit)
-setItem s key value = toSyntax $ objectFfi s (ffi "setItem" (key <: value <: RecNil))
+setItem s key value = toSyntax $ callMethod s "setItem" (arg key <: arg value <: RecNil)
 
 -- | @storage.removeItem(key)@
 removeItem :: Effect f ('Object Storage) -> Expr f 'String -> EffectSyntax f (f 'Unit)
-removeItem s key = toSyntax $ objectFfi s (ffi "removeItem" (key <: RecNil))
+removeItem s key = toSyntax $ callMethod s "removeItem" (arg key <: RecNil)
 
 -- | @storage.clear()@
 clear :: Effect f ('Object Storage) -> EffectSyntax f (f 'Unit)
-clear s = toSyntax $ objectFfi s (ffi "clear" RecNil)
+clear s = toSyntax $ callMethod s "clear" RecNil

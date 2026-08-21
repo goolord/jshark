@@ -4,11 +4,23 @@
   , DerivingStrategies
   , GADTs
   , KindSignatures
+  , OverloadedStrings
   , RankNTypes
   , StandaloneDeriving
   , TypeOperators
 #-}
-module JShark.Types where 
+-- | Two PHOAS syntax trees for a typed subset of JavaScript.
+--
+-- * 'Expr' is the /pure/ tree: Crockford's good parts as expressions
+--   (literals, arithmetic, @===@, functions, @const@-bound lets, arrays).
+-- * 'Effect' is the /impure/ tree: statements, FFI, mutation, I/O.
+--
+-- Binders are parametric (@f :: Universe -> Type@), i.e. weak PHOAS.
+-- A closed term is an end over that parameter: 'ClosedExpr' / 'ClosedEffect'
+-- (@forall f. …@), the same quantification as Kmett's
+-- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg',
+-- not by smuggling effects through 'Expr'.
+module JShark.Types where
 import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
@@ -23,10 +35,8 @@ data Universe
   | Array Universe
   | Function Universe Universe
   | Option Universe
-  | Result Universe Universe
   | Bool
   | Object Type
-  | Effectful Universe
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -35,63 +45,75 @@ data Value :: Universe -> Type where
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
   ValueOption :: Maybe (Value u) -> Value ('Option u)
-  ValueResult :: Either (Value u) (Value v) -> Value ('Result u v)
   ValueBool :: Bool -> Value 'Bool
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
-  Lift :: Expr f u -> Effect f u -- ^ Lift a non-effectful computation into the effectful AST
-  FFI :: String -> Rec (Expr f) us -> Effect f u -- ^ Foreign function interface: @FFI name args@.
+  Lift :: Expr f u -> Effect f u -- ^ Lift a pure expression into the effectful tree
+  FFI :: String -> Rec (Arg f) us -> Effect f u -- ^ Foreign call: @name(args…)@. Args are 'Arg' so an effect (object handle, effectful function) need not pass through 'Expr'.
   UnsafeObject :: Text -> Effect f ('Object x)
   UnsafeObjectGet :: Effect f object -> String -> Effect f u
   UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
-  ObjectFFI :: Effect f object -> Effect f b -> Effect f u
-  ForEach :: Expr f ('Array u) -> (f u -> Effect f u') -> Effect f 'Unit
-  Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v
-  UnEffectful :: Expr f ('Effectful u) -> Effect f u
-  LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ A function, not *necessarily* anonymous
-  ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v -- ^ Apply a function
+  CallMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u -- ^ @recv.method(args…)@
+  Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v -- ^ PHOAS bind (@const n = e@)
+  LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ Effectful function (weak PHOAS: binder is @f u@, not @Effect@)
+  ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v
   IfE :: Expr f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. NB: the condition expression is currently assumed to require no intermediate declarations (i.e. no nested 'Let'); see 'While' for the same caveat.
   While :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. NB: the condition is re-checked by emitting the *same* rendered expression into the generated @while@ test on every iteration, so it must not depend on declarations ('Let') that only run once.
 
+-- | An FFI argument drawn from either syntax tree. This is the sanctioned
+-- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
+data Arg :: (Universe -> Type) -> Universe -> Type where
+  ArgExpr :: Expr f u -> Arg f u
+  ArgEffect :: Effect f u -> Arg f u
+
 data Expr :: (Universe -> Type) -> Universe -> Type where
+  -- Good Parts: values, arithmetic, strict equality, functions, @const@ lets
   Literal :: Value u -> Expr f u -- ^ A literal value. eg. 1, "foo", etc
-  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String -- ^ Concatenation primitive: Concat = +
-  Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Addition primitive: Plus = +
-  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Multiplication primitive: Times = *
-  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Subtraction primitive: Minus = -
-  Abs :: Expr f 'Number -> Expr f 'Number -- ^ Absolute value primitive: Abs x = Math.abs(x)
-  Sign :: Expr f 'Number -> Expr f 'Number -- ^ Sign primitive: Sign x = Math.sign(x)
-  Negate :: Expr f 'Number -> Expr f 'Number -- ^ Negate primitive: Negate x = (x * -1)
-  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division primitive: FracDiv = (/)
-  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical And. And = (&&)
-  Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ Logical Or. Or = (||)
-  Eq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Equality. Eq = (==)
-  NEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality. NEq = (/=)
-  GTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. GTh = (>)
-  LTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTh = (<) 
-  GTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. GTEq = (>=) 
-  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Inequality check on ordering. LTEq = (<=) 
-  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ Assign a value in an Expr
-  Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ A function, not *necessarily* anonymous
-  Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v -- ^ Apply a function
-  Show :: Expr f u -> Expr f 'String -- ^ String casting: Show x = String(x)
-  Var :: f u -> Expr f u  -- ^ Variable reference
-  If :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u -- ^ Ternary conditional: If c t e = c ? t : e
-  Some :: Expr f u -> Expr f ('Option u) -- ^ Option introduction. Represented at runtime as the wrapped value itself (see 'None').
-  None :: Expr f ('Option u) -- ^ Option introduction: the absence of a value, represented as JS @null@.
+  Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String -- ^ String concatenation: @+@
+  Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Addition: @+@
+  Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Multiplication: @*@
+  Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Subtraction: @-@
+  Negate :: Expr f 'Number -> Expr f 'Number -- ^ @-(x)@
+  FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division: @/@
+  And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ @&&@
+  Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ @||@
+  Eq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Strict equality: @===@ (never @==@)
+  NEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Strict inequality: @!==@ (never @!=@)
+  GTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>@
+  LTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<@
+  GTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>=@
+  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<=@
+  Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ PHOAS let; codegen emits @const@
+  Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ Weak PHOAS lambda: binder is @f u@
+  Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
+  Show :: Expr f u -> Expr f 'String -- ^ @String(x)@
+  Var :: f u -> Expr f u -- ^ PHOAS variable (Kmett's Place / return)
+  If :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u -- ^ Ternary: @c ? t : e@
+  -- Option is JS @null@ / the value itself. Intro via 'UnsafeNullable' or
+  -- @Literal (ValueOption …)@. 'OptionCase' stays a primitive: 'evaluate'
+  -- uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
+  -- @if_ (opt .== none)@ plus a type-changing coerce.
   OptionCase :: Expr f ('Option u) -> Expr f v -> (f u -> Expr f v) -> Expr f v -- ^ Eliminate an 'Option', analogous to 'maybe'.
-  Ok :: Expr f u -> Expr f ('Result u v) -- ^ Result introduction for the success case. Represented at runtime as @[true, x]@.
-  Err :: Expr f v -> Expr f ('Result u v) -- ^ Result introduction for the failure case. Represented at runtime as @[false, x]@.
-  ResultCase :: Expr f ('Result u v) -> (f u -> Expr f w) -> (f v -> Expr f w) -> Expr f w -- ^ Eliminate a 'Result', analogous to 'either'.
-  UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Embed an 'Effect' as a pure 'Expr'. Unsafe: only sound when the embedded effect is self-contained.
-  ExprFFI :: Text -> Rec (Expr f) us -> Expr f v -- ^ Call a named global JS function: @fnName(args...)@.
-  ExprProp :: Expr f u -> Text -> Expr f v -- ^ Property access: @receiver.prop@.
-  ExprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v -- ^ Method call: @receiver.method(args...)@.
-  ExprMethodCallback :: Expr f u -> Text -> (f a -> Expr f b) -> Expr f v -- ^ Method call taking a callback, e.g. @receiver.map(function(x){...})@.
+  -- Constrained JS surface (fixed names / universes; not a general FFI)
   ExprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u -- ^ Array indexing: @arr[i]@.
-  MathUnary :: Text -> Expr f 'Number -> Expr f 'Number -- ^ Call a unary @Math@ function: @Math.fn(x)@.
-  MathBinary :: Text -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Call a binary @Math@ function: @Math.fn(x, y)@.
+  MathUnary :: Text -> Expr f 'Number -> Expr f 'Number -- ^ Unary @Math.fn(x)@. Only names in the optimizer whitelist are treated as pure; unknown names are kept (not DCE'd).
+  MathBinary :: Text -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Binary @Math.fn(x, y)@. Same purity whitelist as 'MathUnary'.
+  -- Untyped JS on the pure tree. Not referentially transparent: the name is
+  -- unchecked, so @push@ / @alert@ type-check. Effectful calls belong on
+  -- 'Effect' ('CallMethod' / 'FFI'). Named stdlib wrappers that return
+  -- 'Expr' (e.g. 'toUpper') assume observational purity.
+  UnsafeExprProp :: Expr f u -> Text -> Expr f v -- ^ @receiver.prop@
+  UnsafeExprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v -- ^ @receiver.method(args…)@
+  UnsafeExprMethodCallback :: Expr f u -> Text -> (f a -> Expr f b) -> Expr f v -- ^ @receiver.map(function(x){…})@
+  UnsafeExprFFI :: Text -> Rec (Expr f) us -> Expr f v -- ^ @fnName(args…)@
   UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
+  UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Embed an 'Effect' as a pure 'Expr'. Optimizer splice placeholder; at the surface, pass effects to FFI via 'ArgEffect' instead.
+
+-- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
+type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
+
+-- | Closed effectful term: no free PHOAS binders. The end @forall f. 'Effect' f u@.
+type ClosedEffect (u :: Universe) = forall (f :: Universe -> Type). Effect f u
 
 -- | First-order fragment used by the original unused-binding experiment
 -- ('JShark.ExprF'). Only 'Literal'/'Plus'/'Let'/'Lambda'/'Apply'/'Var'.
@@ -151,12 +173,17 @@ liftValue1 f (ValueNumber a) = ValueNumber (f a)
 liftValue2 :: (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
+-- | JS names for 'Num' on 'Expr'. Must stay in 'JShark.mathUnaryOp'.
+mathAbs, mathSign :: Text
+mathAbs = "abs"
+mathSign = "sign"
+
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus
-  abs = Abs
-  signum = Sign
+  abs = MathUnary mathAbs
+  signum = MathUnary mathSign
   fromInteger n = Literal (fromInteger n)
   negate = Negate
 

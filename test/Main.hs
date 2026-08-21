@@ -34,6 +34,7 @@ import System.IO (hClose, hPutStr, openTempFile)
 import System.Process (readProcessWithExitCode)
 import Test.Tasty
 import Test.Tasty.HUnit
+import qualified JShark.Ajax as Ajax
 import qualified JShark.Array as Array
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
@@ -85,13 +86,13 @@ evaluatorTests = testGroup "evaluate"
 -- constant-folded results. Cheap literals are propagated even under
 -- lambdas; FFI/methods are not.
 fooN :: Expr f 'Number
-fooN = exprFfi "foo" RecNil
+fooN = unsafeExprFfi "foo" RecNil
 
 barN :: Expr f 'Number
-barN = exprFfi "bar" RecNil
+barN = unsafeExprFfi "bar" RecNil
 
 condB :: Expr f 'Bool
-condB = exprFfi "cond" RecNil
+condB = unsafeExprFfi "cond" RecNil
 
 codegenTests :: TestTree
 codegenTests = testGroup "codegen"
@@ -108,13 +109,13 @@ codegenTests = testGroup "codegen"
       renderJS (pureAST (let_ fooN (\x -> if_ condB x (number 0))))
         @?= "const n0 = foo();\n(cond() ? n0 : 0.0)"
   , testCase "let used once on the && RHS is not inlined" $
-      renderJS (pureAST (let_ condB (\x -> And (exprFfi "bar" RecNil) x)))
+      renderJS (pureAST (let_ condB (\x -> And (unsafeExprFfi "bar" RecNil) x)))
         @?= "const n0 = cond();\nbar() && n0"
   , testCase "let used once on the && LHS is inlined" $
-      renderJS (pureAST (let_ condB (\x -> And x (exprFfi "bar" RecNil))))
+      renderJS (pureAST (let_ condB (\x -> And x (unsafeExprFfi "bar" RecNil))))
         @?= "cond() && bar()"
   , testCase "unknown function application renders as a direct call" $
-      renderJS (pureAST (apply (exprFfi "f" RecNil) fooN))
+      renderJS (pureAST (apply (unsafeExprFfi "f" RecNil) fooN))
         @?= "(f())(foo())"
   , testCase "pureProgram wraps decls and the result in a JS IIFE" $
       renderJS (pureProgram (let_ fooN (\x -> x + x)))
@@ -150,10 +151,6 @@ controlFlowTests = testGroup "control flow"
       evaluateNumber (optionCase (JShark.Api.some (number 5) :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1)) @?= 6
   , testCase "optionCase on None" $
       evaluateNumber (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1)) @?= 0
-  , testCase "resultCase on Ok" $
-      evaluateNumber (resultCase (ok (number 5) :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1))) @?= 6
-  , testCase "resultCase on Err" $
-      evaluateNumber (resultCase (err (string "bad") :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1))) @?= (-1)
   , testCase "ifE renders an if/else statement with a shared result variable" $
       renderJS (effectfulAST (fromSyntax (toSyntax (ifE condB (expr (number 1)) (expr (number 2))) *> toSyntax noOp)))
         @?= "let n0;\nif (cond()) {n0 = 1.0;}\nelse {n0 = 2.0;}"
@@ -170,7 +167,7 @@ stdlibTests = testGroup "stdlib"
   [ testCase "Array.index evaluates" $
       evaluateNumber (Array.index numArray (number 1)) @?= 2
   , testCase "Array.index renders as bracket indexing" $
-      renderJS (pureAST (Array.index (exprFfi "xs" RecNil :: Expr f ('Array 'Number)) (exprFfi "i" RecNil)))
+      renderJS (pureAST (Array.index (unsafeExprFfi "xs" RecNil :: Expr f ('Array 'Number)) (unsafeExprFfi "i" RecNil)))
         @?= "xs()[i()]"
   , testCase "Array.length_ renders as .length" $
       renderJS (pureAST (Array.length_ numArray)) @?= "[1.0, 2.0].length"
@@ -231,11 +228,10 @@ stdlibTests = testGroup "stdlib"
         toSyntax noOp)))
         @?= "const n0 = {};\nn0.a = 1.0;\nn0.b = 2.0;"
   , testCase "forEach param name matches body uses" $
-      T.isInfixOf "function(n0){foo(n0);}"
-        (T.pack $ renderJS (effectfulAST (fromSyntax (do
-          toSyntax_ $ forEach numArray (\x -> ffi "foo" (x <: RecNil))
-          toSyntax noOp))))
-        @?= True
+      renderJS (effectfulAST (fromSyntax (do
+        toSyntax_ $ forEach numArray (\x -> ffi "foo" (arg x <: RecNil))
+        toSyntax noOp)))
+        @?= "[1.0, 2.0].forEach(function (n0) {return foo(n0)});"
   , testCase "onClick assigns the DOM onclick property" $
       T.isInfixOf ".onclick ="
         (T.pack $ renderJS (effectfulAST (fromSyntax (do
@@ -243,6 +239,21 @@ stdlibTests = testGroup "stdlib"
           onClick el $ \_ -> noOp
           toSyntax noOp))))
         @?= True
+  , testCase ".== compiles to strict === (never ==)" $
+      renderJS (pureAST (fooN .== barN))
+        @?= "foo() === bar()"
+  , testCase ".!= compiles to strict !==" $
+      renderJS (pureAST (fooN .!= barN))
+        @?= "foo() !== bar()"
+  , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
+      renderJS (effectfulAST (ffi "setTimeout" (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)))
+        @?= "setTimeout(function (n0) {return tick()}, 0.0)"
+  , testCase "send emits xhr.send()" $
+      renderJS (effectfulAST (fromSyntax (Ajax.send (UnsafeObject "xhr") *> toSyntax noOp)))
+        @?= "xhr.send();"
+  , testCase "sendPost emits xhr.send(body)" $
+      renderJS (effectfulAST (fromSyntax (Ajax.sendPost (UnsafeObject "xhr") (string "hi") *> toSyntax noOp)))
+        @?= "xhr.send(\"hi\");"
   ]
 
 optimizeTests :: TestTree
@@ -273,12 +284,18 @@ optimizeTests = testGroup "optimize"
       renderJS (pureAST (Math.sin (number 1))) @?= "Math.sin(1.0)"
   , testCase "unknown MathUnary is not folded" $
       renderJS (pureAST (MathUnary "nope" (number 1))) @?= "Math.nope(1.0)"
+  , testCase "unused unknown MathUnary is kept as a statement" $
+      renderJS (pureAST (let_ (MathUnary "nope" (number 1)) (\_ -> number 2)))
+        @?= "Math.nope(1.0);\n2.0"
   , testCase "GTh of array literals is not folded" $
       renderJS (pureAST (GTh numArray numArray))
         @?= "[1.0, 2.0] > [1.0, 2.0]"
   , testCase "optionCase of a Literal ValueOption folds" $
       renderJS (pureAST (optionCase (Literal (ValueOption (Just (ValueNumber 5)))) (number 0) (\x -> x + 1)))
         @?= "6.0"
+  , testCase "optionCase of some of a folded literal peels" $
+      renderJS (pureAST (optionCase (some (plus (number 1) (number 2))) (number 0) (\x -> x + 1)))
+        @?= "4.0"
   , testCase "if_ True does not fold the dead branch" $
       renderJS (pureAST (if_ (bool True) (number 1) (MathUnary "nope" (number 1))))
         @?= "1.0"
@@ -516,14 +533,6 @@ bunEvalTests =
             , bunCase getBun "some is the wrapped value"
                 (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
             , bunCase getBun "none is null" (none :: Expr f ('Option 'Number))
-            , bunCase getBun "resultCase Ok"
-                (resultCase (ok (number 5) :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1)))
-            , bunCase getBun "resultCase Err"
-                (resultCase (err (string "bad") :: Expr f ('Result 'Number 'String)) (\x -> x + 1) (\_ -> number (-1)))
-            , bunCase getBun "ok is a tagged pair"
-                (ok (number 5) :: Expr f ('Result 'Number 'String))
-            , bunCase getBun "err is a tagged pair"
-                (err (string "bad") :: Expr f ('Result 'Number 'String))
             , bunCase getBun "string concat" (Concat (string "a") (string "b"))
             , bunCase getBun "Show number" (Show (number 3))
             , bunCase getBun "Eq numbers" (Eq (number 1) (number 1))
@@ -586,7 +595,7 @@ bunJSONStringify bun js = do
 
 -- Encoding of the JS runtime representation `evaluate` uses, matching
 -- `JSON.stringify` (non-finite numbers become null; Option Some is the
--- payload; Result is a [okFlag, payload] pair).
+-- payload).
 encodeJSValue :: Value u -> String
 encodeJSValue = \case
   ValueNumber d -> encodeJSNumber d
@@ -597,8 +606,6 @@ encodeJSValue = \case
   ValueArray xs -> "[" ++ intercalate "," (map encodeJSValue xs) ++ "]"
   ValueOption Nothing -> "null"
   ValueOption (Just x) -> encodeJSValue x
-  ValueResult (Left x) -> "[true," ++ encodeJSValue x ++ "]"
-  ValueResult (Right x) -> "[false," ++ encodeJSValue x ++ "]"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
 
 -- JSON.stringify of a finite number; NaN/Infinity stringify to null.

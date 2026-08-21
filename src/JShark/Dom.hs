@@ -38,45 +38,45 @@ import JShark.Rec (Rec(..), (<:))
 -- | An opaque phantom type representing a DOM element (what
 -- @document.getElementById@ /etc. return in the browser). Modeled as an
 -- 'Object' so it can share the same property-access machinery ('get',
--- 'getCall', 'Field') as other foreign objects.
+-- 'Field') as other foreign objects.
 data DomElement
 
 type instance Field DomElement "innerHTML" = 'String
 type instance Field DomElement "innerText" = 'String
 
--- | @document.getElementById(x)@. Bound via 'toSyntax' so reusing the
+-- | @document.getElementById(x)@. Bound via 'hold' so reusing the
 -- handle only references the variable, never re-runs the lookup.
 lookupId :: Expr f 'String -> EffectSyntax f (Effect f ('Object DomElement))
-lookupId x = fmap (expr . Var) $ toSyntax $ ffi "document.getElementById" (x <: RecNil)
+lookupId x = hold $ ffi "document.getElementById" (arg x <: RecNil)
 
 lookupSelector :: Expr f 'String -> EffectSyntax f (Effect f ('Array ('Object DomElement)))
-lookupSelector x = fmap (expr . Var) $ toSyntax $ ffi "document.querySelectorAll" (x <: RecNil)
+lookupSelector x = hold $ ffi "document.querySelectorAll" (arg x <: RecNil)
 
 classAdd, classRemove, classToggle :: Effect f ('Object DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
-classAdd el x    = toSyntax $ objectFfi el (ffi "classList.add" (x <: RecNil))
-classRemove el x = toSyntax $ objectFfi el (ffi "classList.remove" (x <: RecNil))
-classToggle el x = toSyntax $ objectFfi el (ffi "classList.toggle" (x <: RecNil))
+classAdd el x    = toSyntax $ callMethod el "classList.add" (arg x <: RecNil)
+classRemove el x = toSyntax $ callMethod el "classList.remove" (arg x <: RecNil)
+classToggle el x = toSyntax $ callMethod el "classList.toggle" (arg x <: RecNil)
 
--- | @document.createElement(tag)@. Bound via 'toSyntax'; otherwise reusing
+-- | @document.createElement(tag)@. Bound via 'hold'; otherwise reusing
 -- the handle would re-run @createElement@ and create a new element each time.
 createElement :: Expr f 'String -> EffectSyntax f (Effect f ('Object DomElement))
-createElement tag = fmap (expr . Var) $ toSyntax $ ffi "document.createElement" (tag <: RecNil)
+createElement tag = hold $ ffi "document.createElement" (arg tag <: RecNil)
 
 -- | @el.setAttribute(name, value)@
 setAttribute :: Effect f ('Object DomElement) -> Text -> Expr f 'String -> EffectSyntax f (f 'Unit)
-setAttribute el name value = toSyntax $ objectFfi el (ffi "setAttribute" (string name <: value <: RecNil))
+setAttribute el name value = toSyntax $ callMethod el "setAttribute" (arg (string name) <: arg value <: RecNil)
 
 -- | @el.getAttribute(name)@
 getAttribute :: Effect f ('Object DomElement) -> Text -> EffectSyntax f (Expr f 'String)
-getAttribute el name = fmap Var $ toSyntax $ objectFfi el (ffi "getAttribute" (string name <: RecNil))
+getAttribute el name = fmap Var $ toSyntax $ callMethod el "getAttribute" (arg (string name) <: RecNil)
 
 -- | @parent.appendChild(child)@
 appendChild :: Effect f ('Object DomElement) -> Effect f ('Object DomElement) -> EffectSyntax f (f 'Unit)
-appendChild parent child = toSyntax $ objectFfi parent (ffi "appendChild" (unsafeEffectExpr child <: RecNil))
+appendChild parent child = toSyntax $ callMethod parent "appendChild" (ArgEffect child <: RecNil)
 
 -- | @parent.removeChild(child)@
 removeChild :: Effect f ('Object DomElement) -> Effect f ('Object DomElement) -> EffectSyntax f (f 'Unit)
-removeChild parent child = toSyntax $ objectFfi parent (ffi "removeChild" (unsafeEffectExpr child <: RecNil))
+removeChild parent child = toSyntax $ callMethod parent "removeChild" (ArgEffect child <: RecNil)
 
 innerHTML :: Effect f ('Object DomElement) -> EffectSyntax f (Expr f 'String)
 innerHTML = get @"innerHTML"

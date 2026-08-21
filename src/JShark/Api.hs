@@ -12,7 +12,6 @@
 module JShark.Api where
 
 import Data.Text (Text)
-import Data.Coerce (coerce)
 import JShark.Types
 import JShark.Object
 import JShark.Rec (Rec(..), (<:))
@@ -43,16 +42,14 @@ onClick_ :: Effect f ('Object obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f
 onClick_ el body = onClick el $ \_ -> stmts body
 
 consoleLog :: Expr f u -> EffectSyntax f ()
-consoleLog u = toSyntax (ffi "console.log" (u <: RecNil)) *> pure ()
+consoleLog u = toSyntax (ffi "console.log" (arg u <: RecNil)) *> pure ()
 
-unEffectful :: Expr f ('Effectful u) -> Effect f u
-unEffectful = UnEffectful
-
-ffi :: String -> Rec (Expr f) us -> Effect f v
+ffi :: String -> Rec (Arg f) us -> Effect f v
 ffi name args = FFI name args
 
-objectFfi :: Effect f object -> Effect f b -> Effect f u
-objectFfi = ObjectFFI
+-- | @recv.method(args…)@.
+callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
+callMethod = CallMethod
 
 expr :: Expr f u -> Effect f u
 expr = Lift
@@ -63,15 +60,19 @@ plus = Plus
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
 apply = Apply
 
+-- | PHOAS variable: Kmett's @var = return@ / @Place@.
+var :: f u -> Expr f u
+var = Var
+
 lambda ::
      (Expr f u -> Expr f v)
   -> Expr f ('Function u v)
-lambda f = Lambda (coerce f . Var)
+lambda f = Lambda (\x -> f (var x))
 
 lambdaE ::
     (Effect f u -> Effect f v)
   -> Effect f ('Function u v)
-lambdaE f = LambdaE (coerce f . Lift . Var)
+lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
 -- | Embed a 'Double' as a number literal.
 --
@@ -91,8 +92,9 @@ false_ = bool False
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
+-- | @arr.forEach(function(x){…})@. 'callMethod' + 'LambdaE', not a dedicated AST node.
 forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
-forEach arr f = ForEach arr (coerce f . Var)
+forEach arr f = callMethod (expr arr) "forEach" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
 
 -- | 'forEach' with an 'EffectSyntax' body.
 forEach_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
@@ -105,7 +107,7 @@ let_ ::
      Expr f u
   -> (Expr f u -> Expr f v)
   -> Expr f v
-let_ e f = (Let e (coerce f . Var))
+let_ e f = Let e (\x -> f (var x))
 
 -- Control flow -----------------------------------------------------------
 
@@ -129,42 +131,36 @@ while_ = While
 
 -- Option --------------------------------------------------------------
 
+-- | Present value. Literals pack as 'ValueOption'; otherwise a typed
+-- 'UnsafeNullable' (not treated as a known Some by the optimizer, so
+-- FFI nulls such as 'getItem' keep their @=== null@ check).
 some :: Expr f u -> Expr f ('Option u)
-some = Some
+some (Literal v) = Literal (ValueOption (Just v))
+some x = UnsafeNullable x
 
+-- | Absent value: JS @null@.
 none :: Expr f ('Option u)
-none = None
+none = Literal (ValueOption Nothing)
 
 -- | Eliminate an 'Option', analogous to 'maybe'.
 optionCase :: Expr f ('Option u) -> Expr f v -> (Expr f u -> Expr f v) -> Expr f v
-optionCase opt noneBranch someBranch = OptionCase opt noneBranch (coerce someBranch . Var)
+optionCase opt noneBranch someBranch = OptionCase opt noneBranch (\x -> someBranch (var x))
 
--- Result --------------------------------------------------------------
+-- | Untyped global call on the pure tree. Prefer 'ffi' on 'Effect'.
+unsafeExprFfi :: Text -> Rec (Expr f) us -> Expr f v
+unsafeExprFfi = UnsafeExprFFI
 
-ok :: Expr f u -> Expr f ('Result u v)
-ok = Ok
+-- | Untyped property access on the pure tree. Prefer 'getProp' / 'CallMethod'.
+unsafeExprProp :: Expr f u -> Text -> Expr f v
+unsafeExprProp = UnsafeExprProp
 
-err :: Expr f v -> Expr f ('Result u v)
-err = Err
+-- | Untyped method call on the pure tree. Prefer 'callMethod' for effects.
+unsafeExprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v
+unsafeExprMethod = UnsafeExprMethod
 
--- | Eliminate a 'Result', analogous to 'either'.
-resultCase :: Expr f ('Result u v) -> (Expr f u -> Expr f w) -> (Expr f v -> Expr f w) -> Expr f w
-resultCase r okBranch errBranch = ResultCase r (coerce okBranch . Var) (coerce errBranch . Var)
-
-unsafeEffectExpr :: Effect f u -> Expr f u
-unsafeEffectExpr = UnsafeEffectExpr
-
-exprFfi :: Text -> Rec (Expr f) us -> Expr f v
-exprFfi = ExprFFI
-
-exprProp :: Expr f u -> Text -> Expr f v
-exprProp = ExprProp
-
-exprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v
-exprMethod = ExprMethod
-
-exprMethodCallback :: Expr f u -> Text -> (Expr f a -> Expr f b) -> Expr f v
-exprMethodCallback recv name f = ExprMethodCallback recv name (coerce f . Var)
+-- | Untyped callback method on the pure tree (e.g. @map@). Prefer 'callMethod'.
+unsafeExprMethodCallback :: Expr f u -> Text -> (Expr f a -> Expr f b) -> Expr f v
+unsafeExprMethodCallback recv name f = UnsafeExprMethodCallback recv name (\x -> f (var x))
 
 exprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
 exprIndex = ExprIndex
@@ -182,13 +178,18 @@ unsafeNullable = UnsafeNullable
 
 addEventListener :: Text -> Effect f ('Object obj) -> (f u -> Effect f a) -> EffectSyntax f ()
 addEventListener name el handler =
-  toSyntax_ $ objectFfi el (ffi "addEventListener" (string name <: unsafeEffectExpr (LambdaE handler) <: RecNil))
+  toSyntax_ $ callMethod el "addEventListener" (arg (string name) <: ArgEffect (LambdaE handler) <: RecNil)
 
 -- | 'addEventListener' with an 'EffectSyntax' body.
 addEventListener_ :: Text -> Effect f ('Object obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
 
 -- Lifting ----------------------------------------------------------------
+
+-- | Wrap a pure expression as an FFI argument. Effectful arguments
+-- (object handles, 'LambdaE') use 'ArgEffect' so the two trees stay distinct.
+arg :: Expr f u -> Arg f u
+arg = ArgExpr
 
 -- | Convert binders (@f u@), expressions, and effects into an 'Effect'
 -- suitable for FFI / property access without manual 'Lift'/'Var'.
@@ -269,8 +270,8 @@ infixr 3 .&&
 infixr 2 .||
 
 (.==), (.!=) :: Expr f a -> Expr f a -> Expr f 'Bool
-(.==) = Eq
-(.!=) = NEq
+(.==) = Eq   -- compiles to ===
+(.!=) = NEq  -- compiles to !==
 
 (.>), (.<), (.>=), (.<=) :: Expr f a -> Expr f a -> Expr f 'Bool
 (.>) = GTh

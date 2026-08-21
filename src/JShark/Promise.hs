@@ -20,8 +20,8 @@ data Promise (u :: Universe)
 
 -- | @promise.then(function(x){...})@
 promiseThen :: Effect f ('Object (Promise u)) -> (f u -> Effect f v) -> EffectSyntax f (f v)
-promiseThen p handler = toSyntax $ objectFfi p (ffi "then" (unsafeEffectExpr (LambdaE handler) <: RecNil))
+promiseThen p handler = toSyntax $ callMethod p "then" (ArgEffect (LambdaE handler) <: RecNil)
 
 -- | @promise.catch(function(err){...})@
 promiseCatch :: Effect f ('Object (Promise u)) -> (f u -> Effect f v) -> EffectSyntax f (f v)
-promiseCatch p handler = toSyntax $ objectFfi p (ffi "catch" (unsafeEffectExpr (LambdaE handler) <: RecNil))
+promiseCatch p handler = toSyntax $ callMethod p "catch" (ArgEffect (LambdaE handler) <: RecNil)

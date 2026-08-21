@@ -12,26 +12,12 @@ import Data.Kind
 import Data.Text
 import Data.Proxy
 import GHC.TypeLits
-import JShark
 import JShark.Types
 
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
 get :: forall k r f. KnownSymbol k => Effect f ('Object r) -> EffectSyntax f (Expr f (Field r k))
 get x = fmap Var $ toSyntax $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
-
-getCall :: forall k r f u. (KnownSymbol k, Field r k ~ 'Effectful u) => Effect f ('Object r) -> EffectSyntax f (Expr f u)
-getCall x = fmap Var $ toSyntax $ UnsafeObjectGet x $ (symbolVal (Proxy :: Proxy k)) <> "()"
-
-call :: Expr f ('Effectful u) -> EffectSyntax f (Expr f u)
-call e = do
-  x <- toSyntax (UnEffectful e)
-  pure (Var x)
-
-call_ :: Expr f ('Effectful 'Unit) -> EffectSyntax f ()
-call_ e = do
-  _ <- toSyntax $ UnEffectful e
-  pure ()
 
 unsafeObject :: Text -> Effect f ('Object a)
 unsafeObject = UnsafeObject

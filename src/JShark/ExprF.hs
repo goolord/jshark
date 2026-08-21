@@ -9,6 +9,12 @@
 #-}
 -- | Finished form of the original unused-binding experiment.
 --
+-- First-order fragment of the pure tree, in the same spirit as Kmett's
+-- @Rec p a b = Place b | Roll (p a (Rec p a b))@: 'LetF'/'LambdaF' store
+-- binders as @g (f u) (ExprF g f v)@ (@(->)@ at the surface, pairs after
+-- identify). The production pipeline walks full 'Expr'/'Effect' in
+-- 'JShark.optimize' instead.
+--
 -- The 2019 code allocated an 'STRef' per binder and round-tripped through
 -- 'identify'/'unidentify', but never counted uses or dropped a 'LetF'.
 -- This module keeps the same shape (identify → count → unidentify) with

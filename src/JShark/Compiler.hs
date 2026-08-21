@@ -1,7 +1,6 @@
 {-# LANGUAGE
     BangPatterns
   , DataKinds
-  , KindSignatures
   , LambdaCase
   , OverloadedStrings
   , RankNTypes
@@ -57,7 +56,6 @@ import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -81,7 +79,7 @@ import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
 
 import JShark (effectfulAST, effectfulProgram, pureAST, pureProgram, renderJS)
-import JShark.Types (Effect, Expr, Universe)
+import JShark.Types (ClosedEffect, ClosedExpr)
 import Text.PrettyPrint (Doc)
 
 -- | Compilation level for Google Closure Compiler.
@@ -345,18 +343,12 @@ compileTerser = compileWith (CompilerConfig (Terser defaultTerserConfig) MemoryC
 
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
-compileEffect :: forall (u :: Universe).
-     CompilerConfig
-  -> (forall (f :: Universe -> Type). Effect f u)
-  -> IO Text
+compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff = compileWith cfg
   (T.pack (renderJS (effectDoc (configStyle cfg) eff)))
 
 -- | Compile a pure JShark expression. See 'compileEffect'.
-compilePure :: forall (u :: Universe).
-     CompilerConfig
-  -> (forall (f :: Universe -> Type). Expr f u)
-  -> IO Text
+compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
 compilePure cfg e = compileWith cfg
   (T.pack (renderJS (pureDoc (configStyle cfg) e)))
 
@@ -365,11 +357,11 @@ styleConfig cfg = case configStyle cfg of
   Readable -> cfg { configBackend = Passthrough }
   Minified -> cfg
 
-pureDoc :: OutputStyle -> (forall (f :: Universe -> Type). Expr f u) -> Doc
+pureDoc :: OutputStyle -> ClosedExpr u -> Doc
 pureDoc Readable e = pureAST e
 pureDoc Minified e = pureProgram e
 
-effectDoc :: OutputStyle -> (forall (f :: Universe -> Type). Effect f u) -> Doc
+effectDoc :: OutputStyle -> ClosedEffect u -> Doc
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
 
