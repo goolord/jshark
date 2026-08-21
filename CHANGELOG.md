@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+* `IsString` for `Value 'String`, `Expr f 'String`, and `ExprF _ _ 'String`
+  so OverloadedStrings literals work at each pure AST layer.
 * Added a `todo-mvc` executable: Scotty serves Lucid HTML with client
   behaviour compiled from JShark (`cabal run todo-mvc`). Client script
   is at `/app.js`; filter is hash-driven; corrupt `localStorage` is ignored.

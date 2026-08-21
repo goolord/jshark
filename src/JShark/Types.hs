@@ -104,8 +104,22 @@ data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type w
   ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
   VarF :: f u -> ExprF g f u
 
+-- | 'IsString' for JS string literals at each AST layer:
+--
+-- * @Value 'String@ — @"hi"@
+-- * @Expr f 'String@ — @"hi"@ as 'Literal'
+-- * @ExprF g f 'String@ — same for the ExprF fragment
+--
+-- Prefer an explicit type signature when the hole is ambiguous with
+-- 'String'/'Text'. Use 'JShark.Api.string' for runtime 'Text' values.
+instance forall u. (u ~ 'String) => Exts.IsString (Value u) where
+  fromString = ValueString . Exts.fromString
+
 instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
-  fromString = Literal . ValueString . Exts.fromString
+  fromString s = Literal (Exts.fromString s)
+
+instance forall g (f :: Universe -> Type) u. (u ~ 'String) => Exts.IsString (ExprF g f u) where
+  fromString s = LiteralF (Exts.fromString s)
 
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
   (+) = Plus

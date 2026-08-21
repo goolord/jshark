@@ -120,8 +120,12 @@ codegenTests = testGroup "codegen"
       renderJS (pureProgram (let_ fooN (\x -> x + x)))
         @?= "(() => {\n  const n0 = foo();\n  return n0 + n0;\n})()"
   , testCase "effectful console.log FFI call" $
-      renderJS (effectfulAST (fromSyntax (consoleLog (string "hi" :: Expr f 'String) *> toSyntax noOp)))
+      renderJS (effectfulAST (fromSyntax (consoleLog ("hi" :: Expr f 'String) *> toSyntax noOp)))
         @?= "console.log(\"hi\");"
+  , testCase "OverloadedStrings Expr literal" $
+      renderJS (pureAST ("hi" :: Expr f 'String)) @?= "\"hi\""
+  , testCase "OverloadedStrings Value via Literal" $
+      renderJS (pureAST (Literal ("hi" :: Value 'String))) @?= "\"hi\""
   ]
 
 controlFlowTests :: TestTree
@@ -187,7 +191,7 @@ stdlibTests = testGroup "stdlib"
   , testCase "Json.stringify renders as JSON.stringify(x)" $
       renderJS (pureAST (Json.stringify (number 1))) @?= "JSON.stringify(1.0)"
   , testCase "Console.log renders as console.log(x)" $
-      renderJS (effectfulAST (fromSyntax (Console.log (string "hi" :: Expr f 'String) *> toSyntax noOp)))
+      renderJS (effectfulAST (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp)))
         @?= "console.log(\"hi\");"
   , testCase "Dom appendChild inlines single-use handles" $
       renderJS (effectfulAST (fromSyntax (do
@@ -312,6 +316,10 @@ exprFTests = testGroup "ExprF removeUnusedBindings"
       case e' of
         ExprF.LambdaF{} -> pure ()
         _ -> assertFailure "expected LambdaF to remain"
+  , testCase "OverloadedStrings ExprF literal" $
+      case ("hi" :: ExprF (->) f 'String) of
+        ExprF.LiteralF (ValueString s) -> s @?= "hi"
+        _ -> assertFailure "expected LiteralF string"
   , testCase "removeUnusedBindingsExpr round-trips a fragment Expr" $ do
       let e = let_ (number 1) (\_ -> number 2)
       case ExprF.removeUnusedBindingsExpr e of
@@ -433,7 +441,7 @@ compilerTests = testGroup "compiler"
   , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
       clearCompilerCache
       out <- compileEffect readableConfig
-        (fromSyntax (consoleLog (string "hi" :: Expr f 'String) *> toSyntax noOp))
+        (fromSyntax (consoleLog ("hi" :: Expr f 'String) *> toSyntax noOp))
       out @?= "console.log(\"hi\");"
   , testCase "readableConfig compilePure has no IIFE and inlines single-use lets" $ do
       clearCompilerCache
