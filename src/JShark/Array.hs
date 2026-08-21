@@ -3,13 +3,17 @@
   , OverloadedStrings
 #-}
 -- | JS @Array.prototype@ wrappers. Opaque to 'JShark.evaluate' except 'index'.
--- Read wrappers return 'Expr' via 'UnsafeExpr*' (assumed observationally
--- pure). 'push' is a real 'CallMethod' on 'Effect'.
+-- Read wrappers are closed-name 'Expr' nodes. 'push' is a 'CallMethod' on
+-- 'Effect'.
 module JShark.Array
   ( index
   , length_
   , map_
+  , mapE
+  , mapE_
   , filter_
+  , filterE
+  , filterE_
   , includes
   , concat_
   , join
@@ -27,33 +31,45 @@ index = exprIndex
 
 -- | @arr.length@
 length_ :: Expr f ('Array u) -> Expr f 'Number
-length_ arr = unsafeExprProp arr "length"
+length_ = ExprUnary StdArrLen
 
--- | @arr.map(function(x){...})@. The callback stays on 'Expr' and is
--- assumed observationally pure; an 'unsafeExprFfi' inside still type-checks
--- as a pure callback. Effectful work belongs on 'Effect' via 'callMethod'.
+-- | @arr.map(function(x){...})@. The callback stays on 'Expr'.
 map_ :: Expr f ('Array u) -> (Expr f u -> Expr f v) -> Expr f ('Array v)
-map_ arr f = unsafeExprMethodCallback arr "map" f
+map_ arr f = ExprMap arr (\x -> f (var x))
 
--- | @arr.filter(function(x){...})@. Same observational-purity assumption
--- as 'map_': the callback is 'Expr -> Expr', not an 'Effect'.
+-- | @arr.filter(function(x){...})@. The callback stays on 'Expr'.
 filter_ :: Expr f ('Array u) -> (Expr f u -> Expr f 'Bool) -> Expr f ('Array u)
-filter_ arr f = unsafeExprMethodCallback arr "filter" f
+filter_ arr f = ExprFilter arr (\x -> f (var x))
+
+-- | @arr.map@ with an 'Effect' callback (e.g. 'getProp'' inside).
+mapE :: Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f ('Array v)
+mapE arr f = callMethod (expr arr) "map" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+
+-- | 'mapE' in 'EffectSyntax'.
+mapE_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f v)) -> EffectSyntax f (Expr f ('Array v))
+mapE_ arr f = fmap Var $ toSyntax $ mapE arr (\x -> fromSyntax (f x))
+
+-- | @arr.filter@ with an 'Effect' callback (e.g. 'getProp'' inside).
+filterE :: Expr f ('Array u) -> (Expr f u -> Effect f 'Bool) -> Effect f ('Array u)
+filterE arr f = callMethod (expr arr) "filter" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+
+-- | 'filterE' in 'EffectSyntax'.
+filterE_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f 'Bool)) -> EffectSyntax f (Expr f ('Array u))
+filterE_ arr f = fmap Var $ toSyntax $ filterE arr (\x -> fromSyntax (f x))
 
 -- | @arr.includes(x)@
 includes :: Expr f ('Array u) -> Expr f u -> Expr f 'Bool
-includes arr x = unsafeExprMethod arr "includes" (x <: RecNil)
+includes = ExprBinary StdIncludes
 
 -- | @xs.concat(ys)@
 concat_ :: Expr f ('Array u) -> Expr f ('Array u) -> Expr f ('Array u)
-concat_ xs ys = unsafeExprMethod xs "concat" (ys <: RecNil)
+concat_ = ExprBinary StdConcat
 
 -- | @arr.join(sep)@
 join :: Expr f ('Array u) -> Expr f 'String -> Expr f 'String
-join arr sep = unsafeExprMethod arr "join" (sep <: RecNil)
+join = ExprBinary StdJoin
 
--- | @arr.push(x)@. Mutates in place; a 'CallMethod' on 'Effect', not an
--- 'UnsafeExprMethod' smuggled through 'Lift'.
+-- | @arr.push(x)@. Mutates in place; a 'CallMethod' on 'Effect'.
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
 push arr x = callMethod (expr arr) "push" (arg x <: RecNil)
 

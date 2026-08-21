@@ -4,6 +4,7 @@
   , DerivingStrategies
   , GADTs
   , KindSignatures
+  , LambdaCase
   , OverloadedStrings
   , RankNTypes
   , StandaloneDeriving
@@ -18,8 +19,9 @@
 -- Binders are parametric (@f :: Universe -> Type@), i.e. weak PHOAS.
 -- A closed term is an end over that parameter: 'ClosedExpr' / 'ClosedEffect'
 -- (@forall f. …@), the same quantification as Kmett's
--- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg',
--- not by smuggling effects through 'Expr'.
+-- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
+-- Named stdlib on 'Expr' is a closed set of constructors; free-text
+-- escapes live on 'Effect'.
 module JShark.Types where
 import Control.Monad (ap, void)
 import Data.Kind
@@ -57,8 +59,8 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v -- ^ PHOAS bind (@const n = e@)
   LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ Effectful function (weak PHOAS: binder is @f u@, not @Effect@)
   ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v
-  IfE :: Expr f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. NB: the condition expression is currently assumed to require no intermediate declarations (i.e. no nested 'Let'); see 'While' for the same caveat.
-  While :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. NB: the condition is re-checked by emitting the *same* rendered expression into the generated @while@ test on every iteration, so it must not depend on declarations ('Let') that only run once.
+  IfE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. A 'Lift'ed condition must not depend on 'Let' decls that only run once; an 'FFI' condition is re-emitted into the @if@ test.
+  While :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. The rendered condition is re-emitted on every iteration, so it must not depend on declarations that only run once. Use 'FFI' (not a bound var) when the test itself is a call.
 
 -- | An FFI argument drawn from either syntax tree. This is the sanctioned
 -- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
@@ -94,20 +96,84 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   -- uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
   -- @if_ (opt .== none)@ plus a type-changing coerce.
   OptionCase :: Expr f ('Option u) -> Expr f v -> (f u -> Expr f v) -> Expr f v -- ^ Eliminate an 'Option', analogous to 'maybe'.
-  -- Constrained JS surface (fixed names / universes; not a general FFI)
+  -- Constrained JS surface (fixed names / universes; not a general FFI).
+  -- True escapes ('alert', raw @foo()@, free-text methods) live on 'Effect'.
   ExprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u -- ^ Array indexing: @arr[i]@.
-  MathUnary :: Text -> Expr f 'Number -> Expr f 'Number -- ^ Unary @Math.fn(x)@. Only names in the optimizer whitelist are treated as pure; unknown names are kept (not DCE'd).
-  MathBinary :: Text -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Binary @Math.fn(x, y)@. Same purity whitelist as 'MathUnary'.
-  -- Untyped JS on the pure tree. Not referentially transparent: the name is
-  -- unchecked, so @push@ / @alert@ type-check. Effectful calls belong on
-  -- 'Effect' ('CallMethod' / 'FFI'). Named stdlib wrappers that return
-  -- 'Expr' (e.g. 'toUpper') assume observational purity.
-  UnsafeExprProp :: Expr f u -> Text -> Expr f v -- ^ @receiver.prop@
-  UnsafeExprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v -- ^ @receiver.method(args…)@
-  UnsafeExprMethodCallback :: Expr f u -> Text -> (f a -> Expr f b) -> Expr f v -- ^ @receiver.map(function(x){…})@
-  UnsafeExprFFI :: Text -> Rec (Expr f) us -> Expr f v -- ^ @fnName(args…)@
+  MathUnary :: MathFn1 -> Expr f 'Number -> Expr f 'Number -- ^ Unary @Math.fn(x)@. Closed names; observationally pure.
+  MathBinary :: MathFn2 -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Binary @Math.fn(x, y)@. Closed names; observationally pure.
+  ExprUnary :: StdUnary a b -> Expr f a -> Expr f b -- ^ Closed-name unary (@toUpperCase@, @.length@, @JSON.stringify@).
+  ExprBinary :: StdBinary a b c -> Expr f a -> Expr f b -> Expr f c -- ^ Closed-name binary (@indexOf@, @join@, …).
+  ExprTernary :: StdTernary a b c d -> Expr f a -> Expr f b -> Expr f c -> Expr f d -- ^ Closed-name ternary (@slice@, @replace@).
+  ExprMap :: Expr f ('Array u) -> (f u -> Expr f v) -> Expr f ('Array v) -- ^ @arr.map(function(x){…})@. Callback stays on 'Expr'.
+  ExprFilter :: Expr f ('Array u) -> (f u -> Expr f 'Bool) -> Expr f ('Array u) -- ^ @arr.filter(function(x){…})@. Callback stays on 'Expr'.
+  -- Untyped field read. Getters may have effects, so this is not DCE'd.
+  -- Prefer 'StdArrLen' / 'StdStrLen' for @.length@.
+  ExprProp :: Expr f u -> Text -> Expr f v -- ^ @receiver.prop@
   UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
+  UnsafeFromSome :: Expr f ('Option u) -> Expr f u -- ^ After a null check, the JS value is @u@. Codegen is identity.
   UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Embed an 'Effect' as a pure 'Expr'. Optimizer splice placeholder; at the surface, pass effects to FFI via 'ArgEffect' instead.
+
+-- | Closed unary names on 'Expr'. There is no way to write @alert@ here.
+data StdUnary :: Universe -> Universe -> Type where
+  StdToUpper   :: StdUnary 'String 'String
+  StdToLower   :: StdUnary 'String 'String
+  StdTrim      :: StdUnary 'String 'String
+  StdArrLen    :: StdUnary ('Array u) 'Number
+  StdStrLen    :: StdUnary 'String 'Number
+  StdStringify :: StdUnary u 'String
+
+-- | Closed binary names on 'Expr'.
+data StdBinary :: Universe -> Universe -> Universe -> Type where
+  StdIndexOf  :: StdBinary 'String 'String 'Number
+  StdSplit    :: StdBinary 'String 'String ('Array 'String)
+  StdIncludes :: StdBinary ('Array u) u 'Bool
+  StdConcat   :: StdBinary ('Array u) ('Array u) ('Array u)
+  StdJoin     :: StdBinary ('Array u) 'String 'String
+
+-- | Closed ternary names on 'Expr'.
+data StdTernary :: Universe -> Universe -> Universe -> Universe -> Type where
+  StdSlice   :: StdTernary 'String 'Number 'Number 'String
+  StdReplace :: StdTernary 'String 'String 'String 'String
+
+-- | Closed unary @Math.*@ names. JS identifier is 'mathFn1Name'.
+data MathFn1
+  = MathSin | MathCos | MathTan | MathAsin | MathAcos | MathAtan
+  | MathSqrt | MathCbrt | MathExp | MathLog | MathLog2 | MathLog10
+  | MathFloor | MathCeil | MathRound | MathTrunc
+  | MathAbs | MathSign
+
+-- | Closed binary @Math.*@ names. JS identifier is 'mathFn2Name'.
+data MathFn2
+  = MathPow | MathAtan2 | MathMax | MathMin | MathHypot
+
+mathFn1Name :: MathFn1 -> Text
+mathFn1Name = \case
+  MathSin -> "sin"
+  MathCos -> "cos"
+  MathTan -> "tan"
+  MathAsin -> "asin"
+  MathAcos -> "acos"
+  MathAtan -> "atan"
+  MathSqrt -> "sqrt"
+  MathCbrt -> "cbrt"
+  MathExp -> "exp"
+  MathLog -> "log"
+  MathLog2 -> "log2"
+  MathLog10 -> "log10"
+  MathFloor -> "floor"
+  MathCeil -> "ceil"
+  MathRound -> "round"
+  MathTrunc -> "trunc"
+  MathAbs -> "abs"
+  MathSign -> "sign"
+
+mathFn2Name :: MathFn2 -> Text
+mathFn2Name = \case
+  MathPow -> "pow"
+  MathAtan2 -> "atan2"
+  MathMax -> "max"
+  MathMin -> "min"
+  MathHypot -> "hypot"
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
@@ -173,17 +239,12 @@ liftValue1 f (ValueNumber a) = ValueNumber (f a)
 liftValue2 :: (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
--- | JS names for 'Num' on 'Expr'. Must stay in 'JShark.mathUnaryOp'.
-mathAbs, mathSign :: Text
-mathAbs = "abs"
-mathSign = "sign"
-
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus
-  abs = MathUnary mathAbs
-  signum = MathUnary mathSign
+  abs = MathUnary MathAbs
+  signum = MathUnary MathSign
   fromInteger n = Literal (fromInteger n)
   negate = Negate
 

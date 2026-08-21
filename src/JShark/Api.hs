@@ -115,19 +115,31 @@ let_ e f = Let e (\x -> f (var x))
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ = If
 
--- | Effectful conditional. See the note on 'IfE' regarding the condition
--- expression's limitations.
+-- | Effectful conditional with an 'Expr' test.
 ifE :: Expr f 'Bool -> Effect f u -> Effect f u -> Effect f u
-ifE = IfE
+ifE c = IfE (Lift c)
+
+-- | Effectful conditional with an 'Effect' test (re-emitted into the @if@).
+-- Use @ifEE (ffi "cond" RecNil)@ when the test itself must re-run.
+ifEE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
+ifEE = IfE
 
 -- | Run an effect only when the condition holds, otherwise do nothing.
 when_ :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-when_ c t = IfE c t noOp
+when_ c t = IfE (Lift c) t noOp
 
--- | Loop while the condition holds. See the note on 'While' regarding the
--- condition expression's limitations.
+-- | 'when_' with an 'Effect' test.
+whenE :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
+whenE c t = IfE c t noOp
+
+-- | Loop while the condition holds.
 while_ :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-while_ = While
+while_ c = While (Lift c)
+
+-- | 'while_' with an 'Effect' test. Use @whileE (ffi "cond" RecNil)@
+-- when the test itself must re-run each iteration.
+whileE :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
+whileE = While
 
 -- Option --------------------------------------------------------------
 
@@ -146,30 +158,30 @@ none = Literal (ValueOption Nothing)
 optionCase :: Expr f ('Option u) -> Expr f v -> (Expr f u -> Expr f v) -> Expr f v
 optionCase opt noneBranch someBranch = OptionCase opt noneBranch (\x -> someBranch (var x))
 
--- | Untyped global call on the pure tree. Prefer 'ffi' on 'Effect'.
-unsafeExprFfi :: Text -> Rec (Expr f) us -> Expr f v
-unsafeExprFfi = UnsafeExprFFI
-
--- | Untyped property access on the pure tree. Prefer 'getProp' / 'CallMethod'.
-unsafeExprProp :: Expr f u -> Text -> Expr f v
-unsafeExprProp = UnsafeExprProp
-
--- | Untyped method call on the pure tree. Prefer 'callMethod' for effects.
-unsafeExprMethod :: Expr f u -> Text -> Rec (Expr f) us -> Expr f v
-unsafeExprMethod = UnsafeExprMethod
-
--- | Untyped callback method on the pure tree (e.g. @map@). Prefer 'callMethod'.
-unsafeExprMethodCallback :: Expr f u -> Text -> (Expr f a -> Expr f b) -> Expr f v
-unsafeExprMethodCallback recv name f = UnsafeExprMethodCallback recv name (\x -> f (var x))
+-- | Untyped field read on the pure tree. Getters may have effects, so
+-- this is not DCE'd. Prefer 'getProp' on 'Effect', or 'StdArrLen' /
+-- 'StdStrLen' for @.length@.
+exprProp :: Expr f u -> Text -> Expr f v
+exprProp = ExprProp
 
 exprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
 exprIndex = ExprIndex
 
-mathUnary :: Text -> Expr f 'Number -> Expr f 'Number
+mathUnary :: MathFn1 -> Expr f 'Number -> Expr f 'Number
 mathUnary = MathUnary
 
-mathBinary :: Text -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+mathBinary :: MathFn2 -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 mathBinary = MathBinary
+
+-- | After a null check, reinterpret @'Option u@ as @u@. Codegen is identity.
+fromSome :: Expr f ('Option u) -> Expr f u
+fromSome = UnsafeFromSome
+
+-- | Effectful 'optionCase': @null@ takes the none branch, otherwise
+-- the value is passed to the some branch.
+optionCaseE :: Expr f ('Option u) -> Effect f v -> (Expr f u -> Effect f v) -> Effect f v
+optionCaseE opt noneBranch someBranch =
+  IfE (Lift (opt .== none)) noneBranch (someBranch (fromSome opt))
 
 -- | Reinterpret a value that may be a JS null (e.g. the result of
 -- @localStorage.getItem@) as an 'Option'. See the note on 'UnsafeNullable'.
@@ -255,9 +267,21 @@ done = toSyntax noOp
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenS c body = toSyntax $ when_ c (stmts body)
 
+-- | 'whenE' with an 'EffectSyntax' body.
+whenES :: Effect f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+whenES c body = toSyntax $ whenE c (stmts body)
+
+-- | Run the body when the option is present, with the unwrapped value.
+whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
+whenSomeS opt k = whenS (opt .!= none) (k (fromSome opt))
+
 -- | 'ifE' with 'EffectSyntax' branches.
 ifS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 ifS c t e = toSyntax $ ifE c (stmts t) (stmts e)
+
+-- | 'ifEE' with 'EffectSyntax' branches.
+ifES :: Effect f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+ifES c t e = toSyntax $ ifEE c (stmts t) (stmts e)
 
 -- | Call a nullary JS function that returns unit (@fn()@).
 call0 :: forall f. Expr f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)

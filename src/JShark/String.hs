@@ -3,7 +3,7 @@
   , OverloadedStrings
 #-}
 -- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
--- Built on 'UnsafeExpr*'; assumed observationally pure.
+-- Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
 module JShark.String
   ( length_
   , indexOf
@@ -15,38 +15,36 @@ module JShark.String
   , replace
   ) where
 
-import JShark.Api
-import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
 -- | @s.length@
 length_ :: Expr f 'String -> Expr f 'Number
-length_ s = unsafeExprProp s "length"
+length_ = ExprUnary StdStrLen
 
 -- | @s.indexOf(sub)@
 indexOf :: Expr f 'String -> Expr f 'String -> Expr f 'Number
-indexOf s sub = unsafeExprMethod s "indexOf" (sub <: RecNil)
+indexOf = ExprBinary StdIndexOf
 
 -- | @s.slice(start, end)@
 slice :: Expr f 'String -> Expr f 'Number -> Expr f 'Number -> Expr f 'String
-slice s start end = unsafeExprMethod s "slice" (start <: end <: RecNil)
+slice = ExprTernary StdSlice
 
 -- | @s.toUpperCase()@
 toUpper :: Expr f 'String -> Expr f 'String
-toUpper s = unsafeExprMethod s "toUpperCase" RecNil
+toUpper = ExprUnary StdToUpper
 
 -- | @s.toLowerCase()@
 toLower :: Expr f 'String -> Expr f 'String
-toLower s = unsafeExprMethod s "toLowerCase" RecNil
+toLower = ExprUnary StdToLower
 
 -- | @s.trim()@
 trim :: Expr f 'String -> Expr f 'String
-trim s = unsafeExprMethod s "trim" RecNil
+trim = ExprUnary StdTrim
 
 -- | @s.split(sep)@
 split :: Expr f 'String -> Expr f 'String -> Expr f ('Array 'String)
-split s sep = unsafeExprMethod s "split" (sep <: RecNil)
+split = ExprBinary StdSplit
 
 -- | @s.replace(pat, rep)@
 replace :: Expr f 'String -> Expr f 'String -> Expr f 'String -> Expr f 'String
-replace s pat rep = unsafeExprMethod s "replace" (pat <: rep <: RecNil)
+replace = ExprTernary StdReplace

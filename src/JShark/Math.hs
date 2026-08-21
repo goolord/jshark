@@ -75,29 +75,29 @@ log10e = 0.4342944819032518
 
 sin, cos, tan, asin, acos, atan, sqrt, cbrt, exp, log, log2, log10, floor, ceil, round, trunc
   :: Expr f 'Number -> Expr f 'Number
-sin = mathUnary "sin"
-cos = mathUnary "cos"
-tan = mathUnary "tan"
-asin = mathUnary "asin"
-acos = mathUnary "acos"
-atan = mathUnary "atan"
-sqrt = mathUnary "sqrt"
-cbrt = mathUnary "cbrt"
-exp = mathUnary "exp"
-log = mathUnary "log"
-log2 = mathUnary "log2"
-log10 = mathUnary "log10"
-floor = mathUnary "floor"
-ceil = mathUnary "ceil"
-round = mathUnary "round"
-trunc = mathUnary "trunc"
+sin = mathUnary MathSin
+cos = mathUnary MathCos
+tan = mathUnary MathTan
+asin = mathUnary MathAsin
+acos = mathUnary MathAcos
+atan = mathUnary MathAtan
+sqrt = mathUnary MathSqrt
+cbrt = mathUnary MathCbrt
+exp = mathUnary MathExp
+log = mathUnary MathLog
+log2 = mathUnary MathLog2
+log10 = mathUnary MathLog10
+floor = mathUnary MathFloor
+ceil = mathUnary MathCeil
+round = mathUnary MathRound
+trunc = mathUnary MathTrunc
 
 pow, atan2, max_, min_, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pow = mathBinary "pow"
-atan2 = mathBinary "atan2"
-max_ = mathBinary "max"
-min_ = mathBinary "min"
-hypot = mathBinary "hypot"
+pow = mathBinary MathPow
+atan2 = mathBinary MathAtan2
+max_ = mathBinary MathMax
+min_ = mathBinary MathMin
+hypot = mathBinary MathHypot
 
 -- | @Math.random()@. Not pure (yields a different value each call), so
 -- it's an 'Effect'.

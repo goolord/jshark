@@ -45,7 +45,7 @@ import Data.Functor.Const (Const(..))
 import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
-import Data.Maybe (isJust, listToMaybe)
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import GHC.Exts (Any)
 import Numeric (showFFloat)
@@ -115,73 +115,61 @@ isFiniteDouble :: Double -> Bool
 isFiniteDouble d = not (isNaN d) && not (isInfinite d)
 
 -- | Implements the unary @Math@ functions supported by 'MathUnary'.
-mathUnaryOp :: Text -> Maybe (Double -> Double)
-mathUnaryOp n
-  | n == mathAbs = Just abs
-  | n == mathSign = Just signum
-  | otherwise = case n of
-  "sin" -> Just sin
-  "cos" -> Just cos
-  "tan" -> Just tan
-  "asin" -> Just asin
-  "acos" -> Just acos
-  "atan" -> Just atan
-  "sqrt" -> Just sqrt
-  "cbrt" -> Just (\x -> signum x * (abs x ** (1 / 3)))
-  "exp" -> Just exp
-  "log" -> Just log
-  "log2" -> Just (logBase 2)
-  "log10" -> Just (logBase 10)
-  "floor" -> Just (fromIntegral . (floor :: Double -> Integer))
-  "ceil" -> Just (fromIntegral . (ceiling :: Double -> Integer))
+mathUnaryFn :: MathFn1 -> Double -> Double
+mathUnaryFn = \case
+  MathAbs -> abs
+  MathSign -> signum
+  MathSin -> sin
+  MathCos -> cos
+  MathTan -> tan
+  MathAsin -> asin
+  MathAcos -> acos
+  MathAtan -> atan
+  MathSqrt -> sqrt
+  MathCbrt -> \x -> signum x * (abs x ** (1 / 3))
+  MathExp -> exp
+  MathLog -> log
+  MathLog2 -> logBase 2
+  MathLog10 -> logBase 10
+  MathFloor -> fromIntegral . (floor :: Double -> Integer)
+  MathCeil -> fromIntegral . (ceiling :: Double -> Integer)
   -- JS's Math.round rounds half-way values toward +Infinity (e.g.
   -- Math.round(2.5) === 3, Math.round(-2.5) === -2), unlike Haskell's
   -- 'round' (banker's rounding to even: round 2.5 == 2). floor(x + 0.5)
   -- matches JS's semantics.
-  "round" -> Just (fromIntegral . (floor :: Double -> Integer) . (+ 0.5))
-  "trunc" -> Just (fromIntegral . (truncate :: Double -> Integer))
-  _ -> Nothing
-
-
-mathUnaryFn :: Text -> Double -> Double
-mathUnaryFn name = case mathUnaryOp name of
-  Just f -> f
-  Nothing -> error ("evaluate: unknown Math unary function " ++ T.unpack name)
+  MathRound -> fromIntegral . (floor :: Double -> Integer) . (+ 0.5)
+  MathTrunc -> fromIntegral . (truncate :: Double -> Integer)
 
 -- | Implements the binary @Math@ functions supported by 'MathBinary'.
-mathBinaryOp :: Text -> Maybe (Double -> Double -> Double)
-mathBinaryOp = \case
-  "pow" -> Just (**)
-  "atan2" -> Just atan2
-  "max" -> Just max
-  "min" -> Just min
-  "hypot" -> Just (\x y -> sqrt (x * x + y * y))
-  _ -> Nothing
-
-mathBinaryFn :: Text -> Double -> Double -> Double
-mathBinaryFn name = case mathBinaryOp name of
-  Just f -> f
-  Nothing -> error ("evaluate: unknown Math binary function " ++ T.unpack name)
+mathBinaryFn :: MathFn2 -> Double -> Double -> Double
+mathBinaryFn = \case
+  MathPow -> (**)
+  MathAtan2 -> atan2
+  MathMax -> max
+  MathMin -> min
+  MathHypot -> \x y -> sqrt (x * x + y * y)
 
 -- | Fold @Math.*@ only when the Haskell result is known to match JS.
 -- Transcendentals (@sin(1)@, @cbrt@, @pow@, …) stay in JS.
-exactMathUnary :: Text -> Double -> Maybe Double
-exactMathUnary n a
-  | n == mathAbs = Just (abs a)
-  | n == mathSign, isFiniteDouble a = Just (signum a)
-  | otherwise = case n of
-  "sin" | a == 0 -> Just 0
-  "cos" | a == 0 -> Just 1
-  "tan" | a == 0 -> Just 0
-  "sqrt" | a >= 0, let r = sqrt a, r * r == a -> Just r
-  "floor" | isFiniteDouble a -> Just (fromIntegral (floor a :: Integer))
-  "ceil" | isFiniteDouble a -> Just (fromIntegral (ceiling a :: Integer))
-  "round" | isFiniteDouble a -> Just (fromIntegral (floor (a + 0.5) :: Integer))
-  "trunc" | isFiniteDouble a -> Just (fromIntegral (truncate a :: Integer))
+exactMathUnary :: MathFn1 -> Double -> Maybe Double
+exactMathUnary n a = case n of
+  MathAbs -> Just (abs a)
+  MathSign | isFiniteDouble a -> Just (signum a)
+  MathSin | a == 0 -> Just 0
+  MathCos | a == 0 -> Just 1
+  MathTan | a == 0 -> Just 0
+  MathSqrt | a >= 0, let r = sqrt a, r * r == a -> Just r
+  MathFloor | isFiniteDouble a -> Just (fromIntegral (floor a :: Integer))
+  MathCeil | isFiniteDouble a -> Just (fromIntegral (ceiling a :: Integer))
+  MathRound | isFiniteDouble a -> Just (fromIntegral (floor (a + 0.5) :: Integer))
+  MathTrunc | isFiniteDouble a -> Just (fromIntegral (truncate a :: Integer))
   _ -> Nothing
 
-exactMathBinary :: Text -> Double -> Double -> Maybe Double
+exactMathBinary :: MathFn2 -> Double -> Double -> Maybe Double
 exactMathBinary _ _ _ = Nothing
+
+cannotEval :: String -> a
+cannotEval what = error ("evaluate: cannot evaluate " ++ what)
 
 isOrderableValue :: Value u -> Bool
 isOrderableValue = \case
@@ -202,6 +190,10 @@ peelOption = \case
   -- 'Storage.getItem' keeps its @=== null@ check.
   UnsafeNullable (Literal v) -> Just (Just (Literal v))
   _ -> Nothing
+
+peelBoolEffect :: Effect (Const Int) 'Bool -> Maybe Bool
+peelBoolEffect (Lift (Literal (ValueBool b))) = Just b
+peelBoolEffect _ = Nothing
 
 evaluateNumber :: ClosedExpr 'Number -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -237,16 +229,13 @@ evaluate e0 = eval e0 where
     OptionCase opt none' someF -> case eval opt of
       ValueOption Nothing -> eval none'
       ValueOption (Just x) -> eval (someF x)
-    UnsafeEffectExpr _ ->
-      error "evaluate: cannot evaluate an embedded Effect (UnsafeEffectExpr)"
-    UnsafeExprFFI name _ ->
-      error ("evaluate: cannot evaluate a foreign function call: " ++ T.unpack name)
-    UnsafeExprProp _ name ->
-      error ("evaluate: cannot evaluate a foreign property access: " ++ T.unpack name)
-    UnsafeExprMethod _ name _ ->
-      error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
-    UnsafeExprMethodCallback _ name _ ->
-      error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
+    UnsafeEffectExpr _ -> cannotEval "an embedded Effect (UnsafeEffectExpr)"
+    ExprUnary{} -> cannotEval "a stdlib ExprUnary"
+    ExprBinary{} -> cannotEval "a stdlib ExprBinary"
+    ExprTernary{} -> cannotEval "a stdlib ExprTernary"
+    ExprMap{} -> cannotEval "ExprMap"
+    ExprFilter{} -> cannotEval "ExprFilter"
+    ExprProp _ name -> cannotEval ("a property access: " ++ T.unpack name)
     ExprIndex xs i -> case eval xs of
       ValueArray vs ->
         -- JS array indexing truncates the index toward zero (as part of
@@ -262,6 +251,9 @@ evaluate e0 = eval e0 where
     MathUnary name x -> ValueNumber (mathUnaryFn name (unNumber (eval x)))
     MathBinary name x y -> ValueNumber (mathBinaryFn name (unNumber (eval x)) (unNumber (eval y)))
     UnsafeNullable x -> ValueOption (Just (eval x))
+    UnsafeFromSome x -> case eval x of
+      ValueOption (Just v) -> v
+      ValueOption Nothing -> cannotEval "fromSome of None"
 
 -- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
 -- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
@@ -345,16 +337,13 @@ goNode cache = \case
     case ov of
       ValueOption Nothing -> go cache none'
       ValueOption (Just x) -> go cache (someF x)
-  UnsafeEffectExpr _ ->
-    error "evaluate: cannot evaluate an embedded Effect (UnsafeEffectExpr)"
-  UnsafeExprFFI name _ ->
-    error ("evaluate: cannot evaluate a foreign function call: " ++ T.unpack name)
-  UnsafeExprProp _ name ->
-    error ("evaluate: cannot evaluate a foreign property access: " ++ T.unpack name)
-  UnsafeExprMethod _ name _ ->
-    error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
-  UnsafeExprMethodCallback _ name _ ->
-    error ("evaluate: cannot evaluate a foreign method call: " ++ T.unpack name)
+  UnsafeEffectExpr _ -> cannotEval "an embedded Effect (UnsafeEffectExpr)"
+  ExprUnary{} -> cannotEval "a stdlib ExprUnary"
+  ExprBinary{} -> cannotEval "a stdlib ExprBinary"
+  ExprTernary{} -> cannotEval "a stdlib ExprTernary"
+  ExprMap{} -> cannotEval "ExprMap"
+  ExprFilter{} -> cannotEval "ExprFilter"
+  ExprProp _ name -> cannotEval ("a property access: " ++ T.unpack name)
   ExprIndex xs i -> do
     arr <- go cache xs
     iv <- go cache i
@@ -368,6 +357,11 @@ goNode cache = \case
   MathBinary name x y ->
     ValueNumber <$> (mathBinaryFn name <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
   UnsafeNullable x -> ValueOption . Just <$> go cache x
+  UnsafeFromSome x -> do
+    ov <- go cache x
+    case ov of
+      ValueOption (Just v) -> pure v
+      ValueOption Nothing -> cannotEval "fromSome of None"
   where
     num1 f x = ValueNumber . f . unNumber <$> go cache x
     num2 f x y = ValueNumber <$> (f <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
@@ -439,14 +433,28 @@ isSimple = \case
   Var{} -> True
   Show{} -> True
   Negate{} -> True
-  UnsafeExprFFI{} -> True
-  UnsafeExprProp{} -> True
-  UnsafeExprMethod{} -> True
-  UnsafeExprMethodCallback{} -> True
+  ExprUnary{} -> True
+  ExprBinary{} -> True
+  ExprTernary{} -> True
+  ExprMap{} -> True
+  ExprFilter{} -> True
+  ExprProp{} -> True
   ExprIndex{} -> True
   MathUnary{} -> True
   MathBinary{} -> True
   UnsafeNullable x -> isSimple x
+  UnsafeFromSome x -> isSimple x
+  -- Single-use Effect spliced into an Expr hole (e.g. inlined 'ffi').
+  UnsafeEffectExpr e -> isSimpleEffect e
+  _ -> False
+
+isSimpleEffect :: Effect (Const Int) u -> Bool
+isSimpleEffect = \case
+  Lift x -> isSimple x
+  FFI{} -> True
+  CallMethod{} -> True
+  UnsafeObject{} -> True
+  UnsafeObjectGet{} -> True
   _ -> False
 
 wrapOperand :: Expr (Const Int) u -> Doc -> Doc
@@ -459,9 +467,6 @@ countLazyExpr t e = if countExpr t e == 0 then 0 else 2
 
 countLazyEffect :: Int -> Effect (Const Int) u -> Int
 countLazyEffect t e = if countEffect t e == 0 then 0 else 2
-
-countRec :: Int -> Rec (Expr (Const Int)) us -> Int
-countRec t = recFold (\n e -> n + countExpr t e) 0
 
 countArgs :: Int -> Rec (Arg (Const Int)) us -> Int
 countArgs t = recFold (\n a -> n + countArg t a) 0
@@ -496,14 +501,17 @@ countExpr t = \case
   OptionCase o n s ->
     countExpr t o + countLazyExpr t n + countLazyExpr t (s nestedDummy)
   UnsafeEffectExpr e -> countEffect t e
-  UnsafeExprFFI _ args -> countRec t args
-  UnsafeExprProp x _ -> countExpr t x
-  UnsafeExprMethod x _ args -> countExpr t x + countRec t args
-  UnsafeExprMethodCallback x _ f -> countExpr t x + countLazyExpr t (f nestedDummy)
+  ExprUnary _ x -> countExpr t x
+  ExprBinary _ x y -> countExpr t x + countExpr t y
+  ExprTernary _ x y z -> countExpr t x + countExpr t y + countExpr t z
+  ExprMap x f -> countExpr t x + countLazyExpr t (f nestedDummy)
+  ExprFilter x f -> countExpr t x + countLazyExpr t (f nestedDummy)
+  ExprProp x _ -> countExpr t x
   ExprIndex x i -> countExpr t x + countExpr t i
   MathUnary _ x -> countExpr t x
   MathBinary _ x y -> countExpr t x + countExpr t y
   UnsafeNullable x -> countExpr t x
+  UnsafeFromSome x -> countExpr t x
 
 countEffect :: Int -> Effect (Const Int) u -> Int
 countEffect t = \case
@@ -516,11 +524,8 @@ countEffect t = \case
   Bind x f -> countEffect t x + countEffect t (f nestedDummy)
   LambdaE f -> countLazyEffect t (f nestedDummy)
   ApplyE f x -> countEffect t f + countEffect t x
-  IfE c u v -> countExpr t c + countLazyEffect t u + countLazyEffect t v
-  While c b -> countLazyExpr t c + countLazyEffect t b
-
-substRec :: Int -> Expr (Const Int) u -> Rec (Expr (Const Int)) us -> Rec (Expr (Const Int)) us
-substRec t r = mapRec (substExpr t r)
+  IfE c u v -> countEffect t c + countLazyEffect t u + countLazyEffect t v
+  While c b -> countLazyEffect t c + countLazyEffect t b
 
 substArgs :: Int -> Expr (Const Int) u -> Rec (Arg (Const Int)) us -> Rec (Arg (Const Int)) us
 substArgs t r = mapRec (substArg t r)
@@ -559,14 +564,17 @@ substExpr t r = goExpr
       If c u v -> If (goExpr c) (goExpr u) (goExpr v)
       OptionCase o n s -> OptionCase (goExpr o) (goExpr n) (goExpr . s)
       UnsafeEffectExpr e -> UnsafeEffectExpr (substEffect t r e)
-      UnsafeExprFFI n args -> UnsafeExprFFI n (substRec t r args)
-      UnsafeExprProp x n -> UnsafeExprProp (goExpr x) n
-      UnsafeExprMethod x n args -> UnsafeExprMethod (goExpr x) n (substRec t r args)
-      UnsafeExprMethodCallback x n f -> UnsafeExprMethodCallback (goExpr x) n (goExpr . f)
+      ExprUnary n x -> ExprUnary n (goExpr x)
+      ExprBinary n x y -> ExprBinary n (goExpr x) (goExpr y)
+      ExprTernary n x y z -> ExprTernary n (goExpr x) (goExpr y) (goExpr z)
+      ExprMap x f -> ExprMap (goExpr x) (goExpr . f)
+      ExprFilter x f -> ExprFilter (goExpr x) (goExpr . f)
+      ExprProp x n -> ExprProp (goExpr x) n
       ExprIndex x i -> ExprIndex (goExpr x) (goExpr i)
       MathUnary n x -> MathUnary n (goExpr x)
       MathBinary n x y -> MathBinary n (goExpr x) (goExpr y)
       UnsafeNullable x -> UnsafeNullable (goExpr x)
+      UnsafeFromSome x -> UnsafeFromSome (goExpr x)
 
 substEffect :: Int -> Expr (Const Int) u -> Effect (Const Int) v -> Effect (Const Int) v
 substEffect t r = goE
@@ -582,8 +590,8 @@ substEffect t r = goE
       Bind x f -> Bind (goE x) (goE . f)
       LambdaE f -> LambdaE (goE . f)
       ApplyE f x -> ApplyE (goE f) (goE x)
-      IfE c u v -> IfE (substExpr t r c) (goE u) (goE v)
-      While c b -> While (substExpr t r c) (goE b)
+      IfE c u v -> IfE (goE c) (goE u) (goE v)
+      While c b -> While (goE c) (goE b)
 
 -- | Constant-fold and drop dead pure bindings. Applied automatically by
 -- codegen. Literals are propagated even under lambdas; effectful or
@@ -629,6 +637,7 @@ isCheap :: Expr (Const Int) u -> Bool
 isCheap = \case
   Literal v -> isCheapValue v
   UnsafeNullable x -> isCheap x
+  UnsafeFromSome x -> isCheap x
   _ -> False
 
 isCheapEffect :: Effect (Const Int) u -> Bool
@@ -663,16 +672,24 @@ isPureExpr = \case
   If c t e -> isPureExpr c && isPureExpr t && isPureExpr e
   OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s nestedDummy)
   UnsafeEffectExpr _ -> False
-  UnsafeExprFFI{} -> False
-  UnsafeExprProp{} -> False
-  UnsafeExprMethod{} -> False
-  UnsafeExprMethodCallback{} -> False
+  ExprUnary n x -> isPureStdUnary n && isPureExpr x
+  ExprBinary _ x y -> isPureExpr x && isPureExpr y
+  ExprTernary _ x y z -> isPureExpr x && isPureExpr y && isPureExpr z
+  ExprMap x f -> isPureExpr x && isPureExpr (f nestedDummy)
+  ExprFilter x f -> isPureExpr x && isPureExpr (f nestedDummy)
+  -- Getters may have effects; do not DCE an unused field read.
+  ExprProp{} -> False
   ExprIndex x i -> isPureExpr x && isPureExpr i
-  -- Only the names in 'mathUnaryOp' / 'mathBinaryOp' are observationally
-  -- pure. A free 'Text' like @Math.nope@ must not be DCE'd.
-  MathUnary n x -> isJust (mathUnaryOp n) && isPureExpr x
-  MathBinary n x y -> isJust (mathBinaryOp n) && isPureExpr x && isPureExpr y
+  MathUnary _ x -> isPureExpr x
+  MathBinary _ x y -> isPureExpr x && isPureExpr y
   UnsafeNullable x -> isPureExpr x
+  UnsafeFromSome x -> isPureExpr x
+
+-- | @JSON.stringify@ throws on bigint / circular values, so unused
+-- stringify is kept.
+isPureStdUnary :: StdUnary a b -> Bool
+isPureStdUnary StdStringify = False
+isPureStdUnary _ = True
 
 isPureEffect :: Effect (Const Int) u -> Bool
 isPureEffect = \case
@@ -685,11 +702,8 @@ isPureEffect = \case
   Bind x f -> isPureEffect x && isPureEffect (f nestedDummy)
   LambdaE f -> isPureEffect (f nestedDummy)
   ApplyE{} -> False
-  IfE c t e -> isPureExpr c && isPureEffect t && isPureEffect e
+  IfE c t e -> isPureEffect c && isPureEffect t && isPureEffect e
   While{} -> False
-
-optRec :: Int -> Rec (Expr (Const Int)) us -> (Int, Rec (Expr (Const Int)) us)
-optRec = mapAccumRec optExpr
 
 optArgs :: Int -> Rec (Arg (Const Int)) us -> (Int, Rec (Arg (Const Int)) us)
 optArgs = mapAccumRec optArg
@@ -766,13 +780,13 @@ foldIndex arr idx = case (arr, idx) of
     , i >= 0 && i < length vs -> Literal (vs !! i)
   _ -> ExprIndex arr idx
 
-foldMathUnary :: Text -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
+foldMathUnary :: MathFn1 -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
 foldMathUnary n x = case x of
   Literal (ValueNumber a)
     | Just r <- exactMathUnary n a -> Literal (ValueNumber r)
   _ -> MathUnary n x
 
-foldMathBinary :: Text -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
+foldMathBinary :: MathFn2 -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number -> Expr (Const Int) 'Number
 foldMathBinary n x y = case (x, y) of
   (Literal (ValueNumber a), Literal (ValueNumber b))
     | Just r <- exactMathBinary n a b -> Literal (ValueNumber r)
@@ -914,18 +928,29 @@ optExpr t0 = \case
      in case e' of
           Lift x -> (t1, x)
           _ -> (t1, UnsafeEffectExpr e')
-  UnsafeExprFFI n args -> fmap (UnsafeExprFFI n) (optRec t0 args)
-  UnsafeExprProp x n ->
+  ExprUnary n x ->
     let (t1, x') = optExpr t0 x
-     in (t1, UnsafeExprProp x' n)
-  UnsafeExprMethod x n args ->
+     in (t1, ExprUnary n x')
+  ExprBinary n x y ->
     let (t1, x') = optExpr t0 x
-        (t2, args') = optRec t1 args
-     in (t2, UnsafeExprMethod x' n args')
-  UnsafeExprMethodCallback x n f ->
+        (t2, y') = optExpr t1 y
+     in (t2, ExprBinary n x' y')
+  ExprTernary n x y z ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+        (t3, z') = optExpr t2 z
+     in (t3, ExprTernary n x' y' z')
+  ExprMap x f ->
     let (t1, x') = optExpr t0 x
         (t2, tag, body) = optUnder t1 f
-     in (t2, UnsafeExprMethodCallback x' n (rebind tag body))
+     in (t2, ExprMap x' (rebind tag body))
+  ExprFilter x f ->
+    let (t1, x') = optExpr t0 x
+        (t2, tag, body) = optUnder t1 f
+     in (t2, ExprFilter x' (rebind tag body))
+  ExprProp x n ->
+    let (t1, x') = optExpr t0 x
+     in (t1, ExprProp x' n)
   ExprIndex arr idx ->
     let (t1, arr') = optExpr t0 arr
         (t2, idx') = optExpr t1 idx
@@ -938,6 +963,7 @@ optExpr t0 = \case
         (t2, y') = optExpr t1 y
      in (t2, foldMathBinary n x' y')
   UnsafeNullable x -> fmap UnsafeNullable (optExpr t0 x)
+  UnsafeFromSome x -> fmap UnsafeFromSome (optExpr t0 x)
   where
     binNum f k x y =
       let (t1, x') = optExpr t0 x
@@ -978,18 +1004,18 @@ optEffect t0 = \case
           LambdaE g -> optBind t2 x' g
           _ -> (t2, ApplyE f' x')
   IfE c t e ->
-    let (t1, c') = optExpr t0 c
-     in case c' of
-          Literal (ValueBool True) -> optEffect t1 t
-          Literal (ValueBool False) -> optEffect t1 e
-          _ ->
+    let (t1, c') = optEffect t0 c
+     in case peelBoolEffect c' of
+          Just True -> optEffect t1 t
+          Just False -> optEffect t1 e
+          Nothing ->
             let (t2, t') = optEffect t1 t
                 (t3, e') = optEffect t2 e
              in (t3, IfE c' t' e')
   While c b ->
-    let (t1, c') = optExpr t0 c
-     in case c' of
-          Literal (ValueBool False) -> (t1, Lift (Literal ValueUnit))
+    let (t1, c') = optEffect t0 c
+     in case peelBoolEffect c' of
+          Just False -> (t1, Lift (Literal ValueUnit))
           _ ->
             let (t2, b') = optEffect t1 b
              in (t2, While c' b')
@@ -1007,9 +1033,6 @@ foldUnderE t0 f =
   let tag = t0
       (t1, body) = foldEffect (t0 - 1) (f (Const tag))
    in (t1, tag, body)
-
-foldRec :: Int -> Rec (Expr (Const Int)) us -> (Int, Rec (Expr (Const Int)) us)
-foldRec = mapAccumRec foldExpr
 
 foldArgs :: Int -> Rec (Arg (Const Int)) us -> (Int, Rec (Arg (Const Int)) us)
 foldArgs = mapAccumRec foldArg
@@ -1110,18 +1133,29 @@ foldExpr t0 = \case
      in case e' of
           Lift x -> (t1, x)
           _ -> (t1, UnsafeEffectExpr e')
-  UnsafeExprFFI n args -> fmap (UnsafeExprFFI n) (foldRec t0 args)
-  UnsafeExprProp x n ->
+  ExprUnary n x ->
     let (t1, x') = foldExpr t0 x
-     in (t1, UnsafeExprProp x' n)
-  UnsafeExprMethod x n args ->
+     in (t1, ExprUnary n x')
+  ExprBinary n x y ->
     let (t1, x') = foldExpr t0 x
-        (t2, args') = foldRec t1 args
-     in (t2, UnsafeExprMethod x' n args')
-  UnsafeExprMethodCallback x n f ->
+        (t2, y') = foldExpr t1 y
+     in (t2, ExprBinary n x' y')
+  ExprTernary n x y z ->
+    let (t1, x') = foldExpr t0 x
+        (t2, y') = foldExpr t1 y
+        (t3, z') = foldExpr t2 z
+     in (t3, ExprTernary n x' y' z')
+  ExprMap x f ->
     let (t1, x') = foldExpr t0 x
         (t2, tag, body) = foldUnder t1 f
-     in (t2, UnsafeExprMethodCallback x' n (rebind tag body))
+     in (t2, ExprMap x' (rebind tag body))
+  ExprFilter x f ->
+    let (t1, x') = foldExpr t0 x
+        (t2, tag, body) = foldUnder t1 f
+     in (t2, ExprFilter x' (rebind tag body))
+  ExprProp x n ->
+    let (t1, x') = foldExpr t0 x
+     in (t1, ExprProp x' n)
   ExprIndex arr idx ->
     let (t1, arr') = foldExpr t0 arr
         (t2, idx') = foldExpr t1 idx
@@ -1134,6 +1168,7 @@ foldExpr t0 = \case
         (t2, y') = foldExpr t1 y
      in (t2, foldMathBinary n x' y')
   UnsafeNullable x -> fmap UnsafeNullable (foldExpr t0 x)
+  UnsafeFromSome x -> fmap UnsafeFromSome (foldExpr t0 x)
   where
     bin f k x y =
       let (t1, x') = foldExpr t0 x
@@ -1175,18 +1210,18 @@ foldEffect t0 = \case
         (t2, x') = foldEffect t1 x
      in (t2, ApplyE f' x')
   IfE c t e ->
-    let (t1, c') = foldExpr t0 c
-     in case c' of
-          Literal (ValueBool True) -> foldEffect t1 t
-          Literal (ValueBool False) -> foldEffect t1 e
-          _ ->
+    let (t1, c') = foldEffect t0 c
+     in case peelBoolEffect c' of
+          Just True -> foldEffect t1 t
+          Just False -> foldEffect t1 e
+          Nothing ->
             let (t2, t') = foldEffect t1 t
                 (t3, e') = foldEffect t2 e
              in (t3, IfE c' t' e')
   While c b ->
-    let (t1, c') = foldExpr t0 c
-     in case c' of
-          Literal (ValueBool False) -> (t1, Lift (Literal ValueUnit))
+    let (t1, c') = foldEffect t0 c
+     in case peelBoolEffect c' of
+          Just False -> (t1, Lift (Literal ValueUnit))
           _ ->
             let (t2, b') = foldEffect t1 b
              in (t2, While c' b')
@@ -1242,7 +1277,7 @@ effectfulAST' !s0 = \case
     -- Using a shared `let`-bound result variable, assigned in both
     -- branches, is correct regardless of whether the branches are 'Unit'
     -- or carry a real value.
-    let (s1, Code cDecl cRef) = pureAST' s0 c
+    let (s1, Code cDecl cRef) = effectfulAST' s0 c
         (resultN, s2) = allocIdent s1
         resultVar = 'n' : show resultN
         (s3, Code tDecl tRef) = effectfulAST' s2 t
@@ -1253,7 +1288,7 @@ effectfulAST' !s0 = \case
           $$ ("else" <+> P.braces (P.nest 2 (eDecl $$ assign eRef)))
      in (s4, Code (cDecl $$ ifStmt) (P.text resultVar))
   While cond body ->
-    let (s1, Code condDecl condRef) = pureAST' s0 cond
+    let (s1, Code condDecl condRef) = effectfulAST' s0 cond
         (s2, Code bodyDecl bodyRef) = effectfulAST' s1 body
         bodyStmt = if P.isEmpty bodyRef then bodyDecl else bodyDecl $$ (bodyRef <> P.semi)
         whileStmt = "while" <+> P.parens condRef <+> P.braces (P.nest 2 bodyStmt)
@@ -1393,38 +1428,74 @@ pureAST' !s0 = \case
                 (P.parens (P.text optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef))
             )
   UnsafeEffectExpr eff -> effectfulAST' s0 eff
-  UnsafeExprFFI fn args ->
-    let (s1, argDecl, argRefs) = renderArgList pureAST' s0 args
-     in (s1, Code argDecl (P.text (T.unpack fn) <> P.parens argRefs))
-  UnsafeExprProp recv name ->
+  ExprUnary n recv ->
+    let (s1, Code rDecl rRef) = pureAST' s0 recv
+     in (s1, Code rDecl (stdUnaryJS n rRef))
+  ExprBinary n recv arg ->
+    let (s1, Code rDecl rRef) = pureAST' s0 recv
+        (s2, Code aDecl aRef) = pureAST' s1 arg
+     in (s2, Code (rDecl $$ aDecl) (stdBinaryJS n rRef aRef))
+  ExprTernary n recv a b ->
+    let (s1, Code rDecl rRef) = pureAST' s0 recv
+        (s2, Code aDecl aRef) = pureAST' s1 a
+        (s3, Code bDecl bRef) = pureAST' s2 b
+     in (s3, Code (rDecl $$ aDecl $$ bDecl) (stdTernaryJS n rRef aRef bRef))
+  ExprMap recv f -> renderCallbackMethod "map" s0 recv f
+  ExprFilter recv f -> renderCallbackMethod "filter" s0 recv f
+  ExprProp recv name ->
     let (s1, Code rDecl rRef) = pureAST' s0 recv
      in (s1, Code rDecl (rRef <> "." <> P.text (T.unpack name)))
-  UnsafeExprMethod recv name args ->
-    let (s1, Code rDecl rRef) = pureAST' s0 recv
-        (s2, argDecl, argRefs) = renderArgList pureAST' s1 args
-        call = rRef <> "." <> P.text (T.unpack name) <> P.parens argRefs
-     in (s2, Code (rDecl $$ argDecl) call)
-  UnsafeExprMethodCallback recv name f ->
-    let (s1, Code rDecl rRef) = pureAST' s0 recv
-        (nParam, s2) = allocIdent s1
-        ex = f (Const nParam)
-        (s3, Code exDecl exRef) = pureAST' s2 ex
-        paramName = 'n' : show nParam
-        callback = "function" <+> P.parens (P.text paramName) <+> P.braces (exDecl $$ "return" <+> exRef)
-        call = rRef <> "." <> P.text (T.unpack name) <> P.parens callback
-     in (s3, Code rDecl call)
   ExprIndex arr idx ->
     let (s1, Code aDecl aRef) = pureAST' s0 arr
         (s2, Code iDecl iRef) = pureAST' s1 idx
      in (s2, Code (aDecl $$ iDecl) (aRef <> P.brackets iRef))
   MathUnary name x ->
     let (s1, Code xDecl xRef) = pureAST' s0 x
-     in (s1, Code xDecl ("Math." <> P.text (T.unpack name) <> P.parens xRef))
+     in (s1, Code xDecl ("Math." <> P.text (T.unpack (mathFn1Name name)) <> P.parens xRef))
   MathBinary name x y ->
     let (s1, Code xDecl xRef) = pureAST' s0 x
         (s2, Code yDecl yRef) = pureAST' s1 y
-     in (s2, Code (xDecl $$ yDecl) ("Math." <> P.text (T.unpack name) <> P.parens (xRef <> ", " <> yRef)))
+     in (s2, Code (xDecl $$ yDecl) ("Math." <> P.text (T.unpack (mathFn2Name name)) <> P.parens (xRef <> ", " <> yRef)))
   UnsafeNullable x -> pureAST' s0 x
+  UnsafeFromSome x -> pureAST' s0 x
+
+stdUnaryJS :: StdUnary a b -> Doc -> Doc
+stdUnaryJS n r = case n of
+  StdToUpper -> r <> ".toUpperCase()"
+  StdToLower -> r <> ".toLowerCase()"
+  StdTrim -> r <> ".trim()"
+  StdArrLen -> r <> ".length"
+  StdStrLen -> r <> ".length"
+  StdStringify -> "JSON.stringify" <> P.parens r
+
+stdBinaryJS :: StdBinary a b c -> Doc -> Doc -> Doc
+stdBinaryJS n r a = case n of
+  StdIndexOf -> r <> ".indexOf" <> P.parens a
+  StdSplit -> r <> ".split" <> P.parens a
+  StdIncludes -> r <> ".includes" <> P.parens a
+  StdConcat -> r <> ".concat" <> P.parens a
+  StdJoin -> r <> ".join" <> P.parens a
+
+stdTernaryJS :: StdTernary a b c d -> Doc -> Doc -> Doc -> Doc
+stdTernaryJS n r a b = case n of
+  StdSlice -> r <> ".slice" <> P.parens (a <> ", " <> b)
+  StdReplace -> r <> ".replace" <> P.parens (a <> ", " <> b)
+
+renderCallbackMethod ::
+     String
+  -> CG
+  -> Expr (Const Int) a
+  -> (Const Int b -> Expr (Const Int) c)
+  -> (CG, Code)
+renderCallbackMethod name s0 recv f =
+  let (s1, Code rDecl rRef) = pureAST' s0 recv
+      (nParam, s2) = allocIdent s1
+      ex = f (Const nParam)
+      (s3, Code exDecl exRef) = pureAST' s2 ex
+      paramName = 'n' : show nParam
+      callback = "function" <+> P.parens (P.text paramName) <+> P.braces (exDecl $$ "return" <+> exRef)
+      call = rRef <> "." <> P.text name <> P.parens callback
+   in (s3, Code rDecl call)
 
 renderBin :: String -> CG -> Expr (Const Int) a -> Expr (Const Int) b -> (CG, Code)
 renderBin op s0 x y =

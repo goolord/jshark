@@ -23,12 +23,10 @@ storageKey = "jshark-todos"
 
 -- | Parse persisted state. 'None' on throw, non-object JSON, or arrays.
 -- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
-tryParseState :: Expr f 'String -> Expr f ('Option ('Object ()))
-tryParseState s =
-  unsafeNullable $
-    unsafeExprFfi
-      "(function(s){try{var o=JSON.parse(s);if(!o||typeof o!==\"object\"||Array.isArray(o))return null;return{todos:Array.isArray(o.todos)?o.todos:[],nextId:(typeof o.nextId===\"number\"&&isFinite(o.nextId))?o.nextId:1,filter:(o.filter===\"active\"||o.filter===\"completed\")?o.filter:\"all\"};}catch(e){return null;}})"
-      (s <: RecNil)
+-- A true escape (try/catch + JSON.parse), so this is 'ffi' on 'Effect'.
+parseStateJS :: String
+parseStateJS =
+  "(function(s){try{var o=JSON.parse(s);if(!o||typeof o!==\"object\"||Array.isArray(o))return null;return{todos:Array.isArray(o.todos)?o.todos:[],nextId:(typeof o.nextId===\"number\"&&isFinite(o.nextId))?o.nextId:1,filter:(o.filter===\"active\"||o.filter===\"completed\")?o.filter:\"all\"};}catch(e){return null;}})"
 
 callRender :: Effect f ('Object ()) -> EffectSyntax f (f 'Unit)
 callRender state = do
@@ -74,16 +72,15 @@ mainJS = do
   state <- hold (unsafeObject "{todos:[],filter:\"all\",nextId:1}" :: Effect f ('Object ()))
 
   saved <- Storage.getItem Storage.localStorage storageKey
-  let optBlob = optionCase saved none tryParseState
-      hasBlob = optionCase optBlob false_ (\_ -> true_)
-  whenS hasBlob $ do
-    blob <- hold $ Lift $ optionCase optBlob (unsafeExprFfi "Object" RecNil) id
-    t <- getProp blob "todos"
-    setProp state "todos" t
-    n <- getProp blob "nextId"
-    setProp state "nextId" n
-    f <- getProp blob "filter"
-    setProp state "filter" f
+  whenSomeS saved $ \raw -> do
+    parsed <- toSyntax $ ffi parseStateJS (arg raw <: RecNil)
+    whenSomeS (unsafeNullable (Var parsed) :: Expr f ('Option ('Object ()))) $ \blob -> do
+      t <- getProp' blob "todos"
+      setProp state "todos" t
+      n <- getProp' blob "nextId"
+      setProp state "nextId" n
+      f <- getProp' blob "filter"
+      setProp state "filter" f
 
   render <- toSyntax $ LambdaE $ \_ -> stmts $ do
     todos <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
@@ -120,9 +117,11 @@ mainJS = do
         destroy <- Dom.createElement "button"
         Dom.setAttribute destroy "class" "destroy"
         onClick_ destroy $ do
-          todos' <- getProp state "todos"
-          setProp state "todos" $
-            Array.filter_ todos' $ \t -> unsafeExprProp t "id" .!= tid
+          todos' <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
+          kept <- Array.filterE_ todos' $ \t -> do
+            i <- getProp' t "id"
+            toSyntax $ expr (i .!= tid)
+          setProp state "todos" kept
           callRender state
 
         Dom.appendChild view checkbox
@@ -131,8 +130,10 @@ mainJS = do
         Dom.appendChild li view
         Dom.appendChild list li
 
-    let active = Array.filter_ todos $ \t -> unsafeExprProp t "completed" .!= true_
-        activeN = Array.length_ active
+    active <- Array.filterE_ todos $ \t -> do
+      c <- getProp' t "completed"
+      toSyntax $ expr (c .!= true_)
+    let activeN = Array.length_ active
         totalN = Array.length_ todos
         hasTodos = totalN .> 0
     Dom.setInnerText countEl (Show activeN)
@@ -179,9 +180,11 @@ mainJS = do
       callRender state
 
   onClick_ clearBtn $ do
-    todos <- getProp state "todos"
-    setProp state "todos" $
-      Array.filter_ todos $ \t -> unsafeExprProp t "completed" .!= true_
+    todos <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
+    kept <- Array.filterE_ todos $ \t -> do
+      c <- getProp' t "completed"
+      toSyntax $ expr (c .!= true_)
+    setProp state "todos" kept
     callRender state
 
   -- Hash is the sole filter driver (links are plain <a href="#/...">).

@@ -83,42 +83,53 @@ evaluatorTests = testGroup "evaluate"
   ]
 
 -- Non-foldable holes so snapshot tests can pin JS shape rather than
--- constant-folded results. Cheap literals are propagated even under
--- lambdas; FFI/methods are not.
-fooN :: Expr f 'Number
-fooN = unsafeExprFfi "foo" RecNil
+-- constant-folded results. Foreign calls live on 'Effect'; bind then
+-- yield an 'Expr' via 'Var'.
+fooE, barE :: Effect f u
+fooE = ffi "foo" RecNil
+barE = ffi "bar" RecNil
 
-barN :: Expr f 'Number
-barN = unsafeExprFfi "bar" RecNil
+condE :: Effect f 'Bool
+condE = ffi "cond" RecNil
 
-condB :: Expr f 'Bool
-condB = unsafeExprFfi "cond" RecNil
+-- Bind one FFI result and yield a pure expression.
+with1 :: Effect f a -> (Expr f a -> Expr f b) -> Effect f b
+with1 e k = fromSyntax $ do
+  x <- toSyntax e
+  toSyntax (expr (k (Var x)))
+
+-- Bind two FFI results and yield a pure expression.
+with2 :: Effect f a -> Effect f b -> (Expr f a -> Expr f b -> Expr f c) -> Effect f c
+with2 e1 e2 k = fromSyntax $ do
+  x <- toSyntax e1
+  y <- toSyntax e2
+  toSyntax (expr (k (Var x) (Var y)))
 
 codegenTests :: TestTree
 codegenTests = testGroup "codegen"
   [ testCase "nested single-use lets are both inlined" $
-      renderJS (pureAST (let_ fooN (\x -> let_ barN (\y -> y + x))))
+      renderJS (effectfulAST (with2 fooE barE (\x y -> y + x)))
         @?= "bar() + foo()"
   , testCase "let used more than once renders as a const binding" $
-      renderJS (pureAST (let_ fooN (\x -> x + x)))
+      renderJS (effectfulAST (with1 fooE (\x -> x + x)))
         @?= "const n0 = foo();\nn0 + n0"
   , testCase "let used once under a lambda is not inlined" $
-      renderJS (pureAST (let_ fooN (\x -> lambda (\_ -> x + number 1))))
+      renderJS (effectfulAST (with1 fooE (\x -> lambda (\_ -> x + number 1))))
         @?= "const n0 = foo();\nfunction (n1) {return (n0 + 1.0)}"
   , testCase "let used once in an if_ branch is not inlined" $
-      renderJS (pureAST (let_ fooN (\x -> if_ condB x (number 0))))
+      renderJS (effectfulAST (with2 fooE condE (\x c -> if_ c x (number 0))))
         @?= "const n0 = foo();\n(cond() ? n0 : 0.0)"
   , testCase "let used once on the && RHS is not inlined" $
-      renderJS (pureAST (let_ condB (\x -> And (unsafeExprFfi "bar" RecNil) x)))
+      renderJS (effectfulAST (with2 condE barE (\x y -> And y x)))
         @?= "const n0 = cond();\nbar() && n0"
   , testCase "let used once on the && LHS is inlined" $
-      renderJS (pureAST (let_ condB (\x -> And x (unsafeExprFfi "bar" RecNil))))
-        @?= "cond() && bar()"
+      renderJS (effectfulAST (with2 condE barE (\x y -> And x y)))
+        @?= "const n0 = bar();\ncond() && n0"
   , testCase "unknown function application renders as a direct call" $
-      renderJS (pureAST (apply (unsafeExprFfi "f" RecNil) fooN))
+      renderJS (effectfulAST (ApplyE (ffi "f" RecNil) fooE))
         @?= "(f())(foo())"
-  , testCase "pureProgram wraps decls and the result in a JS IIFE" $
-      renderJS (pureProgram (let_ fooN (\x -> x + x)))
+  , testCase "effectfulProgram wraps decls and the result in a JS IIFE" $
+      renderJS (effectfulProgram (with1 fooE (\x -> x + x)))
         @?= "(() => {\n  const n0 = foo();\n  return n0 + n0;\n})()"
   , testCase "effectful console.log FFI call" $
       renderJS (effectfulAST (fromSyntax (consoleLog ("hi" :: Expr f 'String) *> toSyntax noOp)))
@@ -145,17 +156,17 @@ controlFlowTests = testGroup "control flow"
   , testCase "if_ picks the false branch" $
       evaluateNumber (if_ (bool False) (number 1) (number 2)) @?= 2
   , testCase "if_ renders as a ternary" $
-      renderJS (pureAST (if_ condB (number 1) (number 2)))
+      renderJS (effectfulAST (with1 condE (\c -> if_ c (number 1) (number 2))))
         @?= "(cond() ? 1.0 : 2.0)"
   , testCase "optionCase on Some" $
       evaluateNumber (optionCase (JShark.Api.some (number 5) :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1)) @?= 6
   , testCase "optionCase on None" $
       evaluateNumber (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1)) @?= 0
   , testCase "ifE renders an if/else statement with a shared result variable" $
-      renderJS (effectfulAST (fromSyntax (toSyntax (ifE condB (expr (number 1)) (expr (number 2))) *> toSyntax noOp)))
+      renderJS (effectfulAST (fromSyntax (toSyntax (ifEE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)))
         @?= "let n0;\nif (cond()) {n0 = 1.0;}\nelse {n0 = 2.0;}"
-  , testCase "while_ renders a while loop" $
-      renderJS (effectfulAST (fromSyntax (toSyntax_ (while_ condB (ffi "foo" RecNil)) *> toSyntax noOp)))
+  , testCase "whileE re-emits an FFI condition" $
+      renderJS (effectfulAST (fromSyntax (toSyntax_ (whileE condE (ffi "foo" RecNil)) *> toSyntax noOp)))
         @?= "while (cond()) {foo();}"
   ]
 
@@ -167,13 +178,18 @@ stdlibTests = testGroup "stdlib"
   [ testCase "Array.index evaluates" $
       evaluateNumber (Array.index numArray (number 1)) @?= 2
   , testCase "Array.index renders as bracket indexing" $
-      renderJS (pureAST (Array.index (unsafeExprFfi "xs" RecNil :: Expr f ('Array 'Number)) (unsafeExprFfi "i" RecNil)))
+      renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
         @?= "xs()[i()]"
   , testCase "Array.length_ renders as .length" $
       renderJS (pureAST (Array.length_ numArray)) @?= "[1.0, 2.0].length"
   , testCase "Array.map_ renders as .map with a callback" $
       renderJS (pureAST (Array.map_ numArray (\x -> x + number 1)))
         @?= "[1.0, 2.0].map(function (n0) {return n0 + 1.0})"
+  , testCase "Array.filterE renders an effectful callback" $
+      renderJS (effectfulAST (fromSyntax (do
+        toSyntax_ $ Array.filterE numArray (\x -> ffi "pred" (arg x <: RecNil))
+        toSyntax noOp)))
+        @?= "[1.0, 2.0].filter(function (n0) {return pred(n0)});"
   , testCase "Array.map_ callback with an internal let is inlined when used once" $
       renderJS (pureAST (Array.map_ numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
         @?= "[1.0, 2.0].map(function (n0) {return (n0 + 1.0) * 2.0})"
@@ -186,7 +202,7 @@ stdlibTests = testGroup "stdlib"
   , testCase "String.toUpper renders as .toUpperCase()" $
       renderJS (pureAST (Str.toUpper (string "hi"))) @?= "\"hi\".toUpperCase()"
   , testCase "Math.sin renders as Math.sin(x)" $
-      renderJS (pureAST (Math.sin fooN)) @?= "Math.sin(foo())"
+      renderJS (effectfulAST (with1 fooE Math.sin)) @?= "Math.sin(foo())"
   , testCase "Math.sqrt evaluates" $
       evaluateNumber (Math.sqrt (number 9)) @?= 3
   , testCase "Math.round matches JS half-toward-+Infinity semantics" $ do
@@ -240,10 +256,10 @@ stdlibTests = testGroup "stdlib"
           toSyntax noOp))))
         @?= True
   , testCase ".== compiles to strict === (never ==)" $
-      renderJS (pureAST (fooN .== barN))
+      renderJS (effectfulAST (with2 fooE barE (.==)))
         @?= "foo() === bar()"
   , testCase ".!= compiles to strict !==" $
-      renderJS (pureAST (fooN .!= barN))
+      renderJS (effectfulAST (with2 fooE barE (.!=)))
         @?= "foo() !== bar()"
   , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
       renderJS (effectfulAST (ffi "setTimeout" (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)))
@@ -268,7 +284,7 @@ optimizeTests = testGroup "optimize"
   , testCase "dead pure let is dropped" $
       renderJS (pureAST (let_ (number 1) (\_ -> number 2))) @?= "2.0"
   , testCase "unused FFI let is kept as a statement" $
-      renderJS (pureAST (let_ fooN (\_ -> number 1))) @?= "foo();\n1.0"
+      renderJS (effectfulAST (Bind fooE (\_ -> Lift (number 1)))) @?= "foo();\n1.0"
   , testCase "lambda application of a literal folds" $
       renderJS (pureAST (apply (lambda (\x -> x * 2)) (number 21))) @?= "42.0"
   , testCase "if_ of True takes the true branch" $
@@ -282,11 +298,15 @@ optimizeTests = testGroup "optimize"
       renderJS (pureAST (Math.sin (number 0))) @?= "0.0"
   , testCase "Math.sin of a non-zero literal is left to JS" $
       renderJS (pureAST (Math.sin (number 1))) @?= "Math.sin(1.0)"
-  , testCase "unknown MathUnary is not folded" $
-      renderJS (pureAST (MathUnary "nope" (number 1))) @?= "Math.nope(1.0)"
-  , testCase "unused unknown MathUnary is kept as a statement" $
-      renderJS (pureAST (let_ (MathUnary "nope" (number 1)) (\_ -> number 2)))
-        @?= "Math.nope(1.0);\n2.0"
+  , testCase "unused closed-name stdlib is dropped" $
+      renderJS (pureAST (let_ (Str.toUpper (string "hi")) (\_ -> number 1)))
+        @?= "1.0"
+  , testCase "unused stringify is kept (can throw)" $
+      renderJS (pureAST (let_ (Json.stringify (number 1)) (\_ -> number 2)))
+        @?= "JSON.stringify(1.0);\n2.0"
+  , testCase "unused exprProp is kept as a statement" $
+      renderJS (pureAST (let_ (exprProp (number 1) "x" :: Expr f 'Number) (\_ -> number 2)))
+        @?= "1.0.x;\n2.0"
   , testCase "GTh of array literals is not folded" $
       renderJS (pureAST (GTh numArray numArray))
         @?= "[1.0, 2.0] > [1.0, 2.0]"
@@ -297,10 +317,10 @@ optimizeTests = testGroup "optimize"
       renderJS (pureAST (optionCase (some (plus (number 1) (number 2))) (number 0) (\x -> x + 1)))
         @?= "4.0"
   , testCase "if_ True does not fold the dead branch" $
-      renderJS (pureAST (if_ (bool True) (number 1) (MathUnary "nope" (number 1))))
+      renderJS (pureAST (if_ (bool True) (number 1) (exprProp (number 1) "x" :: Expr f 'Number)))
         @?= "1.0"
   , testCase "false && does not fold the RHS" $
-      renderJS (pureAST (And (bool False) (Eq (MathUnary "nope" (number 1)) (number 0))))
+      renderJS (pureAST (And (bool False) (Eq (exprProp (number 1) "x" :: Expr f 'Number) (number 0))))
         @?= "false"
   , testCase "while false becomes a no-op" $
       renderJS (effectfulAST (while_ (bool False) (ffi "foo" RecNil)))
@@ -471,17 +491,17 @@ compilerTests = testGroup "compiler"
       out @?= "console.log(\"hi\");"
   , testCase "readableConfig compilePure has no IIFE and inlines single-use lets" $ do
       clearCompilerCache
-      out <- compilePure readableConfig (let_ fooN (\x -> x + number 1))
+      out <- compileEffect readableConfig (with1 fooE (\x -> x + number 1))
       out @?= "foo() + 1.0"
   , testCase "readableConfig keeps multi-use lets as const" $ do
       clearCompilerCache
-      out <- compilePure readableConfig (let_ fooN (\x -> x + x))
+      out <- compileEffect readableConfig (with1 fooE (\x -> x + x))
       out @?= "const n0 = foo();\nn0 + n0"
   , testCase "Readable style skips the minifier even when a backend is set" $ do
       clearCompilerCache
-      out <- compilePure
+      out <- compileEffect
         (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable)
-        fooN
+        fooE
       out @?= "foo()"
   , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
       clearCompilerCache

@@ -44,17 +44,21 @@ The core language currently supports:
 - `Option` type with `optionCase` (`maybe`-style); `some`/`none` are library wrappers over a nullable cast and JS `null`
 - Effectful statements: `let`-style binding (`EffectSyntax`), `forEach`, effectful conditionals (`ifE`/`when_`) and `while_` loops, and an escape hatch FFI for calling into arbitrary JS
 - A small typed object/property-access mechanism (`Field`) used by the `Dom` and `Ajax` modules
-- Untyped JS on the pure tree is marked `Unsafe*` (`unsafeExprFfi`,
-  `unsafeExprProp`, `unsafeExprMethod`, `unsafeExprMethodCallback`).
-  Effectful calls use `ffi` / `callMethod`. `exprIndex` and `Math.*` stay
-  on `Expr` because their JS names are fixed. `UnsafeEffectExpr` is an
-  optimizer splice, not an FFI path.
+- Named stdlib on the pure tree is closed-name constructors (`toUpper`,
+  `length_`, `stringify`, `map_`, `filter_`, …), like `exprIndex` / `Math.*`.
+  True escapes (`alert`, raw `foo()`, free-text methods) use `ffi` /
+  `callMethod` on `Effect`. Untyped field reads use `exprProp` (not DCE'd;
+  getters may have effects) or `getProp'` inside `filterE`/`mapE`.
+  `UnsafeEffectExpr` is an optimizer splice, not an FFI path.
+  `JSON.stringify` is `stringify` on `Expr` (unused calls are kept; it can
+  throw). `JSON.parse` is `unsafeParse` on `Effect` (it can throw).
+  Effect tests that must re-run use `ifEE`/`whileE`/`whenE`.
 
 Stdlib/browser wrappers built on top of the core language:
-- `JShark.Array`: `index`, `length_`, `map_`, `filter_`, `includes`, `concat_`, `join`, `push`
+- `JShark.Array`: `index`, `length_`, `map_`/`mapE`, `filter_`/`filterE`, `includes`, `concat_`, `join`, `push`
 - `JShark.String`: `length_`, `indexOf`, `slice`, `toUpper`, `toLower`, `trim`, `split`, `replace`
 - `JShark.Math`: constants (`pi`, `e`, ...) plus `sin`/`cos`/`tan`/`sqrt`/`pow`/`atan2`/`max_`/`min_`/`random`/etc.
-- `JShark.Json`: `stringify`, `unsafeParse`
+- `JShark.Json`: `stringify` (`Expr`), `unsafeParse` (`Effect`)
 - `JShark.Console`: `log`, `warn`, `error_`, `info`
 - `JShark.Storage`: `localStorage`/`sessionStorage`, `getItem`, `setItem`, `removeItem`, `clear`
 - `JShark.Timers`: `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`
