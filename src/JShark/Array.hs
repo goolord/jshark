@@ -12,6 +12,7 @@ module JShark.Array
   , concat_
   , join
   , push
+  , push_
   ) where
 
 import JShark.Api
@@ -50,3 +51,7 @@ join arr sep = exprMethod arr "join" (sep <: RecNil)
 -- correctly with other effects.
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
 push arr x = expr (exprMethod arr "push" (x <: RecNil))
+
+-- | 'push' in 'EffectSyntax'.
+push_ :: Expr f ('Array u) -> Expr f u -> EffectSyntax f (f 'Unit)
+push_ arr x = toSyntax $ push arr x

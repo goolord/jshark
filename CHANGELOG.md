@@ -6,6 +6,10 @@
   so OverloadedStrings literals work at each pure AST layer.
 * `Num` / `Fractional` for `Value 'Number` and `Expr f 'Number`
   (`Expr` literals go through `Value`; `ExprF` stays Plus-only).
+* `ToEffect` / `ToExpr` lift classes, JS operators (`.==`, `.||`, …), and
+  `EffectSyntax` helpers (`hold`, `stmts`, `whenS`, `onClick_`, `getProp`,
+  `setProp`, `getProp'`/`setProp'`, `obj`/`objE`, `locationHash`,
+  `Array.push_`, …) in `JShark.Api` / `JShark.Array` / `JShark.Dom`.
 * Added a `todo-mvc` executable: Scotty serves Lucid HTML with client
   behaviour compiled from JShark (`cabal run todo-mvc`). Client script
   is at `/app.js`; filter is hash-driven; corrupt `localStorage` is ignored.

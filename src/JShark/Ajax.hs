@@ -20,7 +20,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 
 new :: EffectSyntax f (Effect f ('Object (XHR)))
-new = fmap (expr . Var) $ toSyntax $ ffi "new XMLHttpRequest" RecNil
+new = hold $ ffi "new XMLHttpRequest" RecNil
 
 open :: StdMethod -> BS.ByteString -> Bool -> Effect f ('Object (XHR)) -> EffectSyntax f ()
 open method url async x = toSyntax_ (objectFfi x $ ffi "open" (string (T.decodeUtf8 (renderStdMethod method)) <: string (T.decodeUtf8 url) <: bool async <: RecNil))

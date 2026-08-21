@@ -1,6 +1,7 @@
 {-# LANGUAGE
     DataKinds
   , OverloadedStrings
+  , ScopedTypeVariables
 #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
@@ -13,24 +14,12 @@ import qualified JShark.Json as Json
 import qualified JShark.Storage as Storage
 import qualified JShark.String as String
 import JShark.Api
-import JShark.Object (unsafeObject, unsafeObjectAssign, unsafeObjectGet)
+import JShark.Object (unsafeObject)
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
 
 storageKey :: Expr f 'String
 storageKey = "jshark-todos"
-
-getValue :: Effect f ('Object Dom.DomElement) -> EffectSyntax f (Expr f 'String)
-getValue el = fmap Var $ toSyntax $ unsafeObjectGet el "value"
-
-setValue :: Effect f ('Object Dom.DomElement) -> Expr f 'String -> EffectSyntax f ()
-setValue el v = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "value") (Lift v)
-
-getProp :: Effect f ('Object a) -> String -> EffectSyntax f (Expr f u)
-getProp obj name = fmap Var $ toSyntax $ unsafeObjectGet obj name
-
-setProp :: Effect f ('Object a) -> String -> Expr f u -> EffectSyntax f ()
-setProp obj name v = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet obj name) (Lift v)
 
 -- | Parse persisted state. 'None' on throw, non-object JSON, or arrays.
 -- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
@@ -41,37 +30,34 @@ tryParseState s =
       "(function(s){try{var o=JSON.parse(s);if(!o||typeof o!==\"object\"||Array.isArray(o))return null;return{todos:Array.isArray(o.todos)?o.todos:[],nextId:(typeof o.nextId===\"number\"&&isFinite(o.nextId))?o.nextId:1,filter:(o.filter===\"active\"||o.filter===\"completed\")?o.filter:\"all\"};}catch(e){return null;}})"
       (s <: RecNil)
 
--- | Invoke @state.render()@. Stored on the state object so the render
--- body can call itself without a recursive Haskell binding.
-callRender :: Effect f ('Object a) -> EffectSyntax f ()
+callRender :: Effect f ('Object ()) -> EffectSyntax f (f 'Unit)
 callRender state = do
   r <- getProp state "render"
-  toSyntax_ $ ApplyE (Lift r) noOp
+  call0 r
 
 mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f ('Object ()))
 mkTodo title tid = do
-  o <- toSyntax $ unsafeObject "{}"
-  setProp (Lift (Var o)) "title" title
-  setProp (Lift (Var o)) "completed" (bool False)
-  setProp (Lift (Var o)) "id" tid
-  pure (Var o)
+  o <- toSyntax emptyObject
+  setProp (obj o) "title" title
+  setProp (obj o) "completed" false_
+  setProp (obj o) "id" tid
+  pure (toExpr o)
 
 hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
-  Or (Eq hash "#/active")
-     (Or (Eq hash "#/completed") (Eq hash "#/"))
+  hash .== "#/active" .|| hash .== "#/completed" .|| hash .== "#/"
 
-applyHashFilter :: Effect f ('Object a) -> Expr f 'String -> Effect f 'Unit
+applyHashFilter :: Effect f ('Object ()) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
-  ifE (Eq hash "#/active")
-    (fromSyntax $ setProp state "filter" "active" *> toSyntax noOp)
-    (ifE (Eq hash "#/completed")
-       (fromSyntax $ setProp state "filter" "completed" *> toSyntax noOp)
-       (ifE (Eq hash "#/")
-          (fromSyntax $ setProp state "filter" "all" *> toSyntax noOp)
-          noOp))
+  ifS (hash .== "#/active")
+    (setProp state "filter" "active")
+    (ifS (hash .== "#/completed")
+       (setProp state "filter" "completed")
+       (ifS (hash .== "#/")
+          (setProp state "filter" "all")
+          done))
 
-mainJS :: EffectSyntax f (f 'Unit)
+mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   form <- Dom.lookupId "todo-form"
   input <- Dom.lookupId "new-todo"
@@ -85,42 +71,36 @@ mainJS = do
   filterActive <- Dom.lookupId "filter-active"
   filterCompleted <- Dom.lookupId "filter-completed"
 
-  state <- fmap (expr . Var) $ toSyntax $ unsafeObject "{todos:[],filter:\"all\",nextId:1}"
+  state <- hold (unsafeObject "{todos:[],filter:\"all\",nextId:1}" :: Effect f ('Object ()))
 
   saved <- Storage.getItem Storage.localStorage storageKey
   let optBlob = optionCase saved none tryParseState
-      hasBlob = optionCase optBlob (bool False) (\_ -> bool True)
-  toSyntax_ $ when_ hasBlob $ fromSyntax $ do
-    blob <- fmap (expr . Var) $ toSyntax $ Lift $
-      optionCase optBlob (exprFfi "Object" RecNil) id
+      hasBlob = optionCase optBlob false_ (\_ -> true_)
+  whenS hasBlob $ do
+    blob <- hold $ Lift $ optionCase optBlob (exprFfi "Object" RecNil) id
     t <- getProp blob "todos"
     setProp state "todos" t
     n <- getProp blob "nextId"
     setProp state "nextId" n
     f <- getProp blob "filter"
     setProp state "filter" f
-    toSyntax noOp
 
-  render <- toSyntax $ LambdaE $ \_ -> fromSyntax $ do
-    todos <- getProp state "todos"
+  render <- toSyntax $ LambdaE $ \_ -> stmts $ do
+    todos <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
     filt <- getProp state "filter"
 
     Dom.setInnerHTML list ""
 
-    toSyntax_ $ forEach todos $ \todo -> fromSyntax $ do
+    forEach_ todos $ \todo -> do
       let tid = exprProp todo "id"
           title = exprProp todo "title"
           completed = exprProp todo "completed"
           showTodo =
-            If
-              (Eq filt "all")
-              (bool True)
-              (If (Eq filt "active") (NEq completed (bool True)) completed)
-      toSyntax_ $ when_ showTodo $ fromSyntax $ do
+            if_ (filt .== "all") true_
+              (if_ (filt .== "active") (completed .!= true_) completed)
+      whenS showTodo $ do
         li <- Dom.createElement "li"
-        toSyntax_ $ when_ completed $ fromSyntax $ do
-          Dom.classAdd li "completed"
-          toSyntax noOp
+        whenS completed $ Dom.classAdd li "completed"
 
         view <- Dom.createElement "div"
         Dom.setAttribute view "class" "view"
@@ -128,111 +108,90 @@ mainJS = do
         checkbox <- Dom.createElement "input"
         Dom.setAttribute checkbox "class" "toggle"
         Dom.setAttribute checkbox "type" "checkbox"
-        toSyntax_ $ when_ completed $ fromSyntax $ do
-          setProp checkbox "checked" (bool True)
-          toSyntax noOp
-        onClick checkbox $ \_ -> fromSyntax $ do
-          cur <- fmap Var $ toSyntax $ unsafeObjectGet (Lift todo) "completed"
-          setProp (Lift todo) "completed" (NEq cur (bool True))
+        whenS completed $ setProp checkbox "checked" true_
+        onClick_ checkbox $ do
+          cur <- getProp' todo "completed"
+          setProp' todo "completed" (cur .!= true_)
           callRender state
-          toSyntax noOp
 
         label <- Dom.createElement "label"
         Dom.setInnerText label title
 
         destroy <- Dom.createElement "button"
         Dom.setAttribute destroy "class" "destroy"
-        onClick destroy $ \_ -> fromSyntax $ do
+        onClick_ destroy $ do
           todos' <- getProp state "todos"
           setProp state "todos" $
-            Array.filter_ todos' $ \t -> NEq (exprProp t "id") tid
+            Array.filter_ todos' $ \t -> exprProp t "id" .!= tid
           callRender state
-          toSyntax noOp
 
         Dom.appendChild view checkbox
         Dom.appendChild view label
         Dom.appendChild view destroy
         Dom.appendChild li view
         Dom.appendChild list li
-        toSyntax noOp
-      toSyntax noOp
 
-    let active = Array.filter_ todos $ \t -> NEq (exprProp t "completed") (bool True)
+    let active = Array.filter_ todos $ \t -> exprProp t "completed" .!= true_
         activeN = Array.length_ active
         totalN = Array.length_ todos
-        hasTodos = GTh totalN 0
+        hasTodos = totalN .> 0
     Dom.setInnerText countEl (Show activeN)
-    toSyntax_ $ ifE (Eq activeN 1)
-      (fromSyntax $ Dom.setInnerText countSuffix " item left" *> toSyntax noOp)
-      (fromSyntax $ Dom.setInnerText countSuffix " items left" *> toSyntax noOp)
+    ifS (activeN .== 1)
+      (Dom.setInnerText countSuffix " item left")
+      (Dom.setInnerText countSuffix " items left")
 
-    toSyntax_ $ ifE hasTodos
-      (fromSyntax $ do
+    ifS hasTodos
+      (do
          Dom.setAttribute mainEl "style" ""
-         Dom.setAttribute footer "style" ""
-         toSyntax noOp)
-      (fromSyntax $ do
+         Dom.setAttribute footer "style" "")
+      (do
          Dom.setAttribute mainEl "style" "display:none"
-         Dom.setAttribute footer "style" "display:none"
-         toSyntax noOp)
+         Dom.setAttribute footer "style" "display:none")
 
     Dom.classRemove filterAll "selected"
     Dom.classRemove filterActive "selected"
     Dom.classRemove filterCompleted "selected"
-    toSyntax_ $ ifE (Eq filt "active")
-      (fromSyntax $ Dom.classAdd filterActive "selected" *> toSyntax noOp)
-      (ifE (Eq filt "completed")
-         (fromSyntax $ Dom.classAdd filterCompleted "selected" *> toSyntax noOp)
-         (fromSyntax $ Dom.classAdd filterAll "selected" *> toSyntax noOp))
+    ifS (filt .== "active")
+      (Dom.classAdd filterActive "selected")
+      (ifS (filt .== "completed")
+         (Dom.classAdd filterCompleted "selected")
+         (Dom.classAdd filterAll "selected"))
 
-    blob <- toSyntax $ unsafeObject "{}"
-    setProp (Lift (Var blob)) "todos" todos
+    blob <- toSyntax emptyObject
+    setProp' blob "todos" todos
     nid <- getProp state "nextId"
-    setProp (Lift (Var blob)) "nextId" nid
-    setProp (Lift (Var blob)) "filter" filt
+    setProp' blob "nextId" nid
+    setProp' blob "filter" filt
     Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
-    toSyntax noOp
 
   setProp state "render" (Var render)
 
-  addEventListener "submit" form $ \_ -> fromSyntax $ do
-    inputRaw <- getValue input
+  addEventListener_ "submit" form $ do
+    inputRaw <- Dom.getValue input
     let title = String.trim inputRaw
-    toSyntax_ $ when_ (GTh (String.length_ title) 0) $ fromSyntax $ do
+    whenS (String.length_ title .> 0) $ do
       nid <- getProp state "nextId"
       todo <- mkTodo title nid
       todos <- getProp state "todos"
-      toSyntax_ $ Array.push todos todo
+      Array.push_ todos todo
       setProp state "nextId" (nid + 1)
-      setValue input ""
+      Dom.setValue input ""
       callRender state
-      toSyntax noOp
-    toSyntax noOp
 
-  onClick clearBtn $ \_ -> fromSyntax $ do
+  onClick_ clearBtn $ do
     todos <- getProp state "todos"
     setProp state "todos" $
-      Array.filter_ todos $ \t -> NEq (exprProp t "completed") (bool True)
+      Array.filter_ todos $ \t -> exprProp t "completed" .!= true_
     callRender state
-    toSyntax noOp
 
   -- Hash is the sole filter driver (links are plain <a href="#/...">).
-  toSyntax_ $ ffi "window.addEventListener"
-    ( "hashchange"
-        <: unsafeEffectExpr
-          ( LambdaE $ \_ -> fromSyntax $ do
-              hash <- fmap Var $ toSyntax $ unsafeObjectGet (unsafeObject "location") "hash"
-              toSyntax_ $ when_ (hashRecognized hash) $ fromSyntax $ do
-                toSyntax_ $ applyHashFilter state hash
-                callRender state
-                toSyntax noOp
-              toSyntax noOp
-          )
-        <: RecNil
-    )
+  addEventListener_ "hashchange" window $ do
+    hash <- locationHash
+    whenS (hashRecognized hash) $ do
+      applyHashFilter state hash
+      callRender state
 
-  hash0 <- fmap Var $ toSyntax $ unsafeObjectGet (unsafeObject "location") "hash"
-  toSyntax_ $ applyHashFilter state hash0
+  hash0 <- locationHash
+  applyHashFilter state hash0
 
   callRender state
-  toSyntax noOp

@@ -24,6 +24,8 @@ module JShark.Dom
   , setInnerHTML
   , innerText
   , setInnerText
+  , getValue
+  , setValue
   ) where
 
 import Data.Text (Text)
@@ -87,4 +89,12 @@ innerText = get @"innerText"
 
 setInnerText :: Effect f ('Object DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 setInnerText el x = toSyntax $ unsafeObjectAssign (unsafeObjectGet el "innerText") (Lift x)
+
+-- | @el.value@ (inputs).
+getValue :: Effect f ('Object DomElement) -> EffectSyntax f (Expr f 'String)
+getValue el = getProp el "value"
+
+-- | @el.value = v@.
+setValue :: Effect f ('Object DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
+setValue el v = setProp el "value" v
 
