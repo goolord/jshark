@@ -1,5 +1,6 @@
 {-# LANGUAGE
     DataKinds
+  , GADTs
   , OverloadedStrings
 #-}
 -- | JS @Array.prototype@ wrappers. Opaque to 'JShark.evaluate' except 'index'.
@@ -19,6 +20,9 @@ module JShark.Array
   , join
   , push
   , push_
+  , pushMany
+  , pushMany_
+  , fromEffects
   , reduce
   , arraySlice
   , sort
@@ -75,11 +79,29 @@ join = ExprBinary StdJoin
 
 -- | @arr.push(x)@. Mutates in place; a 'CallMethod' on 'Effect'.
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
-push arr x = callMethod (expr arr) "push" (arg x <: RecNil)
+push arr x = pushMany arr [x]
 
 -- | 'push' in 'EffectSyntax'.
 push_ :: Expr f ('Array u) -> Expr f u -> EffectSyntax f (f 'Unit)
 push_ arr x = toSyntax $ push arr x
+
+-- Pack a homogeneous argument list into the heterogeneous 'Rec' 'CallMethod' wants.
+data SomeArgs f where
+  SomeArgs :: Rec (Arg f) us -> SomeArgs f
+
+-- | @arr.push(x, y, …)@. One call; mutates in place.
+pushMany :: Expr f ('Array u) -> [Expr f u] -> Effect f 'Unit
+pushMany arr xs =
+  case foldr (\x (SomeArgs ys) -> SomeArgs (arg x <: ys)) (SomeArgs RecNil) xs of
+    SomeArgs args -> callMethod (expr arr) "push" args
+
+-- | 'pushMany' in 'EffectSyntax'.
+pushMany_ :: Expr f ('Array u) -> [Expr f u] -> EffectSyntax f (f 'Unit)
+pushMany_ arr xs = toSyntax $ pushMany arr xs
+
+-- | @[e0, e1, …]@. Elements stay on 'Effect' (object / sum literals).
+fromEffects :: [Effect f u] -> Effect f ('Array u)
+fromEffects = ArrayLit
 
 -- | @arr.reduce(function(acc,x){…}, z)@
 reduce :: Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v

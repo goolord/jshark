@@ -38,7 +38,7 @@ module JShark
     ( Lift, FFI, UnsafeObject, UnsafeObjectGet, UnsafeObjectAssign
     , CallMethod, Bind, BindRec, LambdaE, ApplyE, IfE, While
     , OptionCaseE, ResultCaseE, Throw, Try, ObjectLit, DeleteProp
-    , ArraySort
+    , ArrayLit, ArraySort
     )
     -- Evaluation
   , evaluate
@@ -788,6 +788,7 @@ isSimpleEffect = \case
   CallMethod{} -> True
   UnsafeObject{} -> True
   UnsafeObjectGet{} -> True
+  ArrayLit es -> all isSimpleEffect es
   _ -> False
 
 wrapOperand :: Expr Stamp u -> Doc -> Doc
@@ -885,6 +886,7 @@ countEffect t = \case
   Try a k -> countEffect t a + countLazyEffect t (k nestedDummy)
   ObjectLit fs -> sum (map (countFieldLit t) fs)
   DeleteProp o k -> countEffect t o + countExpr t k
+  ArrayLit es -> sum (map (countEffect t) es)
   ArraySort xs f -> countExpr t xs + countLazyExpr t (f nestedDummy nestedDummy)
 
 countFieldLit :: Int -> FieldLit Stamp r -> Int
@@ -969,6 +971,7 @@ sizeEffect = \case
   Try a k -> 1 + sizeEffect a + sizeEffect (k nestedDummy)
   ObjectLit fs -> 1 + sum (map sizeFieldLit fs)
   DeleteProp o k -> 1 + sizeEffect o + sizeExpr k
+  ArrayLit es -> 1 + sum (map sizeEffect es)
   ArraySort xs f -> 1 + sizeExpr xs + sizeExpr (f nestedDummy nestedDummy)
 
 sizeArg :: Arg Stamp u -> Int
@@ -1125,6 +1128,7 @@ flattenEff = \case
   Try a k -> Try (flattenEff a) (flattenEff . k)
   ObjectLit fs -> ObjectLit (map (mapFieldLit flattenExpr) fs)
   DeleteProp o k -> DeleteProp (flattenEff o) (flattenExpr k)
+  ArrayLit es -> ArrayLit (map flattenEff es)
   ArraySort xs f -> ArraySort (flattenExpr xs) (\a b -> flattenExpr (f a b))
 
 renameArg :: Int -> Int -> Arg Stamp u -> Arg Stamp u
@@ -1205,6 +1209,7 @@ renameEff old new = \case
   Try a k -> Try (renameEff old new a) (renameEff old new . k)
   ObjectLit fs -> ObjectLit (map (mapFieldLit (renameExpr old new)) fs)
   DeleteProp o k -> DeleteProp (renameEff old new o) (renameExpr old new k)
+  ArrayLit es -> ArrayLit (map (renameEff old new) es)
   ArraySort xs f -> ArraySort (renameExpr old new xs) (\a b -> renameExpr old new (f a b))
 
 inlineExpr :: (Stamp u -> Expr Stamp v) -> Expr Stamp u -> Expr Stamp v
@@ -1371,6 +1376,7 @@ isPureEffect = \case
   Try{} -> False
   ObjectLit fs -> all (\(FieldLit e) -> isPureExpr e) fs
   DeleteProp{} -> False
+  ArrayLit es -> all isPureEffect es
   ArraySort{} -> False
 
 optArgs :: Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us)
@@ -1783,6 +1789,9 @@ optEffect t0 = \case
     let (t1, o') = optEffect t0 o
         (t2, k') = optExpr t1 k
      in (t2, DeleteProp o' k')
+  ArrayLit es ->
+    let (t1, es') = mapAccumEffs t0 es
+     in (t1, ArrayLit es')
   ArraySort xs f ->
     let (t1, xs') = optExpr t0 xs
         (t2, tA, tB, body) = optUnder2 t1 f
@@ -1797,6 +1806,13 @@ mapAccumField t (FieldLit @k e : fs) =
   let (t1, e') = optExpr t e
       (t2, fs') = mapAccumField t1 fs
    in (t2, FieldLit @k e' : fs')
+
+mapAccumEffs :: Int -> [Effect Stamp u] -> (Int, [Effect Stamp u])
+mapAccumEffs t [] = (t, [])
+mapAccumEffs t (e:es) =
+  let (t1, e') = optEffect t e
+      (t2, es') = mapAccumEffs t1 es
+   in (t2, e' : es')
 
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
@@ -1961,6 +1977,7 @@ effectfulAST' !s0 = \case
     let (s1, Code xDecl xRef) = pureAST' s0 x
      in (s1, Code (xDecl $$ (("throw" <+> xRef) <> P.semi)) mempty)
   ObjectLit fs -> renderObjectLit s0 fs
+  ArrayLit es -> renderArrayLit s0 es
   DeleteProp o k ->
     let (s1, Code oDecl oRef) = effectfulAST' s0 o
         (s2, Code kDecl kRef) = pureAST' s1 k
@@ -2230,6 +2247,19 @@ renderResultLit :: Bool -> CG -> Value u -> (CG, Code)
 renderResultLit isOk s0 x =
   let (s1, Code d r) = pureAST' s0 (Literal x)
    in (s1, Code d (resultObject isOk r))
+
+renderArrayLit :: CG -> [Effect Stamp u] -> (CG, Code)
+renderArrayLit s0 es =
+  let (s1, cs) = mapAccumAST effectfulAST' s0 es
+      (decls, refs) = partitionCode cs
+   in (s1, Code (P.vcat decls) (P.brackets (P.hcat (P.punctuate ", " refs))))
+
+mapAccumAST :: (CG -> a -> (CG, Code)) -> CG -> [a] -> (CG, [Code])
+mapAccumAST _ s [] = (s, [])
+mapAccumAST f s (x:xs) =
+  let (s1, c) = f s x
+      (s2, cs) = mapAccumAST f s1 xs
+   in (s2, c : cs)
 
 renderObjectLit :: CG -> [FieldLit Stamp r] -> (CG, Code)
 renderObjectLit s0 fs =

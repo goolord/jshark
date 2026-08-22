@@ -303,6 +303,12 @@ stdlibTests = testGroup "stdlib"
   , testCase "Array.push renders as a mutating .push call" $
       renderJS (effectfulAST (fromSyntax (toSyntax (Array.push numArray (number 3)) *> toSyntax noOp)))
         @?= "[1.0, 2.0].push(3.0);"
+  , testCase "Array.pushMany renders one call with every argument" $
+      renderJS (effectfulAST (fromSyntax (toSyntax (Array.pushMany numArray [number 3, number 4]) *> toSyntax noOp)))
+        @?= "[1.0, 2.0].push(3.0, 4.0);"
+  , testCase "Array.fromEffects renders an array literal" $
+      renderJS (effectfulAST (Array.fromEffects [expr (number 1), expr (number 2)]))
+        @?= "[1.0, 2.0]"
   , testCase "String.toUpper renders as .toUpperCase()" $
       renderJS (pureAST (Str.toUpper (string "hi"))) @?= "\"hi\".toUpperCase()"
   , testCase "Floating sin renders as Math.sin(x)" $
@@ -506,12 +512,15 @@ genericTests = testGroup "generic"
   , testCase "newRecord is an empty object of the Generic row" $
       renderJS (effectfulAST (G.newRecord @Person))
         @?= "{}"
-  , testCase "toObjectArray pushes each record" $
-      T.isInfixOf ".push(" (T.pack $ renderJS (effectfulAST (G.toObjectArray [Person "Ada" 36])))
-        @?= True
+  , testCase "toObjectArray is an array of records" $
+      renderJS (effectfulAST (G.toObjectArray [Person "Ada" 36, Person "Bob" 40]))
+        @?= "[{\"fullName\": \"Ada\", \"years\": 36.0}, {\"fullName\": \"Bob\", \"years\": 40.0}]"
+  , testCase "toObjectArray of [] is a literal empty array" $
+      renderJS (effectfulAST (G.toObjectArray ([] :: [Person])))
+        @?= "[]"
   , testCase "record field of [Person] uses toObjectArray" $
-      T.isInfixOf ".push(" (T.pack $ renderJS (effectfulAST (G.toObject (Group [Person "Ada" 36]))))
-        @?= True
+      renderJS (effectfulAST (G.toObject (Group [Person "Ada" 36])))
+        @?= "{\"members\": [{\"fullName\": \"Ada\", \"years\": 36.0}]}"
   , testCase "toSum nullary is a tagged object" $
       renderJS (effectfulAST (G.toSum Red))
         @?= "{\"tag\": \"Red\"}"
@@ -521,9 +530,9 @@ genericTests = testGroup "generic"
   , testCase "toSum n-ary payload is a quoted object" $
       T.isInfixOf "\"0\":" (T.pack $ renderJS (effectfulAST (G.toSum (Rect 2 3))))
         @?= True
-  , testCase "toSumArray pushes each sum" $
-      T.isInfixOf ".push(" (T.pack $ renderJS (effectfulAST (G.toSumArray [Red, Blue])))
-        @?= True
+  , testCase "toSumArray is an array of sums" $
+      renderJS (effectfulAST (G.toSumArray [Red, Blue]))
+        @?= "[{\"tag\": \"Red\"}, {\"tag\": \"Blue\"}]"
   , testCase "record field of a sum uses toSum" $
       T.isInfixOf "\"Red\"" (T.pack $ renderJS (effectfulAST (G.toObject (Badge Red))))
         @?= True

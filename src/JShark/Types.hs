@@ -116,6 +116,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   Try :: Effect f u -> (f 'String -> Effect f u) -> Effect f u -- ^ @try { a } catch (e) { k e }@
   ObjectLit :: [FieldLit f r] -> Effect f ('MutableObject r) -- ^ Typed @{k: v, …}@; keys come from 'FieldLit'
   DeleteProp :: Effect f object -> Expr f 'String -> Effect f 'Bool -- ^ @delete o[k]@
+  ArrayLit :: [Effect f u] -> Effect f ('Array u) -- ^ @[e0, e1, …]@. Elements stay on 'Effect' (no 'UnsafeEffectExpr').
   ArraySort :: Expr f ('Array u) -> (f u -> f u -> Expr f 'Number) -> Effect f ('Array u) -- ^ @arr.sort(function(a,b){…})@
 
 -- | An FFI argument drawn from either syntax tree. This is the sanctioned

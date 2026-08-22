@@ -58,7 +58,7 @@ import GHC.TypeLits
   , type (+)
   )
 import JShark.Api (bool, expr, hold, ifE, none, number, some, string, throw_, yield, (.==))
-import JShark.Array (push_)
+import JShark.Array (fromEffects)
 import JShark.Object (field, get, newObject, obj, unsafeObjectAssign, unsafeObjectGet)
 import JShark.Types
 
@@ -217,12 +217,9 @@ instance (ToValue e, ToValue a) => ToValue (Either e a) where
 toObject :: (Generic a, GToObject (Rep a) (As a)) => a -> Effect f ('MutableObject (As a))
 toObject = obj . gtoFields . from
 
--- | @[Person]@ / @todos@. Empty array plus 'push' of each 'toObject'.
+-- | @[Person]@ / @todos@. One array of 'toObject' elements.
 toObjectArray :: (Generic a, GToObject (Rep a) (As a)) => [a] -> Effect f ('Array ('MutableObject (As a)))
-toObjectArray xs = fromSyntax $ do
-  arr <- toSyntax (expr (Literal (ValueArray [])))
-  mapM_ (\x -> push_ (Var arr) (UnsafeEffectExpr (toObject x))) xs
-  yield (Var arr)
+toObjectArray = fromEffects . map toObject
 
 -- | Empty object of row 'As' @a@. Constrained so @newRecord \@Int@ is rejected.
 newRecord :: forall a f. (Generic a, GToObject (Rep a) (As a)) => Effect f ('MutableObject (As a))
@@ -414,12 +411,9 @@ type family NatSym (n :: Nat) :: Symbol where
 toSum :: (Generic a, GToSum a (Rep a)) => a -> Effect f (SumOf a)
 toSum = gtoSum . from
 
--- | @[Color]@. Empty array plus 'push' of each 'toSum'.
+-- | @[Color]@. One array of 'toSum' elements.
 toSumArray :: (Generic a, GToSum a (Rep a)) => [a] -> Effect f ('Array (SumOf a))
-toSumArray xs = fromSyntax $ do
-  arr <- toSyntax (expr (Literal (ValueArray [])))
-  mapM_ (\x -> push_ (Var arr) (UnsafeEffectExpr (toSum x))) xs
-  yield (Var arr)
+toSumArray = fromEffects . map toSum
 
 sumTag :: Effect f (SumOf a) -> EffectSyntax f (Expr f 'String)
 sumTag = get @"tag"
