@@ -1,11 +1,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Host-side Breakout model. 'Generic' rows become JS objects via
-'JShark.Generic'. Layout matches the MDN canvas workshop grid;
-'Game' / 'Brick' / 'Ball' follow the Haskell breakout domain split
-(state, bricks, ball) without Gloss physics or items.
--}
+-- | Host-side Breakout model. 'Generic' rows become JS objects via
+-- 'JShark.Generic'. Layout matches the MDN canvas workshop grid;
+-- 'Game' / 'Brick' / 'Ball' follow the Haskell breakout domain split
+-- (state, bricks, ball) without Gloss physics or items.
 module Types
   ( Ball (..)
   , Paddle (..)

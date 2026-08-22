@@ -181,9 +181,8 @@ ffi = FFI
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
 callMethod = CallMethod
 
-{- | @Object.assign(dst, src)@. In-place copy; @dst@ keeps its identity
-(needed when a closure already captured @dst@).
--}
+-- | @Object.assign(dst, src)@. In-place copy; @dst@ keeps its identity
+-- (needed when a closure already captured @dst@).
 assign :: Effect f u -> Effect f u -> EffectSyntax f (f 'Unit)
 assign dst src = do
   toSyntax_ $ ffi "Object.assign" (ArgEffect dst <: ArgEffect src <: RecNil)
@@ -231,10 +230,9 @@ lambda3 f = lambda (\x -> lambda2 (\y z -> f x y z))
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
-{- | Recursive @let@. The right-hand side must be productive — a 'lambda',
-or a value that does not force the binder. 'JShark.evaluate' ties the knot,
-so a strict self-reference (@letRec (\\x -> x + 1)@) diverges.
--}
+-- | Recursive @let@. The right-hand side must be productive — a 'lambda',
+-- or a value that does not force the binder. 'JShark.evaluate' ties the knot,
+-- so a strict self-reference (@letRec (\\x -> x + 1)@) diverges.
 letRec :: (Expr f u -> Expr f u) -> (Expr f u -> Expr f v) -> Expr f v
 letRec r b = LetRec (\x -> r (var x)) (\x -> b (var x))
 
@@ -242,9 +240,8 @@ bindRec ::
   (Effect f u -> Effect f u) -> (Effect f u -> Effect f v) -> Effect f v
 bindRec r b = BindRec (\x -> r (Lift (var x))) (\x -> b (Lift (var x)))
 
-{- | Recursively bind a zero-argument effectful function, then run the body.
-@loop0 paint wire@ is @const render = function(){ paint(render); }; wire(render)@.
--}
+-- | Recursively bind a zero-argument effectful function, then run the body.
+-- @loop0 paint wire@ is @const render = function(){ paint(render); }; wire(render)@.
 loop0 ::
   (Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit))
   -> (Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit))
@@ -303,17 +300,15 @@ if_ = If
 ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
 ifE = IfE
 
-{- | @switch (s) { case k: …; default: … }@. First matching label wins.
-Arms do not fall through. Statement arms that are polymorphic ('FFI',
-'CallMethod') need 'discard', same as 'ifE'.
--}
+-- | @switch (s) { case k: …; default: … }@. First matching label wins.
+-- Arms do not fall through. Statement arms that are polymorphic ('FFI',
+-- 'CallMethod') need 'discard', same as 'ifE'.
 stringCaseE ::
   Expr f 'String -> [(Text, Effect f v)] -> Effect f v -> Effect f v
 stringCaseE = StringCaseE
 
-{- | Drop a result, forcing 'Unit'. Lets statement-'if' be 'IfE' of two
-unit arms (polymorphic 'FFI' / 'CallMethod' are not unit witnesses).
--}
+-- | Drop a result, forcing 'Unit'. Lets statement-'if' be 'IfE' of two
+-- unit arms (polymorphic 'FFI' / 'CallMethod' are not unit witnesses).
 discard :: Effect f u -> Effect f 'Unit
 discard e = Bind e (\_ -> noOp)
 
@@ -430,18 +425,16 @@ instance ToExpr f u (f u) where
 hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold e = fmap (Lift . Var) (toSyntax e)
 
-{- | Recover the record phantom from an object handle. Closed so
-'Effect'/'Expr' win over a bare PHOAS binder @f ('MutableObject r)@.
--}
+-- | Recover the record phantom from an object handle. Closed so
+-- 'Effect'/'Expr' win over a bare PHOAS binder @f ('MutableObject r)@.
 type family ObjectRow (a :: Type) :: Type where
   ObjectRow (Effect f ('MutableObject r)) = r
   ObjectRow (Expr f ('MutableObject r)) = r
   ObjectRow (f ('MutableObject r)) = r
 
-{- | @o.k@. @OverloadedRecordDot@ uses 'HasField' on 'Effect' and 'Expr':
-@n <- o.fullName@. PHOAS binders need 'get' or @(Var x).k@. Keys that
-are not Haskell identifiers still use @get \@k@.
--}
+-- | @o.k@. @OverloadedRecordDot@ uses 'HasField' on 'Effect' and 'Expr':
+-- @n <- o.fullName@. PHOAS binders need 'get' or @(Var x).k@. Keys that
+-- are not Haskell identifiers still use @get \@k@.
 get ::
   forall k a f.
   (KnownSymbol k, ToEffect f ('MutableObject (ObjectRow a)) a) =>

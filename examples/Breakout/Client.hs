@@ -49,9 +49,8 @@ data Once = Once
   }
   deriving Generic
 
-{- | Instantaneous frame rate from rAF timestamps. Not game state.
-@lastMs = -1@ means no sample yet (not @0@, which is a valid rAF time).
--}
+-- | Instantaneous frame rate from rAF timestamps. Not game state.
+-- @lastMs = -1@ means no sample yet (not @0@, which is a valid rAF time).
 data Fps = Fps
   { lastMs :: Double
   , fps :: Double

@@ -187,9 +187,8 @@ valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
 valueEq (ValueFunction _) (ValueFunction _) =
   error "evaluate: functions cannot be compared for equality"
 
-{- | Last-wins records. JS @===@ is identity; we keep value equality
-because a frozen object is a Good Parts record, not a mutable handle.
--}
+-- | Last-wins records. JS @===@ is identity; we keep value equality
+-- because a frozen object is a Good Parts record, not a mutable handle.
 frozenEq :: [FieldLit Value r] -> [FieldLit Value r] -> Bool
 frozenEq as bs =
   let
@@ -200,11 +199,11 @@ frozenEq as bs =
 
 lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
 lastWinsFields = reverse . keep [] . reverse
-  where
-    keep acc [] = acc
-    keep acc (f : fs)
-      | fieldKey f `elem` map fieldKey acc = keep acc fs
-      | otherwise = keep (f : acc) fs
+ where
+  keep acc [] = acc
+  keep acc (f : fs)
+    | fieldKey f `elem` map fieldKey acc = keep acc fs
+    | otherwise = keep (f : acc) fs
 
 evalFieldLit ::
   Monad m =>
@@ -245,10 +244,9 @@ jsShow (ValueRegex s) = s
 jsShow ValueFrozen {} = "[object Object]"
 jsShow (ValueFunction _) = error "evaluate: cannot show a function"
 
-{- | One element of @Array.prototype.join@ (and of a nested array's
-@toString@). JS renders @null@ and @undefined@ as the empty string
-there, not as @\"null\"@ / @\"undefined\"@.
--}
+-- | One element of @Array.prototype.join@ (and of a nested array's
+-- @toString@). JS renders @null@ and @undefined@ as the empty string
+-- there, not as @\"null\"@ / @\"undefined\"@.
 jsJoinElem :: Value u -> Text
 jsJoinElem = \case
   ValueOption Nothing -> ""
@@ -275,8 +273,8 @@ jsShowNumber :: Double -> String
 jsShowNumber d
   | isInt = show (truncate d :: Integer)
   | otherwise = show d
-  where
-    isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
+ where
+  isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
 
 isFiniteDouble :: Double -> Bool
 isFiniteDouble d = not (isNaN d) && not (isInfinite d)
@@ -322,9 +320,8 @@ mathBinaryFn = \case
   MathMin -> min
   MathHypot -> \x y -> sqrt (x * x + y * y)
 
-{- | Fold @Math.*@ only when the Haskell result is known to match JS.
-Transcendentals (@sin(1)@, @cbrt@, @pow@, …) stay in JS.
--}
+-- | Fold @Math.*@ only when the Haskell result is known to match JS.
+-- Transcendentals (@sin(1)@, @cbrt@, @pow@, …) stay in JS.
 exactMathUnary :: MathFn1 -> Double -> Maybe Double
 exactMathUnary n a = case n of
   MathAbs -> Just (abs a)
@@ -410,16 +407,16 @@ jsParseInt s r
         case readInt (fromIntegral r :: Integer) okDigit digitToInt t1 of
           (n, _) : _ -> fromInteger (if neg then negate n else n)
           [] -> 0 / 0
-  where
-    okDigit c =
-      let
-        v
-          | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
-          | c >= 'a' && c <= 'z' = Char.ord c - Char.ord 'a' + 10
-          | c >= 'A' && c <= 'Z' = Char.ord c - Char.ord 'A' + 10
-          | otherwise = 99
-       in
-        v < r
+ where
+  okDigit c =
+    let
+      v
+        | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
+        | c >= 'a' && c <= 'z' = Char.ord c - Char.ord 'a' + 10
+        | c >= 'A' && c <= 'Z' = Char.ord c - Char.ord 'A' + 10
+        | otherwise = 99
+     in
+      v < r
 
 -- | JS @Array.prototype.slice@: ToInteger, negatives from the end, clamp.
 jsArraySlice :: [a] -> Double -> Double -> [a]
@@ -447,32 +444,30 @@ jsQuote s = P.doubleQuotes (P.text (escapeJsString (T.unpack s)))
 
 escapeJsString :: String -> String
 escapeJsString = concatMap esc
-  where
-    esc '\\' = "\\\\"
-    esc '"' = "\\\""
-    esc '\n' = "\\n"
-    esc '\r' = "\\r"
-    esc '\t' = "\\t"
-    esc c
-      | Char.ord c < 32 =
-          let
-            h = showHex (Char.ord c) ""
-           in
-            "\\u" ++ replicate (4 - length h) '0' ++ h
-      | otherwise = [c]
+ where
+  esc '\\' = "\\\\"
+  esc '"' = "\\\""
+  esc '\n' = "\\n"
+  esc '\r' = "\\r"
+  esc '\t' = "\\t"
+  esc c
+    | Char.ord c < 32 =
+        let
+          h = showHex (Char.ord c) ""
+         in
+          "\\u" ++ replicate (4 - length h) '0' ++ h
+    | otherwise = [c]
 
-{- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
-'Embed' is a typed hole filler: applying a PHOAS continuation to
-'Embed' @x@ inlines @x@ at the binder's own universe, so substitution
-never needs 'unsafeCoerce' or 'eqT'.
--}
+-- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
+-- 'Embed' is a typed hole filler: applying a PHOAS continuation to
+-- 'Embed' @x@ inlines @x@ at the binder's own universe, so substitution
+-- never needs 'unsafeCoerce' or 'eqT'.
 data Stamp (u :: Universe) where
   Stamp :: Int -> Stamp u
   Embed :: Expr Stamp u -> Stamp u
 
-{- | Codegen / dummy binder. Same as 'Stamp'; kept so call sites that
-only need a name stay readable.
--}
+-- | Codegen / dummy binder. Same as 'Stamp'; kept so call sites that
+-- only need a name stay readable.
 pattern Name :: Int -> Stamp u
 pattern Name i = Stamp i
 
@@ -512,19 +507,17 @@ peelString _ = Nothing
 evaluateNumber :: ClosedExpr 'Number -> Double
 evaluateNumber e = unNumber (evaluate e)
 
-{- | Pure reference interpreter. Shared Haskell heap nodes are walked
-once per occurrence (no memo table). Use 'evaluateCached' when host-level
-sharing should be observed.
--}
+-- | Pure reference interpreter. Shared Haskell heap nodes are walked
+-- once per occurrence (no memo table). Use 'evaluateCached' when host-level
+-- sharing should be observed.
 evaluate :: ClosedExpr u -> Value u
 evaluate = evalValue
 
 evalValue :: Expr Value v -> Value v
 evalValue = runIdentity . evalAlg (Identity . evalValue) (\g v -> evalValue (g v))
 
-{- | One algebra. 'evaluate' is Identity; 'evaluateCached' memos via
-'goOpen' / 'applyCached'.
--}
+-- | One algebra. 'evaluate' is Identity; 'evaluateCached' memos via
+-- 'goOpen' / 'applyCached'.
 evalAlg ::
   Monad m =>
   (forall w. Expr Value w -> m (Value w))
@@ -679,9 +672,9 @@ evalAlg rec apply = \case
   GetField @k o -> do
     ov <- rec o
     withFrozenField @k ov rec
-  where
-    num1 f x = ValueNumber . f . unNumber <$> rec x
-    num2 f x y = ValueNumber <$> (f <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
+ where
+  num1 f x = ValueNumber . f . unNumber <$> rec x
+  num2 f x y = ValueNumber <$> (f <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
 
 -- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
 -- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
@@ -692,11 +685,10 @@ data CacheEntry where
 
 type EvalCache = IORef (IntMap [CacheEntry])
 
-{- | Like 'evaluate', but memoizes shared heap nodes via 'StableName'.
-In 'IO' because observable sharing is inherently effectful.
-No 'Typeable' on the result: 'goOpen' memos constructors whose
-universe is a concrete 'Typeable' type ('Number', 'Bool', …).
--}
+-- | Like 'evaluate', but memoizes shared heap nodes via 'StableName'.
+-- In 'IO' because observable sharing is inherently effectful.
+-- No 'Typeable' on the result: 'goOpen' memos constructors whose
+-- universe is a concrete 'Typeable' type ('Number', 'Bool', …).
 evaluateCached :: ClosedExpr u -> IO (Value u)
 evaluateCached e0 = do
   cache <- newIORef IM.empty
@@ -720,15 +712,15 @@ lookupCache ::
   Typeable v =>
   StableName (Expr Value v) -> Maybe [CacheEntry] -> Maybe (Value v)
 lookupCache sn ments = ments >>= findHit
-  where
-    findHit [] = Nothing
-    findHit (CacheEntry sn' val : rest)
-      | eqStableName sn sn' =
-          case castValue val of
-            Just val' -> Just val'
-            Nothing ->
-              error "evaluateCached: StableName hit at a different universe"
-      | otherwise = findHit rest
+ where
+  findHit [] = Nothing
+  findHit (CacheEntry sn' val : rest)
+    | eqStableName sn sn' =
+        case castValue val of
+          Just val' -> Just val'
+          Nothing ->
+            error "evaluateCached: StableName hit at a different universe"
+    | otherwise = findHit rest
 
 castValue :: forall u v. (Typeable u, Typeable v) => Value u -> Maybe (Value v)
 castValue val = case eqT @u @v of
@@ -740,10 +732,9 @@ applyCached :: EvalCache -> (Value u -> Expr Value v) -> Value u -> Value v
 applyCached cache g v = unsafePerformIO (goOpen cache (g v))
 {-# NOINLINE applyCached #-}
 
-{- | Memoize constructors whose result universe is a concrete 'Typeable'
-type. Polymorphic-result nodes cannot call 'go' (no 'Typeable'
-evidence); they fall through to 'evalValue'.
--}
+-- | Memoize constructors whose result universe is a concrete 'Typeable'
+-- type. Polymorphic-result nodes cannot call 'go' (no 'Typeable'
+-- evidence); they fall through to 'evalValue'.
 goOpen :: EvalCache -> Expr Value v -> IO (Value v)
 goOpen cache e = case e of
   Plus {} -> go cache e
@@ -810,26 +801,23 @@ printComputation computation = putStrLn (renderJSCompact computation)
 renderJS :: Doc -> String
 renderJS = P.renderStyle P.style
 
-{- | Linear dump. HughesPJ 'PageMode' on a large inlined @bindRec@
-body is superlinear (breakout sat in 'renderJS' for tens of seconds).
-'compileEffect' uses this, then 'prettyJS' for 'Readable'.
--}
+-- | Linear dump. HughesPJ 'PageMode' on a large inlined @bindRec@
+-- body is superlinear (breakout sat in 'renderJS' for tens of seconds).
+-- 'compileEffect' uses this, then 'prettyJS' for 'Readable'.
 renderJSCompact :: Doc -> String
 renderJSCompact = P.renderStyle P.style {P.mode = P.LeftMode}
 
-{- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
-(@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
--}
+-- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
+-- (@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
 jsCheckedIndex :: Doc -> Doc -> Doc
 jsCheckedIndex arr idx =
   P.parens
     "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
     <> P.parens (arr <> ("," <+> idx))
 
-{- | A runtime function emitted once per program, ahead of the code that
-calls it. Recording the use in 'CG' keeps a second call site from
-repeating the whole definition.
--}
+-- | A runtime function emitted once per program, ahead of the code that
+-- calls it. Recording the use in 'CG' keeps a second call site from
+-- repeating the whole definition.
 data Helper = HelperEq | HelperGroupBy | HelperZipWith
   deriving (Eq, Ord)
 
@@ -865,11 +853,11 @@ jsZipWith xs ys f =
 groupByFirst :: [(Text, Value u)] -> [(Text, [Value u])]
 groupByFirst kvs =
   [(k, reverse (M.findWithDefault [] k grouped)) | k <- reverse revOrder]
-  where
-    (grouped, revOrder) = foldl' step (M.empty, []) kvs
-    step (acc, ks) (k, v)
-      | M.member k acc = (M.adjust (v :) k acc, ks)
-      | otherwise = (M.insert k [v] acc, k : ks)
+ where
+  (grouped, revOrder) = foldl' step (M.empty, []) kvs
+  step (acc, ks) (k, v)
+    | M.member k acc = (M.adjust (v :) k acc, ks)
+    | otherwise = (M.insert k [v] acc, k : ks)
 
 groupRow :: (Text, [Value u]) -> Value ('Object (GroupBy u))
 groupRow (k, vs) =
@@ -878,11 +866,10 @@ groupRow (k, vs) =
     , FieldLit @"items" (Literal (ValueArray vs))
     ]
 
-{- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
-path ('location.hash'); @o["0"]@ otherwise. A single key that is
-not an ident must stay bracketed — @window["location.hash"]@ is
-@undefined@, which made TodoMVC hash filters a no-op.
--}
+-- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
+-- path ('location.hash'); @o["0"]@ otherwise. A single key that is
+-- not an ident must stay bracketed — @window["location.hash"]@ is
+-- @undefined@, which made TodoMVC hash filters a no-op.
 jsDotOrBracket :: Doc -> String -> Doc
 jsDotOrBracket obj key
   | jsIdent key = obj <> "." <> P.text key
@@ -895,9 +882,9 @@ jsDotOrBracket obj key
 jsIdent :: String -> Bool
 jsIdent [] = False
 jsIdent (c : cs) = jsIdStart c && all jsIdPart cs
-  where
-    jsIdStart x = Char.isAscii x && (Char.isLetter x || x == '_' || x == '$')
-    jsIdPart x = jsIdStart x || Char.isDigit x
+ where
+  jsIdStart x = Char.isAscii x && (Char.isLetter x || x == '_' || x == '$')
+  jsIdPart x = jsIdStart x || Char.isDigit x
 
 data Code = MkCode
   { codeDecl :: Doc
@@ -905,14 +892,13 @@ data Code = MkCode
   , codeRefFX :: Bool
   }
 
-{- | Two-field sugar for a non-effectful leftover ref. Do not rematch
-this pattern and rebuild — that drops 'codeRefFX'. Take 'MkCode'
-apart and use 'keepRef' / 'fxCode'.
--}
+-- | Two-field sugar for a non-effectful leftover ref. Do not rematch
+-- this pattern and rebuild — that drops 'codeRefFX'. Take 'MkCode'
+-- apart and use 'keepRef' / 'fxCode'.
 pattern Code :: Doc -> Doc -> Code
 pattern Code d r <- MkCode d r _
-  where
-    Code d r = MkCode d r False
+ where
+  Code d r = MkCode d r False
 
 {-# COMPLETE Code #-}
 
@@ -932,9 +918,8 @@ instance Monoid Code where
 renderCode :: Code -> Doc
 renderCode (MkCode a b _) = a $$ b
 
-{- | Wrap helpers + generated decls + result in an IIFE so a minifier treats
-the result as live (plain expression statements get DCE'd).
--}
+-- | Wrap helpers + generated decls + result in an IIFE so a minifier treats
+-- the result as live (plain expression statements get DCE'd).
 renderIIFE :: CG -> Code -> Doc
 renderIIFE s (MkCode decls ref _) =
   let
@@ -958,10 +943,9 @@ effectfulProgram e = uncurry renderIIFE (effectfulAST' startCG (optimizeEffect e
 partitionCode :: [Code] -> ([Doc], [Doc])
 partitionCode = unzip . map (\(MkCode a b _) -> (a, b))
 
-{- | 'ValueUnit' renders as nothing, since a unit statement emits nothing.
-As an array element it still occupies a slot, so it has to print — a
-dropped ref would shorten the literal.
--}
+-- | 'ValueUnit' renders as nothing, since a unit statement emits nothing.
+-- As an array element it still occupies a slot, so it has to print — a
+-- dropped ref would shorten the literal.
 arrayElemRef :: Doc -> Doc
 arrayElemRef r = if P.isEmpty r then "undefined" else r
 
@@ -996,9 +980,8 @@ nestedDummy = Name nestedDummyId
 constBind :: Int -> Doc -> Doc
 constBind n ref = ("const" <+> P.text ('n' : show n) <+> "=" <+> ref) <> P.semi
 
-{- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
-counter guess: only a binder that is already in the tree.
--}
+-- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
+-- counter guess: only a binder that is already in the tree.
 liveBinder :: Effect Stamp u -> Maybe Int
 liveBinder (Lift e) = liveBinderExpr e
 liveBinder _ = Nothing
@@ -1098,19 +1081,18 @@ sizeExpr :: Expr Stamp u -> Int
 sizeExpr e = case e of
   Var (Embed e') -> sizeExpr e'
   _ -> 1 + getSum (foldExpr nestedDummy s s sf e)
-  where
-    s = Sum . sizeExpr
-    sf = Sum . sizeEffect
+ where
+  s = Sum . sizeExpr
+  sf = Sum . sizeEffect
 
 sizeEffect :: Effect Stamp u -> Int
 sizeEffect e = 1 + getSum (foldEff nestedDummy s s sf sf e)
-  where
-    s = Sum . sizeExpr
-    sf = Sum . sizeEffect
+ where
+  s = Sum . sizeExpr
+  sf = Sum . sizeEffect
 
-{- | First-order reopen: rename the tag allocated by 'optUnder'. Never
-re-applies the original PHOAS @f@.
--}
+-- | First-order reopen: rename the tag allocated by 'optUnder'. Never
+-- re-applies the original PHOAS @f@.
 rebindExpr :: Int -> Expr Stamp v -> Stamp u -> Expr Stamp v
 rebindExpr tag body s = renameExpr tag (stampId s) body
 
@@ -1241,10 +1223,9 @@ mapEff ge gf = \case
   ArrayLit es -> ArrayLit (map gf es)
   ArraySort xs f -> ArraySort (ge xs) (\a b -> ge (f a b))
 
-{- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
-use @le@. Binders are applied to @dummy@.
-'Expr' has no lazy 'Effect' child; see 'foldEff' for @lf@.
--}
+-- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
+-- use @le@. Binders are applied to @dummy@.
+-- 'Expr' has no lazy 'Effect' child; see 'foldEff' for @lf@.
 foldExpr ::
   forall f m u.
   Monoid m =>
@@ -1338,27 +1319,26 @@ foldEff dummy se le sf lf = \case
   DeleteProp o k -> sf o <> se k
   ArrayLit es -> foldMap sf es
   ArraySort xs f -> se xs <> le (f dummy dummy)
-  where
-    foldArg :: forall x. Arg f x -> m
-    foldArg (ArgExpr e) = se e
-    foldArg (ArgEffect e) = sf e
+ where
+  foldArg :: forall x. Arg f x -> m
+  foldArg (ArgExpr e) = se e
+  foldArg (ArgEffect e) = sf e
 
 lookupField ::
   forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
 lookupField = findLit . reverse
-  where
-    findLit [] = Nothing
-    findLit (FieldLit @k' e : rest) =
-      case sameSymbol (Proxy @k) (Proxy @k') of
-        Just Refl -> Just e
-        Nothing -> findLit rest
+ where
+  findLit [] = Nothing
+  findLit (FieldLit @k' e : rest) =
+    case sameSymbol (Proxy @k) (Proxy @k') of
+      Just Refl -> Just e
+      Nothing -> findLit rest
 
 fieldsPure :: PhoasDummy f => [FieldLit f r] -> Bool
 fieldsPure = all (\(FieldLit e) -> isPureExpr e)
 
-{- | Last-wins, and only when every sibling is observationally pure
-(so projecting @.b@ cannot DCE @JSON.stringify@ in @.a@).
--}
+-- | Last-wins, and only when every sibling is observationally pure
+-- (so projecting @.b@ cannot DCE @JSON.stringify@ in @.a@).
 projectFrozenField ::
   forall k r f.
   (KnownSymbol k, PhoasDummy f) => [FieldLit f r] -> Maybe (Expr f (Field r k))
@@ -1387,9 +1367,8 @@ foldGetField = \case
   If (Literal (ValueBool False)) _ e -> foldGetField @k e
   _ -> Nothing
 
-{- | Unwrap 'Embed' holes. The universe of the hole is the universe of the
-'Var', so this is ordinary GADT coverage — not a cast.
--}
+-- | Unwrap 'Embed' holes. The universe of the hole is the universe of the
+-- 'Var', so this is ordinary GADT coverage — not a cast.
 flattenExpr :: Expr Stamp u -> Expr Stamp u
 flattenExpr = \case
   Var (Embed e) -> flattenExpr e
@@ -1398,9 +1377,8 @@ flattenExpr = \case
 flattenEff :: Effect Stamp u -> Effect Stamp u
 flattenEff = mapEff flattenExpr flattenEff
 
-{- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
-does not need a cast. Used after the one 'optUnder' apply of @f@.
--}
+-- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
+-- does not need a cast. Used after the one 'optUnder' apply of @f@.
 renameExpr :: Int -> Int -> Expr Stamp u -> Expr Stamp u
 renameExpr old new = \case
   Var (Embed e) -> renameExpr old new (flattenExpr e)
@@ -1417,9 +1395,8 @@ inlineExpr f x = flattenExpr (f (Embed x))
 inlineEff :: (Stamp u -> Effect Stamp v) -> Expr Stamp u -> Effect Stamp v
 inlineEff f x = flattenEff (f (Embed x))
 
-{- | Re-apply a PHOAS continuation and optimize at the next free tag @t@
-(never a reset @-2@ — that collides with 'Stamp's already in the tree).
--}
+-- | Re-apply a PHOAS continuation and optimize at the next free tag @t@
+-- (never a reset @-2@ — that collides with 'Stamp's already in the tree).
 reoptExpr :: Int -> (Stamp u -> Expr Stamp v) -> Stamp u -> Expr Stamp v
 reoptExpr t f b = snd (optExpr t (flattenExpr (f b)))
 
@@ -1434,12 +1411,11 @@ reoptExpr2 ::
   -> Expr Stamp v
 reoptExpr2 t f a b = snd (optExpr t (flattenExpr (f a b)))
 
-{- | Constant-fold and drop dead pure bindings. Applied automatically by
-codegen. This is the End-algebra: a closed term is instantiated at
-'Stamp' for the name supply (Kmett: take the end, then interpret).
-Host-language sharing is recovered by 'evaluateCached' and by
-instantiating the 'ClosedExpr' once ('NOINLINE') before this walk.
--}
+-- | Constant-fold and drop dead pure bindings. Applied automatically by
+-- codegen. This is the End-algebra: a closed term is instantiated at
+-- 'Stamp' for the name supply (Kmett: take the end, then interpret).
+-- Host-language sharing is recovered by 'evaluateCached' and by
+-- instantiating the 'ClosedExpr' once ('NOINLINE') before this walk.
 optimize :: ClosedExpr u -> Expr Stamp u
 optimize e = flattenExpr (snd (optExpr (-2) e))
 {-# NOINLINE optimize #-}
@@ -1518,9 +1494,9 @@ isPureExpr e = case e of
   UnsafeEffectExpr _ -> False
   ExprUnary n x -> isPureStdUnary n && isPureExpr x
   _ -> getAll (foldExpr phoasDummy p p pe e)
-  where
-    p = All . isPureExpr
-    pe = All . isPureEffectStamp
+ where
+  p = All . isPureExpr
+  pe = All . isPureEffectStamp
 
 isPureEffectStamp :: PhoasDummy f => Effect f u -> Bool
 isPureEffectStamp e = case e of
@@ -1545,9 +1521,8 @@ isPureEffectStamp e = case e of
           e
       )
 
-{- | @JSON.stringify@ throws on bigint / circular values, so unused
-stringify is kept.
--}
+-- | @JSON.stringify@ throws on bigint / circular values, so unused
+-- stringify is kept.
 isPureStdUnary :: StdUnary a b -> Bool
 isPureStdUnary StdStringify = False
 isPureStdUnary _ = True
@@ -2043,18 +2018,18 @@ optExpr t0 = \case
       case foldGetField @k o' of
         Just e -> optExpr t1 e
         Nothing -> (t1, GetField @k o')
-  where
-    binNum f k x y =
-      let
-        (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-       in
-        (t2, foldNum2 f k x' y')
-    unNum f k x =
-      let
-        (t1, x') = optExpr t0 x
-       in
-        (t1, foldNum1 f k x')
+ where
+  binNum f k x y =
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+     in
+      (t2, foldNum2 f k x' y')
+  unNum f k x =
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldNum1 f k x')
 
 optEffect :: Int -> Effect Stamp u -> (Int, Effect Stamp u)
 optEffect t0 = \case
@@ -2290,12 +2265,11 @@ effectfulAST :: ClosedEffect u -> Doc
 effectfulAST e =
   uncurry renderWithHelpers (effectfulAST' startCG (optimizeEffect e))
 
-{- | Witness that forces @u ~ 'Unit@: @noOp@, 'While', 'Throw', or
-'Bind' into those. Polymorphic nodes ('UnsafeObjectAssign',
-'CallMethod', 'FFI') do not count — they inhabit any @u@. Two-arm
-forms require *both* arms unit; otherwise a 'Throw' would drop the
-other arm's value. Statement @if@ is 'IfE' after 'JShark.Api.discard'.
--}
+-- | Witness that forces @u ~ 'Unit@: @noOp@, 'While', 'Throw', or
+-- 'Bind' into those. Polymorphic nodes ('UnsafeObjectAssign',
+-- 'CallMethod', 'FFI') do not count — they inhabit any @u@. Two-arm
+-- forms require *both* arms unit; otherwise a 'Throw' would drop the
+-- other arm's value. Statement @if@ is 'IfE' after 'JShark.Api.discard'.
 isUnitWitness :: Effect Stamp u -> Bool
 isUnitWitness = \case
   Lift (Literal ValueUnit) -> True
@@ -2312,10 +2286,9 @@ isUnitWitness = \case
   Try a k -> isUnitWitness a && isUnitWitness (k nestedDummy)
   _ -> False
 
-{- | Turn a rendered effect into a statement. Unit values may still have a
-non-empty ref (@el.x = v@, @foo()@); those become statements, not
-@let n = …@.
--}
+-- | Turn a rendered effect into a statement. Unit values may still have a
+-- non-empty ref (@el.x = v@, @foo()@); those become statements, not
+-- @let n = …@.
 asStmt :: Doc -> Doc -> Doc
 asStmt decl ref
   | P.isEmpty ref = decl
@@ -2358,9 +2331,8 @@ resultCasePrelude s0 res =
    in
     (s3, prelude, obj, nUnw)
 
-{- | Unit arms: prelude + stmt, empty ref. Value arms: prelude +
-@let result@ + stmt, result ident.
--}
+-- | Unit arms: prelude + stmt, empty ref. Value arms: prelude +
+-- @let result@ + stmt, result ident.
 emitBranching ::
   Bool
   -> CG
@@ -2407,12 +2379,12 @@ renderFunction nParam decl ref =
   "function"
     <+> P.parens (P.text $ 'n' : show nParam)
     <+> P.braces (decl $$ ret)
-  where
-    -- Empty ref is Unit (event handlers, forEach of noOp). `return ()`
-    -- is a SyntaxError; HughesPJ `parens` of empty is `()`.
-    ret
-      | P.isEmpty ref = "return"
-      | otherwise = "return" <+> P.parens ref
+ where
+  -- Empty ref is Unit (event handlers, forEach of noOp). `return ()`
+  -- is a SyntaxError; HughesPJ `parens` of empty is `()`.
+  ret
+    | P.isEmpty ref = "return"
+    | otherwise = "return" <+> P.parens ref
 
 effectfulAST' :: forall v. CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !s0 = \case
@@ -2793,8 +2765,8 @@ stdUnaryJS n r = case n of
   StdArrLen -> dotLength
   StdStrLen -> dotLength
   StdStringify -> "JSON.stringify" <> P.parens r
-  where
-    dotLength = r <> ".length"
+ where
+  dotLength = r <> ".length"
 
 stdBinaryJS :: StdBinary a b c -> Doc -> Doc -> Doc
 stdBinaryJS n r a = case n of
@@ -2811,8 +2783,8 @@ stdTernaryJS n r a b = case n of
   StdSlice -> slice
   StdArrSlice -> slice
   StdReplace -> r <> ".replace" <> P.parens (a <> ", " <> b)
-  where
-    slice = r <> ".slice" <> P.parens (a <> ", " <> b)
+ where
+  slice = r <> ".slice" <> P.parens (a <> ", " <> b)
 
 resultPayloadRef :: Doc -> Doc
 resultPayloadRef r

@@ -57,8 +57,8 @@ page headExtra source scriptSrc = doctypehtml_ $ do
 filterLink :: Route -> Html ()
 filterLink r =
   li_ $ a_ attrs (toHtml (routeLabel r))
-  where
-    attrs =
-      href_ (routeHash r)
-        : id_ (routeId r)
-        : if routeValue r == valueAll then [class_ classSelected] else []
+ where
+  attrs =
+    href_ (routeHash r)
+      : id_ (routeId r)
+      : if routeValue r == valueAll then [class_ classSelected] else []

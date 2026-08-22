@@ -4,9 +4,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{- | Canvas 2D. Get a context from a canvas element, then draw.
-Styles are 'Field's ('fillStyle', 'strokeStyle', 'lineWidth', …).
--}
+-- | Canvas 2D. Get a context from a canvas element, then draw.
+-- Styles are 'Field's ('fillStyle', 'strokeStyle', 'lineWidth', …).
 module JShark.Canvas
   ( Context2D
   , TextMetrics
@@ -62,9 +61,8 @@ data TextMetrics
 
 type instance Field TextMetrics "width" = 'Number
 
-{- | @el.getContext("2d")@. 'none' when the element is not a canvas.
-Held so reuse does not re-run 'getContext'.
--}
+-- | @el.getContext("2d")@. 'none' when the element is not a canvas.
+-- Held so reuse does not re-run 'getContext'.
 getContext2d ::
   Effect f ('MutableObject DomElement)
   -> EffectSyntax f (Effect f ('Option ('MutableObject Context2D)))
@@ -74,9 +72,8 @@ getContext2d el =
       (callMethod el "getContext" (arg (string "2d") <: RecNil))
       (\x -> Lift (unsafeNullable (Var x)))
 
-{- | @HTMLCanvasElement.width@ / @height@ (drawing buffer, not CSS).
-Assigning either resets the bitmap.
--}
+-- | @HTMLCanvasElement.width@ / @height@ (drawing buffer, not CSS).
+-- Assigning either resets the bitmap.
 canvasWidth ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'Number)
 canvasWidth el = getProp el "width"

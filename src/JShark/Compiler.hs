@@ -5,20 +5,19 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{- | Post-process generated JavaScript: pretty-print or minify, and cache.
-
-Google Closure Compiler is no longer the best default. Its Advanced
-mode is still unique for whole-program property renaming, but it is a
-Java tool, slow to start, and unsafe on JShark FFI without externs.
-In 2026 the practical choice is [esbuild](https://esbuild.github.io)
-(fast, ubiquitous, what this module uses for 'Auto'). Terser remains
-as the more aggressive size-oriented option; Closure is still available
-when you actually want Advanced.
-
-Use 'readableConfig' for a human-readable snippet (single-use bindings
-inlined, no IIFE, no minifier). 'defaultCompilerConfig' wraps an IIFE
-and minifies.
--}
+-- | Post-process generated JavaScript: pretty-print or minify, and cache.
+--
+-- Google Closure Compiler is no longer the best default. Its Advanced
+-- mode is still unique for whole-program property renaming, but it is a
+-- Java tool, slow to start, and unsafe on JShark FFI without externs.
+-- In 2026 the practical choice is [esbuild](https://esbuild.github.io)
+-- (fast, ubiquitous, what this module uses for 'Auto'). Terser remains
+-- as the more aggressive size-oriented option; Closure is still available
+-- when you actually want Advanced.
+--
+-- Use 'readableConfig' for a human-readable snippet (single-use bindings
+-- inlined, no IIFE, no minifier). 'defaultCompilerConfig' wraps an IIFE
+-- and minifies.
 module JShark.Compiler
   ( -- * Compiler Configuration
     CompilerConfig (..)
@@ -90,11 +89,10 @@ import System.Process (readProcessWithExitCode)
 import Text.PrettyPrint (Doc)
 import Text.Read (readMaybe)
 
-{- | Compilation level for Google Closure Compiler.
-Encoded as the long names ('SIMPLE_OPTIMIZATIONS' /
-'ADVANCED_OPTIMIZATIONS') that both old jars and current
-@google-closure-compiler@ accept.
--}
+-- | Compilation level for Google Closure Compiler.
+-- Encoded as the long names ('SIMPLE_OPTIMIZATIONS' /
+-- 'ADVANCED_OPTIMIZATIONS') that both old jars and current
+-- @google-closure-compiler@ accept.
 data ClosureLevel
   = WhitespaceOnly
   | Simple
@@ -114,9 +112,8 @@ data CompilerClosureConfig = CompilerClosureConfig
   }
   deriving (Show, Eq, Ord)
 
-{- | Default Closure configuration: SIMPLE (not Advanced — Advanced
-renames properties and will break DOM/FFI without externs).
--}
+-- | Default Closure configuration: SIMPLE (not Advanced — Advanced
+-- renames properties and will break DOM/FFI without externs).
 defaultClosureConfig :: CompilerClosureConfig
 defaultClosureConfig = CompilerClosureConfig Simple []
 
@@ -144,10 +141,9 @@ data CompilerTerserConfig = CompilerTerserConfig
 defaultTerserConfig :: CompilerTerserConfig
 defaultTerserConfig = CompilerTerserConfig True True []
 
-{- | Minifier backend. 'Auto' picks the first of esbuild, Closure, Terser
-found on @PATH@. If none are present, 'tryCompileWith' returns 'Left';
-'compileWith' then honors 'configFallback' (unminified source vs throw).
--}
+-- | Minifier backend. 'Auto' picks the first of esbuild, Closure, Terser
+-- found on @PATH@. If none are present, 'tryCompileWith' returns 'Left';
+-- 'compileWith' then honors 'configFallback' (unminified source vs throw).
 data CompilerBackend
   = Auto
   | Closure CompilerClosureConfig
@@ -156,13 +152,12 @@ data CompilerBackend
   | Passthrough
   deriving (Show, Eq, Ord)
 
-{- | Caching strategy for minified JavaScript artifacts.
-
-Memory entries are keyed by the full source+backend string (no hash
-collisions) and capped at 256; when full, the 'Ord'-least key is
-dropped (not LRU). Disk entries store that same key in the file and
-verify it on read.
--}
+-- | Caching strategy for minified JavaScript artifacts.
+--
+-- Memory entries are keyed by the full source+backend string (no hash
+-- collisions) and capped at 256; when full, the 'Ord'-least key is
+-- dropped (not LRU). Disk entries store that same key in the file and
+-- verify it on read.
 data CacheStrategy
   = NoCache
   | MemoryCache
@@ -182,18 +177,16 @@ data CompilerConfig = CompilerConfig
   { configBackend :: CompilerBackend
   , configCache :: CacheStrategy
   , configFallback :: Bool
-  {- ^ When 'True', minifier failure (missing binary, crash, empty DCE'd
-    output) logs to stderr and returns the unminified source. When
-    'False', 'compileWith' throws. Named helpers ('compileEsbuild' etc.)
-    set this to 'False'.
-  -}
+  -- ^ When 'True', minifier failure (missing binary, crash, empty DCE'd
+  --     output) logs to stderr and returns the unminified source. When
+  --     'False', 'compileWith' throws. Named helpers ('compileEsbuild' etc.)
+  --     set this to 'False'.
   , configStyle :: OutputStyle
   }
   deriving (Show, Eq, Ord)
 
-{- | Auto backend, minified output, in-memory cache, fall back to the
-unminified source if no minifier is installed (or if it crashes).
--}
+-- | Auto backend, minified output, in-memory cache, fall back to the
+-- unminified source if no minifier is installed (or if it crashes).
 defaultCompilerConfig :: CompilerConfig
 defaultCompilerConfig = CompilerConfig Auto MemoryCache True Minified
 
@@ -224,8 +217,8 @@ clearCompilerCache = writeIORef globalMemoryCache Map.empty
 
 fnv1a64 :: BS.ByteString -> Word64
 fnv1a64 = BS.foldl' step 14695981039346656037
-  where
-    step !h !w = (h `xor` fromIntegral w) * 1099511628211
+ where
+  step !h !w = (h `xor` fromIntegral w) * 1099511628211
 
 hashText :: Text -> String
 hashText t = showHex (fnv1a64 (TE.encodeUtf8 t)) ""
@@ -249,19 +242,17 @@ insertBounded k v m =
       then Map.deleteMin m'
       else m'
 
-{- | Minify raw JavaScript using 'defaultCompilerConfig'.
-
-Does __not__ wrap the input in an IIFE: a bare expression with no side
-effects may be DCE'd to empty by esbuild/Terser. Prefer 'compilePure' /
-'compileEffect' for JShark output. Empty minifier output on non-empty
-input is treated as failure.
--}
+-- | Minify raw JavaScript using 'defaultCompilerConfig'.
+--
+-- Does __not__ wrap the input in an IIFE: a bare expression with no side
+-- effects may be DCE'd to empty by esbuild/Terser. Prefer 'compilePure' /
+-- 'compileEffect' for JShark output. Empty minifier output on non-empty
+-- input is treated as failure.
 compileJS :: Text -> IO Text
 compileJS = compileWith defaultCompilerConfig
 
-{- | Minify using 'tryCompileWith'. On 'Left', either throw or (when
-'configFallback' is set) log to stderr and return the original source.
--}
+-- | Minify using 'tryCompileWith'. On 'Left', either throw or (when
+-- 'configFallback' is set) log to stderr and return the original source.
 compileWith :: CompilerConfig -> Text -> IO Text
 compileWith cfg source = do
   res <- tryCompileWith cfg source
@@ -274,11 +265,10 @@ compileWith cfg source = do
       | otherwise ->
           throwIO (userError ("JShark.Compiler: compilation failed: " ++ err))
 
-{- | Minify without fallback or throwing on minifier failure.
-Cache is consulted only for successful results (fallback source is
-never stored). 'Readable' forces 'Passthrough' so a minifying backend
-cannot run.
--}
+-- | Minify without fallback or throwing on minifier failure.
+-- Cache is consulted only for successful results (fallback source is
+-- never stored). 'Readable' forces 'Passthrough' so a minifying backend
+-- cannot run.
 tryCompileWith :: CompilerConfig -> Text -> IO (Either String Text)
 tryCompileWith cfg0 source =
   let
@@ -366,9 +356,8 @@ atomicWriteFile dest bytes = do
     )
     `catch` (\(e :: SomeException) -> closeH >> cleanupTmp >> throwIO e)
 
-{- | Minify with Google Closure Compiler at the given level.
-Throws if the compiler is missing or fails ('configFallback' is false).
--}
+-- | Minify with Google Closure Compiler at the given level.
+-- Throws if the compiler is missing or fails ('configFallback' is false).
 compileClosure :: ClosureLevel -> Text -> IO Text
 compileClosure lvl =
   compileWith
@@ -391,83 +380,81 @@ compileTerser =
   compileWith
     (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified)
 
-{- | Indent generated JavaScript. Understands double/single-quoted strings
-(with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
-not @/re/@ literals, so those are not treated as strings. Not a general
-JS parser.
--}
+-- | Indent generated JavaScript. Understands double/single-quoted strings
+-- (with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
+-- not @/re/@ literals, so those are not treated as strings. Not a general
+-- JS parser.
 prettyJS :: Text -> Text
 prettyJS = T.pack . formatJS . T.unpack . T.strip
 
 formatJS :: String -> String
 formatJS = go 0
-  where
-    indent n = replicate (n * 2) ' '
+ where
+  indent n = replicate (n * 2) ' '
 
-    go :: Int -> String -> String
-    go _ [] = []
-    go n ('"' : xs) = '"' : string '"' xs (go n)
-    go n ('\'' : xs) = '\'' : string '\'' xs (go n)
-    go n ('{' : xs) =
-      let
-        xs' = dropWhile isSpace xs
-       in
-        case xs' of
-          '}' : rest -> "{}" ++ afterClose n rest
-          _ -> '{' : '\n' : indent (n + 1) ++ go (n + 1) xs'
-    go n ('}' : xs) =
-      let
-        n' = max 0 (n - 1)
-       in
-        '\n' : indent n' ++ '}' : afterClose n' (dropWhile isSpace xs)
-    go n (';' : xs) =
-      let
-        xs' = dropWhile isSpace xs
-       in
-        ';' : case xs' of
-          '}' : _ -> go n xs'
-          [] -> []
-          _ -> '\n' : indent n ++ go n xs'
-    go n (c : xs)
-      | isSpace c =
-          let
-            xs' = dropWhile isSpace xs
-           in
-            case xs' of
-              [] -> []
-              '}' : _ -> go n xs'
-              _ -> ' ' : go n xs'
-      | otherwise = c : go n xs
-
-    afterClose n s =
-      case dropWhile isSpace s of
-        s'
-          | Just rest <- keyword "else" s' -> ' ' : go n ("else" ++ rest)
-          | Just rest <- keyword "catch" s' -> ' ' : go n ("catch" ++ rest)
-        -- Stay on this line for expression tails (`})`, `}()`, `},`, `};`).
-        c : _ | c `elem` (");,.}(" :: String) -> go n (dropWhile isSpace s)
+  go :: Int -> String -> String
+  go _ [] = []
+  go n ('"' : xs) = '"' : string '"' xs (go n)
+  go n ('\'' : xs) = '\'' : string '\'' xs (go n)
+  go n ('{' : xs) =
+    let
+      xs' = dropWhile isSpace xs
+     in
+      case xs' of
+        '}' : rest -> "{}" ++ afterClose n rest
+        _ -> '{' : '\n' : indent (n + 1) ++ go (n + 1) xs'
+  go n ('}' : xs) =
+    let
+      n' = max 0 (n - 1)
+     in
+      '\n' : indent n' ++ '}' : afterClose n' (dropWhile isSpace xs)
+  go n (';' : xs) =
+    let
+      xs' = dropWhile isSpace xs
+     in
+      ';' : case xs' of
+        '}' : _ -> go n xs'
         [] -> []
-        s' -> '\n' : indent n ++ go n s'
+        _ -> '\n' : indent n ++ go n xs'
+  go n (c : xs)
+    | isSpace c =
+        let
+          xs' = dropWhile isSpace xs
+         in
+          case xs' of
+            [] -> []
+            '}' : _ -> go n xs'
+            _ -> ' ' : go n xs'
+    | otherwise = c : go n xs
 
-    keyword kw s = case splitAt (length kw) s of
-      (pre, rest)
-        | pre == kw, not (startsIdent rest) -> Just rest
-      _ -> Nothing
+  afterClose n s =
+    case dropWhile isSpace s of
+      s'
+        | Just rest <- keyword "else" s' -> ' ' : go n ("else" ++ rest)
+        | Just rest <- keyword "catch" s' -> ' ' : go n ("catch" ++ rest)
+      -- Stay on this line for expression tails (`})`, `}()`, `},`, `};`).
+      c : _ | c `elem` (");,.}(" :: String) -> go n (dropWhile isSpace s)
+      [] -> []
+      s' -> '\n' : indent n ++ go n s'
 
-    startsIdent (c : _) = isAlphaNum c || c == '_' || c == '$'
-    startsIdent [] = False
+  keyword kw s = case splitAt (length kw) s of
+    (pre, rest)
+      | pre == kw, not (startsIdent rest) -> Just rest
+    _ -> Nothing
 
-    string _ [] _ = []
-    string q (c : cs) k
-      | c == '\\' = case cs of
-          d : ds -> c : d : string q ds k
-          [] -> [c]
-      | c == q = c : k cs
-      | otherwise = c : string q cs k
+  startsIdent (c : _) = isAlphaNum c || c == '_' || c == '$'
+  startsIdent [] = False
 
-{- | Compile an effectful JShark computation. 'Readable' emits a pretty
-snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
--}
+  string _ [] _ = []
+  string q (c : cs) k
+    | c == '\\' = case cs of
+        d : ds -> c : d : string q ds k
+        [] -> [c]
+    | c == q = c : k cs
+    | otherwise = c : string q cs k
+
+-- | Compile an effectful JShark computation. 'Readable' emits a pretty
+-- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 compileTree :: CompilerConfig -> (OutputStyle -> Doc) -> IO Text
 compileTree cfg doc =
   forceCompiled
@@ -516,23 +503,23 @@ tryRunCompile cfg source = case configBackend cfg of
 -- Auto: npx may hit the network. Explicit backends may use npx --no-install.
 runAuto :: Text -> IO (Either String Text)
 runAuto source = go probes
-  where
-    probes =
-      [ (hasExecutable "esbuild", runEsbuild defaultEsbuildConfig source)
-      ,
-        ( (||)
-            <$> hasExecutable "google-closure-compiler"
-            <*> hasExecutable "closure-compiler"
-        , runClosure defaultClosureConfig source
-        )
-      , (hasExecutable "terser", runTerser defaultTerserConfig source)
-      ]
-    go [] =
-      pure
-        (Left "no minifier on PATH (install esbuild, google-closure-compiler, or terser)")
-    go ((check, run) : rest) = do
-      ok <- check
-      if ok then run else go rest
+ where
+  probes =
+    [ (hasExecutable "esbuild", runEsbuild defaultEsbuildConfig source)
+    ,
+      ( (||)
+          <$> hasExecutable "google-closure-compiler"
+          <*> hasExecutable "closure-compiler"
+      , runClosure defaultClosureConfig source
+      )
+    , (hasExecutable "terser", runTerser defaultTerserConfig source)
+    ]
+  go [] =
+    pure
+      (Left "no minifier on PATH (install esbuild, google-closure-compiler, or terser)")
+  go ((check, run) : rest) = do
+    ok <- check
+    if ok then run else go rest
 
 hasExecutable :: String -> IO Bool
 hasExecutable name = do
@@ -551,44 +538,43 @@ runEsbuild cfg source = do
   case found of
     Left err -> pure (Left err)
     Right (exe, wrap) -> run exe (wrap args)
-  where
-    -- A pure IIFE (or bare expression) is an unused statement to esbuild, so
-    -- '--minify' can DCE it to empty — especially after constant folding turns
-    -- 'return 1+2' into 'return 3'. Re-run as 'export default (…)' / ESM so the
-    -- value is live, then strip the export to leave an expression again.
-    run exe args = do
-      first <- executeProcessRaw exe args source
-      case first of
-        Left err -> pure (Left err)
-        Right out
-          | not (T.null out) || T.null (T.strip source) -> pure (Right out)
-          | otherwise -> do
-              let
-                wrapped = "export default (" <> dropTrailingSemis (T.strip source) <> ")\n"
-                args' = args ++ ["--format=esm"]
-              second <- executeProcessRaw exe args' wrapped
-              case second of
-                Left err -> pure (Left err)
-                Right out' ->
-                  let
-                    stripped = stripExportDefault out'
-                   in
-                    if T.null stripped
-                      then
-                        pure
-                          ( Left
-                              "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)"
-                          )
-                      else pure (Right stripped)
+ where
+  -- A pure IIFE (or bare expression) is an unused statement to esbuild, so
+  -- '--minify' can DCE it to empty — especially after constant folding turns
+  -- 'return 1+2' into 'return 3'. Re-run as 'export default (…)' / ESM so the
+  -- value is live, then strip the export to leave an expression again.
+  run exe args = do
+    first <- executeProcessRaw exe args source
+    case first of
+      Left err -> pure (Left err)
+      Right out
+        | not (T.null out) || T.null (T.strip source) -> pure (Right out)
+        | otherwise -> do
+            let
+              wrapped = "export default (" <> dropTrailingSemis (T.strip source) <> ")\n"
+              args' = args ++ ["--format=esm"]
+            second <- executeProcessRaw exe args' wrapped
+            case second of
+              Left err -> pure (Left err)
+              Right out' ->
+                let
+                  stripped = stripExportDefault out'
+                 in
+                  if T.null stripped
+                    then
+                      pure
+                        ( Left
+                            "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)"
+                        )
+                    else pure (Right stripped)
 
 dropTrailingSemis :: Text -> Text
 dropTrailingSemis =
   T.dropWhileEnd
     (\c -> c == ';' || c == ' ' || c == '\n' || c == '\r' || c == '\t')
 
-{- | Undo the 'export default (…)' / ESM anchor. esbuild '--minify' often
-rewrites 'export default EXPR' to 'var e=EXPR;export{e as default};'.
--}
+-- | Undo the 'export default (…)' / ESM anchor. esbuild '--minify' often
+-- rewrites 'export default EXPR' to 'var e=EXPR;export{e as default};'.
 stripExportDefault :: Text -> Text
 stripExportDefault t =
   let
@@ -681,9 +667,8 @@ executeProcess cmd args source = do
             )
     _ -> pure res
 
-{- | Like 'executeProcess' but allows empty stdout (used when esbuild may DCE
-a pure expression and we want to retry with an ESM export anchor).
--}
+-- | Like 'executeProcess' but allows empty stdout (used when esbuild may DCE
+-- a pure expression and we want to retry with an ESM export anchor).
 executeProcessRaw :: FilePath -> [String] -> Text -> IO (Either String Text)
 executeProcessRaw cmd args source =
   ( do

@@ -143,9 +143,8 @@ exportExamples dest examples = do
       )
     T.writeFile (dir </> "app.js") (exampleJs ex)
 
-{- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
-@app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
--}
+-- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
+-- @app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
 slashRedirect :: FilePath -> String
 slashRedirect name =
   "<!DOCTYPE html><meta charset=\"utf-8\">"

@@ -2,13 +2,12 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | JS @Array.prototype@ wrappers.
-Read wrappers are closed-name 'Expr' nodes; 'evaluate' handles
-'index', 'map', 'filter', 'reduce', 'reduceRight', 'groupBy', 'zipWith',
-and 'singleton'.
-'push' is a 'CallMethod' on 'Effect'. Import qualified; names clash
-with 'Prelude'.
--}
+-- | JS @Array.prototype@ wrappers.
+-- Read wrappers are closed-name 'Expr' nodes; 'evaluate' handles
+-- 'index', 'map', 'filter', 'reduce', 'reduceRight', 'groupBy', 'zipWith',
+-- and 'singleton'.
+-- 'push' is a 'CallMethod' on 'Effect'. Import qualified; names clash
+-- with 'Prelude'.
 module JShark.Array
   ( index
   , length
@@ -137,9 +136,8 @@ reduceRight arr z f = ExprReduceRight arr z (\a x -> f (var a) (var x))
 singleton :: Expr f u -> Expr f ('Array u)
 singleton x = ExprMap (Literal (ValueArray [ValueUnit])) (\_ -> x)
 
-{- | @Object.groupBy@ as @[{key, items}]@. The key callback is unary
-('String'); first-seen key order. Not a null-prototype object.
--}
+-- | @Object.groupBy@ as @[{key, items}]@. The key callback is unary
+-- ('String'); first-seen key order. Not a null-prototype object.
 groupBy ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f 'String)
@@ -159,10 +157,9 @@ arraySlice ::
   Expr f ('Array u) -> Expr f 'Number -> Expr f 'Number -> Expr f ('Array u)
 arraySlice = ExprTernary StdArrSlice
 
-{- | @arr.sort(function(a,b){…})@. Mutates in place. The compare callback
-is a binary JS function (not curried 'lambda2'); it should return a
-'Number' (negative / zero / positive).
--}
+-- | @arr.sort(function(a,b){…})@. Mutates in place. The compare callback
+-- is a binary JS function (not curried 'lambda2'); it should return a
+-- 'Number' (negative / zero / positive).
 sort ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f u -> Expr f 'Number)

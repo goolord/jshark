@@ -33,20 +33,18 @@ import JShark
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 
-{- | An opaque phantom type representing a DOM element (what
-@document.getElementById@ /etc. return in the browser). Modeled as an
-'MutableObject' so it can share the same property-access machinery ('get',
-'Field') as other foreign objects.
--}
+-- | An opaque phantom type representing a DOM element (what
+-- @document.getElementById@ /etc. return in the browser). Modeled as an
+-- 'MutableObject' so it can share the same property-access machinery ('get',
+-- 'Field') as other foreign objects.
 data DomElement
 
 type instance Field DomElement "innerHTML" = 'String
 
 type instance Field DomElement "innerText" = 'String
 
-{- | @document.getElementById(x)@. Bound via 'hold' so reusing the
-handle only references the variable, never re-runs the lookup.
--}
+-- | @document.getElementById(x)@. Bound via 'hold' so reusing the
+-- handle only references the variable, never re-runs the lookup.
 lookupId ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 lookupId x = hold $ ffi "document.getElementById" (arg x <: RecNil)
@@ -65,9 +63,8 @@ classAdd el x = toSyntax $ callMethod el "classList.add" (arg x <: RecNil)
 classRemove el x = toSyntax $ callMethod el "classList.remove" (arg x <: RecNil)
 classToggle el x = toSyntax $ callMethod el "classList.toggle" (arg x <: RecNil)
 
-{- | @document.createElement(tag)@. Bound via 'hold'; otherwise reusing
-the handle would re-run @createElement@ and create a new element each time.
--}
+-- | @document.createElement(tag)@. Bound via 'hold'; otherwise reusing
+-- the handle would re-run @createElement@ and create a new element each time.
 createElement ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 createElement tag = hold $ ffi "document.createElement" (arg tag <: RecNil)

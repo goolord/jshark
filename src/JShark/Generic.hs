@@ -12,10 +12,9 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{- | 'Generic' product records and tagged sums as JShark objects.
-Records: row 'As' @a@ (or @type instance Field a k = ViaGeneric a k@).
-Sums: @{tag, payload}@ on row 'Tagged' @a@.
--}
+-- | 'Generic' product records and tagged sums as JShark objects.
+-- Records: row 'As' @a@ (or @type instance Field a k = ViaGeneric a k@).
+-- Sums: @{tag, payload}@ on row 'Tagged' @a@.
 module JShark.Generic
   ( As
   , MutableObjectOf
@@ -75,9 +74,8 @@ import JShark.Object (field, get, newObject, obj, unsafeObjectGet)
 import JShark.Types
 import Unsafe.Coerce (unsafeCoerce)
 
-{- | Row phantom for a 'Generic' record @a@. Existing rows ('Window')
-stay manual; they do not become 'As'.
--}
+-- | Row phantom for a 'Generic' record @a@. Existing rows ('Window')
+-- stay manual; they do not become 'As'.
 data As (a :: Type)
 
 -- | @'MutableObject' ('As' a)@
@@ -137,9 +135,8 @@ type family ScalarU (a :: Type) :: Universe where
   ScalarU Bool = 'Bool
   ScalarU () = 'Unit
 
-{- | Host type → JShark universe for 'ToJS' / 'ToValue' only. No
-catch-all: records are 'toObject', not 'Expr'.
--}
+-- | Host type → JShark universe for 'ToJS' / 'ToValue' only. No
+-- catch-all: records are 'toObject', not 'Expr'.
 type family UniverseOf (a :: Type) :: Universe where
   UniverseOf Double = ScalarU Double
   UniverseOf Float = ScalarU Float
@@ -151,9 +148,8 @@ type family UniverseOf (a :: Type) :: Universe where
   UniverseOf (Maybe a) = 'Option (UniverseOf a)
   UniverseOf (Either e a) = 'Result (UniverseOf e) (UniverseOf a)
 
-{- | Field-position universe. Nested products use 'As'; nested sums use
-'Tagged'.
--}
+-- | Field-position universe. Nested products use 'As'; nested sums use
+-- 'Tagged'.
 type family FieldU (a :: Type) :: Universe where
   FieldU Double = ScalarU Double
   FieldU Float = ScalarU Float
@@ -197,10 +193,9 @@ instance ToValue Float where
   toValue = ValueNumber . realToFrac
   fromValue (ValueNumber d) = realToFrac d
 
-{- | IEEE 'Number'. Integers outside (-2^53, 2^53) round. 'fromValue'
-uses 'truncate' (toward 0), matching a host 'toJS' roundtrip, not
-JS ToInt32.
--}
+-- | IEEE 'Number'. Integers outside (-2^53, 2^53) round. 'fromValue'
+-- uses 'truncate' (toward 0), matching a host 'toJS' roundtrip, not
+-- JS ToInt32.
 instance ToJS Int where
   toJS = number . fromIntegral
 
@@ -268,9 +263,9 @@ newRecord ::
   forall a f.
   (Generic a, GToObject (Rep a) (As a)) => Effect f ('MutableObject (As a))
 newRecord = newObject
-  where
-    -- Mention 'toObject' so 'GToObject' is used; never applied.
-    _recordRow = toObject :: a -> Effect f ('MutableObject (As a))
+ where
+  -- Mention 'toObject' so 'GToObject' is used; never applied.
+  _recordRow = toObject :: a -> Effect f ('MutableObject (As a))
 
 -- | Splice an object/sum 'Effect' into a 'FieldLit' 'Expr' hole.
 embedObject :: Effect f u -> Expr f u
@@ -549,10 +544,9 @@ type family AppendSym (xs :: [Symbol]) (ys :: [Symbol]) :: [Symbol] where
   AppendSym '[] ys = ys
   AppendSym (x ': xs) ys = x ': AppendSym xs ys
 
-{- | Handler chain indexed by constructor names. @caseSum s arms@
-requires @arms :: CaseSum a f v (CtorNames a)@. 'CaseAny' / 'Case_'
-inhabit any leftover suffix (does not extend the name list).
--}
+-- | Handler chain indexed by constructor names. @caseSum s arms@
+-- requires @arms :: CaseSum a f v (CtorNames a)@. 'CaseAny' / 'Case_'
+-- inhabit any leftover suffix (does not extend the name list).
 data CaseSum a f v (ns :: [Symbol]) where
   CaseEnd :: CaseSum a f v '[]
   CaseAny :: (Expr f 'String -> Effect f v) -> CaseSum a f v ns
@@ -580,24 +574,23 @@ on ::
   -> CaseSum a f v (name ': ns)
 on = CaseCons
 
-{- | Exhaustive @if (s.tag === "C1") … else if …@. Every named arm
-tests its tag. 'CaseEnd' throws on leftover tags; 'CaseAny' /
-'Case_' is a suffix wildcard (remaining constructors + unknown).
-Named arms must be a prefix of 'CtorNames' in declaration order.
-
-@
-caseSum shape $
-  on @"Circle" (\\r -> …) $
-  on @"Rect"   (\\p -> …) $
-  CaseEnd
-@
-
-@
-caseSum phase $
-  on @"Play" (\\_ -> …) $
-  Case_ (\\_ -> noOp)
-@
--}
+-- | Exhaustive @if (s.tag === "C1") … else if …@. Every named arm
+-- tests its tag. 'CaseEnd' throws on leftover tags; 'CaseAny' /
+-- 'Case_' is a suffix wildcard (remaining constructors + unknown).
+-- Named arms must be a prefix of 'CtorNames' in declaration order.
+--
+-- @
+-- caseSum shape $
+--   on @"Circle" (\\r -> …) $
+--   on @"Rect"   (\\p -> …) $
+--   CaseEnd
+-- @
+--
+-- @
+-- caseSum phase $
+--   on @"Play" (\\_ -> …) $
+--   Case_ (\\_ -> noOp)
+-- @
 withTag ::
   Effect f (SumOf a)
   -> (Expr f 'String -> Effect f (SumOf a) -> Effect f v)
@@ -629,10 +622,9 @@ emitCase t _ (CaseAny k) = k t
 emitCase t _ CaseEnd =
   throw_ (string (T.pack "JShark.Generic: caseSum: unhandled ") <> t)
 
-{- | @if (s.tag === "Ctor") hit(s.payload) else miss@. Nullary ctors
-pass 'Unit'; they do not read @payload@. One-arm; use 'caseSum' for
-an exhaustive match.
--}
+-- | @if (s.tag === "Ctor") hit(s.payload) else miss@. Nullary ctors
+-- pass 'Unit'; they do not read @payload@. One-arm; use 'caseSum' for
+-- an exhaustive match.
 whenTag ::
   forall (name :: Symbol) a f v.
   (KnownSymbol name, Unpayload (IsUnit (CtorU a name)) (CtorU a name)) =>
@@ -686,9 +678,8 @@ instance
       (symbolVal (Proxy @name))
       (embedObject (obj (gPayloadFieldsN @0 @(l :*: r) @(Payload a name) p)))
 
-{- | Internal row so @{tag, payload}@ can be one 'ObjectLit' without a
-public 'Field' on 'Tagged'.
--}
+-- | Internal row so @{tag, payload}@ can be one 'ObjectLit' without a
+-- public 'Field' on 'Tagged'.
 data PayloadRow (u :: Universe)
 
 type instance Field (PayloadRow u) "tag" = 'String

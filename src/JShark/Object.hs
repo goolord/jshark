@@ -36,12 +36,11 @@ import GHC.TypeLits
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
-{- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is
-'getField' on 'Effect' or 'Expr' @'MutableObject@ (both yield
-'EffectSyntax'). Frozen @o.k@ on @'Expr' f ('Object r)@ is a pure
-'GetField'. PHOAS binders @f ('MutableObject r)@ need 'get' or
-@(Var x).k@; frozen binders use @(Var x).k@.
--}
+-- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is
+-- 'getField' on 'Effect' or 'Expr' @'MutableObject@ (both yield
+-- 'EffectSyntax'). Frozen @o.k@ on @'Expr' f ('Object r)@ is a pure
+-- 'GetField'. PHOAS binders @f ('MutableObject r)@ need 'get' or
+-- @(Var x).k@; frozen binders use @(Var x).k@.
 get ::
   forall k r f.
   KnownSymbol k =>
@@ -91,9 +90,8 @@ obj = ObjectLit
 frozen :: [FieldLit f r] -> Expr f ('Object r)
 frozen = FrozenLit
 
-{- | @Object.create(proto)@. Prototypal inheritance without @new@.
-The child's row is independent of the prototype's.
--}
+-- | @Object.create(proto)@. Prototypal inheritance without @new@.
+-- The child's row is independent of the prototype's.
 create :: Effect f ('MutableObject proto) -> Effect f ('MutableObject child)
 create proto = FFI "Object.create" (ArgEffect proto <: RecNil)
 

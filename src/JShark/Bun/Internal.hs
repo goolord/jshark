@@ -1,10 +1,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{- | Run raw JavaScript with bun. Plumbing for 'JShark.Bun'.
-
-A caller holding a 'String' of JavaScript has already left the typed
-subset, so this stays behind @.Internal@ rather than in the public API.
--}
+-- | Run raw JavaScript with bun. Plumbing for 'JShark.Bun'.
+--
+-- A caller holding a 'String' of JavaScript has already left the typed
+-- subset, so this stays behind @.Internal@ rather than in the public API.
 module JShark.Bun.Internal
   ( JSProgram (..)
   , plainProgram
@@ -35,7 +34,14 @@ import System.Directory
   )
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
-import System.IO (IOMode (WriteMode), hClose, hPutStrLn, openTempFile, stderr, withFile)
+import System.IO
+  ( IOMode (WriteMode)
+  , hClose
+  , hPutStrLn
+  , openTempFile
+  , stderr
+  , withFile
+  )
 import System.Process
   ( CreateProcess (..)
   , ProcessHandle
@@ -46,20 +52,18 @@ import System.Process
   , withCreateProcess
   )
 
-{- | Wall-clock ceiling on one bun run. The object language has
-'JShark.Types.While' and 'JShark.Timers', so a program that never
-terminates is expressible; without a ceiling the caller waits forever.
--}
+-- | Wall-clock ceiling on one bun run. The object language has
+-- 'JShark.Types.While' and 'JShark.Timers', so a program that never
+-- terminates is expressible; without a ceiling the caller waits forever.
 bunTimeoutMicroseconds :: Int
 bunTimeoutMicroseconds = 10 * 1000 * 1000
 
-{- | An ES module to run under bun.
-
-'jsExpression' is the term under evaluation; its value becomes the
-result. 'jsPrelude' runs first (this is where a DOM environment installs
-its globals) and 'jsEpilogue' last, in a @finally@, so a prelude that
-holds the event loop open still shuts itself down when the program throws.
--}
+-- | An ES module to run under bun.
+--
+-- 'jsExpression' is the term under evaluation; its value becomes the
+-- result. 'jsPrelude' runs first (this is where a DOM environment installs
+-- its globals) and 'jsEpilogue' last, in a @finally@, so a prelude that
+-- holds the event loop open still shuts itself down when the program throws.
 data JSProgram = JSProgram
   { jsFlags :: [String]
   -- ^ Flags for bun itself, ahead of the script path.
@@ -72,13 +76,12 @@ data JSProgram = JSProgram
 plainProgram :: String -> JSProgram
 plainProgram js = JSProgram [] "" js ""
 
-{- | Evaluate a JavaScript expression with bun and return
-@JSON.stringify@ of its value (@\"undefined\"@ when that value is
-@undefined@). A thenable result is awaited first.
-
-The JSON travels through a file, not stdout, so writes from the program
-itself (@console.log@) do not corrupt the result. Requires bun on @PATH@.
--}
+-- | Evaluate a JavaScript expression with bun and return
+-- @JSON.stringify@ of its value (@\"undefined\"@ when that value is
+-- @undefined@). A thenable result is awaited first.
+--
+-- The JSON travels through a file, not stdout, so writes from the program
+-- itself (@console.log@) do not corrupt the result. Requires bun on @PATH@.
 runJS :: String -> IO Text
 runJS = runJSWith bunTimeoutMicroseconds
 
@@ -124,33 +127,33 @@ runProgram limit p = do
         if BS.null raw
           then die "bun wrote no result (did the program exit early?)"
           else pure (decodeUtf8With lenientDecode raw)
-  where
-    -- The result leaves through 'resultPath'. Using stdout would mix it
-    -- with whatever the program itself logs. ES imports hoist, so the
-    -- prelude may carry its own.
-    script resultPath =
-      unlines
-        [ "import { writeFileSync } from \"node:fs\";"
-        , jsPrelude p
-        , "try {"
-        , "  const $raw = (" ++ jsExpression p ++ ");"
-        , "  const $thenable ="
-        , "    $raw !== null &&"
-        , "    (typeof $raw === \"object\" || typeof $raw === \"function\") &&"
-        , "    typeof $raw.then === \"function\";"
-        , -- Only a thenable is awaited: an unconditional await would add a
-          -- microtask tick, letting a pending timer fire before the result
-          -- is read.
-          "  const $jshark = $thenable ? await $raw : $raw;"
-        , "  const $json = JSON.stringify($jshark);"
-        , "  writeFileSync("
-            ++ jsString resultPath
-            ++ ", $json === undefined ? \"undefined\" : $json);"
-        , "} finally {"
-        , jsEpilogue p
-        , "}"
-        ]
-    jsString s = '"' : escapeJsString s ++ "\""
+ where
+  -- The result leaves through 'resultPath'. Using stdout would mix it
+  -- with whatever the program itself logs. ES imports hoist, so the
+  -- prelude may carry its own.
+  script resultPath =
+    unlines
+      [ "import { writeFileSync } from \"node:fs\";"
+      , jsPrelude p
+      , "try {"
+      , "  const $raw = (" ++ jsExpression p ++ ");"
+      , "  const $thenable ="
+      , "    $raw !== null &&"
+      , "    (typeof $raw === \"object\" || typeof $raw === \"function\") &&"
+      , "    typeof $raw.then === \"function\";"
+      , -- Only a thenable is awaited: an unconditional await would add a
+        -- microtask tick, letting a pending timer fire before the result
+        -- is read.
+        "  const $jshark = $thenable ? await $raw : $raw;"
+      , "  const $json = JSON.stringify($jshark);"
+      , "  writeFileSync("
+          ++ jsString resultPath
+          ++ ", $json === undefined ? \"undefined\" : $json);"
+      , "} finally {"
+      , jsEpilogue p
+      , "}"
+      ]
+  jsString s = '"' : escapeJsString s ++ "\""
 
 readIfPresent :: FilePath -> IO Text
 readIfPresent path = do
@@ -159,14 +162,13 @@ readIfPresent path = do
     then decodeUtf8With lenientDecode <$> BS.readFile path
     else pure T.empty
 
-{- | Run bun with stdio on files, and kill it if it outlives @limit@.
-
-stdout and stderr go to files rather than pipes so there is nothing to
-drain: a pipe left unread by a killed reader thread would deadlock. The
-wait polls 'getProcessExitCode' instead of blocking in @waitForProcess@,
-because an async exception cannot interrupt a blocking foreign call —
-'System.Timeout.timeout' around a wait leaves the child spinning.
--}
+-- | Run bun with stdio on files, and kill it if it outlives @limit@.
+--
+-- stdout and stderr go to files rather than pipes so there is nothing to
+-- drain: a pipe left unread by a killed reader thread would deadlock. The
+-- wait polls 'getProcessExitCode' instead of blocking in @waitForProcess@,
+-- because an async exception cannot interrupt a blocking foreign call —
+-- 'System.Timeout.timeout' around a wait leaves the child spinning.
 spawnBun ::
   FilePath
   -> [String]
@@ -195,49 +197,48 @@ spawnBun bun flags scriptPath outPath errPath limit =
             _ <- waitBounded (1 * 1000 * 1000) ph
             pure Nothing
 
-{- | Poll for exit until @limit@ microseconds of wall clock have passed.
-Elapsed time comes from the monotonic clock, not a count of sleeps, which
-would ignore the time each poll itself takes.
--}
+-- | Poll for exit until @limit@ microseconds of wall clock have passed.
+-- Elapsed time comes from the monotonic clock, not a count of sleeps, which
+-- would ignore the time each poll itself takes.
 waitBounded :: Int -> ProcessHandle -> IO (Maybe ExitCode)
 waitBounded limit ph = do
   start <- getMonotonicTimeNSec
   go start
-  where
-    stepMicroseconds = 10 * 1000
-    limitNanoseconds = fromIntegral limit * 1000 :: Word64
-    go start = do
-      m <- getProcessExitCode ph
-      case m of
-        Just c -> pure (Just c)
-        Nothing -> do
-          now <- getMonotonicTimeNSec
-          if now - start >= limitNanoseconds
-            then pure Nothing
-            else do
-              threadDelay stepMicroseconds
-              go start
+ where
+  stepMicroseconds = 10 * 1000
+  limitNanoseconds = fromIntegral limit * 1000 :: Word64
+  go start = do
+    m <- getProcessExitCode ph
+    case m of
+      Just c -> pure (Just c)
+      Nothing -> do
+        now <- getMonotonicTimeNSec
+        if now - start >= limitNanoseconds
+          then pure Nothing
+          else do
+            threadDelay stepMicroseconds
+            go start
 
-{- | A private directory for one run, holding the script, the result, and
-bun's stdout and stderr.
-
-'openTempFile' supplies the unique name and the directory hangs off it,
-so there is no delete-then-create race. The handles are closed before bun
-starts: it opens these paths itself, and on Windows an open handle would
-lock them.
--}
+-- | A private directory for one run, holding the script, the result, and
+-- bun's stdout and stderr.
+--
+-- 'openTempFile' supplies the unique name and the directory hangs off it,
+-- so there is no delete-then-create race. The handles are closed before bun
+-- starts: it opens these paths itself, and on Windows an open handle would
+-- lock them.
 withRunDir :: FilePath -> (FilePath -> IO a) -> IO a
 withRunDir parent act = bracket acquire release (act . snd)
-  where
-    acquire = do
-      (path, h) <- openTempFile parent "jshark-bun.tmp"
-      hClose h
-      let dir = path ++ ".d"
-      createDirectory dir
-      pure (path, dir)
-    release (path, dir) = do
-      removeQuietly dir (removePathForcibly dir)
-      removeQuietly path (removeFile path)
+ where
+  acquire = do
+    (path, h) <- openTempFile parent "jshark-bun.tmp"
+    hClose h
+    let
+      dir = path ++ ".d"
+    createDirectory dir
+    pure (path, dir)
+  release (path, dir) = do
+    removeQuietly dir (removePathForcibly dir)
+    removeQuietly path (removeFile path)
 
 removeQuietly :: FilePath -> IO () -> IO ()
 removeQuietly path action =

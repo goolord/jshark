@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | DOM ids and the hash/filter strings they imply. Page and Client
-must use these; do not restate the literals in either file.
--}
+-- | DOM ids and the hash/filter strings they imply. Page and Client
+-- must use these; do not restate the literals in either file.
 module Ids
   ( Route (..)
   , routes

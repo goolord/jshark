@@ -14,9 +14,8 @@ import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
-{- | An opaque phantom type representing a @Promise@ resolving to a value of
-universe @u@.
--}
+-- | An opaque phantom type representing a @Promise@ resolving to a value of
+-- universe @u@.
 data Promise (u :: Universe)
 
 -- | @promise.then(function(x){...})@

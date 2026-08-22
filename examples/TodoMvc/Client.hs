@@ -63,9 +63,8 @@ parseObject = Json.unsafeParse
 emptyState :: Effect f (MutableObjectOf AppState)
 emptyState = newRecord @AppState
 
-{- | Parse persisted state. 'none' on throw, non-object JSON, or arrays.
-Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
--}
+-- | Parse persisted state. 'none' on throw, non-object JSON, or arrays.
+-- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
 parseState :: Expr f 'String -> Effect f ('Option (MutableObjectOf AppState))
 parseState s =
   try_
@@ -126,10 +125,9 @@ hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
   foldr (\r acc -> hash .== string (routeHash r) .|| acc) false_ routes
 
-{- | One todo row, in Lucid's combinators. The structure is TodoMVC's;
-the holes are the title, the completed class and checkbox state, and the
-two handlers. 'renderInto' compiles this to @createElement@ calls.
--}
+-- | One todo row, in Lucid's combinators. The structure is TodoMVC's;
+-- the holes are the title, the completed class and checkbox state, and the
+-- two handlers. 'renderInto' compiles this to @createElement@ calls.
 todoItem ::
   Expr f 'String
   -> Expr f 'Bool

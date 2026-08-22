@@ -18,25 +18,24 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{- | Two PHOAS syntax trees for a typed subset of JavaScript.
-
-Three layers live on the same GADTs:
-
-* Good Parts kernel on 'Expr': literals, @===@, @?:@, @&&@/@||@,
-  unary functions, @const@ lets, arrays. No @==@, @with@, @eval@,
-  @new@, or @this@. Functions are unary; nest them (see 'JShark.Api.lambda2').
-* Haskell sums encoded as JS: 'Option' is @null@ / the value;
-  'Result' is @{ok: Bool, value: …}@, not a JS built-in.
-* Closed stdlib names ('ExprUnary' / 'MathUnary' / …) plus 'Effect'
-  for statements, FFI, mutation, and I/O.
-
-Binders are parametric (@f :: Universe -> Type@), i.e. weak PHOAS.
-A closed term is an end over that parameter: 'ClosedExpr' / 'ClosedEffect'
-(@forall f. …@), the same quantification as Kmett's
-@type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
-Named stdlib on 'Expr' is a closed set of constructors; free-text
-escapes live on 'Effect'.
--}
+-- | Two PHOAS syntax trees for a typed subset of JavaScript.
+--
+-- Three layers live on the same GADTs:
+--
+-- * Good Parts kernel on 'Expr': literals, @===@, @?:@, @&&@/@||@,
+--   unary functions, @const@ lets, arrays. No @==@, @with@, @eval@,
+--   @new@, or @this@. Functions are unary; nest them (see 'JShark.Api.lambda2').
+-- * Haskell sums encoded as JS: 'Option' is @null@ / the value;
+--   'Result' is @{ok: Bool, value: …}@, not a JS built-in.
+-- * Closed stdlib names ('ExprUnary' / 'MathUnary' / …) plus 'Effect'
+--   for statements, FFI, mutation, and I/O.
+--
+-- Binders are parametric (@f :: Universe -> Type@), i.e. weak PHOAS.
+-- A closed term is an end over that parameter: 'ClosedExpr' / 'ClosedEffect'
+-- (@forall f. …@), the same quantification as Kmett's
+-- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
+-- Named stdlib on 'Expr' is a closed set of constructors; free-text
+-- escapes live on 'Effect'.
 module JShark.Types
   ( Universe (..)
   , Value (..)
@@ -195,16 +194,14 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -> Effect f ('Array u)
     -- ^ @arr.sort(function(a,b){…})@
 
-{- | An FFI argument drawn from either syntax tree. This is the sanctioned
-seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
--}
+-- | An FFI argument drawn from either syntax tree. This is the sanctioned
+-- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
 data Arg :: (Universe -> Type) -> Universe -> Type where
   ArgExpr :: Expr f u -> Arg f u
   ArgEffect :: Effect f u -> Arg f u
 
-{- | JS property type of row @r@ at key @k@. Open; each host row supplies
-instances. The index on 'Object' / 'MutableObject' is this host 'Type', not a 'Universe'.
--}
+-- | JS property type of row @r@ at key @k@. Open; each host row supplies
+-- instances. The index on 'Object' / 'MutableObject' is this host 'Type', not a 'Universe'.
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
 -- | @Object.groupBy@ reified as @[{key, items}]@. Not a null-prototype dict.
@@ -214,9 +211,8 @@ type instance Field (GroupBy u) "key" = 'String
 
 type instance Field (GroupBy u) "items" = 'Array u
 
-{- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
-value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
--}
+-- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
+-- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
 data FieldLit (f :: Universe -> Type) (r :: Type) where
   FieldLit :: forall k f r. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
 
@@ -346,9 +342,8 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     (f u -> Expr f u)
     -> (f u -> Expr f v)
     -> Expr f v
-    {- ^ Recursive let. The rhs must be productive; 'JShark.evaluate' ties
-        the knot, so one that forces its own binder diverges.
-    -}
+    -- ^ Recursive let. The rhs must be productive; 'JShark.evaluate' ties
+    --         the knot, so one that forces its own binder diverges.
   Lambda ::
     (f u -> Expr f v)
     -> Expr f ('Function u v)
@@ -371,12 +366,11 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f u
     -> Expr f u
     -> Expr f u
-    {- ^ Ternary: @c ? t : e@
-        Option is JS @null@ / the value itself. Intro via 'UnsafeNullable' or
-        @Literal (ValueOption …)@. 'OptionCase' stays a primitive: 'evaluate'
-        uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
-        @if_ (opt .== none)@ plus a type-changing coerce.
-    -}
+    -- ^ Ternary: @c ? t : e@
+    --         Option is JS @null@ / the value itself. Intro via 'UnsafeNullable' or
+    --         @Literal (ValueOption …)@. 'OptionCase' stays a primitive: 'evaluate'
+    --         uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
+    --         @if_ (opt .== none)@ plus a type-changing coerce.
   OptionCase ::
     Expr f ('Option u)
     -> Expr f v
@@ -390,10 +384,9 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> (f e -> Expr f v)
     -> (f a -> Expr f v)
     -> Expr f v
-    {- ^ Eliminate a 'Result', analogous to 'either'.
-        Constrained JS surface (fixed names / universes; not a general FFI).
-        True escapes ('alert', raw @foo()@, free-text methods) live on 'Effect'.
-    -}
+    -- ^ Eliminate a 'Result', analogous to 'either'.
+    --         Constrained JS surface (fixed names / universes; not a general FFI).
+    --         True escapes ('alert', raw @foo()@, free-text methods) live on 'Effect'.
   ExprIndex ::
     Expr f ('Array u)
     -> Expr f 'Number
@@ -583,9 +576,8 @@ type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
 -- | Closed effectful term: no free PHOAS binders. The end @forall f. 'Effect' f u@.
 type ClosedEffect (u :: Universe) = forall (f :: Universe -> Type). Effect f u
 
-{- | Ordering on the Good Parts primitives. Objects/arrays use JS
-'ToPrimitive' and are not constructible here.
--}
+-- | Ordering on the Good Parts primitives. Objects/arrays use JS
+-- 'ToPrimitive' and are not constructible here.
 class Comparable (u :: Universe)
 
 instance Comparable 'Number
@@ -594,14 +586,13 @@ instance Comparable 'String
 
 instance Comparable 'Bool
 
-{- | 'IsString' for JS string literals:
-
-* @Value 'String@ — @"hi"@
-* @Expr f 'String@ — @"hi"@ as 'Literal'
-
-Prefer an explicit type signature when the hole is ambiguous with
-'String'/'Text'. Use 'JShark.Api.string' for runtime 'Text' values.
--}
+-- | 'IsString' for JS string literals:
+--
+-- * @Value 'String@ — @"hi"@
+-- * @Expr f 'String@ — @"hi"@ as 'Literal'
+--
+-- Prefer an explicit type signature when the hole is ambiguous with
+-- 'String'/'Text'. Use 'JShark.Api.string' for runtime 'Text' values.
 instance forall u. u ~ 'String => Exts.IsString (Value u) where
   fromString = ValueString . Exts.fromString
 
@@ -620,9 +611,8 @@ instance Semigroup (Expr f ('Array u)) where
 instance Monoid (Expr f ('Array u)) where
   mempty = Literal (ValueArray [])
 
-{- | @base@ 'Maybe': combine innards when both are 'Some'. Not 'Alternative'.
-The right argument is needed in both arms, so it is bound once with 'Let'.
--}
+-- | @base@ 'Maybe': combine innards when both are 'Some'. Not 'Alternative'.
+-- The right argument is needed in both arms, so it is bound once with 'Let'.
 instance Semigroup (Expr f u) => Semigroup (Expr f ('Option u)) where
   o <> d =
     Let d $ \dv ->
@@ -642,17 +632,16 @@ instance Semigroup (Expr f a) => Semigroup (Expr f ('Function r a)) where
 instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
   mempty = Lambda (\_ -> mempty)
 
-{- | 'Num' / 'Fractional' / 'Floating' for JS numbers:
-
-* @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
-  'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
-* @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
-  ('Plus'/'Times'/'MathUnary'/…) and fold later in codegen.
-  @(**)@ is @Math.pow@, not @exp (log x * y)@.
-
-Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
-for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
--}
+-- | 'Num' / 'Fractional' / 'Floating' for JS numbers:
+--
+-- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
+--   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
+-- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
+--   ('Plus'/'Times'/'MathUnary'/…) and fold later in codegen.
+--   @(**)@ is @Math.pow@, not @exp (log x * y)@.
+--
+-- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
+-- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
 instance forall u. u ~ 'Number => Num (Value u) where
   (+) = liftValue2 (+)
   (*) = liftValue2 (*)

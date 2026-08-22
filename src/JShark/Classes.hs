@@ -4,15 +4,14 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{- | Universe-indexed copies of the @base@ classes that apply to
-'Array', 'Option', 'Result', and 'Function', plus the @*@-kind
-'Semigroup' / 'Monoid' instances those classes need.
-
-These are not the "Prelude" classes: @t :: Universe -> Universe@, and
-methods map object-language values. Import qualified, or hide the
-"Prelude" names. 'Semigroup' / 'Monoid' on @Expr f ('Array u)@ (and
-friends) *are* the @base@ classes.
--}
+-- | Universe-indexed copies of the @base@ classes that apply to
+-- 'Array', 'Option', 'Result', and 'Function', plus the @*@-kind
+-- 'Semigroup' / 'Monoid' instances those classes need.
+--
+-- These are not the "Prelude" classes: @t :: Universe -> Universe@, and
+-- methods map object-language values. Import qualified, or hide the
+-- "Prelude" names. 'Semigroup' / 'Monoid' on @Expr f ('Array u)@ (and
+-- friends) *are* the @base@ classes.
 module JShark.Classes
   ( -- * Functor
     Functor (..)

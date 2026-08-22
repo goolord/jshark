@@ -65,10 +65,9 @@ statusOK = expr 200
 
 -- Fetch -------------------------------------------------------------------
 
-{- | Opaque tag for the object returned by @fetch@. Simplified: hands back
-the resolved response's handle directly instead of modeling a Promise
-of Response, and has no body-streaming/JSON-decoding methods.
--}
+-- | Opaque tag for the object returned by @fetch@. Simplified: hands back
+-- the resolved response's handle directly instead of modeling a Promise
+-- of Response, and has no body-streaming/JSON-decoding methods.
 data FetchResponse
 
 type instance Field FetchResponse "ok" = 'Bool

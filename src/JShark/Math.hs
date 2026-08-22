@@ -2,9 +2,8 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | JS @Math@ names that are not Haskell 'Num'/'Fractional'/'Floating'.
-Import qualified; remaining names still clash with 'Prelude' (@floor@, @round@, …).
--}
+-- | JS @Math@ names that are not Haskell 'Num'/'Fractional'/'Floating'.
+-- Import qualified; remaining names still clash with 'Prelude' (@floor@, @round@, …).
 module JShark.Math
   ( inc
   , dec
@@ -84,8 +83,7 @@ max = MathBinary MathMax
 min = MathBinary MathMin
 hypot = MathBinary MathHypot
 
-{- | @Math.random()@. Not pure (yields a different value each call), so
-it's an 'Effect'.
--}
+-- | @Math.random()@. Not pure (yields a different value each call), so
+-- it's an 'Effect'.
 random :: Effect f 'Number
 random = ffi "Math.random" RecNil

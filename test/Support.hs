@@ -1,19 +1,17 @@
-{-# LANGUAGE
-    DataKinds
-  , DeriveGeneric
-  , RankNTypes
-  , ScopedTypeVariables
-  , TypeFamilies
-#-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Support
   ( LitRow
-  , Person(..)
-  , Tagged(..)
-  , Group(..)
-  , Color(..)
-  , Shape(..)
-  , Badge(..)
+  , Person (..)
+  , Tagged (..)
+  , Group (..)
+  , Color (..)
+  , Shape (..)
+  , Badge (..)
   , fooE
   , barE
   , condE
@@ -23,49 +21,53 @@ module Support
   , prettyIfLambda
   , numArray
   , mulDiv
-  ) where
+  )
+where
 
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Rec (Rec(..), (<:))
+import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
 data LitRow
+
 type instance Field LitRow "x" = 'Number
+
 type instance Field LitRow "y" = 'Number
+
 type instance Field LitRow "s" = 'String
 
 data Person = Person
   { fullName :: Text
   , years :: Double
   }
-  deriving (Generic)
+  deriving Generic
 
 data Tagged = Tagged
   { label :: Text
   , tags :: [Text]
   , nickname :: Maybe Text
   }
-  deriving (Generic)
+  deriving Generic
 
 data Group = Group
   { members :: [Person]
   }
-  deriving (Generic)
+  deriving Generic
 
 data Color = Red | Green | Blue
-  deriving (Generic)
+  deriving Generic
 
 data Shape
   = Circle Double
   | Rect Double Double
-  deriving (Generic)
+  deriving Generic
 
 data Badge = Badge
   { hue :: Color
   }
-  deriving (Generic)
+  deriving Generic
 
 fooE, barE :: Effect f u
 fooE = ffi "foo" RecNil
@@ -82,7 +84,8 @@ with1 e k = fromSyntax $ do
   x <- toSyntax e
   toSyntax (expr (k (Var x)))
 
-with2 :: Effect f a -> Effect f b -> (Expr f a -> Expr f b -> Expr f c) -> Effect f c
+with2 ::
+  Effect f a -> Effect f b -> (Expr f a -> Expr f b -> Expr f c) -> Effect f c
 with2 e1 e2 k = fromSyntax $ do
   x <- toSyntax e1
   y <- toSyntax e2
@@ -90,12 +93,18 @@ with2 e1 e2 k = fromSyntax $ do
 
 prettyIfLambda :: forall f. Effect f 'Number
 prettyIfLambda = fromSyntax $ do
-  r <- toSyntax $ ApplyE
-    (lambdaE (\x ->
-        ifE (ffi "Boolean" (arg (number 1) <: RecNil))
-          x
-          (expr (number 0))))
-    (expr (number 6))
+  r <-
+    toSyntax $
+      ApplyE
+        ( lambdaE
+            ( \x ->
+                ifE
+                  (ffi "Boolean" (arg (number 1) <: RecNil))
+                  x
+                  (expr (number 0))
+            )
+        )
+        (expr (number 6))
   yield (Var r)
 
 numArray :: forall f. Expr f ('Array 'Number)

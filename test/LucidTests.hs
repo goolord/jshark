@@ -1,10 +1,8 @@
-{-# LANGUAGE
-    DataKinds
-  , FlexibleContexts
-  , OverloadedStrings
-  , RankNTypes
-  , ScopedTypeVariables
-#-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | 'JShark.Lucid' templates, executed in a real DOM (happy-dom via bun).
 module LucidTests (lucidDomTests) where
@@ -34,39 +32,52 @@ import Test.Tasty.HUnit
 lucidDomTests :: TestTree
 lucidDomTests =
   after AllSucceed "happy-dom is available" $
-    testGroup "JShark.Lucid"
-      [ domCase "static structure survives the round trip"
+    testGroup
+      "JShark.Lucid"
+      [ domCase
+          "static structure survives the round trip"
           (markupOf (li_ (div_ [class_ "view"] "hi")))
           "\"<li><div class=\\\"view\\\">hi</div></li>\""
       , testCase "a hole-free template renders the same as Lucid" $ do
           -- The point of reusing Lucid's classes: one value, two backends.
-          let expected = TL.unpack (renderText (shared :: Html ()))
+          let
+            expected = TL.unpack (renderText (shared :: Html ()))
           got <- runDom (markupOf shared)
           assertEqual "same markup" (show expected) got
-      , domCase "text_ is a text node" (markupOf (li_ (text_ "plain"))) "\"<li>plain</li>\""
-      , domCase "void_ has no closing tag"
+      , domCase
+          "text_ is a text node"
+          (markupOf (li_ (text_ "plain")))
+          "\"<li>plain</li>\""
+      , domCase
+          "void_ has no closing tag"
           (markupOf (void_ "input" [class_ "toggle", type_ "checkbox"]))
           "\"<input class=\\\"toggle\\\" type=\\\"checkbox\\\">\""
-      , domCase "dynText is a text node"
+      , domCase
+          "dynText is a text node"
           (textOf (string "li label") (todoRow (string "write tests") true_))
           "\"write tests\""
-      , domCase "classWhen adds the class when the test holds"
+      , domCase
+          "classWhen adds the class when the test holds"
           (attrOf (string "li") (string "class") (todoRow (string "x") true_))
           "\"completed\""
-      , domCase "classWhen leaves the class off when the test fails"
+      , domCase
+          "classWhen leaves the class off when the test fails"
           (hasClass (string "li") (string "completed") (todoRow (string "x") false_))
           "false"
-      , domCase "prop sets the property, not the attribute"
+      , domCase
+          "prop sets the property, not the attribute"
           (checkedOf (todoRow (string "x") true_))
           "true"
-      , domCase "dynAttr sets a computed attribute"
+      , domCase
+          "dynAttr sets a computed attribute"
           ( attrOf
               (string "li")
               (string "data-id")
               (li_ (dynAttr "data-id" (Concat (string "id-") (string "7"))))
           )
           "\"id-7\""
-      , domCase "dynAttr overrides a static attribute of the same name"
+      , domCase
+          "dynAttr overrides a static attribute of the same name"
           ( attrOf
               (string "li")
               (string "class")
@@ -76,9 +87,8 @@ lucidDomTests =
       , domCase "on wires an event listener" clickTemplate "\"yes\""
       ]
 
-{- | A template with no holes, so it is polymorphic over 'Term' and can be
-rendered by Lucid as well as by 'renderInto'.
--}
+-- | A template with no holes, so it is polymorphic over 'Term' and can be
+-- rendered by Lucid as well as by 'renderInto'.
 shared ::
   forall h.
   (Term (h ()) (h ()), Term [Attribute] (h () -> h ()), IsString (h ())) => h ()
@@ -129,16 +139,15 @@ querySelector ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 querySelector selector = hold (ffi "document.querySelector" (arg selector <: RecNil))
 
-{- | A click handler that marks the root. Proves the listener is attached
-to the element the template describes.
--}
+-- | A click handler that marks the root. Proves the listener is attached
+-- to the element the template describes.
 clickTemplate :: forall f. Effect f 'String
 clickTemplate = fromSyntax $ do
   root <- Dom.lookupId (string "root")
   _ <-
-    renderInto root $
-      button_ [class_ "hit"] $
-        on "click" (Dom.setAttribute root "data-hit" (string "yes"))
+    renderInto root
+      $ button_ [class_ "hit"]
+      $ on "click" (Dom.setAttribute root "data-hit" (string "yes"))
   btn <- querySelector (string "button.hit")
   _ <- toSyntax (callMethod btn "click" RecNil :: Effect f 'Unit)
   v <- Dom.getAttribute root "data-hit"
@@ -160,10 +169,11 @@ domCase name e expected = testCase name $ do
 
 runDom :: (forall f. Effect f u) -> IO String
 runDom e = T.unpack <$> evaluateEffectJSONWith cfg e
-  where
-    cfg =
-      domBunConfig
-        {bunEnv = HappyDom defaultHappyDomOptions {happyDomBody = rootDiv}}
+ where
+  cfg =
+    domBunConfig
+      { bunEnv = HappyDom defaultHappyDomOptions {happyDomBody = rootDiv}
+      }
 
 rootDiv :: Text
 rootDiv = "<div id=\"root\"></div>"

@@ -1,10 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
-Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
-Import qualified; names clash with 'Prelude'.
--}
+-- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
+-- Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
+-- Import qualified; names clash with 'Prelude'.
 module JShark.String
   ( length
   , indexOf
