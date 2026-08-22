@@ -11,6 +11,7 @@
 module Main (main) where
 
 import BunTests (bunEvalTests)
+import qualified Control.Exception as Ex
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -87,6 +88,18 @@ evaluatorTests = testGroup "evaluate"
       evaluateNumber
         ((Object.frozen [Object.field @"x" (number 1), Object.field @"x" (number 2)] :: Expr f ('Object LitRow)).x)
         @?= 2
+  , testCase "frozen records compare by last-wins fields" $
+      case
+        evaluate
+          ( Eq
+              (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
+              (Object.frozen [Object.field @"x" (number 1)])
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Show of Result is JS String(object)" $
+      case evaluate (Show (ok (number 5) :: Expr f ('Result 'String 'Number))) of
+        ValueString s -> s @?= "[object Object]"
   , testCase "evaluateCached agrees with evaluate on a shared heap node" $ do
       let x = number 21 + number 21
           e = x + x
@@ -263,9 +276,26 @@ stdlibTests :: TestTree
 stdlibTests = testGroup "stdlib"
   [ testCase "Array.index evaluates" $
       evaluateNumber (Array.index numArray (number 1)) @?= 2
-  , testCase "Array.index renders as bracket indexing" $
-      renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
-        @?= "xs()[i()]"
+  , testCase "Array.index 1.9 is the integer slot" $
+      evaluateNumber (Array.index numArray (number 1.9)) @?= 2
+  , testCase "Array.index out of bounds throws" $ do
+      r <- Ex.try (Ex.evaluate (evaluateNumber (Array.index numArray (number 9))))
+      case r of
+        Left (Ex.ErrorCall msg)
+          | "evaluate: array index" `T.isPrefixOf` T.pack msg -> pure ()
+          | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+        Right n -> assertFailure ("expected throw, got " <> show n)
+  , testCase "Array.index NaN is out of bounds" $ do
+      r <- Ex.try (Ex.evaluate (evaluateNumber (Array.index numArray (number (0 / 0)))))
+      case r of
+        Left (Ex.ErrorCall msg)
+          | "evaluate: array index" `T.isPrefixOf` T.pack msg -> pure ()
+          | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+        Right n -> assertFailure ("expected throw, got " <> show n)
+  , testCase "Array.index truncates and throws out of bounds" $ do
+      let js = T.pack $ renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
+      T.isInfixOf "Math.trunc" js @?= True
+      T.isInfixOf "throw" js @?= True
   , testCase "Array.length renders as .length" $
       renderJS (pureAST (Array.length numArray)) @?= "[1.0, 2.0].length"
   , testCase "Array.map renders as .map with a callback" $
@@ -402,12 +432,14 @@ stdlibTests = testGroup "stdlib"
           onClick el $ \_ -> noOp
           toSyntax noOp))))
         @?= True
-  , testCase ".== compiles to strict === (never ==)" $
-      renderJS (effectfulAST (with2 fooE barE (.==)))
-        @?= "foo() === bar()"
-  , testCase ".!= compiles to strict !==" $
-      renderJS (effectfulAST (with2 fooE barE (.!=)))
-        @?= "foo() !== bar()"
+  , testCase ".== is $eq (=== then structural; never ==)" $ do
+      let js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.==)))
+      T.isInfixOf "$eq" js @?= True
+      T.isInfixOf " == " js @?= False
+  , testCase ".!= is !$eq" $ do
+      let js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.!=)))
+      T.isInfixOf "$eq" js @?= True
+      T.isPrefixOf "!" js @?= True
   , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
       renderJS (effectfulAST (ffi "setTimeout" (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)))
         @?= "setTimeout(function (n0) {return (tick())}, 0.0)"
@@ -555,10 +587,12 @@ genericTests = testGroup "generic"
   , testCase "record field of a sum uses toSum" $
       T.isInfixOf "\"Red\"" (T.pack $ renderJS (effectfulAST (G.toObject (Badge Red))))
         @?= True
-  , testCase "whenTag on a nullary ctor compares .tag" $
-      T.isInfixOf ".tag === \"Red\"" (T.pack $ renderJS (effectfulAST
-        (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))))
-        @?= True
+  , testCase "whenTag on a nullary ctor compares .tag" $ do
+      let js = T.pack $ renderJS (effectfulAST
+            (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no"))))
+      T.isInfixOf ".tag" js @?= True
+      T.isInfixOf "\"Red\"" js @?= True
+      T.isInfixOf "$eq" js @?= True
   , testCase "whenTag unary payload is the value" $
       T.isInfixOf ".payload" (T.pack $ renderJS (effectfulAST
         (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))))
@@ -581,18 +615,19 @@ genericTests = testGroup "generic"
                G.on @"Blue" (\_ -> expr (string "b")) $
                G.CaseEnd))
       T.isInfixOf ".tag" js @?= True
-      T.isInfixOf "=== \"Red\"" js @?= True
-      T.isInfixOf "=== \"Green\"" js @?= True
-      T.isInfixOf "=== \"Blue\"" js @?= True
+      T.isInfixOf "$eq" js @?= True
+      T.isInfixOf "\"Red\"" js @?= True
+      T.isInfixOf "\"Green\"" js @?= True
+      T.isInfixOf "\"Blue\"" js @?= True
       T.isInfixOf "throw" js @?= True
   , testCase "caseSum Case_ is a suffix wildcard" $ do
       let js = T.pack $ renderJS (effectfulAST
             (G.caseSum @Color (ffi "color" RecNil) $
                G.on @"Red" (\_ -> expr (string "r")) $
                G.Case_ (\_ -> expr (string "other"))))
-      T.isInfixOf "=== \"Red\"" js @?= True
-      T.isInfixOf "=== \"Green\"" js @?= False
-      T.isInfixOf "=== \"Blue\"" js @?= False
+      T.isInfixOf "\"Red\"" js @?= True
+      T.isInfixOf "\"Green\"" js @?= False
+      T.isInfixOf "\"Blue\"" js @?= False
   , testCase "caseSum unary payload is the value" $
       T.isInfixOf ".payload" (T.pack $ renderJS (effectfulAST
         (G.caseSum @Shape (ffi "shape" RecNil) $

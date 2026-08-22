@@ -71,6 +71,8 @@ bunEvalTests =
             , bunCase getBun "Eq numbers" (Eq (number 1) (number 1))
             , bunCase getBun "NEq numbers" (NEq (number 1) (number 2))
             , bunCase getBun "array index" (Array.index numArray (number 1))
+            , bunCase getBun "array index 1.9 is the integer slot"
+                (Array.index numArray (number 1.9))
             , bunCase getBun "Math.sqrt" (sqrt (number 9))
             , bunCase getBun "Math.round half toward +Infinity" (Math.round (number 2.5))
             , bunCase getBun "Math.round negative half" (Math.round (number (-2.5)))

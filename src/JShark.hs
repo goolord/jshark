@@ -176,10 +176,42 @@ valueEq (ValueResult a) (ValueResult b) = case (a, b) of
   (Right x, Right y) -> valueEq x y
   _ -> False
 valueEq (ValueRegex a) (ValueRegex b) = a == b
-valueEq ValueFrozen{} ValueFrozen{} =
-  error "evaluate: frozen objects cannot be compared for equality"
+valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
 valueEq (ValueFunction _) (ValueFunction _) =
   error "evaluate: functions cannot be compared for equality"
+
+-- | Last-wins records. JS @===@ is identity; we keep value equality
+-- because a frozen object is a Good Parts record, not a mutable handle.
+frozenEq :: [FieldLit Value r] -> [FieldLit Value r] -> Bool
+frozenEq as bs =
+  let
+    as' = lastWinsFields as
+    bs' = lastWinsFields bs
+   in
+    length as' == length bs' && all (\fa -> any (fieldLitEq fa) bs') as'
+
+lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
+lastWinsFields = reverse . keep [] . reverse
+  where
+    keep acc [] = acc
+    keep acc (f : fs)
+      | fieldKey f `elem` map fieldKey acc = keep acc fs
+      | otherwise = keep (f : acc) fs
+
+evalFieldLit ::
+  Monad m =>
+  (forall w. Expr Value w -> m (Value w))
+  -> FieldLit Value r
+  -> m (FieldLit Value r)
+evalFieldLit rec (FieldLit @k e) = FieldLit @k . Literal <$> rec e
+
+fieldLitEq :: FieldLit Value r -> FieldLit Value r -> Bool
+fieldLitEq (FieldLit @k a) (FieldLit @k' b) =
+  case sameSymbol (Proxy @k) (Proxy @k') of
+    Nothing -> False
+    Just Refl -> case (a, b) of
+      (Literal x, Literal y) -> valueEq x y
+      _ -> error "evaluate: frozen field was not forced"
 
 -- | Only numbers, strings, and booleans support ordering comparisons.
 valueCompare :: Value u -> Value u -> Ordering
@@ -200,8 +232,7 @@ jsShow ValueUnit = "undefined"
 jsShow (ValueArray xs) = T.intercalate "," (map jsShow xs)
 jsShow (ValueOption Nothing) = "null"
 jsShow (ValueOption (Just x)) = jsShow x
-jsShow (ValueResult (Right x)) = jsShow x
-jsShow (ValueResult (Left x)) = jsShow x
+jsShow ValueResult{} = "[object Object]"
 jsShow (ValueRegex s) = s
 jsShow ValueFrozen{} = "[object Object]"
 jsShow (ValueFunction _) = error "evaluate: cannot show a function"
@@ -314,7 +345,6 @@ isOrderableValue = \case
 
 eqFoldableValue :: Value u -> Bool
 eqFoldableValue ValueFunction{} = False
-eqFoldableValue ValueFrozen{} = False
 eqFoldableValue _ = True
 
 -- | JS ToInt32 / ToUint32 for bitwise ops and @>>>@.
@@ -560,16 +590,15 @@ evalAlg rec apply = \case
     iv <- rec i
     case arr of
       ValueArray vs ->
-        -- JS array indexing truncates the index toward zero (as part of
-        -- ToIntegerOrInfinity) rather than rounding, and returns @undefined@
-        -- out of bounds rather than crashing; we can't represent
-        -- @undefined@ generically here (there's no 'Value' inhabitant for
-        -- an arbitrary universe @u@), so out-of-bounds access is a hard
-        -- error in the reference interpreter.
+        -- Ordinary JS @a[1.9]@ is the string key @\"1.9\"@ (@undefined@).
+        -- We treat the index as an integer (trunc toward 0) and throw
+        -- out of bounds: no holes, no @undefined@ at an arbitrary @u@.
+        -- Codegen matches this; it does not emit raw @a[i]@.
         let
-          idx = truncate (unNumber iv) :: Int
+          d = unNumber iv
+          idx = truncate d :: Int
          in
-          if idx >= 0 && idx < length vs
+          if isFiniteDouble d && idx >= 0 && idx < length vs
             then pure (vs !! idx)
             else error "evaluate: array index out of bounds"
   MathUnary name x -> ValueNumber . mathUnaryFn name . unNumber <$> rec x
@@ -577,7 +606,7 @@ evalAlg rec apply = \case
     ValueNumber
       <$> (mathBinaryFn name <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
   UnsafeNullable x -> ValueOption . Just <$> rec x
-  FrozenLit fs -> pure (ValueFrozen fs)
+  FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit rec) fs
   GetField @k o -> do
     ov <- rec o
     withFrozenField @k ov rec
@@ -679,7 +708,7 @@ goOpen cache e = case e of
   Literal ValueBool{} -> go cache e
   Literal ValueUnit -> go cache e
   Literal ValueRegex{} -> go cache e
-  FrozenLit fs -> pure (ValueFrozen fs)
+  FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit (goOpen cache)) fs
   GetField @k o -> do
     ov <- goOpen cache o
     withFrozenField @k ov (goOpen cache)
@@ -707,6 +736,26 @@ body is superlinear (breakout sat in 'renderJS' for tens of seconds).
 -}
 renderJSCompact :: Doc -> String
 renderJSCompact = P.renderStyle P.style{P.mode = P.LeftMode}
+
+-- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
+-- (@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
+jsCheckedIndex :: Doc -> Doc -> Doc
+jsCheckedIndex arr idx =
+  P.parens
+    "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
+    <> P.parens (arr <> ("," <+> idx))
+
+-- | @===@ then structural arrays / plain objects (frozen records, 'Result').
+-- Identity-only @===@ would make two equal @[1]@ / @{x:1}@ bindings disagree
+-- with 'evaluate'.
+jsValueEq :: Doc -> Doc -> Doc
+jsValueEq a b =
+  P.parens
+    "function $eq(a,b){if(a===b)return true;if(Array.isArray(a)&&Array.isArray(b)){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$eq(a[i],b[i]))return false;return true}if(a&&b&&a.constructor===Object&&b.constructor===Object){var ka=Object.keys(a);if(ka.length!==Object.keys(b).length)return false;for(var j=0;j<ka.length;j++){var k=ka[j];if(!Object.prototype.hasOwnProperty.call(b,k)||!$eq(a[k],b[k]))return false}return true}return false}"
+    <> P.parens (a <> ("," <+> b))
+
+jsValueNEq :: Doc -> Doc -> Doc
+jsValueNEq a b = "!" <> P.parens (jsValueEq a b)
 
 {- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
 path ('location.hash'); @o["0"]@ otherwise. A single key that is
@@ -1418,10 +1467,30 @@ foldCmp cmp ok k x y = case (x, y) of
   _ -> k x y
 
 foldEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldEq = foldCmp valueEq eqFoldableValue Eq
+foldEq = foldFrozenEq valueEq Eq
 
 foldNEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldNEq = foldCmp (\a b -> not (valueEq a b)) eqFoldableValue NEq
+foldNEq = foldFrozenEq (\a b -> not (valueEq a b)) NEq
+
+foldFrozenEq ::
+  (forall a. Value a -> Value a -> Bool)
+  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
+  -> Expr Stamp u
+  -> Expr Stamp u
+  -> Expr Stamp 'Bool
+foldFrozenEq cmp k x y = case (x, y) of
+  (Literal a, Literal b) | eqFoldableValue a && eqFoldableValue b ->
+    Literal (ValueBool (cmp a b))
+  (FrozenLit as, FrozenLit bs)
+    | Just as' <- peelFrozen as
+    , Just bs' <- peelFrozen bs ->
+        Literal (ValueBool (cmp (ValueFrozen as') (ValueFrozen bs')))
+  _ -> k x y
+
+peelFrozen :: [FieldLit Stamp r] -> Maybe [FieldLit Value r]
+peelFrozen = traverse $ \(FieldLit @k e) -> case e of
+  Literal v -> Just (FieldLit @k (Literal v))
+  _ -> Nothing
 
 foldOrd ::
   Ordering
@@ -1453,7 +1522,8 @@ foldTypeOf x = case x of
 foldIndex :: Expr Stamp ('Array u) -> Expr Stamp 'Number -> Expr Stamp u
 foldIndex arr idx = case (arr, idx) of
   (Literal (ValueArray vs), Literal (ValueNumber d))
-    | let
+    | isFiniteDouble d
+    , let
         i = truncate d :: Int
     , i >= 0 && i < length vs ->
         Literal (vs !! i)
@@ -2381,8 +2451,8 @@ pureAST' !s0 = \case
   Lambda f -> emitExprLambda s0 f
   And x y -> renderBin "&&" s0 x y
   Or x y -> renderBin "||" s0 x y
-  Eq x y -> renderBin "===" s0 x y
-  NEq x y -> renderBin "!==" s0 x y
+  Eq x y -> renderBinApp jsValueEq s0 x y
+  NEq x y -> renderBinApp jsValueNEq s0 x y
   GTh x y -> renderBin ">" s0 x y
   LTh x y -> renderBin "<" s0 x y
   GTEq x y -> renderBin ">=" s0 x y
@@ -2497,7 +2567,7 @@ pureAST' !s0 = \case
       (s1, Code aDecl aRef) = pureAST' s0 arr
       (s2, Code iDecl iRef) = pureAST' s1 idx
      in
-      (s2, Code (aDecl $$ iDecl) (aRef <> P.brackets iRef))
+      (s2, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
   MathUnary name x ->
     let
       (s1, Code xDecl xRef) = pureAST' s0 x
@@ -2752,15 +2822,20 @@ renderCallbackMethod name s0 recv f =
 
 renderBin :: String -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code)
 renderBin op s0 x y =
+  renderBinApp
+    (\l r -> wrapOperand x l <+> P.text op <+> wrapOperand y r)
+    s0
+    x
+    y
+
+renderBinApp ::
+  (Doc -> Doc -> Doc) -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code)
+renderBinApp join s0 x y =
   let
     (s1, Code xDecl xRef) = pureAST' s0 x
     (s2, Code yDecl yRef) = pureAST' s1 y
    in
-    ( s2
-    , Code
-        (xDecl $$ yDecl)
-        (wrapOperand x xRef <+> P.text op <+> wrapOperand y yRef)
-    )
+    (s2, Code (xDecl $$ yDecl) (join xRef yRef))
 
 argAST :: CG -> Arg Stamp u -> (CG, Code)
 argAST s (ArgExpr e) = pureAST' s e

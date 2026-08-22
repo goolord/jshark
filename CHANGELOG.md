@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* `evaluate` and JS agree on more Good Parts edges: array index is
+  `Math.trunc` + throw (no `a[1.9]` / NaN holes); frozen fields are
+  evaluated eagerly and compared by last-wins value; `.==` is `$eq`
+  (`===` then structural arrays / plain objects); `Show` of `Result` is
+  `String(object)` (`"[object Object]"`).
 * Dependency bounds follow PVP for the APIs we import: lower bound is
   the version that added the symbol, upper bound is the next `A`
   (`text < 3`, `lucid < 3`, `scotty < 1`). We do not pin the current `B`.
