@@ -100,10 +100,14 @@ wire canvas state = do
   addEventListener "keydown" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
       code <- getProp (Lift (Var e)) "code"
-      bindArrows state code true_
-      ifS (code .== "Space") (do
-        toSyntax $ callMethod (Lift (Var e)) "preventDefault" RecNil
-        tryRestart state) done
+      toSyntax $ stringCaseE code
+        [ ("ArrowRight", discard (stmts $ set @"rightOn" state true_))
+        , ("ArrowLeft", discard (stmts $ set @"leftOn" state true_))
+        , ("Space", discard (stmts $ do
+            toSyntax $ callMethod (Lift (Var e)) "preventDefault" RecNil
+            tryRestart state))
+        ]
+        noOp
   addEventListener "keyup" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
       code <- getProp (Lift (Var e)) "code"
@@ -123,9 +127,12 @@ bindArrows ::
   -> Expr f 'String
   -> Expr f 'Bool
   -> EffectSyntax f (f 'Unit)
-bindArrows state code held = do
-  ifS (code .== "ArrowRight") (set @"rightOn" state held) done
-  ifS (code .== "ArrowLeft") (set @"leftOn" state held) done
+bindArrows state code held =
+  toSyntax $ stringCaseE code
+    [ ("ArrowRight", discard (stmts $ set @"rightOn" state held))
+    , ("ArrowLeft", discard (stmts $ set @"leftOn" state held))
+    ]
+    noOp
 
 tryRestart :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
 tryRestart state =

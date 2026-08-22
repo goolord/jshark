@@ -56,4 +56,4 @@ filterLink r =
     attrs =
       href_ (routeHash r)
         : id_ (routeId r)
-        : [class_ classSelected | routeValue r == valueAll]
+        : if routeValue r == valueAll then [class_ classSelected] else []

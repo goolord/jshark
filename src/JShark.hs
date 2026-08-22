@@ -908,7 +908,7 @@ countEffect t = \case
     countExpr t o + countLazyEffect t (e nestedDummy) + countLazyEffect t (s nestedDummy)
   StringCaseE o arms d ->
     countExpr t o
-      + sum [countLazyEffect t e | (_, e) <- arms]
+      + sum (map (countLazyEffect t . snd) arms)
       + countLazyEffect t d
   Throw x -> countExpr t x
   Try a k -> countEffect t a + countLazyEffect t (k nestedDummy)

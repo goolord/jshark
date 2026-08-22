@@ -86,13 +86,10 @@ hydrate blob = do
     (set @"nextId" st n)
     (set @"nextId" st 1)
   f <- getProp (Lift blob) "filter"
-  ifS (knownFilter f)
-    (set @"filter" st f)
-    (set @"filter" st (string valueAll))
+  toSyntax $ stringCaseE f
+    (map (\r -> (routeValue r, discard (stmts $ set @"filter" st f))) routes)
+    (discard (stmts $ set @"filter" st (string valueAll)))
   pure (Var st)
-
-knownFilter :: Expr f 'String -> Expr f 'Bool
-knownFilter f = foldr (\r acc -> f .== string (routeValue r) .|| acc) false_ routes
 
 mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f (ObjectOf Todo))
 mkTodo todoTitle tid = do
@@ -108,13 +105,9 @@ hashRecognized hash =
 
 applyHashFilter :: Effect f (ObjectOf AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
-  foldr
-    (\r k ->
-       ifS (hash .== string (routeHash r))
-         (set @"filter" state (string (routeValue r)))
-         k)
-    done
-    routes
+  toSyntax $ stringCaseE hash
+    (map (\r -> (routeHash r, discard (stmts $ set @"filter" state (string (routeValue r))))) routes)
+    noOp
 
 byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 byId = Dom.lookupId . string
@@ -219,10 +212,9 @@ mainJS = do
              Dom.setAttribute footerEl "style" "display:none")
 
         mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
-        mapM_ (\(r, el) ->
-          ifS (filt .== string (routeValue r))
-            (Dom.classAdd el (string classSelected))
-            done) filterLinks
+        toSyntax $ stringCaseE filt
+          (map (\(r, el) -> (routeValue r, discard (stmts $ Dom.classAdd el (string classSelected)))) filterLinks)
+          noOp
 
         blob <- toSyntax emptyState
         set @"todos" blob items
