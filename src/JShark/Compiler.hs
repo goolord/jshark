@@ -409,14 +409,17 @@ formatJS = go 0
 
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
+compileTree :: CompilerConfig -> (OutputStyle -> Doc) -> IO Text
+compileTree cfg doc =
+  forceCompiled =<< finishStyle (configStyle cfg) <$> compileWith cfg
+    (T.pack (renderJSCompact (doc (configStyle cfg))))
+
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffect cfg eff = forceCompiled =<< finishStyle (configStyle cfg) <$> compileWith cfg
-  (T.pack (renderJSCompact (effectDoc (configStyle cfg) eff)))
+compileEffect cfg eff = compileTree cfg (`effectDoc` eff)
 
 -- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePure cfg e = forceCompiled =<< finishStyle (configStyle cfg) <$> compileWith cfg
-  (T.pack (renderJSCompact (pureDoc (configStyle cfg) e)))
+compilePure cfg e = compileTree cfg (`pureDoc` e)
 
 -- | Banner-before-serve only means JS is ready if this ran.
 forceCompiled :: Text -> IO Text
@@ -471,17 +474,15 @@ hasExecutable name = do
 
 runEsbuild :: CompilerEsbuildConfig -> Text -> IO (Either String Text)
 runEsbuild cfg source = do
-  mDirect <- findExecutable "esbuild"
-  mNpx <- findExecutable "npx"
+  found <- lookupNamedTool "esbuild"
   let args =
         ["--loader=js", "--log-level=error"]
         ++ [ "--minify" | esbuildMinify cfg ]
         ++ maybe [] (\t -> ["--target=" ++ t]) (esbuildTarget cfg)
         ++ esbuildExtraArgs cfg
-  case (mDirect, mNpx) of
-    (Just exe, _) -> run exe args
-    (Nothing, Just npxExe) -> run npxExe (["--no-install", "esbuild"] ++ args)
-    (Nothing, Nothing) -> pure (Left "esbuild executable not found on PATH")
+  case found of
+    Left err -> pure (Left err)
+    Right (exe, wrap) -> run exe (wrap args)
   where
   -- A pure IIFE (or bare expression) is an unused statement to esbuild, so
   -- '--minify' can DCE it to empty — especially after constant folding turns
@@ -552,18 +553,31 @@ runClosure cfg source = do
         executeProcess npxExe (["--no-install", "google-closure-compiler"] ++ args) source
       (Nothing, Nothing, Nothing) -> pure (Left "Google Closure Compiler not found on PATH")
 
-runTerser :: CompilerTerserConfig -> Text -> IO (Either String Text)
-runTerser cfg source = do
-  mDirect <- findExecutable "terser"
+lookupNamedTool :: String -> IO (Either String (FilePath, [String] -> [String]))
+lookupNamedTool name = do
+  mDirect <- findExecutable name
   mNpx <- findExecutable "npx"
-  let args =
-        ["--compress" | terserCompress cfg]
-        ++ ["--mangle" | terserMangle cfg]
-        ++ terserExtraArgs cfg
   case (mDirect, mNpx) of
-    (Just exe, _) -> executeProcess exe args source
-    (Nothing, Just npxExe) -> executeProcess npxExe (["--no-install", "terser"] ++ args) source
-    (Nothing, Nothing) -> pure (Left "terser executable not found on PATH")
+    (Just exe, _) -> pure (Right (exe, id))
+    (Nothing, Just npxExe) ->
+      pure (Right (npxExe, (["--no-install", name] ++)))
+    (Nothing, Nothing) ->
+      pure (Left (name ++ " executable not found on PATH"))
+
+runNamedTool :: String -> [String] -> Text -> IO (Either String Text)
+runNamedTool name args source = do
+  found <- lookupNamedTool name
+  case found of
+    Left err -> pure (Left err)
+    Right (exe, wrap) -> executeProcess exe (wrap args) source
+
+runTerser :: CompilerTerserConfig -> Text -> IO (Either String Text)
+runTerser cfg source =
+  runNamedTool "terser"
+    (["--compress" | terserCompress cfg]
+      ++ ["--mangle" | terserMangle cfg]
+      ++ terserExtraArgs cfg)
+    source
 
 executeProcess :: FilePath -> [String] -> Text -> IO (Either String Text)
 executeProcess cmd args source = do

@@ -16,14 +16,17 @@ import JShark.Api
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
+console_ :: String -> Expr f u -> EffectSyntax f ()
+console_ name x = toSyntax_ (ffi ("console." ++ name) (arg x <: RecNil))
+
 log :: Expr f u -> EffectSyntax f ()
-log x = toSyntax_ (ffi "console.log" (arg x <: RecNil))
+log = console_ "log"
 
 warn :: Expr f u -> EffectSyntax f ()
-warn x = toSyntax_ (ffi "console.warn" (arg x <: RecNil))
+warn = console_ "warn"
 
 error :: Expr f u -> EffectSyntax f ()
-error x = toSyntax_ (ffi "console.error" (arg x <: RecNil))
+error = console_ "error"
 
 info :: Expr f u -> EffectSyntax f ()
-info x = toSyntax_ (ffi "console.info" (arg x <: RecNil))
+info = console_ "info"

@@ -14,6 +14,7 @@
 module Client (mainJS, Todo, AppState) where
 
 import Prelude hiding (filter, id)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import qualified JShark.Array as Array
@@ -86,8 +87,7 @@ hydrate blob = do
     (set @"nextId" st n)
     (set @"nextId" st 1)
   f <- getProp (Lift blob) "filter"
-  toSyntax $ stringCaseE f
-    (map (\r -> (routeValue r, discard (stmts $ set @"filter" st f))) routes)
+  toSyntax $ routeSwitch routeValue (\_ -> set @"filter" st f) f
     (discard (stmts $ set @"filter" st (string valueAll)))
   pure (Var st)
 
@@ -103,11 +103,46 @@ hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
   foldr (\r acc -> hash .== string (routeHash r) .|| acc) false_ routes
 
+routeSwitch
+  :: (Route -> Text)
+  -> (Route -> EffectSyntax f (f 'Unit))
+  -> Expr f 'String
+  -> Effect f 'Unit
+  -> Effect f 'Unit
+routeSwitch key arm scrut def =
+  stringCaseE scrut (map (\r -> (key r, discard (stmts (arm r)))) routes) def
+
 applyHashFilter :: Effect f (ObjectOf AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
-  toSyntax $ stringCaseE hash
-    (map (\r -> (routeHash r, discard (stmts $ set @"filter" state (string (routeValue r))))) routes)
-    noOp
+  toSyntax $
+    routeSwitch routeHash (\r -> set @"filter" state (string (routeValue r))) hash noOp
+
+highlightFilter
+  :: Expr f 'String
+  -> [(Route, Effect f ('MutableObject Dom.DomElement))]
+  -> EffectSyntax f (f 'Unit)
+highlightFilter filt filterLinks = do
+  mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
+  toSyntax $
+    routeSwitch routeValue
+      (\r -> Dom.classAdd (fromMaybe missing (lookup r filterLinks)) (string classSelected))
+      filt
+      noOp
+  where
+    missing = error "highlightFilter: missing filter link"
+
+persistState
+  :: Effect f (ObjectOf AppState)
+  -> Expr f ('Array (ObjectOf Todo))
+  -> Expr f 'String
+  -> EffectSyntax f (f 'Unit)
+persistState state items filt = do
+  blob <- toSyntax emptyState
+  set @"todos" blob items
+  set @"filter" blob filt
+  nid <- state.nextId
+  set @"nextId" blob nid
+  Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
 
 byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 byId = Dom.lookupId . string
@@ -211,17 +246,8 @@ mainJS = do
              Dom.setAttribute mainEl "style" "display:none"
              Dom.setAttribute footerEl "style" "display:none")
 
-        mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
-        toSyntax $ stringCaseE filt
-          (map (\(r, el) -> (routeValue r, discard (stmts $ Dom.classAdd el (string classSelected)))) filterLinks)
-          noOp
-
-        blob <- toSyntax emptyState
-        set @"todos" blob items
-        set @"filter" blob filt
-        nid <- state.nextId
-        set @"nextId" blob nid
-        Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
+        highlightFilter filt filterLinks
+        persistState state items filt
 
       wire :: Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)
       wire render = do

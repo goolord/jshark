@@ -101,13 +101,11 @@ wire canvas state = do
     stmts $ do
       code <- getProp (Lift (Var e)) "code"
       toSyntax $ stringCaseE code
-        [ ("ArrowRight", discard (stmts $ set @"rightOn" state true_))
-        , ("ArrowLeft", discard (stmts $ set @"leftOn" state true_))
-        , ("Space", discard (stmts $ do
+        [ ("Space", discard (stmts $ do
             toSyntax $ callMethod (Lift (Var e)) "preventDefault" RecNil
             tryRestart state))
         ]
-        noOp
+        (stmts $ bindArrows state code true_)
   addEventListener "keyup" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
       code <- getProp (Lift (Var e)) "code"
@@ -389,19 +387,22 @@ fill ctx col = set @"fillStyle" ctx col
 phaseSum :: Effect f (ObjectOf Game) -> EffectSyntax f (Effect f (SumOf Phase))
 phaseSum state = fmap toEffect (state.phase)
 
-whenPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-whenPlay state body = do
+onPhase
+  :: Effect f (ObjectOf Game)
+  -> Effect f 'Unit
+  -> Effect f 'Unit
+  -> EffectSyntax f (f 'Unit)
+onPhase state play miss = do
   ph <- phaseSum state
   toSyntax $ G.caseSum ph $
-    G.on @"Play" (\_ -> stmts body) $
-    G.Case_ (\_ -> noOp)
+    G.on @"Play" (\_ -> play) $
+    G.Case_ (\_ -> miss)
+
+whenPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+whenPlay state body = onPhase state (stmts body) noOp
 
 unlessPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-unlessPlay state body = do
-  ph <- phaseSum state
-  toSyntax $ G.caseSum ph $
-    G.on @"Play" (\_ -> noOp) $
-    G.Case_ (\_ -> stmts body)
+unlessPlay state body = onPhase state noOp (stmts body)
 
 setPhase :: Effect f (ObjectOf Game) -> Phase -> EffectSyntax f (f 'Unit)
 setPhase state p = do

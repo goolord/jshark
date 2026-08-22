@@ -30,6 +30,7 @@ data Route = Route
   , routeValue :: Text
   , routeLabel :: Text
   }
+  deriving (Eq)
 
 routeAll, routeActive, routeCompleted :: Route
 routeAll = Route "filter-all" "#/" "all" "All"

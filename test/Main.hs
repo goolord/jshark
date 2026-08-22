@@ -1,20 +1,16 @@
 {-# LANGUAGE
     DataKinds
-  , DeriveGeneric
   , GADTs
-  , LambdaCase
   , OverloadedRecordDot
   , OverloadedStrings
   , RankNTypes
   , ScopedTypeVariables
   , TypeApplications
-  , TypeFamilies
 #-}
 module Main (main) where
 
-import Control.Exception (IOException, bracket, catch)
-import Data.Char (isDigit, isSpace)
-import Data.List (dropWhileEnd, intercalate)
+import BunTests (bunEvalTests)
+import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
@@ -22,19 +18,15 @@ import JShark.Api
 import JShark.Compiler
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
-import GHC.Generics (Generic)
+import Support
 import System.Directory
   ( createDirectoryIfMissing
   , findExecutable
   , getTemporaryDirectory
   , listDirectory
-  , removeFile
   , removePathForcibly
   )
-import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
-import System.IO (hClose, hPutStr, openTempFile)
-import System.Process (readProcessWithExitCode)
 import Test.Tasty
 import Test.Tasty.HUnit
 import qualified JShark.Ajax as Ajax
@@ -103,81 +95,12 @@ evaluatorTests = testGroup "evaluate"
         ValueNumber n -> do
           n @?= evaluateNumber e
           n @?= 84
+  , testCase "evaluateCached parseInt_ matches evaluate" $ do
+      let e = parseInt_ (string "10") (number 16)
+      cached <- evaluateCached e
+      case cached of
+        ValueNumber n -> n @?= evaluateNumber e
   ]
-
--- Non-foldable holes so snapshot tests can pin JS shape rather than
--- constant-folded results. Foreign calls live on 'Effect'; bind then
--- yield an 'Expr' via 'Var'.
-data LitRow
-type instance Field LitRow "x" = 'Number
-type instance Field LitRow "y" = 'Number
-type instance Field LitRow "s" = 'String
-
-data Person = Person
-  { fullName :: Text
-  , years :: Double
-  }
-  deriving (Generic)
-
-data Tagged = Tagged
-  { label :: Text
-  , tags :: [Text]
-  , nickname :: Maybe Text
-  }
-  deriving (Generic)
-
-data Group = Group
-  { members :: [Person]
-  }
-  deriving (Generic)
-
-data Color = Red | Green | Blue
-  deriving (Generic)
-
-data Shape
-  = Circle Double
-  | Rect Double Double
-  deriving (Generic)
-
-data Badge = Badge
-  { hue :: Color
-  }
-  deriving (Generic)
-
-fooE, barE :: Effect f u
-fooE = ffi "foo" RecNil
-barE = ffi "bar" RecNil
-
-condE :: Effect f 'Bool
-condE = ffi "cond" RecNil
-
-yieldString :: Expr f 'String -> EffectSyntax f (f 'String)
-yieldString = yield
-
--- Bind one FFI result and yield a pure expression.
-with1 :: Effect f a -> (Expr f a -> Expr f b) -> Effect f b
-with1 e k = fromSyntax $ do
-  x <- toSyntax e
-  toSyntax (expr (k (Var x)))
-
--- Bind two FFI results and yield a pure expression.
-with2 :: Effect f a -> Effect f b -> (Expr f a -> Expr f b -> Expr f c) -> Effect f c
-with2 e1 e2 k = fromSyntax $ do
-  x <- toSyntax e1
-  y <- toSyntax e2
-  toSyntax (expr (k (Var x) (Var y)))
-
--- Self-contained: Boolean(1) is not folded, so prettyJS must keep a real if
--- inside a LambdaE and still be valid JS.
-prettyIfLambda :: forall f. Effect f 'Number
-prettyIfLambda = fromSyntax $ do
-  r <- toSyntax $ ApplyE
-    (lambdaE (\x ->
-        ifE (ffi "Boolean" (arg (number 1) <: RecNil))
-          x
-          (expr (number 0))))
-    (expr (number 6))
-  yield (Var r)
 
 codegenTests :: TestTree
 codegenTests = testGroup "codegen"
@@ -311,9 +234,6 @@ controlFlowTests = testGroup "control flow"
       T.isInfixOf "case \"number\":" js @?= True
   ]
 
-numArray :: forall f. Expr f ('Array 'Number)
-numArray = Literal (ValueArray [ValueNumber 1, ValueNumber 2])
-
 stdlibTests :: TestTree
 stdlibTests = testGroup "stdlib"
   [ testCase "Array.index evaluates" $
@@ -330,7 +250,7 @@ stdlibTests = testGroup "stdlib"
       renderJS (effectfulAST (fromSyntax (do
         toSyntax_ $ Array.filterE numArray (\x -> ffi "pred" (arg x <: RecNil))
         toSyntax noOp)))
-        @?= "[1.0, 2.0].filter(function (n0) {return pred(n0)});"
+        @?= "[1.0, 2.0].filter(function (n0) {return (pred(n0))});"
   , testCase "Array.map callback with an internal let is inlined when used once" $
       renderJS (pureAST (Array.map numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
         @?= "[1.0, 2.0].map(function (n0) {return (n0 + 1.0) * 2.0})"
@@ -436,11 +356,20 @@ stdlibTests = testGroup "stdlib"
         toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "b") (Lift (number 2))
         toSyntax noOp)))
         @?= "const n0 = {};\nn0.a = 1.0;\nn0.b = 2.0;"
+  , testCase "locationHash is window.location.hash, not a bracket key" $ do
+      let js = T.pack $ renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
+      T.isInfixOf "window.location.hash" js @?= True
+      T.isInfixOf "[\"location.hash\"]" js @?= False
   , testCase "forEach param name matches body uses" $
       renderJS (effectfulAST (fromSyntax (do
         toSyntax_ $ forEach numArray (\x -> ffi "foo" (arg x <: RecNil))
         toSyntax noOp)))
-        @?= "[1.0, 2.0].forEach(function (n0) {return foo(n0)});"
+        @?= "[1.0, 2.0].forEach(function (n0) {return (foo(n0))});"
+  , testCase "LambdaE of Unit does not emit return ()" $
+      renderJS (effectfulAST (fromSyntax (do
+        toSyntax_ $ forEach numArray (\_ -> noOp)
+        toSyntax noOp)))
+        @?= "[1.0, 2.0].forEach(function (n0) {return});"
   , testCase "onClick assigns the DOM onclick property" $
       T.isInfixOf ".onclick ="
         (T.pack $ renderJS (effectfulAST (fromSyntax (do
@@ -456,11 +385,11 @@ stdlibTests = testGroup "stdlib"
         @?= "foo() !== bar()"
   , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
       renderJS (effectfulAST (ffi "setTimeout" (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)))
-        @?= "setTimeout(function (n0) {return tick()}, 0.0)"
+        @?= "setTimeout(function (n0) {return (tick())}, 0.0)"
   , testCase "requestAnimationFrame takes ArgEffect" $
       renderJS (effectfulAST (fromSyntax (
         Timers.requestAnimationFrame (\_ -> ffi "tick" RecNil) *> toSyntax noOp)))
-        @?= "requestAnimationFrame(function (n0) {return tick()});"
+        @?= "requestAnimationFrame(function (n0) {return (tick())});"
   , testCase "send emits xhr.send()" $
       renderJS (effectfulAST (fromSyntax (Ajax.send (UnsafeObject "xhr") *> toSyntax noOp)))
         @?= "xhr.send();"
@@ -692,6 +621,9 @@ optimizeTests = testGroup "optimize"
   , testCase "let inside a lambda folds" $
       renderJS (pureAST (lambda (\x -> let_ (number 1) (\y -> y + x))))
         @?= "function (n0) {return (1.0 + n0)}"
+  , testCase "multi-use let inside a lambda stays inside the function" $
+      renderJS (pureAST (lambda (\x -> let_ (x + x) (\y -> y + y))))
+        @?= "function (n0) {const n1 = n0 + n0;\n               return (n1 + n1)}"
   , testCase "array index of a literal folds" $
       renderJS (pureAST (Array.index numArray (number 0))) @?= "1.0"
   , testCase "let-bound frozen field is cheap and folds" $
@@ -918,168 +850,3 @@ compilerTests = testGroup "compiler"
       out @?= "let n0;\nif (cond()) {\n  n0 = 1.0;\n} else {\n  n0 = 2.0;\n}"
   ]
 
--- Run generated JS with bun and compare JSON.stringify of the result to
--- `evaluate`. If bun is missing, the PATH check fails and the eval cases
--- are skipped (not reported as passing).
-bunEvalTests :: TestTree
-bunEvalTests =
-  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
-    testGroup "bun agrees with evaluate"
-      [ testCase "bun is on PATH" $ do
-          m <- getBun
-          case m of
-            Just _ -> pure ()
-            Nothing ->
-              assertFailure "bun not found on PATH; install https://bun.sh"
-      , after AllSucceed "bun is on PATH" $
-          testGroup "eval"
-            [ bunCase getBun "addition" (number 1 + number 2)
-            , bunCase getBun "subtraction" ((number 5 :: Expr f 'Number) - number 2)
-            , bunCase getBun "multiplication and division"
-                ((number 6 :: Expr f 'Number) * number 7 / number 2)
-            , bunCase getBun "abs and negate" (abs (negate (number 5) :: Expr f 'Number))
-            , bunCase getBun "let used twice" (let_ (number 21) (\x -> x + x))
-            , bunCase getBun "nested single-use lets"
-                (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x)))
-            , bunCase getBun "lambda application"
-                (apply (lambda (\x -> x * 2)) (number 21))
-            , bunCase getBun "if_ true" (if_ (bool True) (number 1) (number 2))
-            , bunCase getBun "if_ false" (if_ (bool False) (number 1) (number 2))
-            , bunCase getBun "&& short-circuit false"
-                (And (bool False) (bool True))
-            , bunCase getBun "|| short-circuit true"
-                (Or (bool True) (bool False))
-            , bunCase getBun "let on && LHS" (let_ (bool True) (\x -> And x (bool False)))
-            , bunCase getBun "let on && RHS" (let_ (bool True) (\x -> And (bool False) x))
-            , bunCase getBun "let in if_ branch"
-                (let_ (number 5) (\x -> if_ (bool True) x (number 0)))
-            , bunCase getBun "optionCase Some"
-                (optionCase (JShark.Api.some (number 5) :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1))
-            , bunCase getBun "optionCase None"
-                (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1))
-            , bunCase getBun "some is the wrapped value"
-                (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
-            , bunCase getBun "none is null" (none :: Expr f ('Option 'Number))
-            , bunCase getBun "string concat" (Concat (string "a") (string "b"))
-            , bunCase getBun "Show number" (Show (number 3))
-            , bunCase getBun "Eq numbers" (Eq (number 1) (number 1))
-            , bunCase getBun "NEq numbers" (NEq (number 1) (number 2))
-            , bunCase getBun "array index" (Array.index numArray (number 1))
-            , bunCase getBun "Math.sqrt" (sqrt (number 9))
-            , bunCase getBun "Math.round half toward +Infinity" (Math.round (number 2.5))
-            , bunCase getBun "Math.round negative half" (Math.round (number (-2.5)))
-            , bunCase getBun "Math.pow" (number 2 ** number 10)
-            , bunCase getBun "Math.sin 0" (sin (number 0))
-            , testCase "prettyJS compileEffect ifE+LambdaE" $ do
-                bun <- getBun >>= \case
-                  Just b -> pure b
-                  Nothing -> assertFailure "bun not found on PATH"
-                clearCompilerCache
-                out <- compileEffect readableConfig prettyIfLambda
-                assertBool "indented if body" ("{\n" `T.isInfixOf` out)
-                got <- bunJSONStringify bun (wrapReadableExpr out)
-                assertEqual
-                  ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> T.unpack out)
-                  "6"
-                  got
-            ]
-      ]
-
-bunCase :: IO (Maybe FilePath) -> String -> (forall f. Expr f u) -> TestTree
-bunCase getBun name e = testCase name $ do
-  m <- getBun
-  case m of
-    Nothing -> assertFailure "bun not found on PATH"
-    Just bun -> assertBunAgrees bun e
-
--- Readable effect snippets are statements plus a trailing result
--- expression. Wrap so bunJSONStringify can treat them as a value.
-wrapReadableExpr :: Text -> String
-wrapReadableExpr src =
-  let ls = filter (not . T.null) (T.lines (T.strip src))
-   in case reverse ls of
-        [] -> "undefined"
-        result : revStmts ->
-          T.unpack $ T.unlines $
-            "(() => {" : reverse revStmts ++ ["return " <> result, "})()"]
-
-assertBunAgrees :: FilePath -> (forall f. Expr f u) -> IO ()
-assertBunAgrees bun e = do
-  let expected = encodeJSValue (evaluate e)
-      program = renderJS (pureProgram e)
-  got <- bunJSONStringify bun program
-  assertEqual
-    ("evaluate JSON: " <> expected <> "\nbun JSON: " <> got <> "\njs:\n" <> program)
-    expected
-    got
-
--- Evaluate a JS expression (typically a `pureProgram` IIFE) with bun and
--- return JSON.stringify of its result, without a trailing newline.
--- `JSON.stringify(undefined)` is `undefined`; we print the word `undefined`
--- so unit values have a stable encoding.
-bunJSONStringify :: FilePath -> String -> IO String
-bunJSONStringify bun js = do
-  tmp <- getTemporaryDirectory
-  let script =
-        unlines
-          [ "const $jshark = (" ++ js ++ ");"
-          , "const $json = JSON.stringify($jshark);"
-          , "console.log($json === undefined ? \"undefined\" : $json);"
-          ]
-  bracket
-    (openTempFile tmp "jshark-bun.js")
-    (\(path, h) -> do
-        hClose h `catch` ignoreIO
-        removeFile path `catch` ignoreIO)
-    $ \(path, h) -> do
-      hPutStr h script
-      hClose h
-      (ex, out, errOut) <- readProcessWithExitCode bun [path] ""
-      case ex of
-        ExitSuccess -> pure (dropWhileEnd isSpace out)
-        ExitFailure n ->
-          assertFailure $
-            "bun exited " <> show n
-              <> "\nstderr:\n" <> errOut
-              <> "\njs:\n" <> js
-
--- Encoding of the JS runtime representation `evaluate` uses, matching
--- `JSON.stringify` (non-finite numbers become null; Option Some is the
--- payload).
-encodeJSValue :: Value u -> String
-encodeJSValue = \case
-  ValueNumber d -> encodeJSNumber d
-  ValueBool True -> "true"
-  ValueBool False -> "false"
-  ValueString s -> encodeJSString (T.unpack s)
-  ValueUnit -> "undefined"
-  ValueArray xs -> "[" ++ intercalate "," (map encodeJSValue xs) ++ "]"
-  ValueOption Nothing -> "null"
-  ValueOption (Just x) -> encodeJSValue x
-  ValueResult (Right x) -> "{\"ok\":" ++ encodeJSValue x ++ "}"
-  ValueResult (Left x) -> "{\"err\":" ++ encodeJSValue x ++ "}"
-  ValueRegex s -> encodeJSString (T.unpack s)
-  ValueFrozen{} -> error "encodeJSValue: frozen objects are not JSON"
-  ValueFunction _ -> error "encodeJSValue: functions are not JSON"
-
--- JSON.stringify of a finite number; NaN/Infinity stringify to null.
-encodeJSNumber :: Double -> String
-encodeJSNumber d
-  | isNaN d || isInfinite d = "null"
-  | isInt = show (truncate d :: Integer)
-  | otherwise = show d
-  where
-    isInt = d == fromInteger (truncate d)
-
-encodeJSString :: String -> String
-encodeJSString s = '"' : concatMap esc s ++ "\""
-  where
-    esc '"' = "\\\""
-    esc '\\' = "\\\\"
-    esc '\n' = "\\n"
-    esc '\r' = "\\r"
-    esc '\t' = "\\t"
-    esc c = [c]
-
-ignoreIO :: IOException -> IO ()
-ignoreIO _ = pure ()

@@ -31,7 +31,6 @@ module JShark.Dom
 import Data.Text (Text)
 import JShark
 import JShark.Api
-import JShark.Object hiding (get, set)
 import JShark.Types
 import JShark.Rec (Rec(..), (<:))
 
@@ -82,13 +81,13 @@ innerHTML :: Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'Str
 innerHTML el = get @"innerHTML" el
 
 setInnerHTML :: Effect f ('MutableObject DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
-setInnerHTML el x = toSyntax $ unsafeObjectAssign (unsafeObjectGet el "innerHTML") (Lift x)
+setInnerHTML el x = set @"innerHTML" el x
 
 innerText :: Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)
 innerText el = get @"innerText" el
 
 setInnerText :: Effect f ('MutableObject DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
-setInnerText el x = toSyntax $ unsafeObjectAssign (unsafeObjectGet el "innerText") (Lift x)
+setInnerText el x = set @"innerText" el x
 
 -- | @el.value@ (inputs).
 getValue :: Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)

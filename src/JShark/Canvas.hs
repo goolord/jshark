@@ -81,6 +81,38 @@ setCanvasWidth el n = setProp el "width" n
 setCanvasHeight :: Effect f ('MutableObject DomElement) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 setCanvasHeight el n = setProp el "height" n
 
+ctxCall0 :: Effect f ('MutableObject Context2D) -> String -> EffectSyntax f (f 'Unit)
+ctxCall0 ctx name = toSyntax $ callMethod ctx name RecNil
+
+call2
+  :: Effect f ('MutableObject Context2D)
+  -> String
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+call2 ctx name x y = toSyntax $ callMethod ctx name (arg x <: arg y <: RecNil)
+
+call3
+  :: Effect f ('MutableObject Context2D)
+  -> String
+  -> Expr f a
+  -> Expr f b
+  -> Expr f c
+  -> EffectSyntax f (f 'Unit)
+call3 ctx name a b c =
+  toSyntax $ callMethod ctx name (arg a <: arg b <: arg c <: RecNil)
+
+call4
+  :: Effect f ('MutableObject Context2D)
+  -> String
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+call4 ctx name x y w h =
+  toSyntax $ callMethod ctx name (arg x <: arg y <: arg w <: arg h <: RecNil)
+
 fillRect, strokeRect, clearRect ::
      Effect f ('MutableObject Context2D)
   -> Expr f 'Number
@@ -88,30 +120,27 @@ fillRect, strokeRect, clearRect ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-fillRect ctx x y w h =
-  toSyntax $ callMethod ctx "fillRect" (arg x <: arg y <: arg w <: arg h <: RecNil)
-strokeRect ctx x y w h =
-  toSyntax $ callMethod ctx "strokeRect" (arg x <: arg y <: arg w <: arg h <: RecNil)
-clearRect ctx x y w h =
-  toSyntax $ callMethod ctx "clearRect" (arg x <: arg y <: arg w <: arg h <: RecNil)
+fillRect ctx = call4 ctx "fillRect"
+strokeRect ctx = call4 ctx "strokeRect"
+clearRect ctx = call4 ctx "clearRect"
 
 beginPath, closePath, fill, stroke, save, restore ::
      Effect f ('MutableObject Context2D)
   -> EffectSyntax f (f 'Unit)
-beginPath ctx = toSyntax $ callMethod ctx "beginPath" RecNil
-closePath ctx = toSyntax $ callMethod ctx "closePath" RecNil
-fill ctx = toSyntax $ callMethod ctx "fill" RecNil
-stroke ctx = toSyntax $ callMethod ctx "stroke" RecNil
-save ctx = toSyntax $ callMethod ctx "save" RecNil
-restore ctx = toSyntax $ callMethod ctx "restore" RecNil
+beginPath ctx = ctxCall0 ctx "beginPath"
+closePath ctx = ctxCall0 ctx "closePath"
+fill ctx = ctxCall0 ctx "fill"
+stroke ctx = ctxCall0 ctx "stroke"
+save ctx = ctxCall0 ctx "save"
+restore ctx = ctxCall0 ctx "restore"
 
 moveTo, lineTo ::
      Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-moveTo ctx x y = toSyntax $ callMethod ctx "moveTo" (arg x <: arg y <: RecNil)
-lineTo ctx x y = toSyntax $ callMethod ctx "lineTo" (arg x <: arg y <: RecNil)
+moveTo ctx = call2 ctx "moveTo"
+lineTo ctx = call2 ctx "lineTo"
 
 -- | @ctx.arc(x, y, r, start, end)@. Clockwise.
 arc ::
@@ -132,10 +161,8 @@ fillText, strokeText ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-fillText ctx t x y =
-  toSyntax $ callMethod ctx "fillText" (arg t <: arg x <: arg y <: RecNil)
-strokeText ctx t x y =
-  toSyntax $ callMethod ctx "strokeText" (arg t <: arg x <: arg y <: RecNil)
+fillText ctx = call3 ctx "fillText"
+strokeText ctx = call3 ctx "strokeText"
 
 measureText ::
      Effect f ('MutableObject Context2D)
@@ -148,8 +175,7 @@ translate ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-translate ctx x y =
-  toSyntax $ callMethod ctx "translate" (arg x <: arg y <: RecNil)
+translate ctx = call2 ctx "translate"
 
 rotate :: Effect f ('MutableObject Context2D) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 rotate ctx a = toSyntax $ callMethod ctx "rotate" (arg a <: RecNil)
@@ -159,4 +185,4 @@ scale ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-scale ctx x y = toSyntax $ callMethod ctx "scale" (arg x <: arg y <: RecNil)
+scale ctx = call2 ctx "scale"

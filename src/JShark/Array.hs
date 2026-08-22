@@ -49,9 +49,13 @@ map arr f = ExprMap arr (\x -> f (var x))
 filter :: Expr f ('Array u) -> (Expr f u -> Expr f 'Bool) -> Expr f ('Array u)
 filter arr f = ExprFilter arr (\x -> f (var x))
 
+arrayMethod :: String -> Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f w
+arrayMethod name arr f =
+  callMethod (expr arr) name (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+
 -- | @arr.map@ with an 'Effect' callback (e.g. 'getProp'' inside).
 mapE :: Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f ('Array v)
-mapE arr f = callMethod (expr arr) "map" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+mapE = arrayMethod "map"
 
 -- | 'mapE' in 'EffectSyntax'.
 mapE_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f v)) -> EffectSyntax f (Expr f ('Array v))
@@ -59,7 +63,7 @@ mapE_ arr f = fmap Var $ toSyntax $ mapE arr (\x -> fromSyntax (f x))
 
 -- | @arr.filter@ with an 'Effect' callback (e.g. 'getProp'' inside).
 filterE :: Expr f ('Array u) -> (Expr f u -> Effect f 'Bool) -> Effect f ('Array u)
-filterE arr f = callMethod (expr arr) "filter" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+filterE = arrayMethod "filter"
 
 -- | 'filterE' in 'EffectSyntax'.
 filterE_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f 'Bool)) -> EffectSyntax f (Expr f ('Array u))

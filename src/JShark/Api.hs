@@ -210,8 +210,13 @@ false_ = bool False
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
+-- | @arr.method(function(x){…})@ with an 'Effect' callback.
+arrayCallback :: String -> Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f w
+arrayCallback name arr f =
+  callMethod (expr arr) name (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+
 forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
-forEach arr f = callMethod (expr arr) "forEach" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+forEach = arrayCallback "forEach"
 
 forEach_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
 forEach_ arr f = toSyntax $ forEach arr (\x -> stmts (f x))
@@ -351,6 +356,7 @@ set :: forall k a f. (KnownSymbol k, ToEffect f ('MutableObject (ObjectRow a)) a
 set o v = Object.set @k @(ObjectRow a)
   (toEffect o :: Effect f ('MutableObject (ObjectRow a))) v
 
+-- | Untyped @o.k@. Prefer 'get' / 'set' (or record-dot) when the key is a 'Field'.
 getProp :: Effect f ('MutableObject a) -> String -> EffectSyntax f (Expr f u)
 getProp o name = fmap Var $ toSyntax $ unsafeObjectGet o name
 

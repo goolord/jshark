@@ -55,6 +55,7 @@ module JShark
   , printComputation
   , renderJS
   , renderJSCompact
+  , escapeJsString
   ) where
 
 -- Indexed PHOAS (binders @f u@, closed terms @forall f@) in the style of
@@ -64,11 +65,14 @@ module JShark
 -- 'Expr' is the pure tree; 'Effect' is the impure tree. They join at FFI
 -- through 'Arg', not by treating effects as expressions.
 
+import Control.Monad (foldM)
 import Data.Bits ((.&.), (.|.), xor, shiftL, shiftR)
+import Data.Functor.Identity (Identity(..), runIdentity)
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Int (Int32)
 import Data.Maybe (fromMaybe)
+import Data.Monoid (All(..), Sum(..))
 import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
@@ -232,7 +236,10 @@ exactMathUnary n a = case n of
   _ -> Nothing
 
 exactMathBinary :: MathFn2 -> Double -> Double -> Maybe Double
-exactMathBinary _ _ _ = Nothing
+exactMathBinary n a b = case n of
+  MathMax | isFiniteDouble a && isFiniteDouble b -> Just (max a b)
+  MathMin | isFiniteDouble a && isFiniteDouble b -> Just (min a b)
+  _ -> Nothing
 
 cannotEval :: String -> a
 cannotEval what = error ("evaluate: cannot evaluate " ++ what)
@@ -384,67 +391,95 @@ evaluate :: ClosedExpr u -> Value u
 evaluate = evalValue
 
 evalValue :: Expr Value v -> Value v
-evalValue = \case
-    Literal v -> v
-    Plus x y -> ValueNumber (unNumber (evalValue x) + unNumber (evalValue y))
-    Times x y -> ValueNumber (unNumber (evalValue x) * unNumber (evalValue y))
-    Minus x y -> ValueNumber (unNumber (evalValue x) - unNumber (evalValue y))
-    Negate x -> ValueNumber (negate (unNumber (evalValue x)))
-    FracDiv x y -> ValueNumber (unNumber (evalValue x) / unNumber (evalValue y))
-    Rem x y -> ValueNumber (jsRem (unNumber (evalValue x)) (unNumber (evalValue y)))
-    BitAnd x y -> ValueNumber (jsBit2 (.&.) (unNumber (evalValue x)) (unNumber (evalValue y)))
-    BitOr x y -> ValueNumber (jsBit2 (.|.) (unNumber (evalValue x)) (unNumber (evalValue y)))
-    BitXor x y -> ValueNumber (jsBit2 xor (unNumber (evalValue x)) (unNumber (evalValue y)))
-    Shl x y -> ValueNumber (jsShl (unNumber (evalValue x)) (unNumber (evalValue y)))
-    Shr x y -> ValueNumber (jsShr (unNumber (evalValue x)) (unNumber (evalValue y)))
-    UShr x y -> ValueNumber (jsUShr (unNumber (evalValue x)) (unNumber (evalValue y)))
-    Var x -> x
-    Apply g x -> unFunction (evalValue g) (evalValue x)
-    Lambda g -> ValueFunction (evalValue . g)
-    Concat x y -> ValueString (unString (evalValue x) <> unString (evalValue y))
-    Show x -> ValueString (jsShow (evalValue x))
-    TypeOf x -> ValueString (typeOfValue (evalValue x))
-    And x y -> ValueBool (unBool (evalValue x) && unBool (evalValue y))
-    Or x y -> ValueBool (unBool (evalValue x) || unBool (evalValue y))
-    Eq x y -> ValueBool (valueEq (evalValue x) (evalValue y))
-    NEq x y -> ValueBool (not (valueEq (evalValue x) (evalValue y)))
-    GTh x y -> ValueBool (valueCompare (evalValue x) (evalValue y) == GT)
-    LTh x y -> ValueBool (valueCompare (evalValue x) (evalValue y) == LT)
-    GTEq x y -> ValueBool (valueCompare (evalValue x) (evalValue y) /= LT)
-    LTEq x y -> ValueBool (valueCompare (evalValue x) (evalValue y) /= GT)
-    Let x g -> evalValue (g (evalValue x))
-    LetRec r b ->
-      let rec = case r rec of
-            Lambda g -> ValueFunction (evalValue . g)
-            _ -> error "evaluate: LetRec rhs must be a Lambda"
-       in evalValue (b rec)
-    If c t e -> if unBool (evalValue c) then evalValue t else evalValue e
-    OptionCase opt none' someF -> case evalValue opt of
-      ValueOption Nothing -> evalValue none'
-      ValueOption (Just x) -> evalValue (someF x)
-    ResultOk x -> ValueResult (Right (evalValue x))
-    ResultErr x -> ValueResult (Left (evalValue x))
-    ResultCase res errF okF -> case evalValue res of
-      ValueResult (Left e) -> evalValue (errF e)
-      ValueResult (Right a) -> evalValue (okF a)
-    UnsafeEffectExpr _ -> cannotEval "an embedded Effect (UnsafeEffectExpr)"
-    ExprUnary{} -> cannotEval "a stdlib ExprUnary"
-    ExprBinary n x y -> case n of
-      StdParseInt ->
-        ValueNumber (jsParseInt (unString (evalValue x)) (truncate (unNumber (evalValue y))))
-      StdTest -> cannotEval "RegExp.test"
-      _ -> cannotEval "a stdlib ExprBinary"
-    ExprTernary n xs a b -> case n of
-      StdArrSlice -> case evalValue xs of
+evalValue = runIdentity . evalAlg (Identity . evalValue) (\g v -> evalValue (g v))
+
+-- | One algebra. 'evaluate' is Identity; 'evaluateCached' memos via
+-- 'goOpen' / 'applyCached'.
+evalAlg
+  :: Monad m
+  => (forall w. Expr Value w -> m (Value w))
+  -> (forall a b. (Value a -> Expr Value b) -> Value a -> Value b)
+  -> Expr Value v
+  -> m (Value v)
+evalAlg rec apply = \case
+  Literal v -> pure v
+  Plus x y -> num2 (+) x y
+  Times x y -> num2 (*) x y
+  Minus x y -> num2 (-) x y
+  Negate x -> num1 negate x
+  FracDiv x y -> num2 (/) x y
+  Rem x y -> num2 jsRem x y
+  BitAnd x y -> num2 (jsBit2 (.&.)) x y
+  BitOr x y -> num2 (jsBit2 (.|.)) x y
+  BitXor x y -> num2 (jsBit2 xor) x y
+  Shl x y -> num2 jsShl x y
+  Shr x y -> num2 jsShr x y
+  UShr x y -> num2 jsUShr x y
+  Var x -> pure x
+  Apply g x -> unFunction <$> rec g <*> rec x
+  Lambda g -> pure (ValueFunction (apply g))
+  Concat x y -> do
+    a <- rec x
+    b <- rec y
+    pure (ValueString (unString a <> unString b))
+  Show x -> ValueString . jsShow <$> rec x
+  TypeOf x -> ValueString . typeOfValue <$> rec x
+  And x y -> do
+    a <- rec x
+    if unBool a then rec y else pure (ValueBool False)
+  Or x y -> do
+    a <- rec x
+    if unBool a then pure (ValueBool True) else rec y
+  Eq x y -> ValueBool <$> (valueEq <$> rec x <*> rec y)
+  NEq x y -> ValueBool . not <$> (valueEq <$> rec x <*> rec y)
+  GTh x y -> ValueBool . (== GT) <$> (valueCompare <$> rec x <*> rec y)
+  LTh x y -> ValueBool . (== LT) <$> (valueCompare <$> rec x <*> rec y)
+  GTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> rec x <*> rec y)
+  LTEq x y -> ValueBool . (/= GT) <$> (valueCompare <$> rec x <*> rec y)
+  Let x g -> rec x >>= rec . g
+  LetRec r b ->
+    let recV = case r recV of
+          Lambda g -> ValueFunction (apply g)
+          _ -> error "evaluate: LetRec rhs must be a Lambda"
+     in rec (b recV)
+  If c t e -> do
+    cv <- rec c
+    if unBool cv then rec t else rec e
+  OptionCase opt none' someF -> do
+    ov <- rec opt
+    case ov of
+      ValueOption Nothing -> rec none'
+      ValueOption (Just x) -> rec (someF x)
+  ResultOk x -> ValueResult . Right <$> rec x
+  ResultErr x -> ValueResult . Left <$> rec x
+  ResultCase res errF okF -> do
+    rv <- rec res
+    case rv of
+      ValueResult (Left e) -> rec (errF e)
+      ValueResult (Right a) -> rec (okF a)
+  UnsafeEffectExpr _ -> cannotEval "an embedded Effect (UnsafeEffectExpr)"
+  ExprUnary{} -> cannotEval "a stdlib ExprUnary"
+  ExprBinary n x y -> evalStdBinary n <$> rec x <*> rec y
+  ExprTernary n xs a b -> case n of
+    StdArrSlice -> do
+      arr <- rec xs
+      i <- rec a
+      j <- rec b
+      case arr of
         ValueArray vs ->
-          ValueArray (jsArraySlice vs (unNumber (evalValue a)) (unNumber (evalValue b)))
-      _ -> cannotEval "a stdlib ExprTernary"
-    ExprMap{} -> cannotEval "ExprMap"
-    ExprFilter{} -> cannotEval "ExprFilter"
-    ExprReduce xs z f -> case evalValue xs of
-      ValueArray vs ->
-        foldl (\acc v -> evalValue (f acc v)) (evalValue z) vs
-    ExprIndex xs i -> case evalValue xs of
+          pure (ValueArray (jsArraySlice vs (unNumber i) (unNumber j)))
+    _ -> cannotEval "a stdlib ExprTernary"
+  ExprMap{} -> cannotEval "ExprMap"
+  ExprFilter{} -> cannotEval "ExprFilter"
+  ExprReduce xs z f -> do
+    arr <- rec xs
+    z0 <- rec z
+    case arr of
+      ValueArray vs -> foldM (\acc v -> rec (f acc v)) z0 vs
+  ExprIndex xs i -> do
+    arr <- rec xs
+    iv <- rec i
+    case arr of
       ValueArray vs ->
         -- JS array indexing truncates the index toward zero (as part of
         -- ToIntegerOrInfinity) rather than rounding, and returns @undefined@
@@ -452,15 +487,21 @@ evalValue = \case
         -- @undefined@ generically here (there's no 'Value' inhabitant for
         -- an arbitrary universe @u@), so out-of-bounds access is a hard
         -- error in the reference interpreter.
-        let idx = truncate (unNumber (evalValue i)) :: Int
+        let idx = truncate (unNumber iv) :: Int
          in if idx >= 0 && idx < length vs
-              then vs !! idx
+              then pure (vs !! idx)
               else error "evaluate: array index out of bounds"
-    MathUnary name x -> ValueNumber (mathUnaryFn name (unNumber (evalValue x)))
-    MathBinary name x y -> ValueNumber (mathBinaryFn name (unNumber (evalValue x)) (unNumber (evalValue y)))
-    UnsafeNullable x -> ValueOption (Just (evalValue x))
-    FrozenLit fs -> ValueFrozen fs
-    GetField @k o -> withFrozenField @k (evalValue o) evalValue
+  MathUnary name x -> ValueNumber . mathUnaryFn name . unNumber <$> rec x
+  MathBinary name x y ->
+    ValueNumber <$> (mathBinaryFn name <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
+  UnsafeNullable x -> ValueOption . Just <$> rec x
+  FrozenLit fs -> pure (ValueFrozen fs)
+  GetField @k o -> do
+    ov <- rec o
+    withFrozenField @k ov rec
+  where
+    num1 f x = ValueNumber . f . unNumber <$> rec x
+    num2 f x y = ValueNumber <$> (f <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
 
 -- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
 -- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
@@ -514,8 +555,9 @@ applyCached :: EvalCache -> (Value u -> Expr Value v) -> Value u -> Value v
 applyCached cache g v = unsafePerformIO (goOpen cache (g v))
 {-# NOINLINE applyCached #-}
 
--- | Memoize when the node’s result universe is a concrete 'Typeable'
--- type; otherwise evaluate without the table.
+-- | Memoize constructors whose result universe is a concrete 'Typeable'
+-- type. Polymorphic-result nodes cannot call 'go' (no 'Typeable'
+-- evidence); they fall through to 'evalValue'.
 goOpen :: EvalCache -> Expr Value v -> IO (Value v)
 goOpen cache e = case e of
   Plus{} -> go cache e
@@ -543,6 +585,7 @@ goOpen cache e = case e of
   LTEq{} -> go cache e
   MathUnary{} -> go cache e
   MathBinary{} -> go cache e
+  ExprBinary StdParseInt _ _ -> go cache e
   Literal ValueNumber{} -> go cache e
   Literal ValueString{} -> go cache e
   Literal ValueBool{} -> go cache e
@@ -554,110 +597,15 @@ goOpen cache e = case e of
     withFrozenField @k ov (goOpen cache)
   _ -> pure (evalValue e)
 
-goNode :: forall v. Typeable v => EvalCache -> Expr Value v -> IO (Value v)
-goNode cache = \case
-  Literal v -> pure v
-  Plus x y -> num2 (+) x y
-  Times x y -> num2 (*) x y
-  Minus x y -> num2 (-) x y
-  Negate x -> num1 negate x
-  FracDiv x y -> num2 (/) x y
-  Rem x y -> num2 jsRem x y
-  BitAnd x y -> num2 (jsBit2 (.&.)) x y
-  BitOr x y -> num2 (jsBit2 (.|.)) x y
-  BitXor x y -> num2 (jsBit2 xor) x y
-  Shl x y -> num2 jsShl x y
-  Shr x y -> num2 jsShr x y
-  UShr x y -> num2 jsUShr x y
-  Var x -> pure x
-  Apply g x -> unFunction <$> goOpen cache g <*> goOpen cache x
-  Lambda g -> pure (ValueFunction (applyCached cache g))
-  Concat x y -> do
-    a <- go cache x
-    b <- go cache y
-    pure (ValueString (unString a <> unString b))
-  Show x -> ValueString . jsShow <$> goOpen cache x
-  TypeOf x -> ValueString . typeOfValue <$> goOpen cache x
-  And x y -> do
-    a <- go cache x
-    if unBool a then go cache y else pure (ValueBool False)
-  Or x y -> do
-    a <- go cache x
-    if unBool a then pure (ValueBool True) else go cache y
-  Eq x y -> ValueBool <$> (valueEq <$> goOpen cache x <*> goOpen cache y)
-  NEq x y -> ValueBool . not <$> (valueEq <$> goOpen cache x <*> goOpen cache y)
-  GTh x y -> ValueBool . (== GT) <$> (valueCompare <$> goOpen cache x <*> goOpen cache y)
-  LTh x y -> ValueBool . (== LT) <$> (valueCompare <$> goOpen cache x <*> goOpen cache y)
-  GTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> goOpen cache x <*> goOpen cache y)
-  LTEq x y -> ValueBool . (/= GT) <$> (valueCompare <$> goOpen cache x <*> goOpen cache y)
-  Let x g -> goOpen cache x >>= go cache . g
-  LetRec r b ->
-    let rec = case r rec of
-          Lambda g -> ValueFunction (applyCached cache g)
-          _ -> error "evaluateCached: LetRec rhs must be a Lambda"
-     in go cache (b rec)
-  If c t e -> do
-    cv <- go cache c
-    if unBool cv then go cache t else go cache e
-  OptionCase opt none' someF -> do
-    ov <- goOpen cache opt
-    case ov of
-      ValueOption Nothing -> go cache none'
-      ValueOption (Just x) -> go cache (someF x)
-  ResultOk x -> ValueResult . Right <$> goOpen cache x
-  ResultErr x -> ValueResult . Left <$> goOpen cache x
-  ResultCase res errF okF -> do
-    rv <- goOpen cache res
-    case rv of
-      ValueResult (Left e) -> go cache (errF e)
-      ValueResult (Right a) -> go cache (okF a)
-  UnsafeEffectExpr _ -> cannotEval "an embedded Effect (UnsafeEffectExpr)"
-  ExprUnary{} -> cannotEval "a stdlib ExprUnary"
-  ExprBinary{} -> cannotEval "a stdlib ExprBinary"
-  ExprTernary n xs a b -> case n of
-    StdArrSlice -> do
-      arr <- goOpen cache xs
-      i <- go cache a
-      j <- go cache b
-      case arr of
-        ValueArray vs ->
-          pure (ValueArray (jsArraySlice vs (unNumber i) (unNumber j)))
-    _ -> cannotEval "a stdlib ExprTernary"
-  ExprMap{} -> cannotEval "ExprMap"
-  ExprFilter{} -> cannotEval "ExprFilter"
-  ExprReduce xs z f -> do
-    arr <- goOpen cache xs
-    z0 <- go cache z
-    case arr of
-      ValueArray vs -> goFold z0 vs
-    where
-      goFold acc [] = pure acc
-      goFold acc (v:vs) = do
-        acc' <- go cache (f acc v)
-        goFold acc' vs
-  ExprIndex xs i -> do
-    arr <- goOpen cache xs
-    iv <- go cache i
-    case arr of
-      ValueArray vs ->
-        let idx = truncate (unNumber iv) :: Int
-         in if idx >= 0 && idx < length vs
-              then pure (vs !! idx)
-              else error "evaluate: array index out of bounds"
-  MathUnary name x -> ValueNumber . mathUnaryFn name . unNumber <$> go cache x
-  MathBinary name x y ->
-    ValueNumber <$> (mathBinaryFn name <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
-  UnsafeNullable x -> ValueOption . Just <$> goOpen cache x
-  FrozenLit fs -> pure (ValueFrozen fs)
-  GetField @k o -> do
-    ov <- goOpen cache o
-    withFrozenField @k ov (goOpen cache)
-  where
-    num1 f x = ValueNumber . f . unNumber <$> go cache x
-    num2 f x y = ValueNumber <$> (f <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
+goNode :: EvalCache -> Expr Value v -> IO (Value v)
+goNode cache = evalAlg (goOpen cache) (applyCached cache)
 
-fromRightE :: Either [Char] c -> c
-fromRightE = either error id
+evalStdBinary :: StdBinary a b c -> Value a -> Value b -> Value c
+evalStdBinary n x y = case n of
+  StdParseInt ->
+    ValueNumber (jsParseInt (unString x) (truncate (unNumber y)))
+  StdTest -> cannotEval "RegExp.test"
+  _ -> cannotEval "a stdlib ExprBinary"
 
 printComputation :: Doc -> IO ()
 printComputation computation = putStrLn (renderJSCompact computation)
@@ -671,10 +619,17 @@ renderJS = P.renderStyle P.style
 renderJSCompact :: Doc -> String
 renderJSCompact = P.renderStyle P.style { P.mode = P.LeftMode }
 
--- | @o.foo@ when @foo@ is an identifier; @o["0"]@ otherwise.
+-- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
+-- path ('location.hash'); @o["0"]@ otherwise. A single key that is
+-- not an ident must stay bracketed — @window["location.hash"]@ is
+-- @undefined@, which made TodoMVC hash filters a no-op.
 jsDotOrBracket :: Doc -> String -> Doc
 jsDotOrBracket obj key
   | jsIdent key = obj <> "." <> P.text key
+  | (seg, '.':rest) <- break (== '.') key
+  , jsIdent seg
+  , not (null rest) =
+      jsDotOrBracket (jsDotOrBracket obj seg) rest
   | otherwise = obj <> "[" <> P.doubleQuotes (P.text key) <> "]"
 
 jsIdent :: String -> Bool
@@ -826,186 +781,33 @@ countLazyExpr t e = if countExpr t e == 0 then 0 else 2
 countLazyEffect :: Int -> Effect Stamp u -> Int
 countLazyEffect t e = if countEffect t e == 0 then 0 else 2
 
-countArgs :: Int -> Rec (Arg Stamp) us -> Int
-countArgs t = recFold (\n a -> n + countArg t a) 0
-
-countArg :: Int -> Arg Stamp u -> Int
-countArg t (ArgExpr e) = countExpr t e
-countArg t (ArgEffect e) = countEffect t e
-
 countExpr :: Int -> Expr Stamp u -> Int
-countExpr t = \case
-  Literal{} -> 0
-  Var s -> case s of
-    Stamp i -> if i == t then 1 else 0
-    Embed e -> countExpr t e
-  Concat x y -> countExpr t x + countExpr t y
-  Plus x y -> countExpr t x + countExpr t y
-  Times x y -> countExpr t x + countExpr t y
-  Minus x y -> countExpr t x + countExpr t y
-  Negate x -> countExpr t x
-  FracDiv x y -> countExpr t x + countExpr t y
-  Rem x y -> countExpr t x + countExpr t y
-  BitAnd x y -> countExpr t x + countExpr t y
-  BitOr x y -> countExpr t x + countExpr t y
-  BitXor x y -> countExpr t x + countExpr t y
-  Shl x y -> countExpr t x + countExpr t y
-  Shr x y -> countExpr t x + countExpr t y
-  UShr x y -> countExpr t x + countExpr t y
-  And x y -> countExpr t x + countLazyExpr t y
-  Or x y -> countExpr t x + countLazyExpr t y
-  Eq x y -> countExpr t x + countExpr t y
-  NEq x y -> countExpr t x + countExpr t y
-  GTh x y -> countExpr t x + countExpr t y
-  LTh x y -> countExpr t x + countExpr t y
-  GTEq x y -> countExpr t x + countExpr t y
-  LTEq x y -> countExpr t x + countExpr t y
-  Let x g -> countExpr t x + countExpr t (g nestedDummy)
-  LetRec r b -> countLazyExpr t (r nestedDummy) + countExpr t (b nestedDummy)
-  Lambda g -> countLazyExpr t (g nestedDummy)
-  Apply f x -> countExpr t f + countExpr t x
-  Show x -> countExpr t x
-  TypeOf x -> countExpr t x
-  If c u v -> countExpr t c + countLazyExpr t u + countLazyExpr t v
-  OptionCase o n s ->
-    countExpr t o + countLazyExpr t n + countLazyExpr t (s nestedDummy)
-  ResultOk x -> countExpr t x
-  ResultErr x -> countExpr t x
-  ResultCase o e s ->
-    countExpr t o + countLazyExpr t (e nestedDummy) + countLazyExpr t (s nestedDummy)
-  UnsafeEffectExpr e -> countEffect t e
-  ExprUnary _ x -> countExpr t x
-  ExprBinary _ x y -> countExpr t x + countExpr t y
-  ExprTernary _ x y z -> countExpr t x + countExpr t y + countExpr t z
-  ExprMap x f -> countExpr t x + countLazyExpr t (f nestedDummy)
-  ExprFilter x f -> countExpr t x + countLazyExpr t (f nestedDummy)
-  ExprReduce x z f ->
-    countExpr t x + countExpr t z + countLazyExpr t (f nestedDummy nestedDummy)
-  ExprIndex x i -> countExpr t x + countExpr t i
-  MathUnary _ x -> countExpr t x
-  MathBinary _ x y -> countExpr t x + countExpr t y
-  UnsafeNullable x -> countExpr t x
-  FrozenLit fs -> sum (map (countFieldLit t) fs)
-  GetField o -> countExpr t o
+countExpr t e = case e of
+  Var (Stamp i) -> if i == t then 1 else 0
+  Var (Embed e') -> countExpr t e'
+  _ -> getSum (foldExpr nestedDummy (Sum . countExpr t) (Sum . countLazyExpr t) (Sum . countEffect t) e)
 
 countEffect :: Int -> Effect Stamp u -> Int
-countEffect t = \case
-  Lift x -> countExpr t x
-  FFI _ args -> countArgs t args
-  UnsafeObject _ -> 0
-  UnsafeObjectGet x _ -> countEffect t x
-  UnsafeObjectAssign x y -> countEffect t x + countEffect t y
-  CallMethod x _ args -> countEffect t x + countArgs t args
-  Bind x f -> countEffect t x + countEffect t (f nestedDummy)
-  BindRec r b -> countLazyEffect t (r nestedDummy) + countEffect t (b nestedDummy)
-  LambdaE f -> countLazyEffect t (f nestedDummy)
-  ApplyE f x -> countEffect t f + countEffect t x
-  IfE c u v -> countEffect t c + countLazyEffect t u + countLazyEffect t v
-  While c b -> countLazyEffect t c + countLazyEffect t b
-  OptionCaseE o n s ->
-    countExpr t o + countLazyEffect t n + countLazyEffect t (s nestedDummy)
-  ResultCaseE o e s ->
-    countExpr t o + countLazyEffect t (e nestedDummy) + countLazyEffect t (s nestedDummy)
-  StringCaseE o arms d ->
-    countExpr t o
-      + sum (map (countLazyEffect t . snd) arms)
-      + countLazyEffect t d
-  Throw x -> countExpr t x
-  Try a k -> countEffect t a + countLazyEffect t (k nestedDummy)
-  ObjectLit fs -> sum (map (countFieldLit t) fs)
-  DeleteProp o k -> countEffect t o + countExpr t k
-  ArrayLit es -> sum (map (countEffect t) es)
-  ArraySort xs f -> countExpr t xs + countLazyExpr t (f nestedDummy nestedDummy)
-
-countFieldLit :: Int -> FieldLit Stamp r -> Int
-countFieldLit t (FieldLit e) = countExpr t e
+countEffect t = getSum . foldEff nestedDummy (Sum . countExpr t) (Sum . countLazyExpr t) (Sum . countEffect t) (Sum . countLazyEffect t)
 
 -- Re-opt only small trees. A second walk of a @bindRec@ / do-chain
 -- paint body is what hung todo-mvc and breakout.
 optSmall :: Int
 optSmall = 16
 
-sizeFieldLit :: FieldLit Stamp r -> Int
-sizeFieldLit (FieldLit e) = sizeExpr e
-
 sizeExpr :: Expr Stamp u -> Int
-sizeExpr = \case
-  Literal{} -> 1
-  Var (Embed e) -> sizeExpr e
-  Var{} -> 1
-  Concat x y -> 1 + sizeExpr x + sizeExpr y
-  Plus x y -> 1 + sizeExpr x + sizeExpr y
-  Times x y -> 1 + sizeExpr x + sizeExpr y
-  Minus x y -> 1 + sizeExpr x + sizeExpr y
-  Negate x -> 1 + sizeExpr x
-  FracDiv x y -> 1 + sizeExpr x + sizeExpr y
-  Rem x y -> 1 + sizeExpr x + sizeExpr y
-  BitAnd x y -> 1 + sizeExpr x + sizeExpr y
-  BitOr x y -> 1 + sizeExpr x + sizeExpr y
-  BitXor x y -> 1 + sizeExpr x + sizeExpr y
-  Shl x y -> 1 + sizeExpr x + sizeExpr y
-  Shr x y -> 1 + sizeExpr x + sizeExpr y
-  UShr x y -> 1 + sizeExpr x + sizeExpr y
-  And x y -> 1 + sizeExpr x + sizeExpr y
-  Or x y -> 1 + sizeExpr x + sizeExpr y
-  Eq x y -> 1 + sizeExpr x + sizeExpr y
-  NEq x y -> 1 + sizeExpr x + sizeExpr y
-  GTh x y -> 1 + sizeExpr x + sizeExpr y
-  LTh x y -> 1 + sizeExpr x + sizeExpr y
-  GTEq x y -> 1 + sizeExpr x + sizeExpr y
-  LTEq x y -> 1 + sizeExpr x + sizeExpr y
-  Let x g -> 1 + sizeExpr x + sizeExpr (g nestedDummy)
-  LetRec r b -> 1 + sizeExpr (r nestedDummy) + sizeExpr (b nestedDummy)
-  Lambda g -> 1 + sizeExpr (g nestedDummy)
-  Apply f x -> 1 + sizeExpr f + sizeExpr x
-  Show x -> 1 + sizeExpr x
-  TypeOf x -> 1 + sizeExpr x
-  If c u v -> 1 + sizeExpr c + sizeExpr u + sizeExpr v
-  OptionCase o n s -> 1 + sizeExpr o + sizeExpr n + sizeExpr (s nestedDummy)
-  ResultOk x -> 1 + sizeExpr x
-  ResultErr x -> 1 + sizeExpr x
-  ResultCase o e s -> 1 + sizeExpr o + sizeExpr (e nestedDummy) + sizeExpr (s nestedDummy)
-  UnsafeEffectExpr e -> 1 + sizeEffect e
-  ExprUnary _ x -> 1 + sizeExpr x
-  ExprBinary _ x y -> 1 + sizeExpr x + sizeExpr y
-  ExprTernary _ x y z -> 1 + sizeExpr x + sizeExpr y + sizeExpr z
-  ExprMap x f -> 1 + sizeExpr x + sizeExpr (f nestedDummy)
-  ExprFilter x f -> 1 + sizeExpr x + sizeExpr (f nestedDummy)
-  ExprReduce x z f -> 1 + sizeExpr x + sizeExpr z + sizeExpr (f nestedDummy nestedDummy)
-  ExprIndex x i -> 1 + sizeExpr x + sizeExpr i
-  MathUnary _ x -> 1 + sizeExpr x
-  MathBinary _ x y -> 1 + sizeExpr x + sizeExpr y
-  UnsafeNullable x -> 1 + sizeExpr x
-  FrozenLit fs -> 1 + sum (map sizeFieldLit fs)
-  GetField o -> 1 + sizeExpr o
+sizeExpr e = case e of
+  Var (Embed e') -> sizeExpr e'
+  _ -> 1 + getSum (foldExpr nestedDummy s s sf e)
+  where
+    s = Sum . sizeExpr
+    sf = Sum . sizeEffect
 
 sizeEffect :: Effect Stamp u -> Int
-sizeEffect = \case
-  Lift x -> 1 + sizeExpr x
-  FFI _ args -> 1 + recFold (\n a -> n + sizeArg a) 0 args
-  UnsafeObject{} -> 1
-  UnsafeObjectGet x _ -> 1 + sizeEffect x
-  UnsafeObjectAssign x y -> 1 + sizeEffect x + sizeEffect y
-  CallMethod x _ args -> 1 + sizeEffect x + recFold (\n a -> n + sizeArg a) 0 args
-  Bind x f -> 1 + sizeEffect x + sizeEffect (f nestedDummy)
-  BindRec r b -> 1 + sizeEffect (r nestedDummy) + sizeEffect (b nestedDummy)
-  LambdaE f -> 1 + sizeEffect (f nestedDummy)
-  ApplyE f x -> 1 + sizeEffect f + sizeEffect x
-  IfE c u v -> 1 + sizeEffect c + sizeEffect u + sizeEffect v
-  While c b -> 1 + sizeEffect c + sizeEffect b
-  OptionCaseE o n s -> 1 + sizeExpr o + sizeEffect n + sizeEffect (s nestedDummy)
-  ResultCaseE o e s -> 1 + sizeExpr o + sizeEffect (e nestedDummy) + sizeEffect (s nestedDummy)
-  StringCaseE o arms d -> 1 + sizeExpr o + sum (map (sizeEffect . snd) arms) + sizeEffect d
-  Throw x -> 1 + sizeExpr x
-  Try a k -> 1 + sizeEffect a + sizeEffect (k nestedDummy)
-  ObjectLit fs -> 1 + sum (map sizeFieldLit fs)
-  DeleteProp o k -> 1 + sizeEffect o + sizeExpr k
-  ArrayLit es -> 1 + sum (map sizeEffect es)
-  ArraySort xs f -> 1 + sizeExpr xs + sizeExpr (f nestedDummy nestedDummy)
-
-sizeArg :: Arg Stamp u -> Int
-sizeArg (ArgExpr e) = sizeExpr e
-sizeArg (ArgEffect e) = sizeEffect e
+sizeEffect e = 1 + getSum (foldEff nestedDummy s s sf sf e)
+  where
+    s = Sum . sizeExpr
+    sf = Sum . sizeEffect
 
 -- | First-order reopen: rename the tag allocated by 'optUnder'. Never
 -- re-applies the original PHOAS @f@.
@@ -1044,6 +846,194 @@ keepEffCont t tag body f
 mapFieldLit :: (forall u. Expr f u -> Expr f u) -> FieldLit f r -> FieldLit f r
 mapFieldLit g (FieldLit @k e) = FieldLit @k (g e)
 
+mapArg
+  :: (forall v. Expr f v -> Expr f v)
+  -> (forall v. Effect f v -> Effect f v)
+  -> Arg f u
+  -> Arg f u
+mapArg ge _ (ArgExpr e) = ArgExpr (ge e)
+mapArg _ gf (ArgEffect e) = ArgEffect (gf e)
+
+-- | Rebuild by rewriting immediate children. 'Var' / 'Literal' are leaves.
+mapExpr
+  :: (forall v. Expr f v -> Expr f v)
+  -> (forall v. Effect f v -> Effect f v)
+  -> Expr f u
+  -> Expr f u
+mapExpr ge gf = \case
+  Literal x -> Literal x
+  Var s -> Var s
+  Concat x y -> Concat (ge x) (ge y)
+  Plus x y -> Plus (ge x) (ge y)
+  Times x y -> Times (ge x) (ge y)
+  Minus x y -> Minus (ge x) (ge y)
+  Negate x -> Negate (ge x)
+  FracDiv x y -> FracDiv (ge x) (ge y)
+  Rem x y -> Rem (ge x) (ge y)
+  BitAnd x y -> BitAnd (ge x) (ge y)
+  BitOr x y -> BitOr (ge x) (ge y)
+  BitXor x y -> BitXor (ge x) (ge y)
+  Shl x y -> Shl (ge x) (ge y)
+  Shr x y -> Shr (ge x) (ge y)
+  UShr x y -> UShr (ge x) (ge y)
+  And x y -> And (ge x) (ge y)
+  Or x y -> Or (ge x) (ge y)
+  Eq x y -> Eq (ge x) (ge y)
+  NEq x y -> NEq (ge x) (ge y)
+  GTh x y -> GTh (ge x) (ge y)
+  LTh x y -> LTh (ge x) (ge y)
+  GTEq x y -> GTEq (ge x) (ge y)
+  LTEq x y -> LTEq (ge x) (ge y)
+  Let x g -> Let (ge x) (ge . g)
+  LetRec rhs body -> LetRec (ge . rhs) (ge . body)
+  Lambda g -> Lambda (ge . g)
+  Apply f x -> Apply (ge f) (ge x)
+  Show x -> Show (ge x)
+  TypeOf x -> TypeOf (ge x)
+  If c u v -> If (ge c) (ge u) (ge v)
+  OptionCase o n s -> OptionCase (ge o) (ge n) (ge . s)
+  ResultOk x -> ResultOk (ge x)
+  ResultErr x -> ResultErr (ge x)
+  ResultCase o e s -> ResultCase (ge o) (ge . e) (ge . s)
+  UnsafeEffectExpr e -> UnsafeEffectExpr (gf e)
+  ExprUnary n x -> ExprUnary n (ge x)
+  ExprBinary n x y -> ExprBinary n (ge x) (ge y)
+  ExprTernary n x y z -> ExprTernary n (ge x) (ge y) (ge z)
+  ExprMap x f -> ExprMap (ge x) (ge . f)
+  ExprFilter x f -> ExprFilter (ge x) (ge . f)
+  ExprReduce x z f -> ExprReduce (ge x) (ge z) (\a b -> ge (f a b))
+  ExprIndex x i -> ExprIndex (ge x) (ge i)
+  MathUnary n x -> MathUnary n (ge x)
+  MathBinary n x y -> MathBinary n (ge x) (ge y)
+  UnsafeNullable x -> UnsafeNullable (ge x)
+  FrozenLit fs -> FrozenLit (map (mapFieldLit ge) fs)
+  GetField @k o -> GetField @k (ge o)
+
+mapEff
+  :: (forall v. Expr f v -> Expr f v)
+  -> (forall v. Effect f v -> Effect f v)
+  -> Effect f u
+  -> Effect f u
+mapEff ge gf = \case
+  Lift x -> Lift (ge x)
+  FFI n args -> FFI n (mapRec (mapArg ge gf) args)
+  UnsafeObject o -> UnsafeObject o
+  UnsafeObjectGet x s -> UnsafeObjectGet (gf x) s
+  UnsafeObjectAssign x y -> UnsafeObjectAssign (gf x) (gf y)
+  CallMethod x n args -> CallMethod (gf x) n (mapRec (mapArg ge gf) args)
+  Bind x f -> Bind (gf x) (gf . f)
+  BindRec rhs body -> BindRec (gf . rhs) (gf . body)
+  LambdaE f -> LambdaE (gf . f)
+  ApplyE f x -> ApplyE (gf f) (gf x)
+  IfE c u v -> IfE (gf c) (gf u) (gf v)
+  While c b -> While (gf c) (gf b)
+  OptionCaseE o n s -> OptionCaseE (ge o) (gf n) (gf . s)
+  ResultCaseE o e s -> ResultCaseE (ge o) (gf . e) (gf . s)
+  StringCaseE o arms d ->
+    StringCaseE (ge o) (map (fmap gf) arms) (gf d)
+  Throw x -> Throw (ge x)
+  Try a k -> Try (gf a) (gf . k)
+  ObjectLit fs -> ObjectLit (map (mapFieldLit ge) fs)
+  DeleteProp o k -> DeleteProp (gf o) (ge k)
+  ArrayLit es -> ArrayLit (map gf es)
+  ArraySort xs f -> ArraySort (ge xs) (\a b -> ge (f a b))
+
+-- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
+-- use @le@. Binders are applied to @dummy@.
+-- 'Expr' has no lazy 'Effect' child; see 'foldEff' for @lf@.
+foldExpr
+  :: forall f m u. Monoid m
+  => (forall v. f v)
+  -> (forall v. Expr f v -> m)
+  -> (forall v. Expr f v -> m)
+  -> (forall v. Effect f v -> m)
+  -> Expr f u
+  -> m
+foldExpr dummy se le sf = \case
+  Literal{} -> mempty
+  Var{} -> mempty
+  Concat x y -> se x <> se y
+  Plus x y -> se x <> se y
+  Times x y -> se x <> se y
+  Minus x y -> se x <> se y
+  Negate x -> se x
+  FracDiv x y -> se x <> se y
+  Rem x y -> se x <> se y
+  BitAnd x y -> se x <> se y
+  BitOr x y -> se x <> se y
+  BitXor x y -> se x <> se y
+  Shl x y -> se x <> se y
+  Shr x y -> se x <> se y
+  UShr x y -> se x <> se y
+  And x y -> se x <> le y
+  Or x y -> se x <> le y
+  Eq x y -> se x <> se y
+  NEq x y -> se x <> se y
+  GTh x y -> se x <> se y
+  LTh x y -> se x <> se y
+  GTEq x y -> se x <> se y
+  LTEq x y -> se x <> se y
+  Let x g -> se x <> se (g dummy)
+  LetRec r b -> le (r dummy) <> se (b dummy)
+  Lambda g -> le (g dummy)
+  Apply f x -> se f <> se x
+  Show x -> se x
+  TypeOf x -> se x
+  If c u v -> se c <> le u <> le v
+  OptionCase o n s -> se o <> le n <> le (s dummy)
+  ResultOk x -> se x
+  ResultErr x -> se x
+  ResultCase o e s -> se o <> le (e dummy) <> le (s dummy)
+  UnsafeEffectExpr e -> sf e
+  ExprUnary _ x -> se x
+  ExprBinary _ x y -> se x <> se y
+  ExprTernary _ x y z -> se x <> se y <> se z
+  ExprMap x f -> se x <> le (f dummy)
+  ExprFilter x f -> se x <> le (f dummy)
+  ExprReduce x z f -> se x <> se z <> le (f dummy dummy)
+  ExprIndex x i -> se x <> se i
+  MathUnary _ x -> se x
+  MathBinary _ x y -> se x <> se y
+  UnsafeNullable x -> se x
+  FrozenLit fs -> foldMap (\(FieldLit e) -> se e) fs
+  GetField o -> se o
+
+foldEff
+  :: forall f m u. Monoid m
+  => (forall v. f v)
+  -> (forall v. Expr f v -> m)
+  -> (forall v. Expr f v -> m)
+  -> (forall v. Effect f v -> m)
+  -> (forall v. Effect f v -> m)
+  -> Effect f u
+  -> m
+foldEff dummy se le sf lf = \case
+  Lift x -> se x
+  FFI _ args -> recFold (\n a -> n <> foldArg a) mempty args
+  UnsafeObject{} -> mempty
+  UnsafeObjectGet x _ -> sf x
+  UnsafeObjectAssign x y -> sf x <> sf y
+  CallMethod x _ args -> sf x <> recFold (\n a -> n <> foldArg a) mempty args
+  Bind x f -> sf x <> sf (f dummy)
+  BindRec r b -> lf (r dummy) <> sf (b dummy)
+  LambdaE f -> lf (f dummy)
+  ApplyE f x -> sf f <> sf x
+  IfE c u v -> sf c <> lf u <> lf v
+  While c b -> lf c <> lf b
+  OptionCaseE o n s -> se o <> lf n <> lf (s dummy)
+  ResultCaseE o e s -> se o <> lf (e dummy) <> lf (s dummy)
+  StringCaseE o arms d -> se o <> foldMap (lf . snd) arms <> lf d
+  Throw x -> se x
+  Try a k -> sf a <> lf (k dummy)
+  ObjectLit fs -> foldMap (\(FieldLit e) -> se e) fs
+  DeleteProp o k -> sf o <> se k
+  ArrayLit es -> foldMap sf es
+  ArraySort xs f -> se xs <> le (f dummy dummy)
+  where
+    foldArg :: forall x. Arg f x -> m
+    foldArg (ArgExpr e) = se e
+    foldArg (ArgEffect e) = sf e
+
 lookupField :: forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
 lookupField = findLit . reverse
   where
@@ -1080,91 +1070,15 @@ foldGetField = \case
   If (Literal (ValueBool False)) _ e -> foldGetField @k e
   _ -> Nothing
 
-flattenArg :: Arg Stamp u -> Arg Stamp u
-flattenArg (ArgExpr e) = ArgExpr (flattenExpr e)
-flattenArg (ArgEffect e) = ArgEffect (flattenEff e)
-
 -- | Unwrap 'Embed' holes. The universe of the hole is the universe of the
 -- 'Var', so this is ordinary GADT coverage — not a cast.
 flattenExpr :: Expr Stamp u -> Expr Stamp u
 flattenExpr = \case
   Var (Embed e) -> flattenExpr e
-  Var s -> Var s
-  Literal x -> Literal x
-  Concat x y -> Concat (flattenExpr x) (flattenExpr y)
-  Plus x y -> Plus (flattenExpr x) (flattenExpr y)
-  Times x y -> Times (flattenExpr x) (flattenExpr y)
-  Minus x y -> Minus (flattenExpr x) (flattenExpr y)
-  Negate x -> Negate (flattenExpr x)
-  FracDiv x y -> FracDiv (flattenExpr x) (flattenExpr y)
-  Rem x y -> Rem (flattenExpr x) (flattenExpr y)
-  BitAnd x y -> BitAnd (flattenExpr x) (flattenExpr y)
-  BitOr x y -> BitOr (flattenExpr x) (flattenExpr y)
-  BitXor x y -> BitXor (flattenExpr x) (flattenExpr y)
-  Shl x y -> Shl (flattenExpr x) (flattenExpr y)
-  Shr x y -> Shr (flattenExpr x) (flattenExpr y)
-  UShr x y -> UShr (flattenExpr x) (flattenExpr y)
-  And x y -> And (flattenExpr x) (flattenExpr y)
-  Or x y -> Or (flattenExpr x) (flattenExpr y)
-  Eq x y -> Eq (flattenExpr x) (flattenExpr y)
-  NEq x y -> NEq (flattenExpr x) (flattenExpr y)
-  GTh x y -> GTh (flattenExpr x) (flattenExpr y)
-  LTh x y -> LTh (flattenExpr x) (flattenExpr y)
-  GTEq x y -> GTEq (flattenExpr x) (flattenExpr y)
-  LTEq x y -> LTEq (flattenExpr x) (flattenExpr y)
-  Let x g -> Let (flattenExpr x) (flattenExpr . g)
-  LetRec rhs body -> LetRec (flattenExpr . rhs) (flattenExpr . body)
-  Lambda g -> Lambda (flattenExpr . g)
-  Apply f x -> Apply (flattenExpr f) (flattenExpr x)
-  Show x -> Show (flattenExpr x)
-  TypeOf x -> TypeOf (flattenExpr x)
-  If c u v -> If (flattenExpr c) (flattenExpr u) (flattenExpr v)
-  OptionCase o n s -> OptionCase (flattenExpr o) (flattenExpr n) (flattenExpr . s)
-  ResultOk x -> ResultOk (flattenExpr x)
-  ResultErr x -> ResultErr (flattenExpr x)
-  ResultCase o e s -> ResultCase (flattenExpr o) (flattenExpr . e) (flattenExpr . s)
-  UnsafeEffectExpr e -> UnsafeEffectExpr (flattenEff e)
-  ExprUnary n x -> ExprUnary n (flattenExpr x)
-  ExprBinary n x y -> ExprBinary n (flattenExpr x) (flattenExpr y)
-  ExprTernary n x y z -> ExprTernary n (flattenExpr x) (flattenExpr y) (flattenExpr z)
-  ExprMap x f -> ExprMap (flattenExpr x) (flattenExpr . f)
-  ExprFilter x f -> ExprFilter (flattenExpr x) (flattenExpr . f)
-  ExprReduce x z f -> ExprReduce (flattenExpr x) (flattenExpr z) (\a b -> flattenExpr (f a b))
-  ExprIndex x i -> ExprIndex (flattenExpr x) (flattenExpr i)
-  MathUnary n x -> MathUnary n (flattenExpr x)
-  MathBinary n x y -> MathBinary n (flattenExpr x) (flattenExpr y)
-  UnsafeNullable x -> UnsafeNullable (flattenExpr x)
-  FrozenLit fs -> FrozenLit (map (mapFieldLit flattenExpr) fs)
-  GetField @k o -> GetField @k (flattenExpr o)
+  e -> mapExpr flattenExpr flattenEff e
 
 flattenEff :: Effect Stamp u -> Effect Stamp u
-flattenEff = \case
-  Lift x -> Lift (flattenExpr x)
-  FFI n args -> FFI n (mapRec flattenArg args)
-  UnsafeObject o -> UnsafeObject o
-  UnsafeObjectGet x s -> UnsafeObjectGet (flattenEff x) s
-  UnsafeObjectAssign x y -> UnsafeObjectAssign (flattenEff x) (flattenEff y)
-  CallMethod x n args -> CallMethod (flattenEff x) n (mapRec flattenArg args)
-  Bind x f -> Bind (flattenEff x) (flattenEff . f)
-  BindRec rhs body -> BindRec (flattenEff . rhs) (flattenEff . body)
-  LambdaE f -> LambdaE (flattenEff . f)
-  ApplyE f x -> ApplyE (flattenEff f) (flattenEff x)
-  IfE c u v -> IfE (flattenEff c) (flattenEff u) (flattenEff v)
-  While c b -> While (flattenEff c) (flattenEff b)
-  OptionCaseE o n s -> OptionCaseE (flattenExpr o) (flattenEff n) (flattenEff . s)
-  ResultCaseE o e s -> ResultCaseE (flattenExpr o) (flattenEff . e) (flattenEff . s)
-  StringCaseE o arms d ->
-    StringCaseE (flattenExpr o) (map (fmap flattenEff) arms) (flattenEff d)
-  Throw x -> Throw (flattenExpr x)
-  Try a k -> Try (flattenEff a) (flattenEff . k)
-  ObjectLit fs -> ObjectLit (map (mapFieldLit flattenExpr) fs)
-  DeleteProp o k -> DeleteProp (flattenEff o) (flattenExpr k)
-  ArrayLit es -> ArrayLit (map flattenEff es)
-  ArraySort xs f -> ArraySort (flattenExpr xs) (\a b -> flattenExpr (f a b))
-
-renameArg :: Int -> Int -> Arg Stamp u -> Arg Stamp u
-renameArg old new (ArgExpr e) = ArgExpr (renameExpr old new e)
-renameArg old new (ArgEffect e) = ArgEffect (renameEff old new e)
+flattenEff = mapEff flattenExpr flattenEff
 
 -- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
 -- does not need a cast. Used after the one 'optUnder' apply of @f@.
@@ -1173,77 +1087,10 @@ renameExpr old new = \case
   Var (Embed e) -> renameExpr old new (flattenExpr e)
   Var (Stamp t) | t == old -> Var (Stamp new)
   Var s -> Var s
-  Literal x -> Literal x
-  Concat x y -> Concat (renameExpr old new x) (renameExpr old new y)
-  Plus x y -> Plus (renameExpr old new x) (renameExpr old new y)
-  Times x y -> Times (renameExpr old new x) (renameExpr old new y)
-  Minus x y -> Minus (renameExpr old new x) (renameExpr old new y)
-  Negate x -> Negate (renameExpr old new x)
-  FracDiv x y -> FracDiv (renameExpr old new x) (renameExpr old new y)
-  Rem x y -> Rem (renameExpr old new x) (renameExpr old new y)
-  BitAnd x y -> BitAnd (renameExpr old new x) (renameExpr old new y)
-  BitOr x y -> BitOr (renameExpr old new x) (renameExpr old new y)
-  BitXor x y -> BitXor (renameExpr old new x) (renameExpr old new y)
-  Shl x y -> Shl (renameExpr old new x) (renameExpr old new y)
-  Shr x y -> Shr (renameExpr old new x) (renameExpr old new y)
-  UShr x y -> UShr (renameExpr old new x) (renameExpr old new y)
-  And x y -> And (renameExpr old new x) (renameExpr old new y)
-  Or x y -> Or (renameExpr old new x) (renameExpr old new y)
-  Eq x y -> Eq (renameExpr old new x) (renameExpr old new y)
-  NEq x y -> NEq (renameExpr old new x) (renameExpr old new y)
-  GTh x y -> GTh (renameExpr old new x) (renameExpr old new y)
-  LTh x y -> LTh (renameExpr old new x) (renameExpr old new y)
-  GTEq x y -> GTEq (renameExpr old new x) (renameExpr old new y)
-  LTEq x y -> LTEq (renameExpr old new x) (renameExpr old new y)
-  Let x g -> Let (renameExpr old new x) (renameExpr old new . g)
-  LetRec rhs body -> LetRec (renameExpr old new . rhs) (renameExpr old new . body)
-  Lambda g -> Lambda (renameExpr old new . g)
-  Apply f x -> Apply (renameExpr old new f) (renameExpr old new x)
-  Show x -> Show (renameExpr old new x)
-  TypeOf x -> TypeOf (renameExpr old new x)
-  If c u v -> If (renameExpr old new c) (renameExpr old new u) (renameExpr old new v)
-  OptionCase o n s -> OptionCase (renameExpr old new o) (renameExpr old new n) (renameExpr old new . s)
-  ResultOk x -> ResultOk (renameExpr old new x)
-  ResultErr x -> ResultErr (renameExpr old new x)
-  ResultCase o e s -> ResultCase (renameExpr old new o) (renameExpr old new . e) (renameExpr old new . s)
-  UnsafeEffectExpr e -> UnsafeEffectExpr (renameEff old new e)
-  ExprUnary n x -> ExprUnary n (renameExpr old new x)
-  ExprBinary n x y -> ExprBinary n (renameExpr old new x) (renameExpr old new y)
-  ExprTernary n x y z -> ExprTernary n (renameExpr old new x) (renameExpr old new y) (renameExpr old new z)
-  ExprMap x f -> ExprMap (renameExpr old new x) (renameExpr old new . f)
-  ExprFilter x f -> ExprFilter (renameExpr old new x) (renameExpr old new . f)
-  ExprReduce x z f -> ExprReduce (renameExpr old new x) (renameExpr old new z) (\a b -> renameExpr old new (f a b))
-  ExprIndex x i -> ExprIndex (renameExpr old new x) (renameExpr old new i)
-  MathUnary n x -> MathUnary n (renameExpr old new x)
-  MathBinary n x y -> MathBinary n (renameExpr old new x) (renameExpr old new y)
-  UnsafeNullable x -> UnsafeNullable (renameExpr old new x)
-  FrozenLit fs -> FrozenLit (map (mapFieldLit (renameExpr old new)) fs)
-  GetField @k o -> GetField @k (renameExpr old new o)
+  e -> mapExpr (renameExpr old new) (renameEff old new) e
 
 renameEff :: Int -> Int -> Effect Stamp u -> Effect Stamp u
-renameEff old new = \case
-  Lift x -> Lift (renameExpr old new x)
-  FFI n args -> FFI n (mapRec (renameArg old new) args)
-  UnsafeObject o -> UnsafeObject o
-  UnsafeObjectGet x s -> UnsafeObjectGet (renameEff old new x) s
-  UnsafeObjectAssign x y -> UnsafeObjectAssign (renameEff old new x) (renameEff old new y)
-  CallMethod x n args -> CallMethod (renameEff old new x) n (mapRec (renameArg old new) args)
-  Bind x f -> Bind (renameEff old new x) (renameEff old new . f)
-  BindRec rhs body -> BindRec (renameEff old new . rhs) (renameEff old new . body)
-  LambdaE f -> LambdaE (renameEff old new . f)
-  ApplyE f x -> ApplyE (renameEff old new f) (renameEff old new x)
-  IfE c u v -> IfE (renameEff old new c) (renameEff old new u) (renameEff old new v)
-  While c b -> While (renameEff old new c) (renameEff old new b)
-  OptionCaseE o n s -> OptionCaseE (renameExpr old new o) (renameEff old new n) (renameEff old new . s)
-  ResultCaseE o e s -> ResultCaseE (renameExpr old new o) (renameEff old new . e) (renameEff old new . s)
-  StringCaseE o arms d ->
-    StringCaseE (renameExpr old new o) (map (fmap (renameEff old new)) arms) (renameEff old new d)
-  Throw x -> Throw (renameExpr old new x)
-  Try a k -> Try (renameEff old new a) (renameEff old new . k)
-  ObjectLit fs -> ObjectLit (map (mapFieldLit (renameExpr old new)) fs)
-  DeleteProp o k -> DeleteProp (renameEff old new o) (renameExpr old new k)
-  ArrayLit es -> ArrayLit (map (renameEff old new) es)
-  ArraySort xs f -> ArraySort (renameExpr old new xs) (\a b -> renameExpr old new (f a b))
+renameEff old new = mapEff (renameExpr old new) (renameEff old new)
 
 inlineExpr :: (Stamp u -> Expr Stamp v) -> Expr Stamp u -> Expr Stamp v
 inlineExpr f x = flattenExpr (f (Embed x))
@@ -1334,54 +1181,27 @@ instance PhoasDummy Value where
   phoasDummy = error "JShark.isPureExpr: Value binder"
 
 isPureExpr :: PhoasDummy f => Expr f u -> Bool
-isPureExpr = \case
-  Literal{} -> True
-  Var{} -> True
-  Concat x y -> isPureExpr x && isPureExpr y
-  Plus x y -> isPureExpr x && isPureExpr y
-  Times x y -> isPureExpr x && isPureExpr y
-  Minus x y -> isPureExpr x && isPureExpr y
-  Negate x -> isPureExpr x
-  FracDiv x y -> isPureExpr x && isPureExpr y
-  Rem x y -> isPureExpr x && isPureExpr y
-  BitAnd x y -> isPureExpr x && isPureExpr y
-  BitOr x y -> isPureExpr x && isPureExpr y
-  BitXor x y -> isPureExpr x && isPureExpr y
-  Shl x y -> isPureExpr x && isPureExpr y
-  Shr x y -> isPureExpr x && isPureExpr y
-  UShr x y -> isPureExpr x && isPureExpr y
-  And x y -> isPureExpr x && isPureExpr y
-  Or x y -> isPureExpr x && isPureExpr y
-  Eq x y -> isPureExpr x && isPureExpr y
-  NEq x y -> isPureExpr x && isPureExpr y
-  GTh x y -> isPureExpr x && isPureExpr y
-  LTh x y -> isPureExpr x && isPureExpr y
-  GTEq x y -> isPureExpr x && isPureExpr y
-  LTEq x y -> isPureExpr x && isPureExpr y
-  Let x g -> isPureExpr x && isPureExpr (g phoasDummy)
-  LetRec r b -> isPureExpr (r phoasDummy) && isPureExpr (b phoasDummy)
-  Lambda g -> isPureExpr (g phoasDummy)
-  Apply f x -> isPureExpr f && isPureExpr x
-  Show x -> isPureExpr x
-  TypeOf x -> isPureExpr x
-  If c t e -> isPureExpr c && isPureExpr t && isPureExpr e
-  OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s phoasDummy)
-  ResultOk x -> isPureExpr x
-  ResultErr x -> isPureExpr x
-  ResultCase o e s -> isPureExpr o && isPureExpr (e phoasDummy) && isPureExpr (s phoasDummy)
+isPureExpr e = case e of
   UnsafeEffectExpr _ -> False
   ExprUnary n x -> isPureStdUnary n && isPureExpr x
-  ExprBinary _ x y -> isPureExpr x && isPureExpr y
-  ExprTernary _ x y z -> isPureExpr x && isPureExpr y && isPureExpr z
-  ExprMap x f -> isPureExpr x && isPureExpr (f phoasDummy)
-  ExprFilter x f -> isPureExpr x && isPureExpr (f phoasDummy)
-  ExprReduce x z f -> isPureExpr x && isPureExpr z && isPureExpr (f phoasDummy phoasDummy)
-  ExprIndex x i -> isPureExpr x && isPureExpr i
-  MathUnary _ x -> isPureExpr x
-  MathBinary _ x y -> isPureExpr x && isPureExpr y
-  UnsafeNullable x -> isPureExpr x
-  FrozenLit fs -> all (\(FieldLit e) -> isPureExpr e) fs
-  GetField o -> isPureExpr o
+  _ -> getAll (foldExpr phoasDummy p p pe e)
+  where
+    p = All . isPureExpr
+    pe = All . isPureEffectStamp
+
+isPureEffectStamp :: PhoasDummy f => Effect f u -> Bool
+isPureEffectStamp e = case e of
+  FFI{} -> False
+  UnsafeObjectGet{} -> False
+  UnsafeObjectAssign{} -> False
+  CallMethod{} -> False
+  ApplyE{} -> False
+  While{} -> False
+  Throw{} -> False
+  Try{} -> False
+  DeleteProp{} -> False
+  ArraySort{} -> False
+  _ -> getAll (foldEff phoasDummy (All . isPureExpr) (All . isPureExpr) (All . isPureEffectStamp) (All . isPureEffectStamp) e)
 
 -- | @JSON.stringify@ throws on bigint / circular values, so unused
 -- stringify is kept.
@@ -1390,29 +1210,7 @@ isPureStdUnary StdStringify = False
 isPureStdUnary _ = True
 
 isPureEffect :: Effect Stamp u -> Bool
-isPureEffect = \case
-  Lift x -> isPureExpr x
-  FFI{} -> False
-  UnsafeObject{} -> True
-  UnsafeObjectGet{} -> False
-  UnsafeObjectAssign{} -> False
-  CallMethod{} -> False
-  Bind x f -> isPureEffect x && isPureEffect (f nestedDummy)
-  BindRec r b -> isPureEffect (r nestedDummy) && isPureEffect (b nestedDummy)
-  LambdaE f -> isPureEffect (f nestedDummy)
-  ApplyE{} -> False
-  IfE c t e -> isPureEffect c && isPureEffect t && isPureEffect e
-  While{} -> False
-  OptionCaseE o n s -> isPureExpr o && isPureEffect n && isPureEffect (s nestedDummy)
-  ResultCaseE o e s -> isPureExpr o && isPureEffect (e nestedDummy) && isPureEffect (s nestedDummy)
-  StringCaseE o arms d ->
-    isPureExpr o && all (isPureEffect . snd) arms && isPureEffect d
-  Throw{} -> False
-  Try{} -> False
-  ObjectLit fs -> all (\(FieldLit e) -> isPureExpr e) fs
-  DeleteProp{} -> False
-  ArrayLit es -> all isPureEffect es
-  ArraySort{} -> False
+isPureEffect = isPureEffectStamp
 
 optArgs :: Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us)
 optArgs = mapAccumRec optArg
@@ -1452,29 +1250,28 @@ foldOr x y = case (x, y) of
   (x', Literal (ValueBool True)) | isPureExpr x' -> Literal (ValueBool True)
   _ -> Or x y
 
+foldCmp
+  :: (Value u -> Value u -> Bool)
+  -> (Value u -> Bool)
+  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
+  -> Expr Stamp u
+  -> Expr Stamp u
+  -> Expr Stamp 'Bool
+foldCmp cmp ok k x y = case (x, y) of
+  (Literal a, Literal b) | ok a && ok b -> Literal (ValueBool (cmp a b))
+  _ -> k x y
+
 foldEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldEq x y = case (x, y) of
-  (Literal a, Literal b)
-    | eqFoldableValue a && eqFoldableValue b -> Literal (ValueBool (valueEq a b))
-  _ -> Eq x y
+foldEq = foldCmp valueEq eqFoldableValue Eq
 
 foldNEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldNEq x y = case (x, y) of
-  (Literal a, Literal b)
-    | eqFoldableValue a && eqFoldableValue b -> Literal (ValueBool (not (valueEq a b)))
-  _ -> NEq x y
+foldNEq = foldCmp (\a b -> not (valueEq a b)) eqFoldableValue NEq
 
 foldOrd :: Ordering -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool) -> Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldOrd ord k x y = case (x, y) of
-  (Literal a, Literal b)
-    | isOrderableValue a && isOrderableValue b -> Literal (ValueBool (valueCompare a b == ord))
-  _ -> k x y
+foldOrd ord = foldCmp (\a b -> valueCompare a b == ord) isOrderableValue
 
 foldOrdNeq :: Ordering -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool) -> Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldOrdNeq ord k x y = case (x, y) of
-  (Literal a, Literal b)
-    | isOrderableValue a && isOrderableValue b -> Literal (ValueBool (valueCompare a b /= ord))
-  _ -> k x y
+foldOrdNeq ord = foldCmp (\a b -> valueCompare a b /= ord) isOrderableValue
 
 foldShow :: Expr Stamp u -> Expr Stamp 'String
 foldShow x = case x of
@@ -1515,21 +1312,45 @@ optLet t0 x f =
 -- Count uses on the already-optimized body. Large tails keep that
 -- body (rename-only reopen). Small @f@ may still be applied once more
 -- so nested lets / optionCase peel fold.
+data ElimOps src body = ElimOps
+  { elimCount :: Int -> body -> Int
+  , elimPure :: src -> Bool
+  , elimCheap :: src -> Bool
+  , elimSize :: body -> Int
+  , elimRebuild :: body -> body
+  , elimSplice :: Int -> (Int, body)
+  , elimDropUnused :: src -> Bool
+  }
+
+elimFrom :: ElimOps src body -> Int -> src -> Int -> body -> (Int, body)
+elimFrom ops t x tag body =
+  let uses = elimCount ops tag body
+      kept = elimRebuild ops body
+      inlined
+        | elimSize ops body > optSmall = (t, kept)
+        | otherwise = elimSplice ops t
+   in case uses of
+        0 | elimPure ops x, elimDropUnused ops x -> (t, body)
+        0 -> (t, kept)
+        1 -> inlined
+        _ | elimCheap ops x -> inlined
+        _ -> (t, kept)
+
 elimLetFrom :: Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> Int -> Expr Stamp v -> (Int, Expr Stamp v)
 elimLetFrom t x f tag body =
-  let uses = countExpr tag body
-      rebuild = Let x (rebindExpr tag body)
-      splice
-        | sizeExpr body > optSmall = (t, rebuild)
-        | otherwise = optExpr t (inlineExpr f x)
-   in case uses of
-        -- uses==1 is always a single strict use: countExpr already
-        -- treats lambda/loop/?:/&&-|| RHS positions as 2.
-        0 | isPureExpr x -> (t, body)
-        0 -> (t, rebuild)
-        1 -> splice
-        _ | isCheap x -> splice
-        _ -> (t, rebuild)
+  -- uses==1 is always a single strict use: countExpr already
+  -- treats lambda/loop/?:/&&-|| RHS positions as 2.
+  elimFrom
+    ElimOps
+      { elimCount = countExpr
+      , elimPure = isPureExpr
+      , elimCheap = isCheap
+      , elimSize = sizeExpr
+      , elimRebuild = Let x . rebindExpr tag
+      , elimSplice = \t' -> optExpr t' (inlineExpr f x)
+      , elimDropUnused = const True
+      }
+    t x tag body
 
 boundAsExpr :: Effect Stamp u -> Expr Stamp u
 boundAsExpr (Lift e) = e
@@ -1543,17 +1364,17 @@ optBind t0 x f =
 
 elimBindFrom :: Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> Int -> Effect Stamp v -> (Int, Effect Stamp v)
 elimBindFrom t x f tag body =
-  let uses = countEffect tag body
-      rebuild = Bind x (rebindEff tag body)
-      splice
-        | sizeEffect body > optSmall = (t, rebuild)
-        | otherwise = optEffect t (inlineEff f (boundAsExpr x))
-   in case uses of
-        0 | isPureEffect x, not (isAliasBind x) -> (t, body)
-        0 -> (t, rebuild)
-        1 -> splice
-        _ | isCheapEffect x -> splice
-        _ -> (t, rebuild)
+  elimFrom
+    ElimOps
+      { elimCount = countEffect
+      , elimPure = isPureEffect
+      , elimCheap = isCheapEffect
+      , elimSize = sizeEffect
+      , elimRebuild = Bind x . rebindEff tag
+      , elimSplice = \t' -> optEffect t' (inlineEff f (boundAsExpr x))
+      , elimDropUnused = not . isAliasBind
+      }
+    t x tag body
 
 optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u)
 optExpr t0 = \case
@@ -1843,26 +1664,25 @@ optEffect t0 = \case
           | otherwise = rebindExpr2 tA tB body a b
      in (t2, ArraySort xs' wrap)
 
+mapAccumAST :: (s -> a -> (s, b)) -> s -> [a] -> (s, [b])
+mapAccumAST _ t [] = (t, [])
+mapAccumAST f t (x:xs) =
+  let (t1, x') = f t x
+      (t2, xs') = mapAccumAST f t1 xs
+   in (t2, x' : xs')
+
 mapAccumField :: Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r])
-mapAccumField t [] = (t, [])
-mapAccumField t (FieldLit @k e : fs) =
+mapAccumField = mapAccumAST $ \t (FieldLit @k e) ->
   let (t1, e') = optExpr t e
-      (t2, fs') = mapAccumField t1 fs
-   in (t2, FieldLit @k e' : fs')
+   in (t1, FieldLit @k e')
 
 mapAccumEffs :: Int -> [Effect Stamp u] -> (Int, [Effect Stamp u])
-mapAccumEffs t [] = (t, [])
-mapAccumEffs t (e:es) =
-  let (t1, e') = optEffect t e
-      (t2, es') = mapAccumEffs t1 es
-   in (t2, e' : es')
+mapAccumEffs = mapAccumAST optEffect
 
 mapAccumArms :: Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Effect Stamp u)])
-mapAccumArms t [] = (t, [])
-mapAccumArms t ((k, e) : es) =
+mapAccumArms = mapAccumAST $ \t (k, e) ->
   let (t1, e') = optEffect t e
-      (t2, es') = mapAccumArms t1 es
-   in (t2, (k, e') : es')
+   in (t1, (k, e'))
 
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
@@ -1939,92 +1759,129 @@ ifElseStmt cRef tDecl tRef eDecl eRef
       "if" <+> P.parens cRef <+> bracesNest (asStmt tDecl tRef)
         $$ "else" <+> bracesNest (asStmt eDecl eRef)
 
+assignResult :: String -> Doc -> Doc
+assignResult resultVar ref
+  | P.isEmpty ref = mempty
+  | otherwise = (P.text resultVar <+> "=" <+> ref) <> P.semi
+
+letResult :: String -> Doc
+letResult resultVar = ("let" <+> P.text resultVar) <> P.semi
+
+recBindStmt :: Doc -> Doc -> Doc -> Doc
+recBindStmt n rDecl rRef =
+  ("let" <+> n) <> P.semi $$ rDecl $$ (n <+> "=" <+> rRef) <> P.semi
+
+resultCasePrelude
+  :: CG
+  -> Expr Stamp ('Result e a)
+  -> (CG, Doc, String, Int)
+resultCasePrelude s0 res =
+  let (s1, Code rDecl rRef) = pureAST' s0 res
+      (nObj, s2) = allocIdent s1
+      (nUnw, s3) = allocIdent s2
+      obj = 'n' : show nObj
+      prelude = rDecl $$ constBind nObj rRef $$ constBind nUnw (P.text obj <> ".value")
+   in (s3, prelude, obj, nUnw)
+
+-- | Unit arms: prelude + stmt, empty ref. Value arms: prelude +
+-- @let result@ + stmt, result ident.
+emitBranching
+  :: Bool
+  -> CG
+  -> (CG -> (CG, Doc, extra))
+  -> (Maybe String -> extra -> CG -> (CG, Doc))
+  -> (CG, Code)
+emitBranching unit s0 prelude k
+  | unit =
+      let (s1, pre, extra) = prelude s0
+          (s2, stmt) = k Nothing extra s1
+       in (s2, Code (pre $$ stmt) mempty)
+  | otherwise =
+      let (s1, pre, extra) = prelude s0
+          (n, s2) = allocIdent s1
+          rv = 'n' : show n
+          (s3, stmt) = k (Just rv) extra s2
+       in (s3, Code (pre $$ letResult rv $$ stmt) (P.text rv))
+
+ifAssignOrStmt :: Maybe String -> Doc -> Doc -> Doc -> Doc -> Doc -> Doc
+ifAssignOrStmt Nothing c tD tR eD eR = ifElseStmt c tD tR eD eR
+ifAssignOrStmt (Just rv) c tD tR eD eR =
+  "if" <+> P.parens c <+> bracesNest (tD $$ assignResult rv tR)
+    $$ "else" <+> bracesNest (eD $$ assignResult rv eR)
+
+tryCatchStmt :: Maybe String -> Int -> Doc -> Doc -> Doc -> Doc -> Doc
+tryCatchStmt mRes catchN aDecl aRef bDecl bRef =
+  let catchHead = "catch" <+> P.parens (P.text ('n' : show catchN))
+   in case mRes of
+        Nothing ->
+          "try" <+> bracesNest (asStmt aDecl aRef)
+            $$ (catchHead <+> bracesNest (asStmt bDecl bRef))
+        Just rv ->
+          "try" <+> P.braces (P.nest 2 (aDecl $$ assignResult rv aRef))
+            $$ (catchHead <+> P.braces (P.nest 2 (bDecl $$ assignResult rv bRef)))
+
+renderFunction :: Int -> Doc -> Doc -> Doc
+renderFunction nParam decl ref =
+  "function"
+    <+> P.parens (P.text $ 'n' : show nParam)
+    <+> P.braces (decl $$ ret)
+  where
+    -- Empty ref is Unit (event handlers, forEach of noOp). `return ()`
+    -- is a SyntaxError; HughesPJ `parens` of empty is `()`.
+    ret
+      | P.isEmpty ref = "return"
+      | otherwise = "return" <+> P.parens ref
+
 effectfulAST' :: forall v. CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !s0 = \case
   Lift x -> pureAST' s0 x
   FFI fn args ->
     let (s1, argDecl, argRefs) = renderArgList argAST s0 args
      in (s1, fxCode argDecl (P.text fn <> P.parens argRefs))
-  IfE c t e
-    | isUnitWitness t && isUnitWitness e ->
-        let (s1, Code cDecl cRef) = effectfulAST' s0 c
-            (s2, Code tDecl tRef) = effectfulAST' s1 t
-            (s3, Code eDecl eRef) = effectfulAST' s2 e
-         in (s3, Code (cDecl $$ ifElseStmt cRef tDecl tRef eDecl eRef) mempty)
-    | otherwise ->
-        -- Value-producing @if@: a shared result var is assigned in both
-        -- arms. Do not use emptiness to pick a ternary — a Unit leftover
-        -- ref is not a genuinely-empty Doc.
-        let (s1, Code cDecl cRef) = effectfulAST' s0 c
-            (resultN, s2) = allocIdent s1
-            resultVar = 'n' : show resultN
-            (s3, Code tDecl tRef) = effectfulAST' s2 t
-            (s4, Code eDecl eRef) = effectfulAST' s3 e
-            assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-            ifStmt = ("let" <+> P.text resultVar) <> P.semi
-              $$ ("if" <+> P.parens cRef <+> bracesNest (tDecl $$ assign tRef))
-              $$ ("else" <+> bracesNest (eDecl $$ assign eRef))
-         in (s4, Code (cDecl $$ ifStmt) (P.text resultVar))
+  IfE c t e ->
+    -- Value-producing @if@: a shared result var is assigned in both
+    -- arms. Do not use emptiness to pick a ternary — a Unit leftover
+    -- ref is not a genuinely-empty Doc.
+    emitBranching (isUnitWitness t && isUnitWitness e) s0
+      (\s ->
+         let (s1, Code cDecl cRef) = effectfulAST' s c
+          in (s1, cDecl, cRef))
+      (\mRes cRef s ->
+         let (s1, Code tDecl tRef) = effectfulAST' s t
+             (s2, Code eDecl eRef) = effectfulAST' s1 e
+          in (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef))
   While cond body ->
     let (s1, Code condDecl condRef) = effectfulAST' s0 cond
         (s2, Code bodyDecl bodyRef) = effectfulAST' s1 body
         bodyStmt = if P.isEmpty bodyRef then bodyDecl else bodyDecl $$ (bodyRef <> P.semi)
         whileStmt = "while" <+> P.parens condRef <+> P.braces (P.nest 2 bodyStmt)
      in (s2, Code (condDecl $$ whileStmt) mempty)
-  OptionCaseE opt noneE someF
-    | isUnitWitness noneE && isUnitWitness (someF nestedDummy) ->
-        let (s1, Code oDecl oRef) = pureAST' s0 opt
-            (nBind, s2) = allocIdent s1
-            optVar = 'n' : show nBind
-            (s3, Code nDecl nRef) = effectfulAST' s2 noneE
-            (s4, Code sDecl sRef) = effectfulAST' s3 (someF (Name nBind))
-            stmt = oDecl $$ constBind nBind oRef
-              $$ ifElseStmt (P.text optVar <+> "===" <+> "null") nDecl nRef sDecl sRef
-         in (s4, Code stmt mempty)
-    | otherwise ->
-        let (s1, Code oDecl oRef) = pureAST' s0 opt
-            (nBind, s2) = allocIdent s1
-            optVar = 'n' : show nBind
-            (resultN, s3) = allocIdent s2
-            resultVar = 'n' : show resultN
-            (s4, Code nDecl nRef) = effectfulAST' s3 noneE
-            (s5, Code sDecl sRef) = effectfulAST' s4 (someF (Name nBind))
-            assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-            stmt = oDecl $$ constBind nBind oRef
-              $$ ("let" <+> P.text resultVar) <> P.semi
-              $$ ("if" <+> P.parens (P.text optVar <+> "===" <+> "null")
-                    <+> P.braces (P.nest 2 (nDecl $$ assign nRef)))
-              $$ ("else" <+> P.braces (P.nest 2 (sDecl $$ assign sRef)))
-         in (s5, Code stmt (P.text resultVar))
-  Try a k
-    | isUnitWitness a && isUnitWitness (k nestedDummy) ->
-        let (s1, Code aDecl aRef) = effectfulAST' s0 a
-            (catchN, s2) = allocIdent s1
-            (s3, Code bDecl bRef) = effectfulAST' s2 (k (Name catchN))
-            stmt = "try" <+> bracesNest (asStmt aDecl aRef)
-              $$ ("catch" <+> P.parens (P.text ('n' : show catchN))
-                    <+> bracesNest (asStmt bDecl bRef))
-         in (s3, Code stmt mempty)
-    | otherwise ->
-        let (resultN, s1) = allocIdent s0
-            resultVar = 'n' : show resultN
-            (s2, Code aDecl aRef) = effectfulAST' s1 a
-            (catchN, s3) = allocIdent s2
-            (s4, Code bDecl bRef) = effectfulAST' s3 (k (Name catchN))
-            assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-            stmt = ("let" <+> P.text resultVar) <> P.semi
-              $$ ("try" <+> P.braces (P.nest 2 (aDecl $$ assign aRef)))
-              $$ ("catch" <+> P.parens (P.text ('n' : show catchN))
-                    <+> P.braces (P.nest 2 (bDecl $$ assign bRef)))
-         in (s4, Code stmt (P.text resultVar))
+  OptionCaseE opt noneE someF ->
+    emitBranching (isUnitWitness noneE && isUnitWitness (someF nestedDummy)) s0
+      (\s ->
+         let (s1, Code oDecl oRef) = pureAST' s opt
+             (nBind, s2) = allocIdent s1
+          in (s2, oDecl $$ constBind nBind oRef, nBind))
+      (\mRes nBind s ->
+         let (s1, Code nDecl nRef) = effectfulAST' s noneE
+             (s2, Code sDecl sRef) = effectfulAST' s1 (someF (Name nBind))
+             cond = P.text ('n' : show nBind) <+> "===" <+> "null"
+          in (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef))
+  Try a k ->
+    emitBranching (isUnitWitness a && isUnitWitness (k nestedDummy)) s0
+      (\s -> (s, mempty, ()))
+      (\mRes () s ->
+         let (s1, Code aDecl aRef) = effectfulAST' s a
+             (catchN, s2) = allocIdent s1
+             (s3, Code bDecl bRef) = effectfulAST' s2 (k (Name catchN))
+          in (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef))
   Bind x f -> bindEffectCode s0 x f
   BindRec r b ->
     let (nBind, s1) = allocIdent s0
         n = P.text ('n' : show nBind)
         (s2, MkCode rDecl rRef _) = effectfulAST' s1 (r (Name nBind))
         (s3, MkCode bDecl bRef bFX) = effectfulAST' s2 (b (Name nBind))
-        stmt = ("let" <+> n) <> P.semi $$ rDecl $$ (n <+> "=" <+> rRef) <> P.semi
-     in (s3, MkCode (stmt $$ bDecl) bRef bFX)
+     in (s3, MkCode (recBindStmt n rDecl rRef $$ bDecl) bRef bFX)
   Throw x ->
     let (s1, Code xDecl xRef) = pureAST' s0 x
      in (s1, Code (xDecl $$ (("throw" <+> xRef) <> P.semi)) mempty)
@@ -2062,12 +1919,7 @@ effectfulAST' !s0 = \case
   LambdaE f ->
     let (nParam, s1) = allocIdent s0
         (s2, Code exprXDecl exprXRef) = effectfulAST' s1 (f (Name nParam))
-     in ( s2
-        , Code mempty
-            $ "function"
-            <+> P.parens (P.text $ 'n':show nParam)
-            <+> P.braces ( (exprXDecl $$ "return" <+> exprXRef) )
-        )
+     in (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
   ApplyE fex ex ->
     let (s1, Code exprXDecl exprXRef) = effectfulAST' s0 fex
         (s2, Code exprYDecl exprYRef) = effectfulAST' s1 ex
@@ -2111,7 +1963,7 @@ pureAST' !s0 = \case
           (exprDecls, exprRefs) = partitionCode exprs
        in (s1, Code (P.vcat exprDecls) $ P.brackets (P.hcat $ P.punctuate ", " exprRefs))
     ValueString s -> (s0, Code mempty (jsQuote s))
-    ValueFunction _f -> undefined
+    ValueFunction _ -> error "JShark.pureAST: ValueFunction is eval-only"
     ValueUnit -> (s0, mempty)
     ValueOption (Just x) -> pureAST' s0 (Literal x)
     ValueOption Nothing -> (s0, Code mempty "null")
@@ -2147,15 +1999,9 @@ pureAST' !s0 = \case
     let (s1, Code x1Decl x1Ref) = pureAST' s0 x
      in (s1, Code x1Decl $ "-" <> P.parens x1Ref)
   Lambda f ->
-    let ident0 = cgIdent s0
-        ex = f (Name ident0)
-        (s1, Code exprXDecl exprXRef) = pureAST' s0 ex
-     in ( s1
-        , Code exprXDecl
-            $ "function"
-            <+> P.parens (P.text $ 'n':show ident0)
-            <+> P.braces ("return" <+> (P.parens exprXRef))
-        )
+    let (nParam, s1) = allocIdent s0
+        (s2, Code exprXDecl exprXRef) = pureAST' s1 (f (Name nParam))
+     in (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
   And x y -> renderBin "&&" s0 x y
   Or x y -> renderBin "||" s0 x y
   Eq x y -> renderBin "===" s0 x y
@@ -2172,8 +2018,7 @@ pureAST' !s0 = \case
         n = P.text ('n' : show nBind)
         (s2, MkCode rDecl rRef _) = pureAST' s1 (r (Name nBind))
         (s3, bCode) = pureAST' s2 (b (Name nBind))
-        stmt = ("let" <+> n) <> P.semi $$ rDecl $$ (n <+> "=" <+> rRef) <> P.semi
-     in (s3, keepRef (stmt $$ codeDecl bCode) bCode)
+     in (s3, keepRef (recBindStmt n rDecl rRef $$ codeDecl bCode) bCode)
   Apply fex ex ->
     let (s1, Code exprXDecl exprXRef) = pureAST' s0 fex
         (s2, Code exprYDecl exprYRef) = pureAST' s1 ex
@@ -2266,9 +2111,11 @@ stdUnaryJS n r = case n of
   StdToUpper -> r <> ".toUpperCase()"
   StdToLower -> r <> ".toLowerCase()"
   StdTrim -> r <> ".trim()"
-  StdArrLen -> r <> ".length"
-  StdStrLen -> r <> ".length"
+  StdArrLen -> dotLength
+  StdStrLen -> dotLength
   StdStringify -> "JSON.stringify" <> P.parens r
+  where
+    dotLength = r <> ".length"
 
 stdBinaryJS :: StdBinary a b c -> Doc -> Doc -> Doc
 stdBinaryJS n r a = case n of
@@ -2282,9 +2129,11 @@ stdBinaryJS n r a = case n of
 
 stdTernaryJS :: StdTernary a b c d -> Doc -> Doc -> Doc -> Doc
 stdTernaryJS n r a b = case n of
-  StdSlice -> r <> ".slice" <> P.parens (a <> ", " <> b)
-  StdArrSlice -> r <> ".slice" <> P.parens (a <> ", " <> b)
+  StdSlice -> slice
+  StdArrSlice -> slice
   StdReplace -> r <> ".replace" <> P.parens (a <> ", " <> b)
+  where
+    slice = r <> ".slice" <> P.parens (a <> ", " <> b)
 
 resultPayloadRef :: Doc -> Doc
 resultPayloadRef r
@@ -2307,13 +2156,6 @@ renderArrayLit s0 es =
       (decls, refs) = partitionCode cs
    in (s1, Code (P.vcat decls) (P.brackets (P.hcat (P.punctuate ", " refs))))
 
-mapAccumAST :: (CG -> a -> (CG, Code)) -> CG -> [a] -> (CG, [Code])
-mapAccumAST _ s [] = (s, [])
-mapAccumAST f s (x:xs) =
-  let (s1, c) = f s x
-      (s2, cs) = mapAccumAST f s1 xs
-   in (s2, c : cs)
-
 renderObjectLit :: CG -> [FieldLit Stamp r] -> (CG, Code)
 renderObjectLit s0 fs =
   let step (s, decl, acc) fl@(FieldLit e) =
@@ -2329,18 +2171,11 @@ renderResultCase ::
   -> (Stamp a -> Expr Stamp v)
   -> (CG, Code)
 renderResultCase s0 res errF okF =
-  let (s1, Code rDecl rRef) = pureAST' s0 res
-      (nObj, s2) = allocIdent s1
-      (nUnw, s3) = allocIdent s2
-      obj = 'n' : show nObj
-      (s4, Code eDecl eRef) = pureAST' s3 (errF (Name nUnw))
-      (s5, Code oDecl oRef) = pureAST' s4 (okF (Name nUnw))
-      pick = P.text obj <> ".ok"
-      unwrap = P.text obj <> ".value"
-      stmt = rDecl $$ constBind nObj rRef
-        $$ constBind nUnw unwrap
-        $$ eDecl $$ oDecl
-   in (s5, Code stmt (P.parens (pick <+> "?" <+> oRef <+> ":" <+> eRef)))
+  let (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
+      (s2, Code eDecl eRef) = pureAST' s1 (errF (Name nUnw))
+      (s3, Code oDecl oRef) = pureAST' s2 (okF (Name nUnw))
+   in (s3, Code (prelude $$ eDecl $$ oDecl)
+        (P.parens ((P.text obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef)))
 
 renderStringCaseE ::
      CG
@@ -2354,12 +2189,9 @@ renderStringCaseE s0 scrut arms def =
       (resultN, s2) =
         if unit then (0, s1) else allocIdent s1
       resultVar = 'n' : show resultN
-      assign r
-        | unit || P.isEmpty r = mempty
-        | otherwise = (P.text resultVar <+> "=" <+> r) <> P.semi
       renderArm s e =
         let (s', Code d r) = effectfulAST' s e
-            body = if unit then asStmt d r else d $$ assign r
+            body = if unit then asStmt d r else d $$ assignResult resultVar r
          in (s', body)
       step s [] = (s, [])
       step s ((k, e) : rest) =
@@ -2373,7 +2205,7 @@ renderStringCaseE s0 scrut arms def =
       switchStmt = "switch" <+> P.parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
       prelude
         | unit = oDecl
-        | otherwise = oDecl $$ (("let" <+> P.text resultVar) <> P.semi)
+        | otherwise = oDecl $$ letResult resultVar
       ref = if unit then mempty else P.text resultVar
    in (s4, Code (prelude $$ switchStmt) ref)
 
@@ -2385,33 +2217,21 @@ renderResultCaseE ::
   -> (CG, Code)
 renderResultCaseE s0 res errF okF
   | isUnitWitness (errF nestedDummy) && isUnitWitness (okF nestedDummy) =
-      let (s1, Code rDecl rRef) = pureAST' s0 res
-          (nObj, s2) = allocIdent s1
-          (nUnw, s3) = allocIdent s2
-          obj = 'n' : show nObj
-          (s4, Code eDecl eRef) = effectfulAST' s3 (errF (Name nUnw))
-          (s5, Code oDecl oRef) = effectfulAST' s4 (okF (Name nUnw))
-          unwrap = P.text obj <> ".value"
-          stmt = rDecl $$ constBind nObj rRef $$ constBind nUnw unwrap
-            $$ ifElseStmt (P.text obj <> ".ok") oDecl oRef eDecl eRef
-       in (s5, Code stmt mempty)
+      let (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
+          (s2, Code eDecl eRef) = effectfulAST' s1 (errF (Name nUnw))
+          (s3, Code oDecl oRef) = effectfulAST' s2 (okF (Name nUnw))
+       in (s3, Code (prelude $$ ifElseStmt (P.text obj <> ".ok") oDecl oRef eDecl eRef) mempty)
   | otherwise =
-      let (s1, Code rDecl rRef) = pureAST' s0 res
-          (nObj, s2) = allocIdent s1
-          (nUnw, s3) = allocIdent s2
-          (resultN, s4) = allocIdent s3
-          obj = 'n' : show nObj
+      let (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
+          (resultN, s2) = allocIdent s1
           resultVar = 'n' : show resultN
-          (s5, Code eDecl eRef) = effectfulAST' s4 (errF (Name nUnw))
-          (s6, Code oDecl oRef) = effectfulAST' s5 (okF (Name nUnw))
-          assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-          unwrap = P.text obj <> ".value"
-          stmt = rDecl $$ constBind nObj rRef $$ constBind nUnw unwrap
-            $$ ("let" <+> P.text resultVar) <> P.semi
+          (s3, Code eDecl eRef) = effectfulAST' s2 (errF (Name nUnw))
+          (s4, Code oDecl oRef) = effectfulAST' s3 (okF (Name nUnw))
+          stmt = prelude $$ letResult resultVar
             $$ ifElseStmt (P.text obj <> ".ok")
-                 (oDecl $$ assign oRef) mempty
-                 (eDecl $$ assign eRef) mempty
-       in (s6, Code stmt (P.text resultVar))
+                 (oDecl $$ assignResult resultVar oRef) mempty
+                 (eDecl $$ assignResult resultVar eRef) mempty
+       in (s4, Code stmt (P.text resultVar))
 
 renderCallbackMethod ::
      String

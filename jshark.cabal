@@ -96,8 +96,10 @@ executable todo-mvc
     Client
     Ids
     Page
+    DevServer
   hs-source-dirs:
     app/todo-mvc
+    app/common
   build-depends:
     , base
     , jshark
@@ -117,8 +119,10 @@ executable breakout
     Client
     Page
     Types
+    DevServer
   hs-source-dirs:
     app/breakout
+    app/common
   build-depends:
     , base
     , jshark
@@ -136,6 +140,9 @@ test-suite jshark-test
     exitcode-stdio-1.0
   main-is:
     Main.hs
+  other-modules:
+    Support
+    BunTests
   hs-source-dirs:
     test
   build-depends:

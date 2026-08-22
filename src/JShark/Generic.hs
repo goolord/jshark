@@ -519,10 +519,7 @@ whenTag ::
 whenTag s hit miss = fromSyntax $ do
   o <- hold s
   t <- get @"tag" o
-  toSyntax $
-    ifE (expr (t .== string (T.pack (symbolVal (Proxy @name)))))
-      (hit (unpayload @(IsUnit (CtorU a name)) @(CtorU a name) o))
-      miss
+  toSyntax (emitCase @a t o (CaseCons @name @_ @a hit (CaseAny (\_ -> miss))))
 
 type family IsUnit (u :: Universe) :: Bool where
   IsUnit 'Unit = 'True
