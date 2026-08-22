@@ -272,6 +272,43 @@ controlFlowTests = testGroup "control flow"
   , testCase "try_ of FFI vs Unit keeps the result bind" $
       renderJS (effectfulAST (try_ (ffi "foo" RecNil) noOp))
         @?= "let n0;\ntry {n0 = foo();}\ncatch (n1) {}\nn0"
+  , testCase "stringCaseE of Unit arms is a switch statement" $ do
+      let js = T.pack $ renderJS (effectfulAST (fromSyntax $ do
+            k <- toSyntax (ffi "key" RecNil)
+            toSyntax (stringCaseE (var k)
+              [ ("a", discard (ffi "foo" RecNil))
+              , ("b", discard (ffi "bar" RecNil))
+              ]
+              (discard (ffi "baz" RecNil)))))
+      T.isInfixOf "switch (" js @?= True
+      T.isInfixOf "case \"a\":" js @?= True
+      T.isInfixOf "case \"b\":" js @?= True
+      T.isInfixOf "default:" js @?= True
+      T.isInfixOf "break;" js @?= True
+      T.isInfixOf "foo()" js @?= True
+      T.isInfixOf "=;" js @?= False
+  , testCase "stringCaseE of values keeps the result bind" $ do
+      let js = T.pack $ renderJS (effectfulAST (fromSyntax $ do
+            k <- toSyntax (ffi "key" RecNil)
+            toSyntax (stringCaseE (var k)
+              [("a", expr (number 1))]
+              (expr (number 0)))))
+      T.isInfixOf "let n" js @?= True
+      T.isInfixOf "switch (" js @?= True
+      T.isInfixOf "case \"a\":" js @?= True
+      T.isInfixOf " = 1.0" js @?= True
+      T.isInfixOf " = 0.0" js @?= True
+      T.isInfixOf "break;" js @?= True
+      T.isInfixOf "=;" js @?= False
+  , testCase "stringCaseE switches on the scrutinee ref" $ do
+      let js = T.pack $ renderJS (effectfulAST (fromSyntax $ do
+            x <- toSyntax (ffi "val" RecNil)
+            toSyntax (stringCaseE (typeOf (var x))
+              [("number", discard (ffi "foo" RecNil))]
+              (discard (ffi "bar" RecNil)))))
+      T.isInfixOf "switch (typeof " js @?= True
+      T.isInfixOf " = typeof" js @?= False
+      T.isInfixOf "case \"number\":" js @?= True
   ]
 
 numArray :: forall f. Expr f ('Array 'Number)
@@ -713,6 +750,16 @@ optimizeTests = testGroup "optimize"
   , testCase "optionCaseE of none takes the none branch" $
       renderJS (effectfulAST (optionCaseE (none :: Expr f ('Option 'Number)) (ffi "missing" RecNil) (\x -> expr x)))
         @?= "missing()"
+  , testCase "stringCaseE of a literal takes the matching arm" $
+      renderJS (effectfulAST (stringCaseE (string "a")
+        [("a", ffi "foo" RecNil), ("b", ffi "bar" RecNil)]
+        (ffi "baz" RecNil)))
+        @?= "foo()"
+  , testCase "stringCaseE of a literal miss takes default" $
+      renderJS (effectfulAST (stringCaseE (string "z")
+        [("a", ffi "foo" RecNil)]
+        (ffi "baz" RecNil)))
+        @?= "baz()"
   ]
 
 compilerTests :: TestTree

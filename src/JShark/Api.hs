@@ -48,6 +48,7 @@ module JShark.Api
     -- * Control
   , if_
   , ifE
+  , stringCaseE
   , when_
   , while_
   , whenS
@@ -227,6 +228,12 @@ if_ = If
 -- | Effectful conditional. Lift an 'Expr' test with 'expr'.
 ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
 ifE = IfE
+
+-- | @switch (s) { case k: …; default: … }@. First matching label wins.
+-- Arms do not fall through. Statement arms that are polymorphic ('FFI',
+-- 'CallMethod') need 'discard', same as 'ifE'.
+stringCaseE :: Expr f 'String -> [(Text, Effect f v)] -> Effect f v -> Effect f v
+stringCaseE = StringCaseE
 
 -- | Drop a result, forcing 'Unit'. Lets statement-'if' be 'IfE' of two
 -- unit arms (polymorphic 'FFI' / 'CallMethod' are not unit witnesses).

@@ -112,6 +112,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   While :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. The rendered condition is re-emitted on every iteration, so it must not depend on declarations that only run once. Use 'FFI' (not a bound var) when the test itself is a call.
   OptionCaseE :: Expr f ('Option u) -> Effect f v -> (f u -> Effect f v) -> Effect f v -- ^ Effectful 'optionCase'.
   ResultCaseE :: Expr f ('Result e a) -> (f e -> Effect f v) -> (f a -> Effect f v) -> Effect f v
+  StringCaseE :: Expr f 'String -> [(Text, Effect f v)] -> Effect f v -> Effect f v -- ^ @switch (s) { case k: …; default: … }@. First label wins; no fall-through.
   Throw :: Expr f 'String -> Effect f v -- ^ @throw e@. Never returns. Payload is a string.
   Try :: Effect f u -> (f 'String -> Effect f u) -> Effect f u -- ^ @try { a } catch (e) { k e }@
   ObjectLit :: [FieldLit f r] -> Effect f ('MutableObject r) -- ^ Typed @{k: v, …}@; keys come from 'FieldLit'

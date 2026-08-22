@@ -37,7 +37,7 @@ module JShark
   , Effect
     ( Lift, FFI, UnsafeObject, UnsafeObjectGet, UnsafeObjectAssign
     , CallMethod, Bind, BindRec, LambdaE, ApplyE, IfE, While
-    , OptionCaseE, ResultCaseE, Throw, Try, ObjectLit, DeleteProp
+    , OptionCaseE, ResultCaseE, StringCaseE, Throw, Try, ObjectLit, DeleteProp
     , ArrayLit, ArraySort
     )
     -- Evaluation
@@ -68,6 +68,7 @@ import Data.Bits ((.&.), (.|.), xor, shiftL, shiftR)
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Int (Int32)
+import Data.Maybe (fromMaybe)
 import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
@@ -368,6 +369,10 @@ peelOption = \case
 peelBoolEffect :: Effect Stamp 'Bool -> Maybe Bool
 peelBoolEffect (Lift (Literal (ValueBool b))) = Just b
 peelBoolEffect _ = Nothing
+
+peelString :: Expr Stamp 'String -> Maybe Text
+peelString (Literal (ValueString s)) = Just s
+peelString _ = Nothing
 
 evaluateNumber :: ClosedExpr 'Number -> Double
 evaluateNumber e = unNumber (evaluate e)
@@ -901,6 +906,10 @@ countEffect t = \case
     countExpr t o + countLazyEffect t n + countLazyEffect t (s nestedDummy)
   ResultCaseE o e s ->
     countExpr t o + countLazyEffect t (e nestedDummy) + countLazyEffect t (s nestedDummy)
+  StringCaseE o arms d ->
+    countExpr t o
+      + sum [countLazyEffect t e | (_, e) <- arms]
+      + countLazyEffect t d
   Throw x -> countExpr t x
   Try a k -> countEffect t a + countLazyEffect t (k nestedDummy)
   ObjectLit fs -> sum (map (countFieldLit t) fs)
@@ -986,6 +995,7 @@ sizeEffect = \case
   While c b -> 1 + sizeEffect c + sizeEffect b
   OptionCaseE o n s -> 1 + sizeExpr o + sizeEffect n + sizeEffect (s nestedDummy)
   ResultCaseE o e s -> 1 + sizeExpr o + sizeEffect (e nestedDummy) + sizeEffect (s nestedDummy)
+  StringCaseE o arms d -> 1 + sizeExpr o + sum (map (sizeEffect . snd) arms) + sizeEffect d
   Throw x -> 1 + sizeExpr x
   Try a k -> 1 + sizeEffect a + sizeEffect (k nestedDummy)
   ObjectLit fs -> 1 + sum (map sizeFieldLit fs)
@@ -1143,6 +1153,8 @@ flattenEff = \case
   While c b -> While (flattenEff c) (flattenEff b)
   OptionCaseE o n s -> OptionCaseE (flattenExpr o) (flattenEff n) (flattenEff . s)
   ResultCaseE o e s -> ResultCaseE (flattenExpr o) (flattenEff . e) (flattenEff . s)
+  StringCaseE o arms d ->
+    StringCaseE (flattenExpr o) (map (fmap flattenEff) arms) (flattenEff d)
   Throw x -> Throw (flattenExpr x)
   Try a k -> Try (flattenEff a) (flattenEff . k)
   ObjectLit fs -> ObjectLit (map (mapFieldLit flattenExpr) fs)
@@ -1224,6 +1236,8 @@ renameEff old new = \case
   While c b -> While (renameEff old new c) (renameEff old new b)
   OptionCaseE o n s -> OptionCaseE (renameExpr old new o) (renameEff old new n) (renameEff old new . s)
   ResultCaseE o e s -> ResultCaseE (renameExpr old new o) (renameEff old new . e) (renameEff old new . s)
+  StringCaseE o arms d ->
+    StringCaseE (renameExpr old new o) (map (fmap (renameEff old new)) arms) (renameEff old new d)
   Throw x -> Throw (renameExpr old new x)
   Try a k -> Try (renameEff old new a) (renameEff old new . k)
   ObjectLit fs -> ObjectLit (map (mapFieldLit (renameExpr old new)) fs)
@@ -1391,6 +1405,8 @@ isPureEffect = \case
   While{} -> False
   OptionCaseE o n s -> isPureExpr o && isPureEffect n && isPureEffect (s nestedDummy)
   ResultCaseE o e s -> isPureExpr o && isPureEffect (e nestedDummy) && isPureEffect (s nestedDummy)
+  StringCaseE o arms d ->
+    isPureExpr o && all (isPureEffect . snd) arms && isPureEffect d
   Throw{} -> False
   Try{} -> False
   ObjectLit fs -> all (\(FieldLit e) -> isPureExpr e) fs
@@ -1794,6 +1810,14 @@ optEffect t0 = \case
             let (t2, tE, e') = optUnderE t1 e
                 (t3, tS, s') = optUnderE t2 s
              in (t3, ResultCaseE o' (keepEffCont t3 tE e' e) (keepEffCont t3 tS s' s))
+  StringCaseE o arms d ->
+    let (t1, o') = optExpr t0 o
+     in case peelString o' of
+          Just k -> optEffect t1 (fromMaybe d (lookup k arms))
+          Nothing ->
+            let (t2, arms') = mapAccumArms t1 arms
+                (t3, d') = optEffect t2 d
+             in (t3, StringCaseE o' arms' d')
   Throw x ->
     let (t1, x') = optExpr t0 x
      in (t1, Throw x')
@@ -1832,6 +1856,13 @@ mapAccumEffs t (e:es) =
   let (t1, e') = optEffect t e
       (t2, es') = mapAccumEffs t1 es
    in (t2, e' : es')
+
+mapAccumArms :: Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Effect Stamp u)])
+mapAccumArms t [] = (t, [])
+mapAccumArms t ((k, e) : es) =
+  let (t1, e') = optEffect t e
+      (t2, es') = mapAccumArms t1 es
+   in (t2, (k, e') : es')
 
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
@@ -1884,6 +1915,7 @@ isUnitWitness = \case
   IfE _ t e -> isUnitWitness t && isUnitWitness e
   OptionCaseE _ n s -> isUnitWitness n && isUnitWitness (s nestedDummy)
   ResultCaseE _ e s -> isUnitWitness (e nestedDummy) && isUnitWitness (s nestedDummy)
+  StringCaseE _ arms d -> all (isUnitWitness . snd) arms && isUnitWitness d
   Throw{} -> True
   Try a k -> isUnitWitness a && isUnitWitness (k nestedDummy)
   _ -> False
@@ -2014,6 +2046,7 @@ effectfulAST' !s0 = \case
         call = xRef <> ".sort" <> P.parens cb
      in (s4, fxCode xDecl call)
   ResultCaseE res errF okF -> renderResultCaseE s0 res errF okF
+  StringCaseE scrut arms def -> renderStringCaseE s0 scrut arms def
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)
   UnsafeObjectGet x string ->
     let (s1, Code x1Decl x1Ref) = effectfulAST' s0 x
@@ -2308,6 +2341,41 @@ renderResultCase s0 res errF okF =
         $$ constBind nUnw unwrap
         $$ eDecl $$ oDecl
    in (s5, Code stmt (P.parens (pick <+> "?" <+> oRef <+> ":" <+> eRef)))
+
+renderStringCaseE ::
+     CG
+  -> Expr Stamp 'String
+  -> [(Text, Effect Stamp v)]
+  -> Effect Stamp v
+  -> (CG, Code)
+renderStringCaseE s0 scrut arms def =
+  let unit = all (isUnitWitness . snd) arms && isUnitWitness def
+      (s1, Code oDecl oRef) = pureAST' s0 scrut
+      (resultN, s2) =
+        if unit then (0, s1) else allocIdent s1
+      resultVar = 'n' : show resultN
+      assign r
+        | unit || P.isEmpty r = mempty
+        | otherwise = (P.text resultVar <+> "=" <+> r) <> P.semi
+      renderArm s e =
+        let (s', Code d r) = effectfulAST' s e
+            body = if unit then asStmt d r else d $$ assign r
+         in (s', body)
+      step s [] = (s, [])
+      step s ((k, e) : rest) =
+        let (s', body) = renderArm s e
+            line = "case" <+> (jsQuote k <> P.colon) <+> bracesNest (body <+> ("break" <> P.semi))
+            (s'', lines') = step s' rest
+         in (s'', line : lines')
+      (s3, caseDocs) = step s2 arms
+      (s4, defBody) = renderArm s3 def
+      defDoc = "default:" <+> bracesNest defBody
+      switchStmt = "switch" <+> P.parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
+      prelude
+        | unit = oDecl
+        | otherwise = oDecl $$ (("let" <+> P.text resultVar) <> P.semi)
+      ref = if unit then mempty else P.text resultVar
+   in (s4, Code (prelude $$ switchStmt) ref)
 
 renderResultCaseE ::
      CG
