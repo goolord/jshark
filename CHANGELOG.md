@@ -42,6 +42,9 @@
   so OverloadedStrings literals work at each pure AST layer.
 * `Num` / `Fractional` for `Value 'Number` and `Expr f 'Number`
   (`Expr` literals go through `Value`; `ExprF` stays Plus-only).
+  `Floating` on `Expr f 'Number` (`sin`, `sqrt`, `**` as `Math.pow`, `pi`).
+  Hyperbolics are `Math.sinh` / …, not host identities.
+  `JShark.Math` keeps JS-only names (`round`, `atan2`, `max`, `log2`, …).
 * `ToEffect` / `ToExpr` lift classes, JS operators (`.==`, `.||`, …), and
   `EffectSyntax` helpers (`hold`, `stmts`, `whenS`, `onClick_`, `getProp`,
   `setProp`, `getProp'`/`setProp'`, `obj`/`objE`, `locationHash`,

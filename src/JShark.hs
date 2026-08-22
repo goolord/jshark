@@ -176,6 +176,12 @@ mathUnaryFn = \case
   MathAsin -> asin
   MathAcos -> acos
   MathAtan -> atan
+  MathSinh -> sinh
+  MathCosh -> cosh
+  MathTanh -> tanh
+  MathAsinh -> asinh
+  MathAcosh -> acosh
+  MathAtanh -> atanh
   MathSqrt -> sqrt
   MathCbrt -> \x -> signum x * (abs x ** (1 / 3))
   MathExp -> exp
@@ -209,6 +215,12 @@ exactMathUnary n a = case n of
   MathSin | a == 0 -> Just 0
   MathCos | a == 0 -> Just 1
   MathTan | a == 0 -> Just 0
+  MathSinh | a == 0 -> Just 0
+  MathCosh | a == 0 -> Just 1
+  MathTanh | a == 0 -> Just 0
+  MathAsinh | a == 0 -> Just 0
+  MathAcosh | a == 1 -> Just 0
+  MathAtanh | a == 0 -> Just 0
   MathSqrt | a >= 0, let r = sqrt a, r * r == a -> Just r
   MathFloor | isFiniteDouble a -> Just (fromIntegral (floor a :: Integer))
   MathCeil | isFiniteDouble a -> Just (fromIntegral (ceiling a :: Integer))

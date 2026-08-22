@@ -305,15 +305,15 @@ stdlibTests = testGroup "stdlib"
         @?= "[1.0, 2.0].push(3.0);"
   , testCase "String.toUpper renders as .toUpperCase()" $
       renderJS (pureAST (Str.toUpper (string "hi"))) @?= "\"hi\".toUpperCase()"
-  , testCase "Math.sin renders as Math.sin(x)" $
-      renderJS (effectfulAST (with1 fooE Math.sin)) @?= "Math.sin(foo())"
-  , testCase "Math.sqrt evaluates" $
-      evaluateNumber (Math.sqrt (number 9)) @?= 3
+  , testCase "Floating sin renders as Math.sin(x)" $
+      renderJS (effectfulAST (with1 fooE sin)) @?= "Math.sin(foo())"
+  , testCase "Floating sqrt evaluates" $
+      evaluateNumber (sqrt (number 9)) @?= 3
   , testCase "Math.round matches JS half-toward-+Infinity semantics" $ do
       evaluateNumber (Math.round (number 2.5)) @?= 3
       evaluateNumber (Math.round (number (-2.5))) @?= (-2)
-  , testCase "Math.pow evaluates" $
-      evaluateNumber (Math.pow (number 2) (number 10)) @?= 1024
+  , testCase "Floating (**) evaluates as Math.pow" $
+      evaluateNumber (number 2 ** number 10) @?= 1024
   , testCase "Json.stringify renders as JSON.stringify(x)" $
       renderJS (pureAST (Json.stringify (number 1))) @?= "JSON.stringify(1.0)"
   , testCase "Console.log renders as console.log(x)" $
@@ -627,10 +627,14 @@ optimizeTests = testGroup "optimize"
       renderJS (pureAST
         ((Object.frozen [Object.field @"x" (number 1), Object.field @"x" (number 2)] :: Expr f ('Object LitRow)).x))
         @?= "2.0"
-  , testCase "Math.sin of 0 folds" $
-      renderJS (pureAST (Math.sin (number 0))) @?= "0.0"
-  , testCase "Math.sin of a non-zero literal is left to JS" $
-      renderJS (pureAST (Math.sin (number 1))) @?= "Math.sin(1.0)"
+  , testCase "sin of 0 folds" $
+      renderJS (pureAST (sin (number 0))) @?= "0.0"
+  , testCase "sin of a non-zero literal is left to JS" $
+      renderJS (pureAST (sin (number 1))) @?= "Math.sin(1.0)"
+  , testCase "sinh of 0 folds" $
+      renderJS (pureAST (sinh (number 0))) @?= "0.0"
+  , testCase "sinh of a non-zero literal is Math.sinh" $
+      renderJS (pureAST (sinh (number 1))) @?= "Math.sinh(1.0)"
   , testCase "unused closed-name stdlib is dropped" $
       renderJS (pureAST (let_ (Str.toUpper (string "hi")) (\_ -> number 1)))
         @?= "1.0"
@@ -870,11 +874,11 @@ bunEvalTests =
             , bunCase getBun "Eq numbers" (Eq (number 1) (number 1))
             , bunCase getBun "NEq numbers" (NEq (number 1) (number 2))
             , bunCase getBun "array index" (Array.index numArray (number 1))
-            , bunCase getBun "Math.sqrt" (Math.sqrt (number 9))
+            , bunCase getBun "Math.sqrt" (sqrt (number 9))
             , bunCase getBun "Math.round half toward +Infinity" (Math.round (number 2.5))
             , bunCase getBun "Math.round negative half" (Math.round (number (-2.5)))
-            , bunCase getBun "Math.pow" (Math.pow (number 2) (number 10))
-            , bunCase getBun "Math.sin 0" (Math.sin (number 0))
+            , bunCase getBun "Math.pow" (number 2 ** number 10)
+            , bunCase getBun "Math.sin 0" (sin (number 0))
             , testCase "prettyJS compileEffect ifE+LambdaE" $ do
                 bun <- getBun >>= \case
                   Just b -> pure b

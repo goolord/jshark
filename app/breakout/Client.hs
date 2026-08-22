@@ -270,7 +270,7 @@ drawBall ctx state = do
   bx0 <- b.x
   by0 <- b.y
   _ <- Canvas.beginPath ctx
-  _ <- Canvas.arc ctx bx0 by0 (number ballR) 0 (Math.pi * 2)
+  _ <- Canvas.arc ctx bx0 by0 (number ballR) 0 (pi * 2)
   fill ctx (string ballFill)
   _ <- Canvas.fill ctx
   _ <- Canvas.closePath ctx

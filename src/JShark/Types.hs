@@ -220,6 +220,7 @@ data StdTernary :: Universe -> Universe -> Universe -> Universe -> Type where
 -- | Closed unary @Math.*@ names. JS identifier is 'mathFn1Name'.
 data MathFn1
   = MathSin | MathCos | MathTan | MathAsin | MathAcos | MathAtan
+  | MathSinh | MathCosh | MathTanh | MathAsinh | MathAcosh | MathAtanh
   | MathSqrt | MathCbrt | MathExp | MathLog | MathLog2 | MathLog10
   | MathFloor | MathCeil | MathRound | MathTrunc
   | MathAbs | MathSign
@@ -236,6 +237,12 @@ mathFn1Name = \case
   MathAsin -> "asin"
   MathAcos -> "acos"
   MathAtan -> "atan"
+  MathSinh -> "sinh"
+  MathCosh -> "cosh"
+  MathTanh -> "tanh"
+  MathAsinh -> "asinh"
+  MathAcosh -> "acosh"
+  MathAtanh -> "atanh"
   MathSqrt -> "sqrt"
   MathCbrt -> "cbrt"
   MathExp -> "exp"
@@ -286,12 +293,13 @@ instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Exp
 instance forall (f :: Universe -> Type) u. (u ~ 'String) => Semigroup (Expr f u) where
   (<>) = Concat
 
--- | 'Num' / 'Fractional' for JS numbers:
+-- | 'Num' / 'Fractional' / 'Floating' for JS numbers:
 --
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
 -- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
---   ('Plus'/'Times'/…) and fold later in codegen
+--   ('Plus'/'Times'/'MathUnary'/…) and fold later in codegen.
+--   @(**)@ is @Math.pow@, not @exp (log x * y)@.
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
 -- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
@@ -326,6 +334,28 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Num (Expr f u) where
 instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u) where
   (/) = FracDiv
   fromRational r = Literal (fromRational r)
+
+jsPi :: Double
+jsPi = pi
+
+instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Floating (Expr f u) where
+  pi = Literal (ValueNumber jsPi)
+  exp = MathUnary MathExp
+  log = MathUnary MathLog
+  sqrt = MathUnary MathSqrt
+  (**) = MathBinary MathPow
+  sin = MathUnary MathSin
+  cos = MathUnary MathCos
+  tan = MathUnary MathTan
+  asin = MathUnary MathAsin
+  acos = MathUnary MathAcos
+  atan = MathUnary MathAtan
+  sinh = MathUnary MathSinh
+  cosh = MathUnary MathCosh
+  tanh = MathUnary MathTanh
+  asinh = MathUnary MathAsinh
+  acosh = MathUnary MathAcosh
+  atanh = MathUnary MathAtanh
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).
