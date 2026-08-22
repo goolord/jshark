@@ -15,6 +15,9 @@
   Generic sum case. Named arms are a prefix of `CtorNames a`. Every
   named arm tests its tag; `CaseEnd` throws on leftovers; `CaseAny` is
   a suffix wildcard. `whenTag` is the one-arm matcher.
+* Optimizer/codegen inlining applies the PHOAS continuation to an
+  `Embed` hole instead of `unsafeCoerce` on binder tags. `evaluateCached`
+  has no `Typeable` on the result; `eqT` is only for a `StableName` hit.
 * `HasField` on `Effect`/`Expr` objects so `OverloadedRecordDot`
   (`o.fullName`) is `get`. Binders use `get` or `(Var x).k`.
 * `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
