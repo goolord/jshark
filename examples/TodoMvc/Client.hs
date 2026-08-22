@@ -19,10 +19,20 @@ import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Json as Json
+import JShark.Lucid
+  ( JsHtml
+  , classWhen
+  , dynText
+  , on
+  , prop
+  , renderInto
+  , voidWith_
+  )
 import JShark.Object (field, obj)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Storage as Storage
 import qualified JShark.String as String
+import Lucid (button_, class_, div_, label_, li_, type_)
 import Prelude hiding (filter, id)
 
 -- | Persisted item. JS keys match the selectors (@title@, @completed@, @id@).
@@ -115,6 +125,25 @@ mkTodo todoTitle tid = do
 hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
   foldr (\r acc -> hash .== string (routeHash r) .|| acc) false_ routes
+
+{- | One todo row, in Lucid's combinators. The structure is TodoMVC's;
+the holes are the title, the completed class and checkbox state, and the
+two handlers. 'renderInto' compiles this to @createElement@ calls.
+-}
+todoItem ::
+  Expr f 'String
+  -> Expr f 'Bool
+  -> EffectSyntax f (f 'Unit)
+  -> EffectSyntax f (f 'Unit)
+  -> JsHtml f ()
+todoItem todoTitle isDone toggle destroy = li_ $ do
+  classWhen isDone "completed"
+  div_ [class_ "view"] $ do
+    voidWith_ "input" [class_ "toggle", type_ "checkbox"] $ do
+      prop "checked" isDone
+      on "click" toggle
+    label_ (dynText todoTitle)
+    button_ [class_ "destroy"] (on "click" destroy)
 
 showTodo :: Expr f 'String -> Expr f 'Bool -> Expr f 'Bool
 showTodo filt isDone =
@@ -225,39 +254,19 @@ mainJS = do
         todoTitle <- todo.title
         isDone <- todo.completed
         whenS (showTodo filt isDone) $ do
-          li <- Dom.createElement "li"
-          whenS isDone $ Dom.classAdd li "completed"
-
-          view <- Dom.createElement "div"
-          Dom.setAttribute view "class" "view"
-
-          checkbox <- Dom.createElement "input"
-          Dom.setAttribute checkbox "class" "toggle"
-          Dom.setAttribute checkbox "type" "checkbox"
-          whenS isDone $ setProp checkbox "checked" true_
-          onClick_ checkbox $ do
-            cur <- todo.completed
-            set @"completed" todo (cur .!= true_)
-            call0 render
-
-          label <- Dom.createElement "label"
-          Dom.setInnerText label todoTitle
-
-          destroy <- Dom.createElement "button"
-          Dom.setAttribute destroy "class" "destroy"
-          onClick_ destroy $ do
-            items' <- state.todos
-            kept <- Array.filterE_ items' $ \t -> do
-              i <- t.id
-              yield (i .!= tid)
-            set @"todos" state kept
-            call0 render
-
-          Dom.appendChild view checkbox
-          Dom.appendChild view label
-          Dom.appendChild view destroy
-          Dom.appendChild li view
-          Dom.appendChild list li
+          let
+            toggle = do
+              cur <- todo.completed
+              set @"completed" todo (cur .!= true_)
+              call0 render
+            destroy = do
+              items' <- state.todos
+              kept <- Array.filterE_ items' $ \t -> do
+                i <- t.id
+                yield (i .!= tid)
+              set @"todos" state kept
+              call0 render
+          renderInto list (todoItem todoTitle isDone toggle destroy)
 
       active <- incomplete items
       let

@@ -9,7 +9,7 @@ import-export-style: leading
 function-arrows: leading-args
 single-constraint-parens: never
 single-deriving-parens: never
-indent-wheres: true
+indent-wheres: false
 
 # let/in blocks
 let-style: newline
@@ -25,6 +25,6 @@ newlines-between-decls: 1
 trailing-section-operators: true
 
 # Docs & syntax
-haddock-style: multi-line
+haddock-style: single-line
 unicode: never
 respectful: false

@@ -95,14 +95,33 @@ library
   ghc-options:
     -O2
 
+-- JShark.Lucid destructures Lucid.Base's Attribute, which is not part of
+-- the public Lucid API, so the bound is the tested minor rather than the
+-- next major: a rename inside 2.x would break the build.
+common lucid-dep
+  build-depends:
+    lucid >= 2.11 && < 2.12
+
+library jshark-lucid
+  import: warnings, lucid-dep
+  exposed-modules:
+    JShark.Lucid
+  build-depends:
+    , base
+    , jshark
+    , text
+  hs-source-dirs:
+    jshark-lucid
+  default-language:
+    Haskell2010
+
 common example-lib
-  import: warnings
+  import: warnings, lucid-dep
   default-language:
     Haskell2010
   build-depends:
     , base
     , jshark
-    , lucid >= 2.9 && < 3
     , text
 
 library breakout
@@ -118,6 +137,8 @@ library breakout
 
 library todo-mvc
   import: example-lib
+  build-depends:
+    jshark-lucid
   exposed-modules:
     TodoMvc
   other-modules:
@@ -128,7 +149,7 @@ library todo-mvc
     examples/TodoMvc
 
 executable examples
-  import: warnings
+  import: warnings, lucid-dep
   main-is:
     Main.hs
   other-modules:
@@ -145,7 +166,6 @@ executable examples
     , directory >= 1.3 && < 2
     , filepath
     , jshark
-    , lucid >= 2.9 && < 3
     , scotty >= 0.20 && < 1
     , text
     , todo-mvc
@@ -155,7 +175,7 @@ executable examples
     -threaded
 
 test-suite jshark-test
-  import: warnings
+  import: warnings, lucid-dep
   type:
     exitcode-stdio-1.0
   main-is:
@@ -163,11 +183,13 @@ test-suite jshark-test
   other-modules:
     Support
     BunTests
+    LucidTests
   hs-source-dirs:
     test
   build-depends:
     , base
     , jshark
+    , jshark-lucid
     , tasty
     , tasty-hunit
     , text

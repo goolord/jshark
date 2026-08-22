@@ -11,6 +11,7 @@
 module Main (main) where
 
 import BunTests (bunEvalTests)
+import LucidTests (lucidDomTests)
 import qualified Control.Exception as Ex
 import Data.Char (isDigit)
 import Data.Text (Text)
@@ -59,6 +60,7 @@ tests = testGroup "jshark"
   , optimizeTests
   , compilerTests
   , bunEvalTests
+  , lucidDomTests
   ]
 
 evaluatorTests :: TestTree

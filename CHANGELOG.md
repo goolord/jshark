@@ -11,6 +11,19 @@
   evaluation does not corrupt it. A run that outlives
   `JShark.Bun.Internal.bunTimeoutMicroseconds` (10s) is killed, since
   `while_` and `Timers` can express a program that never terminates.
+* New `jshark-lucid` library. `JShark.Lucid` describes a DOM fragment with
+  Lucid's own combinators and compiles it to `createElement` /
+  `setAttribute` / `appendChild` calls. Lucid's `Html` is a function to a
+  `Builder`, not a tree, so a finished value cannot be walked; what gets
+  reused is the *syntax* — `Term` and `With` are open classes and
+  `Attribute` is a pair of `Text`, so container elements (`li_`, `div_`, …)
+  and every attribute (`class_`, `href_`, …) work unchanged at `JsHtml`.
+  Void elements (`input_`, `br_`) are fixed to Lucid's `HtmlT`, so `void_`
+  covers those. Dynamic parts sit in the child block and apply to the
+  enclosing element: `dynText`, `dynAttr`, `classWhen`, `prop`, `on`.
+  `classWhen` is `classList.toggle(c, test)`, so the element always carries
+  a `class` attribute, empty when nothing matched. `todo-mvc` builds its
+  `<li>` rows with it.
 * A promise-valued program (`JShark.Promise`, `JShark.Ajax`) is awaited
   before serialization instead of stringifying as `{}`. Only a thenable is
   awaited, so a synchronous program gains no microtask tick that would let

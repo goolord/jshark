@@ -64,6 +64,31 @@ cabal test          # bun on PATH for the JS-vs-interpreter checks
 cabal run examples  # http://localhost:3000
 ```
 
+`jshark-lucid` writes the DOM in Lucid and compiles it to
+`createElement` calls, so a template lives in one place instead of being
+spelled out as imperative JS. Lucid's containers and attributes are
+reused as-is; the dynamic parts are children.
+
+```haskell
+import JShark.Lucid
+import Lucid (button_, class_, div_, label_, li_, type_)
+
+todoItem title isDone toggle = li_ $ do
+  classWhen isDone "completed"
+  div_ [class_ "view"] $ do
+    voidWith_ "input" [class_ "toggle", type_ "checkbox"] $ do
+      prop "checked" isDone
+      on "click" toggle
+    label_ (dynText title)
+    button_ [class_ "destroy"] mempty
+```
+
+```js
+const n1 = document.createElement("li");
+n1.classList.toggle("completed", n0.completed);
+// …createElement("div"), setAttribute, appendChild…
+```
+
 `examples/` is TodoMVC and Breakout as named libraries, served together.
 `/` lists them. After the Pages workflow on `master`: https://goolord.github.io/jshark/.
 `test/Main.hs` has more of what compiles to what.
