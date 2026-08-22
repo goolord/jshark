@@ -367,8 +367,8 @@ ifS c t e = toSyntax $ IfE (expr c) (discard (stmts t)) (discard (stmts e))
 whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
 whenSomeS opt k = toSyntax $ optionCaseE opt noOp (\x -> stmts (k x))
 
-call0 :: forall f. Expr f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)
-call0 fn = toSyntax (ApplyE (Lift fn) noOp :: Effect f 'Unit)
+call0 :: forall a f. ToEffect f ('Function 'Unit 'Unit) a => a -> EffectSyntax f (f 'Unit)
+call0 fn = toSyntax (ApplyE (toEffect fn) noOp :: Effect f 'Unit)
 
 infix 4 .==, .!=, .>, .<, .>=, .<=
 infixr 3 .&&

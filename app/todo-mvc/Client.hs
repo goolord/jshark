@@ -1,6 +1,7 @@
 {-# LANGUAGE
     AllowAmbiguousTypes
   , DataKinds
+  , DeriveGeneric
   , OverloadedStrings
   , ScopedTypeVariables
   , TypeApplications
@@ -9,9 +10,11 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Client-side TodoMVC written in JShark.
-module Client (mainJS) where
+module Client (mainJS, Todo, AppState) where
 
+import Prelude hiding (filter, id)
 import Data.Text (Text)
+import GHC.Generics (Generic)
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
 import qualified JShark.Json as Json
@@ -19,39 +22,44 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as String
 import Ids
 import JShark.Api
+import JShark.Generic (ObjectOf, newRecord)
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
-data Todo
-data AppState
+-- | Persisted item. JS keys match the selectors (@title@, @completed@, @id@).
+data Todo = Todo
+  { title :: Text
+  , completed :: Bool
+  , id :: Int
+  }
+  deriving (Generic)
 
-type instance Field Todo "title" = 'String
-type instance Field Todo "completed" = 'Bool
-type instance Field Todo "id" = 'Number
-
-type instance Field AppState "todos" = 'Array ('Object Todo)
-type instance Field AppState "filter" = 'String
-type instance Field AppState "nextId" = 'Number
-type instance Field AppState "render" = 'Function 'Unit 'Unit
+-- | Persisted app state. @render@ is a recursive JS binding, not a field.
+data AppState = AppState
+  { todos :: [Todo]
+  , filter :: Text
+  , nextId :: Int
+  }
+  deriving (Generic)
 
 storageKey :: Expr f 'String
 storageKey = "jshark-todos"
 
-emptyTodos :: Expr f ('Array ('Object Todo))
+emptyTodos :: Expr f ('Array (ObjectOf Todo))
 emptyTodos = Literal (ValueArray [])
 
-parseObject :: Expr f 'String -> Effect f ('Object AppState)
+parseObject :: Expr f 'String -> Effect f ('Object ())
 parseObject = Json.unsafeParse
 
-emptyState :: Effect f ('Object AppState)
-emptyState = newObject
+emptyState :: Effect f (ObjectOf AppState)
+emptyState = newRecord @AppState
 
-emptyTodo :: Effect f ('Object Todo)
-emptyTodo = newObject
+emptyTodo :: Effect f (ObjectOf Todo)
+emptyTodo = newRecord @Todo
 
 -- | Parse persisted state. 'none' on throw, non-object JSON, or arrays.
 -- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
-parseState :: Expr f 'String -> Effect f ('Option ('Object AppState))
+parseState :: Expr f 'String -> Effect f ('Option (ObjectOf AppState))
 parseState s = try_
   (fromSyntax $ do
     o <- toSyntax (parseObject s)
@@ -63,20 +71,20 @@ parseState s = try_
         yield (some st)))
   (expr none)
 
-hydrate :: Expr f ('Object AppState) -> EffectSyntax f (Expr f ('Object AppState))
+hydrate :: Expr f ('Object ()) -> EffectSyntax f (Expr f (ObjectOf AppState))
 hydrate blob = do
   st <- toSyntax emptyState
-  t <- get @"todos" blob
+  t <- getProp (Lift blob) "todos"
   isT <- toSyntax $ ffi "Array.isArray" (arg t <: RecNil)
   ifS (Var isT)
     (set @"todos" st t)
     (set @"todos" st emptyTodos)
-  n <- get @"nextId" blob
+  n <- getProp (Lift blob) "nextId"
   fin <- toSyntax $ ffi "Number.isFinite" (arg n <: RecNil)
   ifS (typeOf n .== "number" .&& Var fin)
     (set @"nextId" st n)
     (set @"nextId" st 1)
-  f <- get @"filter" blob
+  f <- getProp (Lift blob) "filter"
   ifS (knownFilter f)
     (set @"filter" st f)
     (set @"filter" st (string valueAll))
@@ -85,15 +93,10 @@ hydrate blob = do
 knownFilter :: Expr f 'String -> Expr f 'Bool
 knownFilter f = foldr (\r acc -> f .== string (routeValue r) .|| acc) false_ routes
 
-callRender :: Effect f ('Object AppState) -> EffectSyntax f (f 'Unit)
-callRender state = do
-  r <- get @"render" state
-  call0 r
-
-mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f ('Object Todo))
-mkTodo title tid = do
+mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f (ObjectOf Todo))
+mkTodo todoTitle tid = do
   o <- toSyntax emptyTodo
-  set @"title" o title
+  set @"title" o todoTitle
   set @"completed" o false_
   set @"id" o tid
   pure (Var o)
@@ -102,7 +105,7 @@ hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
   foldr (\r acc -> hash .== string (routeHash r) .|| acc) false_ routes
 
-applyHashFilter :: Effect f ('Object AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
+applyHashFilter :: Effect f (ObjectOf AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
   foldr
     (\r k ->
@@ -115,8 +118,8 @@ applyHashFilter state hash =
 byId :: Text -> EffectSyntax f (Effect f ('Object Dom.DomElement))
 byId = Dom.lookupId . string
 
-incomplete :: Expr f ('Array ('Object Todo)) -> EffectSyntax f (Expr f ('Array ('Object Todo)))
-incomplete todos = Array.filterE_ todos $ \t -> do
+incomplete :: Expr f ('Array (ObjectOf Todo)) -> EffectSyntax f (Expr f ('Array (ObjectOf Todo)))
+incomplete items = Array.filterE_ items $ \t -> do
   c <- get @"completed" t
   toSyntax $ expr (c .!= true_)
 
@@ -148,112 +151,117 @@ mainJS = do
       f <- get @"filter" blob
       set @"filter" state f
 
-  render <- toSyntax $ LambdaE $ \_ -> stmts $ do
-    todos <- get @"todos" state
-    filt <- get @"filter" state
+  let paint :: Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)
+      paint render = do
+        items <- get @"todos" state
+        filt <- get @"filter" state
 
-    Dom.setInnerHTML list ""
+        Dom.setInnerHTML list ""
 
-    forEach_ todos $ \todo -> do
-      tid <- get @"id" todo
-      title <- get @"title" todo
-      completed <- get @"completed" todo
-      let showTodo =
-            if_ (filt .== string valueAll) true_
-              (if_ (filt .== string valueActive) (completed .!= true_) completed)
-      whenS showTodo $ do
-        li <- Dom.createElement "li"
-        whenS completed $ Dom.classAdd li "completed"
+        forEach_ items $ \todo -> do
+          tid <- get @"id" todo
+          todoTitle <- get @"title" todo
+          isDone <- get @"completed" todo
+          let showTodo =
+                if_ (filt .== string valueAll) true_
+                  (if_ (filt .== string valueActive) (isDone .!= true_) isDone)
+          whenS showTodo $ do
+            li <- Dom.createElement "li"
+            whenS isDone $ Dom.classAdd li "completed"
 
-        view <- Dom.createElement "div"
-        Dom.setAttribute view "class" "view"
+            view <- Dom.createElement "div"
+            Dom.setAttribute view "class" "view"
 
-        checkbox <- Dom.createElement "input"
-        Dom.setAttribute checkbox "class" "toggle"
-        Dom.setAttribute checkbox "type" "checkbox"
-        whenS completed $ setProp checkbox "checked" true_
-        onClick_ checkbox $ do
-          cur <- get @"completed" todo
-          set @"completed" todo (cur .!= true_)
-          callRender state
+            checkbox <- Dom.createElement "input"
+            Dom.setAttribute checkbox "class" "toggle"
+            Dom.setAttribute checkbox "type" "checkbox"
+            whenS isDone $ setProp checkbox "checked" true_
+            onClick_ checkbox $ do
+              cur <- get @"completed" todo
+              set @"completed" todo (cur .!= true_)
+              call0 render
 
-        label <- Dom.createElement "label"
-        Dom.setInnerText label title
+            label <- Dom.createElement "label"
+            Dom.setInnerText label todoTitle
 
-        destroy <- Dom.createElement "button"
-        Dom.setAttribute destroy "class" "destroy"
-        onClick_ destroy $ do
-          todos' <- get @"todos" state
-          kept <- Array.filterE_ todos' $ \t -> do
-            i <- get @"id" t
-            toSyntax $ expr (i .!= tid)
+            destroy <- Dom.createElement "button"
+            Dom.setAttribute destroy "class" "destroy"
+            onClick_ destroy $ do
+              items' <- get @"todos" state
+              kept <- Array.filterE_ items' $ \t -> do
+                i <- get @"id" t
+                toSyntax $ expr (i .!= tid)
+              set @"todos" state kept
+              call0 render
+
+            Dom.appendChild view checkbox
+            Dom.appendChild view label
+            Dom.appendChild view destroy
+            Dom.appendChild li view
+            Dom.appendChild list li
+
+        active <- incomplete items
+        let activeN = Array.length_ active
+            totalN = Array.length_ items
+            hasTodos = totalN .> 0
+        Dom.setInnerText countEl (Show activeN)
+        ifS (activeN .== 1)
+          (Dom.setInnerText countSuffix " item left")
+          (Dom.setInnerText countSuffix " items left")
+
+        ifS hasTodos
+          (do
+             Dom.setAttribute mainEl "style" ""
+             Dom.setAttribute footerEl "style" "")
+          (do
+             Dom.setAttribute mainEl "style" "display:none"
+             Dom.setAttribute footerEl "style" "display:none")
+
+        mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
+        mapM_ (\(r, el) ->
+          ifS (filt .== string (routeValue r))
+            (Dom.classAdd el (string classSelected))
+            done) filterLinks
+
+        blob <- toSyntax emptyState
+        set @"todos" blob items
+        set @"filter" blob filt
+        nid <- get @"nextId" state
+        set @"nextId" blob nid
+        Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
+
+      wire :: Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)
+      wire render = do
+        addEventListener_ "submit" form $ do
+          inputRaw <- Dom.getValue input
+          let todoTitle = String.trim inputRaw
+          whenS (String.length_ todoTitle .> 0) $ do
+            nid <- get @"nextId" state
+            todo <- mkTodo todoTitle nid
+            items <- get @"todos" state
+            Array.push_ items todo
+            set @"nextId" state (nid + 1)
+            Dom.setValue input ""
+            call0 render
+
+        onClick_ clearBtn $ do
+          items <- get @"todos" state
+          kept <- incomplete items
           set @"todos" state kept
-          callRender state
+          call0 render
 
-        Dom.appendChild view checkbox
-        Dom.appendChild view label
-        Dom.appendChild view destroy
-        Dom.appendChild li view
-        Dom.appendChild list li
+        -- Hash is the sole filter driver (links are plain <a href="#/...">).
+        addEventListener_ "hashchange" window $ do
+          hash <- locationHash
+          whenS (hashRecognized hash) $ do
+            applyHashFilter state hash
+            call0 render
 
-    active <- incomplete todos
-    let activeN = Array.length_ active
-        totalN = Array.length_ todos
-        hasTodos = totalN .> 0
-    Dom.setInnerText countEl (Show activeN)
-    ifS (activeN .== 1)
-      (Dom.setInnerText countSuffix " item left")
-      (Dom.setInnerText countSuffix " items left")
+        hash0 <- locationHash
+        applyHashFilter state hash0
 
-    ifS hasTodos
-      (do
-         Dom.setAttribute mainEl "style" ""
-         Dom.setAttribute footerEl "style" "")
-      (do
-         Dom.setAttribute mainEl "style" "display:none"
-         Dom.setAttribute footerEl "style" "display:none")
+        call0 render
 
-    mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
-    mapM_ (\(r, el) ->
-      ifS (filt .== string (routeValue r))
-        (Dom.classAdd el (string classSelected))
-        done) filterLinks
-
-    blob <- toSyntax emptyState
-    set @"todos" blob todos
-    nid <- get @"nextId" state
-    set @"nextId" blob nid
-    set @"filter" blob filt
-    Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
-
-  set @"render" state (Var render)
-
-  addEventListener_ "submit" form $ do
-    inputRaw <- Dom.getValue input
-    let title = String.trim inputRaw
-    whenS (String.length_ title .> 0) $ do
-      nid <- get @"nextId" state
-      todo <- mkTodo title nid
-      todos <- get @"todos" state
-      Array.push_ todos todo
-      set @"nextId" state (nid + 1)
-      Dom.setValue input ""
-      callRender state
-
-  onClick_ clearBtn $ do
-    todos <- get @"todos" state
-    kept <- incomplete todos
-    set @"todos" state kept
-    callRender state
-
-  -- Hash is the sole filter driver (links are plain <a href="#/...">).
-  addEventListener_ "hashchange" window $ do
-    hash <- locationHash
-    whenS (hashRecognized hash) $ do
-      applyHashFilter state hash
-      callRender state
-
-  hash0 <- locationHash
-  applyHashFilter state hash0
-
-  callRender state
+  toSyntax $ bindRec
+    (\render -> LambdaE $ \_ -> stmts $ paint render)
+    (\render -> stmts $ wire render)

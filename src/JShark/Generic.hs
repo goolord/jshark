@@ -54,8 +54,8 @@ import JShark.Array (push_)
 import JShark.Object (field, get, newObject, obj, unsafeObjectAssign, unsafeObjectGet)
 import JShark.Types
 
--- | Row phantom for a 'Generic' record @a@. Existing rows ('Window',
--- @Todo@) stay manual; they do not become 'As'.
+-- | Row phantom for a 'Generic' record @a@. Existing rows ('Window')
+-- stay manual; they do not become 'As'.
 data As (a :: Type)
 
 -- | @'Object' ('As' a)@

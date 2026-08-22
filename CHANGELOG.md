@@ -11,6 +11,9 @@
   Primitives via `ToJS` / `ToValue` (`Int` is IEEE `Number`).
   Sums as `{tag, payload}` (`toSum` / `toSumArray` / `whenTag` / `sumTag`,
   row `Tagged a`). `Either` stays `Result`.
+* `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
+  `render` is `bindRec`, not a persisted field.
+* `call0` accepts `ToEffect` (`Expr` or `Effect`).
 * Property access uses `o["0"]` when the key is not a JS identifier.
 * `%` / bitwise (`rem_`, `bitAnd`…`ushr`), `parseInt_` (radix required).
 * Array `reduce_`, `arraySlice`, `sort_`; `Regex` via `new RegExp`;
