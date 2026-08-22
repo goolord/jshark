@@ -4,6 +4,7 @@
 
 module Page (page) where
 
+import Ids
 import Lucid
 
 -- | TodoMVC shell. Client script is loaded from @/app.js@.
@@ -25,24 +26,21 @@ page = doctypehtml_ $ do
     section_ [class_ "todoapp"] $ do
       header_ [class_ "header"] $ do
         h1_ "todos"
-        form_ [id_ "todo-form", onsubmit_ "return false;"] $
+        form_ [id_ idForm, onsubmit_ "return false;"] $
           input_
             [ class_ "new-todo"
-            , id_ "new-todo"
+            , id_ idNewTodo
             , placeholder_ "What needs to be done?"
             , autofocus_
             ]
-      section_ [class_ "main", id_ "main"] $
-        ul_ [class_ "todo-list", id_ "todo-list"] mempty
-      footer_ [class_ "footer", id_ "footer"] $ do
+      section_ [class_ "main", id_ idMain] $
+        ul_ [class_ "todo-list", id_ idTodoList] mempty
+      footer_ [class_ "footer", id_ idFooter] $ do
         span_ [class_ "todo-count"] $ do
-          strong_ [id_ "todo-count"] "0"
-          span_ [id_ "todo-count-suffix"] " items left"
-        ul_ [class_ "filters"] $ do
-          li_ $ a_ [href_ "#/", id_ "filter-all", class_ "selected"] "All"
-          li_ $ a_ [href_ "#/active", id_ "filter-active"] "Active"
-          li_ $ a_ [href_ "#/completed", id_ "filter-completed"] "Completed"
-        button_ [class_ "clear-completed", id_ "clear-completed"] "Clear completed"
+          strong_ [id_ idTodoCount] "0"
+          span_ [id_ idTodoCountSuffix] " items left"
+        ul_ [class_ "filters"] $ mapM_ filterLink routes
+        button_ [class_ "clear-completed", id_ idClearCompleted] "Clear completed"
     footer_ [class_ "info"] $ do
       p_ "Enter to add a todo"
       p_ $ do
@@ -50,3 +48,12 @@ page = doctypehtml_ $ do
         a_ [href_ "https://github.com/goolord/jshark"] "JShark"
         ", Scotty, and Lucid"
     script_ [src_ "/app.js"] ("" :: Html ())
+
+filterLink :: Route -> Html ()
+filterLink r =
+  li_ $ a_ attrs (toHtml (routeLabel r))
+  where
+    attrs =
+      href_ (routeHash r)
+        : id_ (routeId r)
+        : [class_ classSelected | routeValue r == valueAll]

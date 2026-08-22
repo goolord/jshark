@@ -1,21 +1,23 @@
 {-# LANGUAGE
-    DataKinds
+    AllowAmbiguousTypes
+  , DataKinds
   , OverloadedStrings
   , ScopedTypeVariables
-  ,     TypeApplications
-    , TypeFamilies
-    , AllowAmbiguousTypes
+  , TypeApplications
+  , TypeFamilies
 #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Client-side TodoMVC written in JShark.
 module Client (mainJS) where
 
+import Data.Text (Text)
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
 import qualified JShark.Json as Json
 import qualified JShark.Storage as Storage
 import qualified JShark.String as String
+import Ids
 import JShark.Api
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
@@ -38,7 +40,7 @@ storageKey = "jshark-todos"
 emptyTodos :: Expr f ('Array ('Object Todo))
 emptyTodos = Literal (ValueArray [])
 
-parseObject :: Expr f 'String -> Effect f ('Object ())
+parseObject :: Expr f 'String -> Effect f ('Object AppState)
 parseObject = Json.unsafeParse
 
 emptyState :: Effect f ('Object AppState)
@@ -61,24 +63,27 @@ parseState s = try_
         yield (some st)))
   (expr none)
 
-hydrate :: Expr f ('Object ()) -> EffectSyntax f (Expr f ('Object AppState))
+hydrate :: Expr f ('Object AppState) -> EffectSyntax f (Expr f ('Object AppState))
 hydrate blob = do
   st <- toSyntax emptyState
-  t <- getProp (Lift blob) "todos"
+  t <- get @"todos" (expr blob)
   isT <- toSyntax $ ffi "Array.isArray" (arg t <: RecNil)
   ifS (Var isT)
     (set @"todos" (Lift (Var st)) t)
     (set @"todos" (Lift (Var st)) emptyTodos)
-  n <- getProp (Lift blob) "nextId"
+  n <- get @"nextId" (expr blob)
   fin <- toSyntax $ ffi "Number.isFinite" (arg n <: RecNil)
   ifS (typeOf n .== "number" .&& Var fin)
     (set @"nextId" (Lift (Var st)) n)
     (set @"nextId" (Lift (Var st)) 1)
-  f <- getProp (Lift blob) "filter"
-  ifS (f .== "active" .|| f .== "completed")
+  f <- get @"filter" (expr blob)
+  ifS (knownFilter f)
     (set @"filter" (Lift (Var st)) f)
-    (set @"filter" (Lift (Var st)) "all")
+    (set @"filter" (Lift (Var st)) (string valueAll))
   pure (Var st)
+
+knownFilter :: Expr f 'String -> Expr f 'Bool
+knownFilter f = foldr (\r acc -> f .== string (routeValue r) .|| acc) false_ routes
 
 callRender :: Effect f ('Object AppState) -> EffectSyntax f (f 'Unit)
 callRender state = do
@@ -95,35 +100,41 @@ mkTodo title tid = do
 
 hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
-  hash .== "#/active" .|| hash .== "#/completed" .|| hash .== "#/"
+  foldr (\r acc -> hash .== string (routeHash r) .|| acc) false_ routes
 
 applyHashFilter :: Effect f ('Object AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
-  ifS (hash .== "#/active")
-    (set @"filter" state "active")
-    (ifS (hash .== "#/completed")
-       (set @"filter" state "completed")
-       (ifS (hash .== "#/")
-          (set @"filter" state "all")
-          done))
+  foldr
+    (\r k ->
+       ifS (hash .== string (routeHash r))
+         (set @"filter" state (string (routeValue r)))
+         k)
+    done
+    routes
+
+byId :: Text -> EffectSyntax f (Effect f ('Object Dom.DomElement))
+byId = Dom.lookupId . string
+
+incomplete :: Expr f ('Array ('Object Todo)) -> EffectSyntax f (Expr f ('Array ('Object Todo)))
+incomplete todos = Array.filterE_ todos $ \t -> do
+  c <- get @"completed" (expr t)
+  toSyntax $ expr (c .!= true_)
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
-  form <- Dom.lookupId "todo-form"
-  input <- Dom.lookupId "new-todo"
-  list <- Dom.lookupId "todo-list"
-  mainEl <- Dom.lookupId "main"
-  footer <- Dom.lookupId "footer"
-  countEl <- Dom.lookupId "todo-count"
-  countSuffix <- Dom.lookupId "todo-count-suffix"
-  clearBtn <- Dom.lookupId "clear-completed"
-  filterAll <- Dom.lookupId "filter-all"
-  filterActive <- Dom.lookupId "filter-active"
-  filterCompleted <- Dom.lookupId "filter-completed"
+  form <- byId idForm
+  input <- byId idNewTodo
+  list <- byId idTodoList
+  mainEl <- byId idMain
+  footerEl <- byId idFooter
+  countEl <- byId idTodoCount
+  countSuffix <- byId idTodoCountSuffix
+  clearBtn <- byId idClearCompleted
+  filterLinks <- traverse (\r -> (,) r <$> byId (routeId r)) routes
 
   state <- hold emptyState
   set @"todos" state emptyTodos
-  set @"filter" state "all"
+  set @"filter" state (string valueAll)
   set @"nextId" state 1
 
   saved <- Storage.getItem Storage.localStorage storageKey
@@ -148,8 +159,8 @@ mainJS = do
       title <- get @"title" (expr todo)
       completed <- get @"completed" (expr todo)
       let showTodo =
-            if_ (filt .== "all") true_
-              (if_ (filt .== "active") (completed .!= true_) completed)
+            if_ (filt .== string valueAll) true_
+              (if_ (filt .== string valueActive) (completed .!= true_) completed)
       whenS showTodo $ do
         li <- Dom.createElement "li"
         whenS completed $ Dom.classAdd li "completed"
@@ -185,9 +196,7 @@ mainJS = do
         Dom.appendChild li view
         Dom.appendChild list li
 
-    active <- Array.filterE_ todos $ \t -> do
-      c <- get @"completed" (expr t)
-      toSyntax $ expr (c .!= true_)
+    active <- incomplete todos
     let activeN = Array.length_ active
         totalN = Array.length_ todos
         hasTodos = totalN .> 0
@@ -199,19 +208,16 @@ mainJS = do
     ifS hasTodos
       (do
          Dom.setAttribute mainEl "style" ""
-         Dom.setAttribute footer "style" "")
+         Dom.setAttribute footerEl "style" "")
       (do
          Dom.setAttribute mainEl "style" "display:none"
-         Dom.setAttribute footer "style" "display:none")
+         Dom.setAttribute footerEl "style" "display:none")
 
-    Dom.classRemove filterAll "selected"
-    Dom.classRemove filterActive "selected"
-    Dom.classRemove filterCompleted "selected"
-    ifS (filt .== "active")
-      (Dom.classAdd filterActive "selected")
-      (ifS (filt .== "completed")
-         (Dom.classAdd filterCompleted "selected")
-         (Dom.classAdd filterAll "selected"))
+    mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
+    mapM_ (\(r, el) ->
+      ifS (filt .== string (routeValue r))
+        (Dom.classAdd el (string classSelected))
+        done) filterLinks
 
     blob <- toSyntax emptyState
     set @"todos" (Lift (Var blob)) todos
@@ -236,9 +242,7 @@ mainJS = do
 
   onClick_ clearBtn $ do
     todos <- get @"todos" state
-    kept <- Array.filterE_ todos $ \t -> do
-      c <- get @"completed" (expr t)
-      toSyntax $ expr (c .!= true_)
+    kept <- incomplete todos
     set @"todos" state kept
     callRender state
 

@@ -78,6 +78,7 @@ executable todo-mvc
     Main.hs
   other-modules:
     Client
+    Ids
     Page
   hs-source-dirs:
     app/todo-mvc
