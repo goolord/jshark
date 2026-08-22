@@ -13,7 +13,7 @@
 module Main (main) where
 
 import Control.Exception (IOException, bracket, catch)
-import Data.Char (isSpace)
+import Data.Char (isDigit, isSpace)
 import Data.List (dropWhileEnd, intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -347,6 +347,34 @@ stdlibTests = testGroup "stdlib"
         ctx <- Canvas.getContext2d c
         toSyntax (Bind ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok")))))))
         @?= "const n0 = document.getElementById(\"c\").getContext(\"2d\");\n(n0 === null ? \"no\" : \"ok\")"
+  , testCase "optionCaseE of getContext plus a large object array tests that context" $ do
+      let people = [Person ("p" <> T.pack (show i)) (fromIntegral i) | i <- [1 .. 15 :: Int]]
+          js = T.pack $ renderJS (effectfulAST (fromSyntax $ do
+            c <- Dom.lookupId (string "c")
+            ctx <- Canvas.getContext2d c
+            toSyntax $
+              Bind ctx $ \o ->
+                optionCaseE (var o) noOp $ \_ ->
+                  stmts $ do
+                    _ <- toSyntax (G.toObject (Group people))
+                    done))
+          jsIdent = T.takeWhile (\c -> c == 'n' || isDigit c)
+          ctxIds =
+            [ i
+            | chunk <- T.splitOn "const " js
+            , T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
+            , let i = jsIdent chunk
+            , not (T.null i)
+            ]
+          nullId =
+            let pre = fst (T.breakOn " === null" js)
+                stem = T.dropWhileEnd (\c -> c == 'n' || isDigit c) pre
+             in T.drop (T.length stem) pre
+      T.isInfixOf "=;" js @?= False
+      (not (null ctxIds)
+        && (nullId `elem` ctxIds
+          || any (\c -> T.isInfixOf ("const " <> nullId <> " = " <> c <> ";") js) ctxIds))
+        @?= True
   , testCase "Canvas.fillRect renders a 2D call" $
       renderJS (effectfulAST (fromSyntax (do
         _ <- Canvas.fillRect (UnsafeObject "ctx") (number 0) (number 0) (number 10) (number 20)

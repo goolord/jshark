@@ -756,6 +756,25 @@ nestedDummy = Name nestedDummyId
 constBind :: Int -> Doc -> Doc
 constBind n ref = ("const" <+> P.text ('n' : show n) <+> "=" <+> ref) <> P.semi
 
+-- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
+-- counter guess: only a binder that is already in the tree.
+liveBinder :: Effect Stamp u -> Maybe Int
+liveBinder (Lift e) = liveBinderExpr e
+liveBinder _ = Nothing
+
+liveBinderExpr :: Expr Stamp u -> Maybe Int
+liveBinderExpr (Var (Stamp n)) | n >= 0 = Just n
+liveBinderExpr (UnsafeNullable e) = liveBinderExpr e
+liveBinderExpr (UnsafeEffectExpr e) = liveBinder e
+liveBinderExpr _ = Nothing
+
+-- | @const n = x; k n@ aliases. Dropping them leaks the body stamp.
+isAliasBind :: Effect Stamp u -> Bool
+isAliasBind (Lift (Var _)) = True
+isAliasBind (Lift (UnsafeNullable (Var _))) = True
+isAliasBind (Lift (UnsafeEffectExpr e)) = isAliasBind e
+isAliasBind _ = False
+
 jsCall :: Doc -> Doc -> Doc
 jsCall f a = P.parens f <> P.parens a
 
@@ -1514,7 +1533,7 @@ elimBindFrom t x f tag body =
         | sizeEffect body > optSmall = (t, rebuild)
         | otherwise = optEffect t (inlineEff f (boundAsExpr x))
    in case uses of
-        0 | isPureEffect x -> (t, body)
+        0 | isPureEffect x, not (isAliasBind x) -> (t, body)
         0 -> (t, rebuild)
         1 -> splice
         _ | isCheapEffect x -> splice
@@ -1822,10 +1841,11 @@ bindEffectCode s0 x f =
   let (tag, sTag) = allocTag s0
       tagged = f (Stamp tag)
       uses = countEffect tag tagged
+      bodyOf s e = effectfulAST' s (f (maybe nestedDummy Name (liveBinder e)))
    in case uses of
         0 ->
           let (s1, MkCode xDecl xRef xFX) = effectfulAST' sTag x
-              (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f nestedDummy)
+              (s2, MkCode yDecl yRef yFX) = bodyOf s1 x
               -- Value-producing effects (ifE) put work in xDecl and leave
               -- a result ident in xRef (codeRefFX False). Assignments and
               -- calls keep the side effect in xRef (fxCode).
@@ -1838,7 +1858,7 @@ bindEffectCode s0 x f =
           let (s1, MkCode xDecl xRef _) = effectfulAST' sTag x
            in if P.isEmpty xRef
                 then
-                  let (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f (Name (cgIdent s1 - 1)))
+                  let (s2, MkCode yDecl yRef yFX) = bodyOf s1 x
                    in (s2, MkCode (xDecl $$ yDecl) yRef yFX)
                 else
                   let (nBind, s2) = allocIdent s1
