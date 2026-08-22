@@ -493,7 +493,7 @@ finishStyle Minified = id
 
 styleConfig :: CompilerConfig -> CompilerConfig
 styleConfig cfg = case configStyle cfg of
-  Readable -> cfg{configBackend = Passthrough}
+  Readable -> cfg {configBackend = Passthrough}
   Minified -> cfg
 
 pureDoc :: OutputStyle -> ClosedExpr u -> Doc

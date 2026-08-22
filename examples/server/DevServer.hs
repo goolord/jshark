@@ -1,6 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module DevServer (Example (..), SitePaths (..), exportExamples, serveExamples, exportPaths, serverPaths) where
+module DevServer
+  ( Example (..)
+  , SitePaths (..)
+  , exportExamples
+  , serveExamples
+  , exportPaths
+  , serverPaths
+  )
+where
 
 import Control.Monad (forM_, when)
 import Data.String (fromString)
@@ -8,10 +16,16 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.IO as TL
+import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Lucid
 import Paths_jshark (getDataFileName)
-import GHC.IO.Encoding (setLocaleEncoding, utf8)
-import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, doesPathExist, removePathForcibly)
+import System.Directory
+  ( copyFile
+  , createDirectoryIfMissing
+  , doesFileExist
+  , doesPathExist
+  , removePathForcibly
+  )
 import System.FilePath ((</>))
 import System.IO (hFlush, stdout)
 import Web.Scotty
@@ -71,7 +85,8 @@ serveExamples port banner examples = do
     forM_ examples $ \ex -> do
       let
         base = "/" <> T.unpack (exampleName ex)
-        page = examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
+        page =
+          examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
       get (fromString base) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
         html $ renderText page
@@ -123,11 +138,14 @@ exportExamples dest examples = do
     writeFile (dest </> name <> ".html") (slashRedirect name)
     TL.writeFile
       (dir </> "index.html")
-      (renderText (examplePage ex (srcScript exportPaths (exampleName ex)) (srcStatic exportPaths)))
+      ( renderText
+          (examplePage ex (srcScript exportPaths (exampleName ex)) (srcStatic exportPaths))
+      )
     T.writeFile (dir </> "app.js") (exampleJs ex)
 
--- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
--- @app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
+{- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
+@app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
+-}
 slashRedirect :: FilePath -> String
 slashRedirect name =
   "<!DOCTYPE html><meta charset=\"utf-8\">"
