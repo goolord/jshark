@@ -62,6 +62,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ Effectful function (weak PHOAS: binder is @f u@, not @Effect@)
   ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v
   IfE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. A 'Lift'ed condition must not depend on 'Let' decls that only run once; an 'FFI' condition is re-emitted into the @if@ test.
+  IfS :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -> Effect f 'Unit -- ^ Statement @if@. Result is 'Unit'; codegen never binds it.
   While :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. The rendered condition is re-emitted on every iteration, so it must not depend on declarations that only run once. Use 'FFI' (not a bound var) when the test itself is a call.
   OptionCaseE :: Expr f ('Option u) -> Effect f v -> (f u -> Effect f v) -> Effect f v -- ^ Effectful 'optionCase'.
   Try :: Effect f u -> Effect f u -> Effect f u -- ^ @try { a } catch { b }@. Same result type in both arms.

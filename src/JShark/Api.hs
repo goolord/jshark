@@ -182,7 +182,7 @@ ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
 ifE = IfE
 
 when_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-when_ c t = IfE c t noOp
+when_ c t = IfS c t noOp
 
 while_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
 while_ = While
@@ -285,7 +285,7 @@ whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenS c body = toSyntax $ when_ (expr c) (stmts body)
 
 ifS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-ifS c t e = toSyntax $ ifE (expr c) (stmts t) (stmts e)
+ifS c t e = toSyntax $ IfS (expr c) (stmts t) (stmts e)
 
 whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
 whenSomeS opt k = toSyntax $ optionCaseE opt noOp (\x -> stmts (k x))

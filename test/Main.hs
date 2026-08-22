@@ -165,6 +165,27 @@ controlFlowTests = testGroup "control flow"
   , testCase "whileE re-emits an FFI condition" $
       renderJS (effectfulAST (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp)))
         @?= "while (cond()) {foo();}"
+  , testCase "when_ of Unit skips the result bind" $
+      renderJS (effectfulAST (when_ condE (ffi "foo" RecNil)))
+        @?= "if (cond()) {foo();}"
+  , testCase "ifS of two CallMethods skips the result bind" $
+      renderJS (effectfulAST (IfS condE
+        (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "a") <: RecNil))
+        (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "b") <: RecNil))))
+        @?= "if (cond()) {el.setAttribute(\"k\", \"a\");}\nelse {el.setAttribute(\"k\", \"b\");}"
+  , testCase "ifE of two getAttributes keeps the result bind" $
+      renderJS (effectfulAST (ifE condE
+        (callMethod (UnsafeObject "el") "getAttribute" (arg (string "a") <: RecNil))
+        (callMethod (UnsafeObject "el") "getAttribute" (arg (string "b") <: RecNil))))
+        @?= "let n0;\nif (cond()) {n0 = el.getAttribute(\"a\");}\nelse {n0 = el.getAttribute(\"b\");}\nn0"
+  , testCase "ifE of assign vs number keeps the result bind" $
+      renderJS (effectfulAST (ifE condE
+        (UnsafeObjectAssign (UnsafeObject "x") (expr (number 1)))
+        (expr (number 2))))
+        @?= "let n0;\nif (cond()) {n0 = x = 1.0;}\nelse {n0 = 2.0;}\nn0"
+  , testCase "try_ of Unit skips the result bind" $
+      renderJS (effectfulAST (try_ (ffi "foo" RecNil) noOp))
+        @?= "try {foo();}\ncatch (n0) {}"
   ]
 
 numArray :: forall f. Expr f ('Array 'Number)

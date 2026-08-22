@@ -28,7 +28,7 @@ module JShark
   , ClosedEffect
   , Effect
     ( Lift, FFI, UnsafeObject, UnsafeObjectGet, UnsafeObjectAssign
-    , CallMethod, Bind, LambdaE, ApplyE, IfE, While, OptionCaseE, Try
+    , CallMethod, Bind, LambdaE, ApplyE, IfE, IfS, While, OptionCaseE, Try
     )
     -- Evaluation
   , evaluate
@@ -539,6 +539,7 @@ countEffect t = \case
   LambdaE f -> countLazyEffect t (f nestedDummy)
   ApplyE f x -> countEffect t f + countEffect t x
   IfE c u v -> countEffect t c + countLazyEffect t u + countLazyEffect t v
+  IfS c u v -> countEffect t c + countLazyEffect t u + countLazyEffect t v
   While c b -> countLazyEffect t c + countLazyEffect t b
   OptionCaseE o n s ->
     countExpr t o + countLazyEffect t n + countLazyEffect t (s nestedDummy)
@@ -607,6 +608,7 @@ substEffect t r = goE
       LambdaE f -> LambdaE (goE . f)
       ApplyE f x -> ApplyE (goE f) (goE x)
       IfE c u v -> IfE (goE c) (goE u) (goE v)
+      IfS c u v -> IfS (goE c) (goE u) (goE v)
       While c b -> While (goE c) (goE b)
       OptionCaseE o n s -> OptionCaseE (substExpr t r o) (goE n) (goE . s)
       Try a b -> Try (goE a) (goE b)
@@ -718,6 +720,7 @@ isPureEffect = \case
   LambdaE f -> isPureEffect (f nestedDummy)
   ApplyE{} -> False
   IfE c t e -> isPureEffect c && isPureEffect t && isPureEffect e
+  IfS c t e -> isPureEffect c && isPureEffect t && isPureEffect e
   While{} -> False
   OptionCaseE o n s -> isPureExpr o && isPureEffect n && isPureEffect (s nestedDummy)
   Try{} -> False
@@ -1033,6 +1036,15 @@ optEffect t0 = \case
             let (t2, t') = optEffect t1 t
                 (t3, e') = optEffect t2 e
              in (t3, IfE c' t' e')
+  IfS c t e ->
+    let (t1, c') = optEffect t0 c
+     in case peelBoolEffect c' of
+          Just True -> optEffect t1 t
+          Just False -> optEffect t1 e
+          Nothing ->
+            let (t2, t') = optEffect t1 t
+                (t3, e') = optEffect t2 e
+             in (t3, IfS c' t' e')
   While c b ->
     let (t1, c') = optEffect t0 c
      in case peelBoolEffect c' of
@@ -1253,6 +1265,15 @@ foldEffect t0 = \case
             let (t2, t') = foldEffect t1 t
                 (t3, e') = foldEffect t2 e
              in (t3, IfE c' t' e')
+  IfS c t e ->
+    let (t1, c') = foldEffect t0 c
+     in case peelBoolEffect c' of
+          Just True -> foldEffect t1 t
+          Just False -> foldEffect t1 e
+          Nothing ->
+            let (t2, t') = foldEffect t1 t
+                (t3, e') = foldEffect t2 e
+             in (t3, IfS c' t' e')
   While c b ->
     let (t1, c') = foldEffect t0 c
      in case peelBoolEffect c' of
@@ -1312,64 +1333,125 @@ bindEffectCode s0 x f =
 effectfulAST :: ClosedEffect u -> Doc
 effectfulAST e = renderCode . snd . effectfulAST' startCG $ optimizeEffect e
 
+-- | Witness that forces @u ~ 'Unit@: @noOp@, 'While', 'IfS'. Polymorphic
+-- nodes ('UnsafeObjectAssign', 'CallMethod', 'FFI') do not count — they
+-- inhabit any @u@. One witness arm on 'IfE'/'Try'/'OptionCaseE' is enough
+-- because it fixes the shared result type.
+isUnitWitness :: Effect (Const Int) u -> Bool
+isUnitWitness = \case
+  Lift (Literal ValueUnit) -> True
+  Lift (UnsafeEffectExpr e) -> isUnitWitness e
+  Lift _ -> False
+  While{} -> True
+  IfS{} -> True
+  Bind _ f -> isUnitWitness (f nestedDummy)
+  IfE _ t e -> isUnitWitness t || isUnitWitness e
+  OptionCaseE _ n s -> isUnitWitness n || isUnitWitness (s nestedDummy)
+  Try a b -> isUnitWitness a || isUnitWitness b
+  _ -> False
+
+-- | Turn a rendered effect into a statement. Unit values may still have a
+-- non-empty ref (@el.x = v@, @foo()@); those become statements, not
+-- @let n = …@.
+asStmt :: Doc -> Doc -> Doc
+asStmt decl ref
+  | P.isEmpty ref = decl
+  | otherwise = decl $$ (ref <> P.semi)
+
+bracesNest :: Doc -> Doc
+bracesNest = P.braces . P.nest 2
+
+ifElseStmt :: Doc -> Doc -> Doc -> Doc -> Doc -> Doc
+ifElseStmt cRef tDecl tRef eDecl eRef
+  | P.isEmpty eDecl && P.isEmpty eRef =
+      "if" <+> P.parens cRef <+> bracesNest (asStmt tDecl tRef)
+  | otherwise =
+      "if" <+> P.parens cRef <+> bracesNest (asStmt tDecl tRef)
+        $$ "else" <+> bracesNest (asStmt eDecl eRef)
+
 effectfulAST' :: forall v. CG -> Effect (Const Int) v -> (CG, Code)
 effectfulAST' !s0 = \case
   Lift x -> pureAST' s0 x
   FFI fn args ->
     let (s1, argDecl, argRefs) = renderArgList argAST s0 args
      in (s1, Code argDecl (P.text fn <> P.parens argRefs))
-  IfE c t e ->
-    -- We always render this as an if/else statement (rather than trying to
-    -- special-case a ternary expression) because an effectful branch's
-    -- rendered "ref" may be a leftover 'Unit' placeholder rather than a
-    -- genuinely-empty Doc, which made an emptiness-based heuristic unsound
-    -- (it could produce a ternary with an empty branch, e.g. `c ? x : `).
-    -- Using a shared `let`-bound result variable, assigned in both
-    -- branches, is correct regardless of whether the branches are 'Unit'
-    -- or carry a real value.
+  IfS c t e ->
     let (s1, Code cDecl cRef) = effectfulAST' s0 c
-        (resultN, s2) = allocIdent s1
-        resultVar = 'n' : show resultN
-        (s3, Code tDecl tRef) = effectfulAST' s2 t
-        (s4, Code eDecl eRef) = effectfulAST' s3 e
-        assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-        ifStmt = ("let" <+> P.text resultVar) <> P.semi
-          $$ ("if" <+> P.parens cRef <+> P.braces (P.nest 2 (tDecl $$ assign tRef)))
-          $$ ("else" <+> P.braces (P.nest 2 (eDecl $$ assign eRef)))
-     in (s4, Code (cDecl $$ ifStmt) (P.text resultVar))
+        (s2, Code tDecl tRef) = effectfulAST' s1 t
+        (s3, Code eDecl eRef) = effectfulAST' s2 e
+     in (s3, Code (cDecl $$ ifElseStmt cRef tDecl tRef eDecl eRef) mempty)
+  IfE c t e
+    | isUnitWitness t || isUnitWitness e ->
+        let (s1, Code cDecl cRef) = effectfulAST' s0 c
+            (s2, Code tDecl tRef) = effectfulAST' s1 t
+            (s3, Code eDecl eRef) = effectfulAST' s2 e
+         in (s3, Code (cDecl $$ ifElseStmt cRef tDecl tRef eDecl eRef) mempty)
+    | otherwise ->
+        -- Value-producing @if@: a shared result var is assigned in both
+        -- arms. Do not use emptiness to pick a ternary — a Unit leftover
+        -- ref is not a genuinely-empty Doc.
+        let (s1, Code cDecl cRef) = effectfulAST' s0 c
+            (resultN, s2) = allocIdent s1
+            resultVar = 'n' : show resultN
+            (s3, Code tDecl tRef) = effectfulAST' s2 t
+            (s4, Code eDecl eRef) = effectfulAST' s3 e
+            assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
+            ifStmt = ("let" <+> P.text resultVar) <> P.semi
+              $$ ("if" <+> P.parens cRef <+> bracesNest (tDecl $$ assign tRef))
+              $$ ("else" <+> bracesNest (eDecl $$ assign eRef))
+         in (s4, Code (cDecl $$ ifStmt) (P.text resultVar))
   While cond body ->
     let (s1, Code condDecl condRef) = effectfulAST' s0 cond
         (s2, Code bodyDecl bodyRef) = effectfulAST' s1 body
         bodyStmt = if P.isEmpty bodyRef then bodyDecl else bodyDecl $$ (bodyRef <> P.semi)
         whileStmt = "while" <+> P.parens condRef <+> P.braces (P.nest 2 bodyStmt)
      in (s2, Code (condDecl $$ whileStmt) mempty)
-  OptionCaseE opt noneE someF ->
-    let (s1, Code oDecl oRef) = pureAST' s0 opt
-        (nBind, s2) = allocIdent s1
-        optVar = 'n' : show nBind
-        (resultN, s3) = allocIdent s2
-        resultVar = 'n' : show resultN
-        (s4, Code nDecl nRef) = effectfulAST' s3 noneE
-        (s5, Code sDecl sRef) = effectfulAST' s4 (someF (Const nBind))
-        assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-        stmt = oDecl $$ constBind nBind oRef
-          $$ ("let" <+> P.text resultVar) <> P.semi
-          $$ ("if" <+> P.parens (P.text optVar <+> "===" <+> "null")
-                <+> P.braces (P.nest 2 (nDecl $$ assign nRef)))
-          $$ ("else" <+> P.braces (P.nest 2 (sDecl $$ assign sRef)))
-     in (s5, Code stmt (P.text resultVar))
-  Try a b ->
-    let (resultN, s1) = allocIdent s0
-        resultVar = 'n' : show resultN
-        (s2, Code aDecl aRef) = effectfulAST' s1 a
-        (catchN, s3) = allocIdent s2
-        (s4, Code bDecl bRef) = effectfulAST' s3 b
-        assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
-        stmt = ("let" <+> P.text resultVar) <> P.semi
-          $$ ("try" <+> P.braces (P.nest 2 (aDecl $$ assign aRef)))
-          $$ ("catch" <+> P.parens (P.text ('n' : show catchN))
-                <+> P.braces (P.nest 2 (bDecl $$ assign bRef)))
-     in (s4, Code stmt (P.text resultVar))
+  OptionCaseE opt noneE someF
+    | isUnitWitness noneE || isUnitWitness (someF nestedDummy) ->
+        let (s1, Code oDecl oRef) = pureAST' s0 opt
+            (nBind, s2) = allocIdent s1
+            optVar = 'n' : show nBind
+            (s3, Code nDecl nRef) = effectfulAST' s2 noneE
+            (s4, Code sDecl sRef) = effectfulAST' s3 (someF (Const nBind))
+            stmt = oDecl $$ constBind nBind oRef
+              $$ ifElseStmt (P.text optVar <+> "===" <+> "null") nDecl nRef sDecl sRef
+         in (s4, Code stmt mempty)
+    | otherwise ->
+        let (s1, Code oDecl oRef) = pureAST' s0 opt
+            (nBind, s2) = allocIdent s1
+            optVar = 'n' : show nBind
+            (resultN, s3) = allocIdent s2
+            resultVar = 'n' : show resultN
+            (s4, Code nDecl nRef) = effectfulAST' s3 noneE
+            (s5, Code sDecl sRef) = effectfulAST' s4 (someF (Const nBind))
+            assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
+            stmt = oDecl $$ constBind nBind oRef
+              $$ ("let" <+> P.text resultVar) <> P.semi
+              $$ ("if" <+> P.parens (P.text optVar <+> "===" <+> "null")
+                    <+> P.braces (P.nest 2 (nDecl $$ assign nRef)))
+              $$ ("else" <+> P.braces (P.nest 2 (sDecl $$ assign sRef)))
+         in (s5, Code stmt (P.text resultVar))
+  Try a b
+    | isUnitWitness a || isUnitWitness b ->
+        let (s1, Code aDecl aRef) = effectfulAST' s0 a
+            (catchN, s2) = allocIdent s1
+            (s3, Code bDecl bRef) = effectfulAST' s2 b
+            stmt = "try" <+> bracesNest (asStmt aDecl aRef)
+              $$ ("catch" <+> P.parens (P.text ('n' : show catchN))
+                    <+> bracesNest (asStmt bDecl bRef))
+         in (s3, Code stmt mempty)
+    | otherwise ->
+        let (resultN, s1) = allocIdent s0
+            resultVar = 'n' : show resultN
+            (s2, Code aDecl aRef) = effectfulAST' s1 a
+            (catchN, s3) = allocIdent s2
+            (s4, Code bDecl bRef) = effectfulAST' s3 b
+            assign ref = if P.isEmpty ref then mempty else (P.text resultVar <+> "=" <+> ref) <> P.semi
+            stmt = ("let" <+> P.text resultVar) <> P.semi
+              $$ ("try" <+> P.braces (P.nest 2 (aDecl $$ assign aRef)))
+              $$ ("catch" <+> P.parens (P.text ('n' : show catchN))
+                    <+> P.braces (P.nest 2 (bDecl $$ assign bRef)))
+         in (s4, Code stmt (P.text resultVar))
   Bind x f -> bindEffectCode s0 x f
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)
   UnsafeObjectGet x string ->
