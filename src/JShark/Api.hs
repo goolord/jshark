@@ -79,6 +79,7 @@ module JShark.Api
   , newObject
   , get
   , set
+  , HasField(..)
   , getProp
   , setProp
   , getProp'
@@ -330,6 +331,9 @@ type family ObjectRow (a :: Type) :: Type where
   ObjectRow (Expr f ('Object r)) = r
   ObjectRow (f ('Object r)) = r
 
+-- | @o.k@. @OverloadedRecordDot@ uses 'HasField' on 'Effect' and 'Expr':
+-- @n <- o.fullName@. PHOAS binders need 'get' or @(Var x).k@. Keys that
+-- are not Haskell identifiers still use @get \@k@.
 get :: forall k a f. (KnownSymbol k, ToEffect f ('Object (ObjectRow a)) a)
     => a -> EffectSyntax f (Expr f (Field (ObjectRow a) k))
 get o = Object.get @k @(ObjectRow a)

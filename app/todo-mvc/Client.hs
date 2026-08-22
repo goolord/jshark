@@ -2,6 +2,7 @@
     AllowAmbiguousTypes
   , DataKinds
   , DeriveGeneric
+  , OverloadedRecordDot
   , OverloadedStrings
   , ScopedTypeVariables
   , TypeApplications
@@ -120,7 +121,7 @@ byId = Dom.lookupId . string
 
 incomplete :: Expr f ('Array (ObjectOf Todo)) -> EffectSyntax f (Expr f ('Array (ObjectOf Todo)))
 incomplete items = Array.filterE_ items $ \t -> do
-  c <- get @"completed" t
+  c <- t.completed
   toSyntax $ expr (c .!= true_)
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
@@ -144,24 +145,24 @@ mainJS = do
   whenSomeS saved $ \raw -> do
     parsed <- toSyntax $ parseState raw
     whenSomeS (Var parsed) $ \blob -> do
-      t <- get @"todos" blob
+      t <- blob.todos
       set @"todos" state t
-      n <- get @"nextId" blob
+      n <- blob.nextId
       set @"nextId" state n
-      f <- get @"filter" blob
+      f <- blob.filter
       set @"filter" state f
 
   let paint :: Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)
       paint render = do
-        items <- get @"todos" state
-        filt <- get @"filter" state
+        items <- state.todos
+        filt <- state.filter
 
         Dom.setInnerHTML list ""
 
         forEach_ items $ \todo -> do
-          tid <- get @"id" todo
-          todoTitle <- get @"title" todo
-          isDone <- get @"completed" todo
+          tid <- todo.id
+          todoTitle <- todo.title
+          isDone <- todo.completed
           let showTodo =
                 if_ (filt .== string valueAll) true_
                   (if_ (filt .== string valueActive) (isDone .!= true_) isDone)
@@ -177,7 +178,7 @@ mainJS = do
             Dom.setAttribute checkbox "type" "checkbox"
             whenS isDone $ setProp checkbox "checked" true_
             onClick_ checkbox $ do
-              cur <- get @"completed" todo
+              cur <- todo.completed
               set @"completed" todo (cur .!= true_)
               call0 render
 
@@ -187,9 +188,9 @@ mainJS = do
             destroy <- Dom.createElement "button"
             Dom.setAttribute destroy "class" "destroy"
             onClick_ destroy $ do
-              items' <- get @"todos" state
+              items' <- state.todos
               kept <- Array.filterE_ items' $ \t -> do
-                i <- get @"id" t
+                i <- t.id
                 toSyntax $ expr (i .!= tid)
               set @"todos" state kept
               call0 render
@@ -226,7 +227,7 @@ mainJS = do
         blob <- toSyntax emptyState
         set @"todos" blob items
         set @"filter" blob filt
-        nid <- get @"nextId" state
+        nid <- state.nextId
         set @"nextId" blob nid
         Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
 
@@ -236,16 +237,16 @@ mainJS = do
           inputRaw <- Dom.getValue input
           let todoTitle = String.trim inputRaw
           whenS (String.length todoTitle .> 0) $ do
-            nid <- get @"nextId" state
+            nid <- state.nextId
             todo <- mkTodo todoTitle nid
-            items <- get @"todos" state
+            items <- state.todos
             Array.push_ items todo
             set @"nextId" state (nid + 1)
             Dom.setValue input ""
             call0 render
 
         onClick_ clearBtn $ do
-          items <- get @"todos" state
+          items <- state.todos
           kept <- incomplete items
           set @"todos" state kept
           call0 render

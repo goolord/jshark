@@ -1,12 +1,17 @@
 {-# LANGUAGE
     AllowAmbiguousTypes
   , DataKinds
+  , FlexibleInstances
+  , MultiParamTypeClasses
   , OverloadedStrings
   , TypeApplications
   , ScopedTypeVariables
   , TypeFamilies
   , TypeOperators
+  , UndecidableInstances
 #-}
+-- Orphans: HasField is GHC.Records; Effect/Expr live in Types (cannot import us).
+{-# OPTIONS_GHC -Wno-orphans #-}
 module JShark.Object
   ( Field
   , get
@@ -20,16 +25,29 @@ module JShark.Object
   , unsafeObject
   , unsafeObjectGet
   , unsafeObjectAssign
+  , HasField(..)
   ) where
 
 import Data.Text (Text)
 import Data.Proxy
+import GHC.Records (HasField(..))
 import GHC.TypeLits
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
 
+-- | @o.k@. With @OverloadedRecordDot@, @n <- o.fullName@ is 'getField'
+-- on 'Effect' or 'Expr' (both yield 'EffectSyntax'). PHOAS binders
+-- @f ('Object r)@ need 'get' or @(Var x).k@.
 get :: forall k r f. KnownSymbol k => Effect f ('Object r) -> EffectSyntax f (Expr f (Field r k))
 get x = fmap Var $ toSyntax $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
+
+instance (KnownSymbol k, u ~ Field r k) =>
+  HasField k (Effect f ('Object r)) (EffectSyntax f (Expr f u)) where
+  getField = get @k
+
+instance (KnownSymbol k, u ~ Field r k) =>
+  HasField k (Expr f ('Object r)) (EffectSyntax f (Expr f u)) where
+  getField o = get @k (Lift o)
 
 -- | Assign a typed field (@o.k = v@).
 set :: forall k r f. KnownSymbol k => Effect f ('Object r) -> Expr f (Field r k) -> EffectSyntax f (f 'Unit)
@@ -68,4 +86,3 @@ unsafeObjectGet = UnsafeObjectGet
 
 unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
 unsafeObjectAssign = UnsafeObjectAssign
-

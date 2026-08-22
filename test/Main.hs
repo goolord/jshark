@@ -3,6 +3,7 @@
   , DeriveGeneric
   , GADTs
   , LambdaCase
+  , OverloadedRecordDot
   , OverloadedStrings
   , RankNTypes
   , ScopedTypeVariables
@@ -463,6 +464,18 @@ genericTests = testGroup "generic"
       renderJS (effectfulAST (fromSyntax $ do
         o <- hold (G.toObject (Person "Ada" 36))
         n <- Object.get @"fullName" o
+        yieldString n))
+        @?= "{\"fullName\": \"Ada\", \"years\": 36.0}.fullName"
+  , testCase "record dot getField matches get" $
+      renderJS (effectfulAST (fromSyntax $ do
+        o <- hold (G.toObject (Person "Ada" 36))
+        n <- o.fullName
+        yieldString n))
+        @?= "{\"fullName\": \"Ada\", \"years\": 36.0}.fullName"
+  , testCase "record dot getField on Expr" $
+      renderJS (effectfulAST (fromSyntax $ do
+        o <- toSyntax (G.toObject (Person "Ada" 36))
+        n <- (Var o).fullName
         yieldString n))
         @?= "{\"fullName\": \"Ada\", \"years\": 36.0}.fullName"
   , testCase "newRecord is an empty object of the Generic row" $

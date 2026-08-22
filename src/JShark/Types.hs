@@ -64,7 +64,11 @@ import Control.Monad (ap, void)
 import Data.Kind
 import Data.Proxy (Proxy(..))
 import Data.Text (Text)
-import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
+import GHC.TypeLits
+  ( KnownSymbol
+  , Symbol
+  , symbolVal
+  )
 import JShark.Rec
 import qualified GHC.Exts as Exts
 

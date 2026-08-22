@@ -15,6 +15,8 @@
   Generic sum case. Named arms are a prefix of `CtorNames a`. Every
   named arm tests its tag; `CaseEnd` throws on leftovers; `CaseAny` is
   a suffix wildcard. `whenTag` is the one-arm matcher.
+* `HasField` on `Effect`/`Expr` objects so `OverloadedRecordDot`
+  (`o.fullName`) is `get`. Binders use `get` or `(Var x).k`.
 * `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
   `render` is `bindRec`, not a persisted field.
 * `call0` accepts `ToEffect` (`Expr` or `Effect`).
