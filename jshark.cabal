@@ -66,6 +66,7 @@ library
     JShark.Ajax
     JShark.Object
     JShark.Dom
+    JShark.Generic
     JShark.Rec
     JShark.Regex
     JShark.Compiler

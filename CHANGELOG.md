@@ -6,6 +6,12 @@
 * `Throw` / `catch_` (catch binds a `String`); `try_` ignores the binder.
 * `LetRec` / `BindRec`, `orElse` / `fromOption`, nested-unary `lambda2`/`apply2`/`lambda3`/`apply3`.
 * Statement `if` is `IfE` after `discard` (no `IfS` constructor). `FieldLit` is keyed by `Field r k`.
+* `JShark.Generic`: `Generic` records as objects (`toObject` /
+  `toObjectArray` / `newRecord`, row `As a`; `ViaGeneric` for `'Object a`).
+  Primitives via `ToJS` / `ToValue` (`Int` is IEEE `Number`).
+  Sums as `{tag, payload}` (`toSum` / `toSumArray` / `whenTag` / `sumTag`,
+  row `Tagged a`). `Either` stays `Result`.
+* Property access uses `o["0"]` when the key is not a JS identifier.
 * `%` / bitwise (`rem_`, `bitAnd`…`ushr`), `parseInt_` (radix required).
 * Array `reduce_`, `arraySlice`, `sort_`; `Regex` via `new RegExp`;
   `obj`/`field` literals, `Object.create`, `delete_`, `hasOwn`.

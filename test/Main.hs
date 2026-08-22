@@ -1,9 +1,11 @@
 {-# LANGUAGE
     DataKinds
+  , DeriveGeneric
   , GADTs
   , LambdaCase
   , OverloadedStrings
   , RankNTypes
+  , ScopedTypeVariables
   , TypeApplications
   , TypeFamilies
 #-}
@@ -19,6 +21,7 @@ import JShark.Api
 import JShark.Compiler
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
+import GHC.Generics (Generic)
 import System.Directory
   ( createDirectoryIfMissing
   , findExecutable
@@ -37,6 +40,7 @@ import qualified JShark.Ajax as Ajax
 import qualified JShark.Array as Array
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
+import qualified JShark.Generic as G
 import qualified JShark.Json as Json
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
@@ -54,6 +58,7 @@ tests = testGroup "jshark"
   , controlFlowTests
   , stdlibTests
   , goodPartsTests
+  , genericTests
   , optimizeTests
   , compilerTests
   , bunEvalTests
@@ -89,12 +94,46 @@ evaluatorTests = testGroup "evaluate"
 data LitRow
 type instance Field LitRow "x" = 'Number
 
+data Person = Person
+  { fullName :: Text
+  , years :: Double
+  }
+  deriving (Generic)
+
+data Tagged = Tagged
+  { label :: Text
+  , tags :: [Text]
+  , nickname :: Maybe Text
+  }
+  deriving (Generic)
+
+data Group = Group
+  { members :: [Person]
+  }
+  deriving (Generic)
+
+data Color = Red | Green | Blue
+  deriving (Generic)
+
+data Shape
+  = Circle Double
+  | Rect Double Double
+  deriving (Generic)
+
+data Badge = Badge
+  { hue :: Color
+  }
+  deriving (Generic)
+
 fooE, barE :: Effect f u
 fooE = ffi "foo" RecNil
 barE = ffi "bar" RecNil
 
 condE :: Effect f 'Bool
 condE = ffi "cond" RecNil
+
+yieldString :: Expr f 'String -> EffectSyntax f (f 'String)
+yieldString = yield
 
 -- Bind one FFI result and yield a pure expression.
 with1 :: Effect f a -> (Expr f a -> Expr f b) -> Effect f b
@@ -373,6 +412,71 @@ goodPartsTests = testGroup "good parts"
   , testCase "ifE of throw vs number keeps the result bind" $
       renderJS (effectfulAST (ifE condE (throw_ "boom") (expr (number 1))))
         @?= "let n0;\nif (cond()) {throw \"boom\";}\nelse {n0 = 1.0;}\nn0"
+  ]
+
+genericTests :: TestTree
+genericTests = testGroup "generic"
+  [ testCase "toJS primitives evaluate" $ do
+      G.fromValue (evaluate (G.toJS (3.5 :: Double))) @?= (3.5 :: Double)
+      G.fromValue (evaluate (G.toJS True)) @?= True
+      G.fromValue (evaluate (G.toJS ("hi" :: Text))) @?= ("hi" :: Text)
+      G.fromValue (evaluate (G.toJS [1, 2 :: Double])) @?= [1, 2 :: Double]
+      G.fromValue (evaluate (G.toJS (Just (1 :: Int)))) @?= Just (1 :: Int)
+      G.fromValue (evaluate (G.toJS (Left "e" :: Either Text Double))) @?= (Left "e" :: Either Text Double)
+  , testCase "toObject renders record fields" $
+      renderJS (effectfulAST (G.toObject (Person "Ada" 36)))
+        @?= "{\"fullName\": \"Ada\", \"years\": 36.0}"
+  , testCase "toObject renders list and Maybe fields" $
+      renderJS (effectfulAST (G.toObject (Tagged "x" ["a", "b"] Nothing)))
+        @?= "{\"label\": \"x\", \"tags\": [\"a\", \"b\"], \"nickname\": null}"
+  , testCase "get on a Generic object uses derived Field" $
+      renderJS (effectfulAST (fromSyntax $ do
+        o <- hold (G.toObject (Person "Ada" 36))
+        n <- Object.get @"fullName" o
+        yieldString n))
+        @?= "{\"fullName\": \"Ada\", \"years\": 36.0}.fullName"
+  , testCase "newRecord is an empty object of the Generic row" $
+      renderJS (effectfulAST (G.newRecord @Person))
+        @?= "{}"
+  , testCase "toObjectArray pushes each record" $
+      T.isInfixOf ".push(" (T.pack $ renderJS (effectfulAST (G.toObjectArray [Person "Ada" 36])))
+        @?= True
+  , testCase "record field of [Person] uses toObjectArray" $
+      T.isInfixOf ".push(" (T.pack $ renderJS (effectfulAST (G.toObject (Group [Person "Ada" 36]))))
+        @?= True
+  , testCase "toSum nullary is a tagged object" $
+      renderJS (effectfulAST (G.toSum Red))
+        @?= "{\"tag\": \"Red\"}"
+  , testCase "toSum unary payload is the value" $
+      T.isInfixOf "\"Circle\"" (T.pack $ renderJS (effectfulAST (G.toSum (Circle 1.5))))
+        @?= True
+  , testCase "toSum n-ary payload is a quoted object" $
+      T.isInfixOf "\"0\":" (T.pack $ renderJS (effectfulAST (G.toSum (Rect 2 3))))
+        @?= True
+  , testCase "toSumArray pushes each sum" $
+      T.isInfixOf ".push(" (T.pack $ renderJS (effectfulAST (G.toSumArray [Red, Blue])))
+        @?= True
+  , testCase "record field of a sum uses toSum" $
+      T.isInfixOf "\"Red\"" (T.pack $ renderJS (effectfulAST (G.toObject (Badge Red))))
+        @?= True
+  , testCase "whenTag on a nullary ctor compares .tag" $
+      T.isInfixOf ".tag === \"Red\"" (T.pack $ renderJS (effectfulAST
+        (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))))
+        @?= True
+  , testCase "whenTag unary payload is the value" $
+      T.isInfixOf ".payload" (T.pack $ renderJS (effectfulAST
+        (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))))
+        @?= True
+  , testCase "whenTag n-ary payload fields are gettable" $
+      T.isInfixOf "[\"0\"]" (T.pack $ renderJS (effectfulAST (fromSyntax $ do
+        s <- hold (G.toSum (Rect 2 3))
+        toSyntax $
+          G.whenTag @"Rect" s
+            (\p -> fromSyntax $ do
+              w <- Object.get @"0" (Lift p)
+              yield w)
+            (expr (number 0)))))
+        @?= True
   ]
 
 optimizeTests :: TestTree

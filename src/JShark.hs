@@ -573,6 +573,19 @@ printComputation (computation) = do
 renderJS :: Doc -> String
 renderJS = P.renderStyle P.style
 
+-- | @o.foo@ when @foo@ is an identifier; @o["0"]@ otherwise.
+jsDotOrBracket :: Doc -> String -> Doc
+jsDotOrBracket obj key
+  | jsIdent key = obj <> "." <> P.text key
+  | otherwise = obj <> "[" <> P.doubleQuotes (P.text key) <> "]"
+
+jsIdent :: String -> Bool
+jsIdent [] = False
+jsIdent (c:cs) = jsIdStart c && all jsIdPart cs
+  where
+    jsIdStart x = Char.isAscii x && (Char.isLetter x || x == '_' || x == '$')
+    jsIdPart x = jsIdStart x || Char.isDigit x
+
 data Code = Code
   { codeDecl :: Doc
   , codeRef :: Doc
@@ -1869,7 +1882,7 @@ effectfulAST' !s0 = \case
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)
   UnsafeObjectGet x string ->
     let (s1, Code x1Decl x1Ref) = effectfulAST' s0 x
-    in (s1, Code x1Decl $ x1Ref <> "." <> P.text string)
+    in (s1, Code x1Decl $ jsDotOrBracket x1Ref string)
   UnsafeObjectAssign x y ->
     let (s1, Code x1Decl x1Ref) = effectfulAST' s0 x
         (s2, Code y1Decl y1Ref) = effectfulAST' s1 y
