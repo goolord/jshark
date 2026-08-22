@@ -16,6 +16,10 @@
 * `call0` accepts `ToEffect` (`Expr` or `Effect`).
 * `JShark.Canvas`: 2D context (`getContext2d`, rects/path/text,
   `save`/`restore`, transforms). Styles are `Field`s.
+* `requestAnimationFrame` in `JShark.Timers`.
+* `breakout` executable: Canvas Breakout (`cabal run breakout`, port 3001).
+* Discarded `do` blocks keep the last assignment: assign/call refs are
+  tagged effectful so a leftover `ifE` ident is still dropped.
 * Property access uses `o["0"]` when the key is not a JS identifier.
 * `%` / bitwise (`rem_`, `bitAnd`…`ushr`), `parseInt_` (radix required).
 * Array `reduce_`, `arraySlice`, `sort_`; `Regex` via `new RegExp`;

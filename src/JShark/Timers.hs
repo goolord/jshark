@@ -8,6 +8,7 @@ module JShark.Timers
   , setInterval
   , clearTimeout
   , clearInterval
+  , requestAnimationFrame
   ) where
 
 import JShark.Api
@@ -29,3 +30,9 @@ clearTimeout timerId = toSyntax_ $ ffi "clearTimeout" (arg timerId <: RecNil)
 -- | @clearInterval(timerId)@
 clearInterval :: Expr f 'Number -> EffectSyntax f ()
 clearInterval timerId = toSyntax_ $ ffi "clearInterval" (arg timerId <: RecNil)
+
+-- | @requestAnimationFrame(function(t){...})@. Returns the frame id.
+requestAnimationFrame :: (f 'Number -> Effect f a) -> EffectSyntax f (Expr f 'Number)
+requestAnimationFrame handler =
+  fmap Var $ toSyntax $
+    ffi "requestAnimationFrame" (ArgEffect (LambdaE handler) <: RecNil)

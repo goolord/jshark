@@ -48,6 +48,7 @@ import qualified JShark.Object as Object
 import qualified JShark.Regex as Regex
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
+import qualified JShark.Timers as Timers
 
 main :: IO ()
 main = defaultMain tests
@@ -227,6 +228,12 @@ controlFlowTests = testGroup "control flow"
   , testCase "when_ of Unit skips the result bind" $
       renderJS (effectfulAST (when_ condE (ffi "foo" RecNil)))
         @?= "if (cond()) {foo();}"
+  , testCase "discarded do keeps the last assignment" $ do
+      let js = T.pack $ renderJS (effectfulAST (when_ condE (fromSyntax $ do
+            _ <- toSyntax $ UnsafeObjectAssign (UnsafeObject "o") (expr (number 1))
+            toSyntax $ UnsafeObjectAssign (UnsafeObject "p") (expr (number 2)))))
+      T.isInfixOf "o = 1.0" js @?= True
+      T.isInfixOf "p = 2.0" js @?= True
   , testCase "ifS of two CallMethods skips the result bind" $
       renderJS (effectfulAST (ifE condE
         (discard (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "a") <: RecNil)))
@@ -362,6 +369,10 @@ stdlibTests = testGroup "stdlib"
   , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
       renderJS (effectfulAST (ffi "setTimeout" (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)))
         @?= "setTimeout(function (n0) {return tick()}, 0.0)"
+  , testCase "requestAnimationFrame takes ArgEffect" $
+      renderJS (effectfulAST (fromSyntax (
+        Timers.requestAnimationFrame (\_ -> ffi "tick" RecNil) *> toSyntax noOp)))
+        @?= "requestAnimationFrame(function (n0) {return tick()});"
   , testCase "send emits xhr.send()" $
       renderJS (effectfulAST (fromSyntax (Ajax.send (UnsafeObject "xhr") *> toSyntax noOp)))
         @?= "xhr.send();"

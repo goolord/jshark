@@ -109,6 +109,27 @@ executable todo-mvc
   ghc-options:
     -threaded
 
+executable breakout
+  import: warnings
+  main-is:
+    Main.hs
+  other-modules:
+    Client
+    Page
+    Types
+  hs-source-dirs:
+    app/breakout
+  build-depends:
+    , base
+    , jshark
+    , lucid >= 2.11.20260427 && < 2.12
+    , scotty >= 0.30 && < 0.31
+    , text
+  default-language:
+    Haskell2010
+  ghc-options:
+    -threaded
+
 test-suite jshark-test
   import: warnings
   type:

@@ -3,8 +3,9 @@
   , ConstraintKinds
   , DataKinds
   , GADTs
-  , LambdaCase
+  ,     LambdaCase
   , OverloadedStrings
+  , PatternSynonyms
   , PolyKinds
   , RankNTypes
   , ScopedTypeVariables
@@ -586,24 +587,42 @@ jsIdent (c:cs) = jsIdStart c && all jsIdPart cs
     jsIdStart x = Char.isAscii x && (Char.isLetter x || x == '_' || x == '$')
     jsIdPart x = jsIdStart x || Char.isDigit x
 
-data Code = Code
+data Code = MkCode
   { codeDecl :: Doc
   , codeRef :: Doc
+  , codeRefFX :: Bool
   }
 
+-- | Two-field sugar for a non-effectful leftover ref. Do not rematch
+-- this pattern and rebuild — that drops 'codeRefFX'. Take 'MkCode'
+-- apart and use 'keepRef' / 'fxCode'.
+pattern Code :: Doc -> Doc -> Code
+pattern Code d r <- MkCode d r _
+  where
+    Code d r = MkCode d r False
+
+{-# COMPLETE Code #-}
+
+fxCode :: Doc -> Doc -> Code
+fxCode d r = MkCode d r True
+
+-- | New decls, same ref and effectfulness as the source 'Code'.
+keepRef :: Doc -> Code -> Code
+keepRef d (MkCode _ r f) = MkCode d r f
+
 instance Semigroup Code where
-  Code a b <> Code x y = Code (a <> b) (x <> y)
+  MkCode a b f <> MkCode x y g = MkCode (a <> b) (x <> y) (f || g)
 
 instance Monoid Code where
-  mempty = Code mempty mempty
+  mempty = MkCode mempty mempty False
 
 renderCode :: Code -> Doc
-renderCode (Code a b) = a $$ b
+renderCode (MkCode a b _) = a $$ b
 
 -- | Wrap generated decls + result in an IIFE so a minifier treats the
 -- result as live (plain expression statements get DCE'd).
 renderIIFE :: Code -> Doc
-renderIIFE (Code decls ref) =
+renderIIFE (MkCode decls ref _) =
   let body = if P.isEmpty ref then decls else decls $$ (("return" <+> ref) <> P.semi)
    in "(() => {" $$ P.nest 2 body $$ "})()"
 
@@ -616,7 +635,7 @@ effectfulProgram :: ClosedEffect u -> Doc
 effectfulProgram e = renderIIFE . snd . effectfulAST' startCG $ optimizeEffect e
 
 partitionCode :: [Code] -> ([Doc], [Doc])
-partitionCode ((Code a b):cs) = let (as,bs) = partitionCode cs in ((a:as),(b:bs))
+partitionCode ((MkCode a b _):cs) = let (as,bs) = partitionCode cs in ((a:as),(b:bs))
 partitionCode [] = ([], [])
 
 -- Codegen counters: `cgIdent` is the next emitted JS name (`n0`, `n1`, …);
@@ -1709,22 +1728,26 @@ bindEffectCode s0 x f =
    in case uses of
         1 -> effectfulAST' sTag (substEffect tag (UnsafeEffectExpr x) tagged)
         0 ->
-          let (s1, Code xDecl xRef) = effectfulAST' sTag x
-              (s2, Code yDecl yRef) = effectfulAST' s1 (f nestedDummy)
+          let (s1, MkCode xDecl xRef xFX) = effectfulAST' sTag x
+              (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f nestedDummy)
+              -- Value-producing effects (ifE) put work in xDecl and leave
+              -- a result ident in xRef (codeRefFX False). Assignments and
+              -- calls keep the side effect in xRef (fxCode).
               stmt
-                | P.isEmpty xDecl && not (P.isEmpty xRef) = xRef <> P.semi
-                | otherwise = xDecl
-           in (s2, Code (stmt $$ yDecl) yRef)
+                | P.isEmpty xRef = xDecl
+                | not xFX && not (P.isEmpty xDecl) = xDecl
+                | otherwise = asStmt xDecl xRef
+           in (s2, MkCode (stmt $$ yDecl) yRef yFX)
         _ ->
-          let (s1, Code xDecl xRef) = effectfulAST' sTag x
+          let (s1, MkCode xDecl xRef _) = effectfulAST' sTag x
            in if P.isEmpty xRef
                 then
-                  let (s2, Code yDecl yRef) = effectfulAST' s1 (f (Const (cgIdent s1 - 1)))
-                   in (s2, Code (xDecl $$ yDecl) yRef)
+                  let (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f (Const (cgIdent s1 - 1)))
+                   in (s2, MkCode (xDecl $$ yDecl) yRef yFX)
                 else
                   let (nBind, s2) = allocIdent s1
-                      (s3, Code yDecl yRef) = effectfulAST' s2 (f (Const nBind))
-                   in (s3, Code (xDecl $$ constBind nBind xRef $$ yDecl) yRef)
+                      (s3, MkCode yDecl yRef yFX) = effectfulAST' s2 (f (Const nBind))
+                   in (s3, MkCode (xDecl $$ constBind nBind xRef $$ yDecl) yRef yFX)
 
 -- | @UnsafeEffectExpr@ is only introduced here as a subst placeholder so a
 -- single-use effect binder can be spliced into an 'Expr' hole; the renderer
@@ -1778,7 +1801,7 @@ effectfulAST' !s0 = \case
   Lift x -> pureAST' s0 x
   FFI fn args ->
     let (s1, argDecl, argRefs) = renderArgList argAST s0 args
-     in (s1, Code argDecl (P.text fn <> P.parens argRefs))
+     in (s1, fxCode argDecl (P.text fn <> P.parens argRefs))
   IfE c t e
     | isUnitWitness t && isUnitWitness e ->
         let (s1, Code cDecl cRef) = effectfulAST' s0 c
@@ -1855,10 +1878,10 @@ effectfulAST' !s0 = \case
   BindRec r b ->
     let (nBind, s1) = allocIdent s0
         n = P.text ('n' : show nBind)
-        (s2, Code rDecl rRef) = effectfulAST' s1 (r (Const nBind))
-        (s3, Code bDecl bRef) = effectfulAST' s2 (b (Const nBind))
+        (s2, MkCode rDecl rRef _) = effectfulAST' s1 (r (Const nBind))
+        (s3, MkCode bDecl bRef bFX) = effectfulAST' s2 (b (Const nBind))
         stmt = ("let" <+> n) <> P.semi $$ rDecl $$ (n <+> "=" <+> rRef) <> P.semi
-     in (s3, Code (stmt $$ bDecl) bRef)
+     in (s3, MkCode (stmt $$ bDecl) bRef bFX)
   Throw x ->
     let (s1, Code xDecl xRef) = pureAST' s0 x
      in (s1, Code (xDecl $$ (("throw" <+> xRef) <> P.semi)) mempty)
@@ -1866,7 +1889,7 @@ effectfulAST' !s0 = \case
   DeleteProp o k ->
     let (s1, Code oDecl oRef) = effectfulAST' s0 o
         (s2, Code kDecl kRef) = pureAST' s1 k
-     in (s2, Code (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
+     in (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
   ArraySort xs f ->
     let (s1, Code xDecl xRef) = pureAST' s0 xs
         (nA, s2) = allocIdent s1
@@ -1877,7 +1900,7 @@ effectfulAST' !s0 = \case
         cb = "function" <+> P.parens ((P.text acc <> ",") <+> P.text x)
           <+> P.braces (bDecl $$ "return" <+> bRef)
         call = xRef <> ".sort" <> P.parens cb
-     in (s4, Code xDecl call)
+     in (s4, fxCode xDecl call)
   ResultCaseE res errF okF -> renderResultCaseE s0 res errF okF
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)
   UnsafeObjectGet x string ->
@@ -1886,11 +1909,11 @@ effectfulAST' !s0 = \case
   UnsafeObjectAssign x y ->
     let (s1, Code x1Decl x1Ref) = effectfulAST' s0 x
         (s2, Code y1Decl y1Ref) = effectfulAST' s1 y
-    in (s2, Code (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref )
+    in (s2, fxCode (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref )
   CallMethod recv name args ->
     let (s1, Code rDecl rRef) = effectfulAST' s0 recv
         (s2, argDecl, argRefs) = renderArgList argAST s1 args
-     in (s2, Code (rDecl $$ argDecl) (rRef <> "." <> P.text name <> P.parens argRefs))
+     in (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> P.text name <> P.parens argRefs))
   LambdaE f ->
     let (nParam, s1) = allocIdent s0
         (s2, Code exprXDecl exprXRef) = effectfulAST' s1 (f (Const nParam))
@@ -1903,7 +1926,7 @@ effectfulAST' !s0 = \case
   ApplyE fex ex ->
     let (s1, Code exprXDecl exprXRef) = effectfulAST' s0 fex
         (s2, Code exprYDecl exprYRef) = effectfulAST' s1 ex
-     in (s2, Code (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
+     in (s2, fxCode (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
 
 pureAST :: ClosedExpr u -> Doc
 pureAST e = renderCode . snd . pureAST' startCG $ optimize e
@@ -1982,24 +2005,24 @@ pureAST' !s0 = \case
      in case uses of
           1 -> pureAST' sTag (substExpr tag x tagged)
           0 ->
-            let (s1, Code xDecl xRef) = pureAST' sTag x
-                (s2, Code yDecl yRef) = pureAST' s1 (g nestedDummy)
+            let (s1, MkCode xDecl xRef _) = pureAST' sTag x
+                (s2, y) = pureAST' s1 (g nestedDummy)
                 stmt
                   | P.isEmpty xDecl && not (P.isEmpty xRef) = xRef <> P.semi
                   | otherwise = xDecl
-             in (s2, Code (stmt $$ yDecl) yRef)
+             in (s2, keepRef (stmt $$ codeDecl y) y)
           _ ->
-            let (s1, Code xDecl xRef) = pureAST' sTag x
+            let (s1, MkCode xDecl xRef _) = pureAST' sTag x
                 (nBind, s2) = allocIdent s1
-                (s3, Code yDecl yRef) = pureAST' s2 (g (Const nBind))
-             in (s3, Code (xDecl $$ constBind nBind xRef $$ yDecl) yRef)
+                (s3, y) = pureAST' s2 (g (Const nBind))
+             in (s3, keepRef (xDecl $$ constBind nBind xRef $$ codeDecl y) y)
   LetRec r b ->
     let (nBind, s1) = allocIdent s0
         n = P.text ('n' : show nBind)
-        (s2, Code rDecl rRef) = pureAST' s1 (r (Const nBind))
-        (s3, Code bDecl bRef) = pureAST' s2 (b (Const nBind))
+        (s2, MkCode rDecl rRef _) = pureAST' s1 (r (Const nBind))
+        (s3, bCode) = pureAST' s2 (b (Const nBind))
         stmt = ("let" <+> n) <> P.semi $$ rDecl $$ (n <+> "=" <+> rRef) <> P.semi
-     in (s3, Code (stmt $$ bDecl) bRef)
+     in (s3, keepRef (stmt $$ codeDecl bCode) bCode)
   Apply fex ex ->
     let (s1, Code exprXDecl exprXRef) = pureAST' s0 fex
         (s2, Code exprYDecl exprYRef) = pureAST' s1 ex
