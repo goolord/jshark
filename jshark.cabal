@@ -135,6 +135,18 @@ library breakout
   hs-source-dirs:
     examples/Breakout
 
+library synth
+  import: example-lib
+  exposed-modules:
+    Synth
+  other-modules:
+    Audio
+    Client
+    Keys
+    Page
+  hs-source-dirs:
+    examples/Synth
+
 library todo-mvc
   import: example-lib
   build-depends:
@@ -167,6 +179,7 @@ executable examples
     , filepath
     , jshark
     , scotty >= 0.20 && < 1
+    , synth
     , text
     , todo-mvc
   default-language:
@@ -184,12 +197,16 @@ test-suite jshark-test
     Support
     BunTests
     LucidTests
+    ExampleTests
   hs-source-dirs:
     test
   build-depends:
     , base
+    , breakout
     , jshark
     , jshark-lucid
+    , synth
+    , todo-mvc
     , tasty
     , tasty-hunit
     , text

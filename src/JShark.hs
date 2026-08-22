@@ -975,6 +975,12 @@ arrayElemRef r = if P.isEmpty r then "undefined" else r
 -- `cgTag` is a decreasing negative id used only for use-counting/inlining
 -- so nested Lets/Binds cannot collide (tags are never valid JS idents).
 -- `cgHelpers` is the set of runtime functions the program has called.
+--
+-- `cgTag` walks the odd negatives and the optimizer's tags
+-- ('optimizeEffect') the even ones, so the two numberings can never name
+-- the same binder. Sharing the space made `countEffect` attribute a
+-- binder's uses to a leftover optimizer tag, see zero, and drop the
+-- `const` while its uses rendered empty.
 data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
@@ -982,10 +988,10 @@ data CG = CG
   }
 
 startCG :: CG
-startCG = CG 0 (-2) Set.empty
+startCG = CG 0 (-3) Set.empty
 
 allocTag :: CG -> (Int, CG)
-allocTag s = (cgTag s, s {cgTag = cgTag s - 1})
+allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 
 allocIdent :: CG -> (Int, CG)
 allocIdent s = (cgIdent s, s {cgIdent = cgIdent s + 1})
@@ -1446,11 +1452,18 @@ optimizeEffect :: ClosedEffect u -> Effect Stamp u
 optimizeEffect e = flattenEff (snd (optEffect (-2) e))
 {-# NOINLINE optimizeEffect #-}
 
+{- | Tags step by two, keeping the optimizer on the even negatives.
+Codegen's 'allocTag' owns the odd ones, so neither can name a binder the
+other is counting.
+-}
+optStep :: Int
+optStep = 2
+
 optUnder :: Int -> (Stamp u -> Expr Stamp v) -> (Int, Int, Expr Stamp v)
 optUnder t0 f =
   let
     tag = t0
-    (t1, body) = optExpr (t0 - 1) (f (Stamp tag))
+    (t1, body) = optExpr (t0 - optStep) (f (Stamp tag))
    in
     (t1, tag, body)
 
@@ -1458,7 +1471,7 @@ optUnderE :: Int -> (Stamp u -> Effect Stamp v) -> (Int, Int, Effect Stamp v)
 optUnderE t0 f =
   let
     tag = t0
-    (t1, body) = optEffect (t0 - 1) (f (Stamp tag))
+    (t1, body) = optEffect (t0 - optStep) (f (Stamp tag))
    in
     (t1, tag, body)
 
@@ -1467,8 +1480,8 @@ optUnder2 ::
 optUnder2 t0 f =
   let
     tA = t0
-    tB = t0 - 1
-    (t1, body) = optExpr (t0 - 2) (f (Stamp tA) (Stamp tB))
+    tB = t0 - optStep
+    (t1, body) = optExpr (t0 - 2 * optStep) (f (Stamp tA) (Stamp tB))
    in
     (t1, tA, tB, body)
 
@@ -1858,7 +1871,7 @@ optExpr t0 = \case
   LetRec r b ->
     let
       tag = t0
-      (t1, r') = optExpr (t0 - 1) (r (Stamp tag))
+      (t1, r') = optExpr (t0 - optStep) (r (Stamp tag))
       (t2, b') = optExpr t1 (b (Stamp tag))
      in
       (t2, LetRec (keepExprCont t2 tag r' r) (keepExprCont t2 tag b' b))
@@ -2086,7 +2099,7 @@ optEffect t0 = \case
   BindRec r b ->
     let
       tag = t0
-      (t1, r') = optEffect (t0 - 1) (r (Stamp tag))
+      (t1, r') = optEffect (t0 - optStep) (r (Stamp tag))
       (t2, b') = optEffect t1 (b (Stamp tag))
      in
       (t2, BindRec (keepEffCont t2 tag r' r) (keepEffCont t2 tag b' b))

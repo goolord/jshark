@@ -7,6 +7,7 @@ import DevServer (Example (..), exportExamples, serveExamples)
 import JShark.Compiler (compileEffect, readableConfig)
 import JShark.Types (fromSyntax)
 import SourcePane (sourceHead, sourcePane)
+import qualified Synth
 import System.Environment (getArgs)
 import System.Exit (die)
 import qualified TodoMvc
@@ -15,6 +16,7 @@ main :: IO ()
 main = do
   breakoutJs <- compileEffect readableConfig (fromSyntax Breakout.mainJS)
   todoJs <- compileEffect readableConfig (fromSyntax TodoMvc.mainJS)
+  synthJs <- compileEffect readableConfig (fromSyntax Synth.mainJS)
   let
     examples =
       [ Example
@@ -31,6 +33,13 @@ main = do
               TodoMvc.page (sourceHead static) (sourcePane static todoJs) script
           )
           todoJs
+      , Example
+          "synth"
+          "Synthesizer"
+          ( \script static ->
+              Synth.page (sourceHead static) (sourcePane static synthJs) script
+          )
+          synthJs
       ]
   args <- getArgs
   case args of

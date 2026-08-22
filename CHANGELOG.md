@@ -7,6 +7,31 @@
   compare contents. `String` is the comma-joined bytes (`"1,2,3"`).
   `base >= 4.17`.
 
+* Fixed: codegen and the optimizer numbered PHOAS tags from the same
+  counter (both `-2` downward), so `countEffect` could attribute a
+  binder's uses to a leftover optimizer tag, count zero, and drop the
+  `const` while every use of it rendered empty — emitting statements like
+  `.setAttribute("class", "view")` with no receiver, or `.type = ;`. Any
+  `when_` followed by a binding could trigger it, as could a binding
+  inside nested branches, and the result was JavaScript that did not
+  parse. The optimizer now walks the even negatives and codegen the odd
+  ones, so the two numberings can never name the same binder.
+* New `synth` example: a polyphonic Web Audio synthesizer at `/synth`
+  (`cabal run examples`). `Audio` binds `AudioContext`, oscillators, a
+  biquad filter, a compressor, and an analyser through `ffi`, so the rest
+  of the example stays in typed JShark — `new` is reachable only because
+  `ffi` is free text, and phantom handles (`AudioCtx`, `Node`, `Param`)
+  keep `connect` from accepting a param. Pitch and the amplitude envelope
+  are `AudioParam` automation, so timing lives on the audio thread rather
+  than in JavaScript; the only per-frame work is the meter. Voices are
+  keyed by note, pointers by `pointerId`, and `blur` / `pointercancel`
+  release held notes.
+* The test suite parse-checks every example's emitted JavaScript with bun
+  (`ExampleTests`). Compiling the Haskell says nothing about whether the
+  emitted program is syntactically valid; the program is bound inside an
+  arrow that is never called, so a syntax error fails while no DOM or
+  audio call runs.
+
 * `JShark.Bun.evaluateEffectJSON` compiles a closed `Effect` to an IIFE and
   runs it with `bun`, returning `JSON.stringify` of the result. Pure `Expr`
   still uses the Haskell `evaluate` tree-walk; an `Effect` has FFI,

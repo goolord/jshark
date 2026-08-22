@@ -12,6 +12,7 @@ import BunTests (bunEvalTests)
 import qualified Control.Exception as Ex
 import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
+import ExampleTests (exampleTests)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
@@ -62,6 +63,7 @@ tests =
     , compilerTests
     , bunEvalTests
     , lucidDomTests
+    , exampleTests
     ]
 
 evaluatorTests :: TestTree
@@ -736,13 +738,23 @@ stdlibTests =
               stem = T.dropWhileEnd (\c -> c == 'n' || isDigit c) pre
              in
               T.drop (T.length stem) pre
+          -- `const a = b;` aliases can chain, so follow them rather than
+          -- assuming the null test names the context binding directly.
+          aliasOf i =
+            [ rhs
+            | chunk <- T.splitOn "const " js
+            , let (lhs, rest) = T.breakOn " = " chunk
+            , lhs == i
+            , let rhs = T.takeWhile (/= ';') (T.drop 3 rest)
+            , rhs == jsIdent rhs
+            , not (T.null rhs)
+            ]
+          resolvesToCtx fuel i
+            | i `elem` ctxIds = True
+            | fuel <= (0 :: Int) = False
+            | otherwise = any (resolvesToCtx (fuel - 1)) (aliasOf i)
         T.isInfixOf "=;" js @?= False
-        ( not (null ctxIds)
-            && ( nullId `elem` ctxIds
-                   || any (\c -> T.isInfixOf ("const " <> nullId <> " = " <> c <> ";") js) ctxIds
-               )
-          )
-          @?= True
+        (not (null ctxIds) && resolvesToCtx 8 nullId) @?= True
     , testCase "Canvas.fillRect renders a 2D call" $
         renderJS
           ( effectfulAST

@@ -89,9 +89,22 @@ n1.classList.toggle("completed", n0.completed);
 // …createElement("div"), setAttribute, appendChild…
 ```
 
-`examples/` is TodoMVC and Breakout as named libraries, served together.
-`/` lists them. After the Pages workflow on `master`: https://goolord.github.io/jshark/.
-`test/Main.hs` has more of what compiles to what.
+`examples/` is TodoMVC, Breakout, and a synthesizer as named libraries,
+served together. `/` lists them. After the Pages workflow on `master`:
+https://goolord.github.io/jshark/. `test/Main.hs` has more of what
+compiles to what.
+
+`synth` is the FFI example. `Audio` binds Web Audio — `new AudioContext`,
+oscillators, a filter, an analyser — behind typed wrappers, so the
+instrument itself never writes JavaScript. Phantom handles keep the graph
+honest (`connect` takes nodes, not params), and the envelope is
+`AudioParam` automation, so a busy main thread cannot make a note stutter.
+
+```haskell
+osc <- Audio.oscillator ctx
+Audio.setValueAt (Audio.param osc "frequency") hz t0
+Audio.connect osc vca
+```
 
 ## vs Haskell / JavaScript
 
