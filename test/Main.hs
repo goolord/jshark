@@ -38,6 +38,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import qualified JShark.Ajax as Ajax
 import qualified JShark.Array as Array
+import qualified JShark.Canvas as Canvas
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import qualified JShark.Generic as G
@@ -310,6 +311,24 @@ stdlibTests = testGroup "stdlib"
         _ <- Dom.appendChild p c2
         toSyntax noOp)))
         @?= "const n0 = document.getElementById(\"p\");\nn0.appendChild(document.createElement(\"div\"));\nn0.appendChild(document.createElement(\"span\"));"
+  , testCase "Canvas.getContext2d is typed as an Option" $
+      renderJS (effectfulAST (fromSyntax (do
+        c <- Dom.lookupId (string "c")
+        ctx <- Canvas.getContext2d c
+        toSyntax (Bind ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok")))))))
+        @?= "const n0 = document.getElementById(\"c\").getContext(\"2d\");\n(n0 === null ? \"no\" : \"ok\")"
+  , testCase "Canvas.fillRect renders a 2D call" $
+      renderJS (effectfulAST (fromSyntax (do
+        _ <- Canvas.fillRect (UnsafeObject "ctx") (number 0) (number 0) (number 10) (number 20)
+        toSyntax noOp)))
+        @?= "ctx.fillRect(0.0, 0.0, 10.0, 20.0);"
+  , testCase "Canvas fillStyle is a Field" $
+      renderJS (effectfulAST (fromSyntax (do
+        _ <- Object.set @"fillStyle"
+          (UnsafeObject "ctx" :: Effect f ('Object Canvas.Context2D))
+          (string "#f00")
+        toSyntax noOp)))
+        @?= "ctx.fillStyle = \"#f00\";"
   , testCase "Storage.getItem is typed as an Option and dispatches via optionCase" $
       renderJS (effectfulAST (fromSyntax (do
         v <- Storage.getItem Storage.localStorage (string "k")

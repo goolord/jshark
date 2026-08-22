@@ -14,6 +14,8 @@
 * `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
   `render` is `bindRec`, not a persisted field.
 * `call0` accepts `ToEffect` (`Expr` or `Effect`).
+* `JShark.Canvas`: 2D context (`getContext2d`, rects/path/text,
+  `save`/`restore`, transforms). Styles are `Field`s.
 * Property access uses `o["0"]` when the key is not a JS identifier.
 * `%` / bitwise (`rem_`, `bitAnd`…`ushr`), `parseInt_` (radix required).
 * Array `reduce_`, `arraySlice`, `sort_`; `Regex` via `new RegExp`;
