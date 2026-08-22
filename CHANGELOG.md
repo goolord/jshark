@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+* `JShark.Bun.evaluateEffectJSON` compiles a closed `Effect` to an IIFE and
+  runs it with `bun`, returning `JSON.stringify` of the result. Pure `Expr`
+  still uses the Haskell `evaluate` tree-walk; an `Effect` has FFI,
+  mutation, and I/O, so bun is the runtime. The result is JSON text, not a
+  `Value`: a `MutableObject` or function has no `Value` constructor. The
+  JSON leaves through a temp file, so `Console.log` in the program under
+  evaluation does not corrupt it. Runs are capped by
+  `JShark.Bun.Internal.bunTimeoutMicroseconds` (10s), since `while_` and
+  `Timers` can express a program that never terminates.
 * `Array.groupBy` is ES2024 `Object.groupBy` as `[{key, items}]` (first-seen
   keys; not a null-prototype object), row `GroupBy`. `evaluate` and
   `$groupBy` agree.
