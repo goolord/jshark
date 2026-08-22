@@ -15,7 +15,6 @@ module JShark.Console
 import Prelude hiding (error, log)
 import JShark.Api
 import JShark.Rec ((<:), Rec(..))
-import JShark.Types
 
 console_ :: String -> Expr f u -> EffectSyntax f ()
 console_ name x = toSyntax_ (ffi ("console." ++ name) (arg x <: RecNil))

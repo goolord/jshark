@@ -18,7 +18,6 @@ import JShark
 import JShark.Api
 import JShark.Compiler
 import JShark.Rec (Rec(..), (<:))
-import JShark.Types
 import Support
 import System.Directory
   ( createDirectoryIfMissing
@@ -145,6 +144,31 @@ codegenTests = testGroup "codegen"
         ValueNumber n -> n @?= 7
   , testCase "Fractional Value via Literal" $
       renderJS (pureAST (Literal ((1 / 2) :: Value 'Number))) @?= "0.5"
+  , testCase "emptyArray renders as []" $
+      renderJS (pureAST (emptyArray :: Expr f ('Array 'Number))) @?= "[]"
+  , testCase "toString renders String(x)" $
+      renderJS (effectfulAST (with1 fooE toString)) @?= "String(foo())"
+  , testCase "assign is Object.assign" $
+      renderJS (effectfulAST (fromSyntax (assign (UnsafeObject "dst") (UnsafeObject "src"))))
+        @?= "Object.assign(dst, src);"
+  , testCase "whenSomeE binds then option-cases" $ do
+      let js = T.pack $ renderJS (effectfulAST (fromSyntax (
+            whenSomeE (ffi "opt" RecNil :: Effect f ('Option 'String)) $ \x ->
+              Console.log x *> done)))
+      T.isInfixOf "opt()" js @?= True
+      T.isInfixOf "=== null" js @?= True
+  , testCase "loop0 is a recursive zero-arg function" $ do
+      let js = T.pack $ renderJS (effectfulAST (fromSyntax (
+            loop0
+              (\_ -> Console.log ("p" :: Expr f 'String) *> done)
+              (\_ -> Console.log ("w" :: Expr f 'String) *> done))))
+      T.isInfixOf "function" js @?= True
+      T.isInfixOf "console.log(\"p\")" js @?= True
+      T.isInfixOf "console.log(\"w\")" js @?= True
+  , testCase "foreverFrame reschedules requestAnimationFrame" $
+      T.count "requestAnimationFrame"
+        (T.pack $ renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
+        @?= 2
   ]
 
 controlFlowTests :: TestTree

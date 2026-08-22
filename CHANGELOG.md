@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* EDSL helpers: `emptyArray`, `toString`, `loop0`, `whenSomeE`, `assign`;
+  `toSyntax` / `toSyntax_` re-exported from `JShark.Api`. Example apps no
+  longer mention AST constructors.
+* **Breaking:** `addEventListener` and timer callbacks
+  (`setTimeout` / `setInterval` / `requestAnimationFrame`) take `Expr`,
+  not the raw PHOAS binder `f u`.
+* `foreverFrame` in `JShark.Timers` — recurring rAF loop.
 * Restored `Result` / `ok` / `err` / `resultCase` / `resultCaseE` — Haskell `Either`, JS `{ok: true, value: v}` / `{ok: false, value: e}`.
 * `Throw` / `catch_` (catch binds a `String`); `try_` ignores the binder.
 * `LetRec` / `BindRec`, `orElse` / `fromOption`, nested-unary `lambda2`/`apply2`/`lambda3`/`apply3`.

@@ -22,8 +22,7 @@ import qualified JShark.Math as Math
 import qualified JShark.Timers as Timers
 import JShark.Api
 import JShark.Generic (MutableObjectOf, SumOf)
-import JShark.Rec (Rec(..), (<:))
-import JShark.Types
+import JShark.Rec (Rec(..))
 import Types
   ( Ball
   , Game
@@ -59,61 +58,46 @@ data Fps = Fps { lastMs :: Double, fps :: Double }
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
-  opt <- Canvas.getContext2d canvas
-  toSyntax $
-    Bind opt $ \o ->
-      optionCaseE (var o) noOp $ \ctx0 ->
-        stmts $ boot canvas (Lift ctx0)
+  ctxOpt <- Canvas.getContext2d canvas
+  whenSomeE ctxOpt $ \ctx -> boot canvas ctx
 
 boot ::
      Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Canvas.Context2D)
+  -> Expr f ('MutableObject Canvas.Context2D)
   -> EffectSyntax f (f 'Unit)
 boot canvas ctx = do
-  ctxH <- hold ctx
+  ctxH <- hold (expr ctx)
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
   state <- hold (G.toObject startGame)
   meter <- hold (G.toObject (Fps (-1) 0))
   wire canvas state
-  toSyntax $
-    bindRec
-      (\frame ->
-         LambdaE $ \(t :: f 'Number) ->
-           stmts $ do
-             tickFps meter (Var t)
-             step state
-             paint ctxH state meter
-             _ <- Timers.requestAnimationFrame $ \t1 ->
-               stmts $ toSyntax (ApplyE frame (expr (Var t1)))
-             done)
-      (\frame ->
-         stmts $ do
-           _ <- Timers.requestAnimationFrame $ \t0 ->
-             stmts $ toSyntax (ApplyE frame (expr (Var t0)))
-           done)
+  Timers.foreverFrame $ \now -> do
+    tickFps meter now
+    step state
+    paint ctxH state meter
 
 wire ::
      Effect f ('MutableObject Dom.DomElement)
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 wire canvas state = do
-  addEventListener "keydown" window $ \(e :: f ('MutableObject ())) ->
+  addEventListener "keydown" window $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
-      code <- eventProp e "code"
+      code <- getProp' e "code"
       toSyntax $ stringCaseE code
         [ ("Space", discard (stmts $ do
-            eventCall e "preventDefault" RecNil
+            toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
             tryRestart state))
         ]
         (stmts $ bindArrows state code true_)
-  addEventListener "keyup" window $ \(e :: f ('MutableObject ())) ->
+  addEventListener "keyup" window $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
-      code <- eventProp e "code"
+      code <- getProp' e "code"
       bindArrows state code false_
-  addEventListener "mousemove" canvas $ \(e :: f ('MutableObject ())) ->
+  addEventListener "mousemove" canvas $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
-      cx <- eventProp e "clientX"
+      cx <- getProp' e "clientX"
       rect <- hold $ callMethod canvas "getBoundingClientRect" RecNil
       left <- getProp rect "left"
       whenPlay state $ do
@@ -133,18 +117,12 @@ bindArrows state code held =
     ]
     noOp
 
+-- | In-place overwrite so the rAF closure keeps the same object identity.
 tryRestart :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 tryRestart state =
   unlessPlay state $ do
-    g0 <- toSyntax (G.toObject startGame)
-    copyGame state (Lift (Var g0))
-
--- | In-place overwrite so the rAF closure keeps the same object identity.
--- Object.assign copies every enumerable field; new 'Game' keys come along.
-copyGame :: Effect f (MutableObjectOf Game) -> Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
-copyGame dst src = do
-  toSyntax_ $ ffi "Object.assign" (ArgEffect dst <: ArgEffect src <: RecNil)
-  done
+    fresh <- hold (G.toObject startGame)
+    assign state fresh
 
 step :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 step state =
@@ -255,9 +233,9 @@ bounceFloor state b bx0 ddy px0 r h ny =
 resetBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 resetBall state = do
   b <- toSyntax (G.toObject startBall)
-  set @"ball" state (Var b)
+  set @"ball" state (var b)
   p <- toSyntax (G.toObject startPaddle)
-  set @"paddle" state (Var p)
+  set @"paddle" state (var p)
 
 paint ::
      Effect f ('MutableObject Canvas.Context2D)
@@ -333,11 +311,11 @@ drawHud ctx state meter = do
   n <- meter.fps
   set @"font" ctx (string "16px Georgia")
   fill ctx (string ink)
-  _ <- Canvas.fillText ctx (string "Score: " <> Show sc) 8 20
+  _ <- Canvas.fillText ctx (string "Score: " <> toString sc) 8 20
   set @"textAlign" ctx (string "center")
-  _ <- Canvas.fillText ctx (string "FPS: " <> Show n) (number (canvasW / 2)) 20
+  _ <- Canvas.fillText ctx (string "FPS: " <> toString n) (number (canvasW / 2)) 20
   set @"textAlign" ctx (string "left")
-  _ <- Canvas.fillText ctx (string "Lives: " <> Show lv) (number (canvasW - 80)) 20
+  _ <- Canvas.fillText ctx (string "Lives: " <> toString lv) (number (canvasW - 80)) 20
   done
 
 drawBanner ::
@@ -380,12 +358,6 @@ tickFps meter now = do
   set @"lastMs" meter now
 
 -- Helpers -----------------------------------------------------------------
-
-eventProp :: f ('MutableObject ()) -> String -> EffectSyntax f (Expr f u)
-eventProp e k = getProp (Lift (Var e)) k
-
-eventCall :: f ('MutableObject ()) -> String -> Rec (Arg f) us -> EffectSyntax f (f u)
-eventCall e name args = toSyntax $ callMethod (Lift (Var e)) name args
 
 clampPaddle :: Expr f 'Number -> Expr f 'Number
 clampPaddle = Math.max 0 . Math.min (number paddleMaxX)
@@ -437,4 +409,4 @@ unlessPlay state body = onPhase state noOp (stmts body)
 setPhase :: Effect f (MutableObjectOf Game) -> Phase -> EffectSyntax f (f 'Unit)
 setPhase state p = do
   s <- toSyntax (G.toSum p)
-  set @"phase" state (Var s)
+  set @"phase" state (var s)

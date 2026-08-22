@@ -28,6 +28,8 @@ module JShark.Api
   , true_
   , false_
   , string
+  , emptyArray
+  , toString
     -- * Variables and lifting
   , var
   , expr
@@ -46,6 +48,7 @@ module JShark.Api
   , let_
   , letRec
   , bindRec
+  , loop0
     -- * Control
   , if_
   , ifE
@@ -65,6 +68,7 @@ module JShark.Api
   , optionCase
   , optionCaseE
   , whenSomeS
+  , whenSomeE
   , unsafeNullable
   , orElse
   , fromOption
@@ -76,6 +80,7 @@ module JShark.Api
     -- * FFI
   , ffi
   , callMethod
+  , assign
     -- * Objects
   , emptyObject
   , newObject
@@ -100,6 +105,8 @@ module JShark.Api
   , hold
   , stmts
   , done
+  , toSyntax
+  , toSyntax_
   , fromSyntax
   , call0
     -- * Operators
@@ -159,6 +166,13 @@ ffi = FFI
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
 callMethod = CallMethod
 
+-- | @Object.assign(dst, src)@. In-place copy; @dst@ keeps its identity
+-- (needed when a closure already captured @dst@).
+assign :: Effect f u -> Effect f u -> EffectSyntax f (f 'Unit)
+assign dst src = do
+  toSyntax_ $ ffi "Object.assign" (ArgEffect dst <: ArgEffect src <: RecNil)
+  done
+
 expr :: Expr f u -> Effect f u
 expr = Lift
 
@@ -198,6 +212,18 @@ letRec r b = LetRec (\x -> r (var x)) (\x -> b (var x))
 bindRec :: (Effect f u -> Effect f u) -> (Effect f u -> Effect f v) -> Effect f v
 bindRec r b = BindRec (\x -> r (Lift (var x))) (\x -> b (Lift (var x)))
 
+-- | Recursively bind a zero-argument effectful function, then run the body.
+-- @loop0 paint wire@ is @const render = function(){ paint(render); }; wire(render)@.
+loop0
+  :: (Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit))
+  -> (Effect f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit))
+  -> EffectSyntax f (f 'Unit)
+loop0 rec body =
+  toSyntax $
+    bindRec
+      (\fn -> lambdaE (\_ -> stmts (rec fn)))
+      (\fn -> stmts (body fn))
+
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
 
@@ -210,6 +236,13 @@ false_ = bool False
 
 string :: Text -> Expr f 'String
 string = Literal . ValueString
+
+emptyArray :: Expr f ('Array u)
+emptyArray = Literal (ValueArray [])
+
+-- | @String(x)@.
+toString :: Expr f u -> Expr f 'String
+toString = Show
 
 -- | @arr.method(function(x){…})@ with an 'Effect' callback.
 arrayCallback :: String -> Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f w
@@ -303,9 +336,9 @@ typeOf = TypeOf
 not_ :: Expr f 'Bool -> Expr f 'Bool
 not_ c = c .== false_
 
-addEventListener :: Text -> Effect f ('MutableObject obj) -> (f u -> Effect f a) -> EffectSyntax f ()
+addEventListener :: Text -> Effect f ('MutableObject obj) -> (Expr f u -> Effect f a) -> EffectSyntax f ()
 addEventListener name el handler =
-  toSyntax_ $ callMethod el "addEventListener" (arg (string name) <: ArgEffect (LambdaE handler) <: RecNil)
+  toSyntax_ $ callMethod el "addEventListener" (ArgExpr (string name) <: ArgEffect (LambdaE (\x -> handler (var x))) <: RecNil)
 
 addEventListener_ :: Text -> Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
@@ -335,7 +368,7 @@ instance ToExpr f u (f u) where
   toExpr = Var
 
 hold :: Effect f u -> EffectSyntax f (Effect f u)
-hold e = fmap (expr . Var) (toSyntax e)
+hold e = fmap (Lift . Var) (toSyntax e)
 
 -- | Recover the record phantom from an object handle. Closed so
 -- 'Effect'/'Expr' win over a bare PHOAS binder @f ('MutableObject r)@.
@@ -355,7 +388,8 @@ get o = Object.get @k @(ObjectRow a)
 set :: forall k a f. (KnownSymbol k, ToEffect f ('MutableObject (ObjectRow a)) a)
     => a -> Expr f (Field (ObjectRow a) k) -> EffectSyntax f (f 'Unit)
 set o v = Object.set @k @(ObjectRow a)
-  (toEffect o :: Effect f ('MutableObject (ObjectRow a))) v
+  (toEffect o :: Effect f ('MutableObject (ObjectRow a)))
+  v
 
 -- | Untyped @o.k@. Prefer 'get' / 'set' (or record-dot) when the key is a 'Field'.
 getProp :: Effect f ('MutableObject a) -> String -> EffectSyntax f (Expr f u)
@@ -384,6 +418,12 @@ ifS c t e = toSyntax $ IfE (expr c) (discard (stmts t)) (discard (stmts e))
 
 whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
 whenSomeS opt k = toSyntax $ optionCaseE opt noOp (\x -> stmts (k x))
+
+-- | Bind an optional effect, then run the body when it is present.
+whenSomeE :: Effect f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
+whenSomeE opt k = do
+  o <- toSyntax opt
+  whenSomeS (var o) k
 
 call0 :: forall a f. ToEffect f ('Function 'Unit 'Unit) a => a -> EffectSyntax f (f 'Unit)
 call0 fn = toSyntax (ApplyE (toEffect fn) noOp :: Effect f 'Unit)

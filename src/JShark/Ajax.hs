@@ -22,7 +22,6 @@ module JShark.Ajax
   ) where
 
 import JShark.Api
-import JShark.Types
 import Network.HTTP.Types
 import JShark.Rec (Rec(..), (<:))
 import qualified Data.ByteString as BS

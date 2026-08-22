@@ -26,7 +26,6 @@ import JShark.Api
 import JShark.Generic (MutableObjectOf, newRecord)
 import JShark.Object (field, obj)
 import JShark.Rec ((<:), Rec(..))
-import JShark.Types
 
 -- | Persisted item. JS keys match the selectors (@title@, @completed@, @id@).
 data Todo = Todo
@@ -48,7 +47,7 @@ storageKey :: Expr f 'String
 storageKey = "jshark-todos"
 
 emptyTodos :: Expr f ('Array (MutableObjectOf Todo))
-emptyTodos = Literal (ValueArray [])
+emptyTodos = emptyArray
 
 parseObject :: Expr f 'String -> Effect f ('MutableObject ())
 parseObject = Json.unsafeParse
@@ -61,32 +60,32 @@ emptyState = newRecord @AppState
 parseState :: Expr f 'String -> Effect f ('Option (MutableObjectOf AppState))
 parseState s = try_
   (fromSyntax $ do
-    o <- toSyntax (parseObject s)
-    isArr <- toSyntax $ ffi "Array.isArray" (arg (Var o) <: RecNil)
-    toSyntax $ ifE (expr (typeOf (Var o) .!= "object" .|| Var isArr))
+    o <- fmap var (toSyntax (parseObject s))
+    isArr <- toSyntax $ ffi "Array.isArray" (arg o <: RecNil)
+    toSyntax $ ifE (expr (typeOf o .!= "object" .|| var isArr))
       (expr none)
       (fromSyntax $ do
-        st <- hydrate (Var o)
-        yield (some st)))
+        st <- hydrate o
+        yield (some (var st))))
   (expr none)
 
-hydrate :: Expr f ('MutableObject ()) -> EffectSyntax f (Expr f (MutableObjectOf AppState))
+hydrate :: Expr f ('MutableObject ()) -> EffectSyntax f (f (MutableObjectOf AppState))
 hydrate blob = do
   st <- toSyntax emptyState
-  t <- getProp (Lift blob) "todos"
+  t <- getProp' blob "todos"
   isT <- toSyntax $ ffi "Array.isArray" (arg t <: RecNil)
-  ifS (Var isT)
+  ifS (var isT)
     (set @"todos" st t)
     (set @"todos" st emptyTodos)
-  n <- getProp (Lift blob) "nextId"
+  n <- getProp' blob "nextId"
   fin <- toSyntax $ ffi "Number.isFinite" (arg n <: RecNil)
-  ifS (typeOf n .== "number" .&& Var fin)
+  ifS (typeOf n .== "number" .&& var fin)
     (set @"nextId" st n)
     (set @"nextId" st 1)
-  f <- getProp (Lift blob) "filter"
+  f <- getProp' blob "filter"
   toSyntax $ routeSwitch routeValue (\_ -> set @"filter" st f) f
     (discard (stmts $ set @"filter" st (string valueAll)))
-  pure (Var st)
+  pure st
 
 mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f (MutableObjectOf Todo))
 mkTodo todoTitle tid = do
@@ -96,7 +95,7 @@ mkTodo todoTitle tid = do
       , field @"completed" false_
       , field @"id" tid
       ]
-  pure (Var o)
+  pure (var o)
 
 hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
@@ -147,7 +146,7 @@ persistState state items filt = do
       , field @"nextId" nid
       ]
       `asTypeOf` emptyState
-  Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
+  Storage.setItem Storage.localStorage storageKey (Json.stringify (var blob))
 
 byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 byId = Dom.lookupId . string
@@ -155,7 +154,7 @@ byId = Dom.lookupId . string
 incomplete :: Expr f ('Array (MutableObjectOf Todo)) -> EffectSyntax f (Expr f ('Array (MutableObjectOf Todo)))
 incomplete items = Array.filterE_ items $ \t -> do
   c <- t.completed
-  toSyntax $ expr (c .!= true_)
+  yield (c .!= true_)
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
@@ -177,7 +176,7 @@ mainJS = do
   saved <- Storage.getItem Storage.localStorage storageKey
   whenSomeS saved $ \raw -> do
     parsed <- toSyntax $ parseState raw
-    whenSomeS (Var parsed) $ \blob -> do
+    whenSomeS (var parsed) $ \blob -> do
       t <- blob.todos
       set @"todos" state t
       n <- blob.nextId
@@ -221,7 +220,7 @@ mainJS = do
               items' <- state.todos
               kept <- Array.filterE_ items' $ \t -> do
                 i <- t.id
-                toSyntax $ expr (i .!= tid)
+                yield (i .!= tid)
               set @"todos" state kept
               call0 render
 
@@ -235,7 +234,7 @@ mainJS = do
         let activeN = Array.length active
             totalN = Array.length items
             hasTodos = totalN .> 0
-        Dom.setInnerText countEl (Show activeN)
+        Dom.setInnerText countEl (toString activeN)
         ifS (activeN .== 1)
           (Dom.setInnerText countSuffix " item left")
           (Dom.setInnerText countSuffix " items left")
@@ -283,6 +282,4 @@ mainJS = do
 
         call0 render
 
-  toSyntax $ bindRec
-    (\render -> LambdaE $ \_ -> stmts $ paint render)
-    (\render -> stmts $ wire render)
+  loop0 paint wire

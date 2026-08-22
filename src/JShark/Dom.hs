@@ -32,7 +32,6 @@ module JShark.Dom
 import Data.Text (Text)
 import JShark
 import JShark.Api
-import JShark.Types
 import JShark.Rec (Rec(..), (<:))
 
 -- | An opaque phantom type representing a DOM element (what
