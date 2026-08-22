@@ -7,9 +7,9 @@ module Page (page) where
 import Ids
 import Lucid
 
--- | TodoMVC shell. Client script is loaded from @/app.js@.
-page :: Html ()
-page = doctypehtml_ $ do
+-- | TodoMVC shell. @headExtra@ / @source@ are the highlighter and JS pane.
+page :: Html () -> Html () -> Html ()
+page headExtra source = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
@@ -22,6 +22,7 @@ page = doctypehtml_ $ do
       [ rel_ "stylesheet"
       , href_ "https://unpkg.com/todomvc-app-css@2.4.3/index.css"
       ]
+    headExtra
   body_ $ do
     section_ [class_ "todoapp"] $ do
       header_ [class_ "header"] $ do
@@ -47,7 +48,8 @@ page = doctypehtml_ $ do
         "Created with "
         a_ [href_ "https://github.com/goolord/jshark"] "JShark"
         ", Scotty, and Lucid"
-    script_ [src_ "/app.js"] ("" :: Html ())
+    source
+    script_ [src_ "/todo-mvc/app.js"] ("" :: Html ())
 
 filterLink :: Route -> Html ()
 filterLink r =

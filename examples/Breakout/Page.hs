@@ -6,9 +6,9 @@ import Data.Text (pack)
 import Lucid
 import Types (boardId, canvasH, canvasW)
 
--- | Breakout shell. Client script is loaded from @/app.js@.
-page :: Html ()
-page = doctypehtml_ $ do
+-- | Breakout shell. @headExtra@ / @source@ are the highlighter and JS pane.
+page :: Html () -> Html () -> Html ()
+page headExtra source = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
@@ -21,7 +21,8 @@ page = doctypehtml_ $ do
         <> "canvas{background:#e2e8f0;display:block;margin:1.5rem auto;border-radius:2px}"
         <> "p{color:#94a3b8}"
         <> "a{color:#38bdf8}"
-  body_ $
+    headExtra
+  body_ $ do
     main_ $ do
       h1_ "Breakout"
       canvas_
@@ -36,4 +37,5 @@ page = doctypehtml_ $ do
         a_ [href_ "https://github.com/end3r/Gamedev-Canvas-workshop"] "MDN canvas workshop"
         " with types from "
         a_ [href_ "https://github.com/akhesaCaro/haskell-breakout"] "haskell-breakout"
-      script_ [src_ "/app.js"] ("" :: Html ())
+    source
+    script_ [src_ "/breakout/app.js"] ("" :: Html ())

@@ -37,11 +37,12 @@ console.log("hello, world");
 ```
 cabal build
 cabal test          # bun on PATH for the JS-vs-interpreter checks
-cabal run todo-mvc  # http://localhost:3000
+cabal run examples  # http://localhost:3000
 ```
 
-`app/todo-mvc` is the example. `test/Main.hs` has more of what compiles
-to what.
+`examples/` is TodoMVC and Breakout as named libraries, served together.
+`/` lists them.
+`test/Main.hs` has more of what compiles to what.
 
 ```
                    /""-._

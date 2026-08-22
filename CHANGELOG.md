@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* One `examples` executable serves Breakout and TodoMVC (`cabal run examples`,
+  port 3000). `/` is a directory listing; each app lives at `/<name>`.
+  The apps are named libraries (`breakout`, `todo-mvc`); the executable
+  only owns the server. Each app page has a details pane of the compiled
+  JavaScript, syntax-highlighted.
 * EDSL helpers: `emptyArray`, `toString`, `loop0`, `whenSomeE`, `assign`;
   `toSyntax` / `toSyntax_` re-exported from `JShark.Api`. Example apps no
   longer mention AST constructors.

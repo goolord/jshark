@@ -34,6 +34,10 @@ build-type:
 extra-source-files:
   README.md
   CHANGELOG.md
+data-files:
+  examples/static/*.png
+  examples/static/*.js
+  examples/static/*.css
 
 common warnings
   ghc-options:
@@ -88,47 +92,59 @@ library
   ghc-options:
     -O2
 
-executable todo-mvc
+common example-lib
   import: warnings
-  main-is:
-    Main.hs
-  other-modules:
-    Client
-    Ids
-    Page
-    DevServer
-  hs-source-dirs:
-    app/todo-mvc
-    app/common
+  default-language:
+    Haskell2010
   build-depends:
     , base
     , jshark
     , lucid >= 2.11.20260427 && < 2.12
-    , scotty >= 0.30 && < 0.31
     , text
-  default-language:
-    Haskell2010
-  ghc-options:
-    -threaded
 
-executable breakout
-  import: warnings
-  main-is:
-    Main.hs
+library breakout
+  import: example-lib
+  exposed-modules:
+    Breakout
   other-modules:
     Client
     Page
     Types
-    DevServer
   hs-source-dirs:
-    app/breakout
-    app/common
+    examples/Breakout
+
+library todo-mvc
+  import: example-lib
+  exposed-modules:
+    TodoMvc
+  other-modules:
+    Client
+    Ids
+    Page
+  hs-source-dirs:
+    examples/TodoMvc
+
+executable examples
+  import: warnings
+  main-is:
+    Main.hs
+  other-modules:
+    DevServer
+    Paths_jshark
+    SourcePane
+  autogen-modules:
+    Paths_jshark
+  hs-source-dirs:
+    examples/server
   build-depends:
     , base
+    , breakout
+    , directory
     , jshark
     , lucid >= 2.11.20260427 && < 2.12
     , scotty >= 0.30 && < 0.31
     , text
+    , todo-mvc
   default-language:
     Haskell2010
   ghc-options:
