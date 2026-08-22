@@ -96,6 +96,9 @@ module JShark
     , DeleteProp
     , ArrayLit
     , ArraySort
+    , NewByteArray
+    , FreezeByteArray
+    , UnsafeFreezeByteArray
     )
   -- Evaluation
   , evaluate
@@ -1063,6 +1066,9 @@ isSimpleEffect = \case
   UnsafeObject {} -> True
   UnsafeObjectGet {} -> True
   ArrayLit es -> all isSimpleEffect es
+  NewByteArray {} -> True
+  FreezeByteArray a -> isSimpleEffect a
+  UnsafeFreezeByteArray a -> isSimpleEffect a
   _ -> False
 
 wrapOperand :: Expr Stamp u -> Doc -> Doc
@@ -1250,6 +1256,9 @@ mapEff ge gf = \case
   DeleteProp o k -> DeleteProp (gf o) (ge k)
   ArrayLit es -> ArrayLit (map gf es)
   ArraySort xs f -> ArraySort (ge xs) (\a b -> ge (f a b))
+  NewByteArray n -> NewByteArray (ge n)
+  FreezeByteArray a -> FreezeByteArray (gf a)
+  UnsafeFreezeByteArray a -> UnsafeFreezeByteArray (gf a)
 
 -- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
 -- use @le@. Binders are applied to @dummy@.
@@ -1347,6 +1356,9 @@ foldEff dummy se le sf lf = \case
   DeleteProp o k -> sf o <> se k
   ArrayLit es -> foldMap sf es
   ArraySort xs f -> se xs <> le (f dummy dummy)
+  NewByteArray n -> se n
+  FreezeByteArray a -> sf a
+  UnsafeFreezeByteArray a -> sf a
  where
   foldArg :: forall x. Arg f x -> m
   foldArg (ArgExpr e) = se e
@@ -1717,6 +1729,11 @@ data ElimOps src body = ElimOps
   { elimCount :: Int -> body -> Int
   , elimPure :: src -> Bool
   , elimCheap :: src -> Bool
+  , -- | May a single use be spliced into the body? Splicing moves the
+    -- source to where its value is read, which is wrong for anything
+    -- that snapshots mutable state: a later write would land first. See
+    -- 'movableEffect'.
+    elimMovable :: src -> Bool
   , elimSize :: body -> Int
   , elimRebuild :: body -> body
   , elimSplice :: Int -> (Int, body)
@@ -1735,7 +1752,8 @@ elimFrom ops t x tag body =
     case uses of
       0 | elimPure ops x, elimDropUnused ops x -> (t, body)
       0 -> (t, kept)
-      1 -> inlined
+      1 | elimMovable ops x -> inlined
+      1 -> (t, kept)
       _ | elimCheap ops x -> inlined
       _ -> (t, kept)
 
@@ -1754,6 +1772,7 @@ elimLetFrom t x f tag body =
       { elimCount = countExpr
       , elimPure = isPureExpr
       , elimCheap = isCheap
+      , elimMovable = const True
       , elimSize = sizeExpr
       , elimRebuild = Let x . rebindExpr tag
       , elimSplice = \t' -> optExpr t' (inlineExpr f x)
@@ -1790,6 +1809,7 @@ elimBindFrom t x f tag body =
       { elimCount = countEffect
       , elimPure = isPureEffect
       , elimCheap = isCheapEffect
+      , elimMovable = movableEffect
       , elimSize = sizeEffect
       , elimRebuild = Bind x . rebindEff tag
       , elimSplice = \t' -> optEffect t' (inlineEff f (boundAsExpr x))
@@ -1799,6 +1819,19 @@ elimBindFrom t x f tag body =
     x
     tag
     body
+
+{- | Whether a single use of this effect may be spliced into the body.
+
+Only 'FreezeByteArray' says no. It copies mutable bytes, so it means
+"their value here"; splicing would slide the copy past any write between
+the binding and the read, and the snapshot would see the write. Reads
+like 'UnsafeObjectGet' are movable as they always were — narrowing that
+would stop the single-use inlining the readable output depends on.
+-}
+movableEffect :: Effect Stamp u -> Bool
+movableEffect = \case
+  FreezeByteArray {} -> False
+  _ -> True
 
 optBin ::
   Int
@@ -2217,6 +2250,21 @@ optEffect t0 = \case
       (t1, es') = mapAccumEffs t0 es
      in
       (t1, ArrayLit es')
+  NewByteArray n ->
+    let
+      (t1, n') = optExpr t0 n
+     in
+      (t1, NewByteArray n')
+  FreezeByteArray a ->
+    let
+      (t1, a') = optEffect t0 a
+     in
+      (t1, FreezeByteArray a')
+  UnsafeFreezeByteArray a ->
+    let
+      (t1, a') = optEffect t0 a
+     in
+      (t1, UnsafeFreezeByteArray a')
   ArraySort xs f ->
     let
       (t1, xs') = optExpr t0 xs
@@ -2519,6 +2567,20 @@ effectfulAST' !s0 = \case
       call = xRef <> ".sort" <> P.parens cb
      in
       (s2, fxCode xDecl call)
+  NewByteArray n ->
+    let
+      (s1, Code nDecl nRef) = pureAST' s0 n
+     in
+      -- Effectful ref: two allocations are two arrays, so this must not
+      -- be folded together with another occurrence.
+      (s1, fxCode nDecl ("new Uint8Array" <> P.parens nRef))
+  FreezeByteArray a ->
+    let
+      (s1, MkCode aDecl aRef _) = effectfulAST' s0 a
+     in
+      (s1, fxCode aDecl (aRef <> ".slice()"))
+  -- No copy and nothing to emit: the same object at the immutable type.
+  UnsafeFreezeByteArray a -> effectfulAST' s0 a
   ResultCaseE res errF okF -> renderResultCaseE s0 res errF okF
   StringCaseE scrut arms def -> renderStringCaseE s0 scrut arms def
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)

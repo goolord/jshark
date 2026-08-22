@@ -32,6 +32,12 @@ module JShark.Api
   , emptyArray
   , toString
 
+    -- * Byte arrays
+  , MutableByteArray
+  , newByteArray
+  , freezeByteArray
+  , unsafeFreezeByteArray
+
     -- * Variables and lifting
   , var
   , expr
@@ -270,6 +276,35 @@ string = Literal . ValueString
 -- | @new Uint8Array([…])@ from a host 'ByteArray'.
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
+
+{- | @new Uint8Array(n)@ — @n@ zeroed bytes, mutable.
+
+'uint8Array' is for bytes the host already has; this is for a buffer whose
+size is known but whose contents are not, which is what a JS API filling a
+buffer wants. Bind it: two occurrences would be two arrays.
+-}
+newByteArray ::
+  Expr f 'Number -> Effect f ('MutableObject MutableByteArray)
+newByteArray = NewByteArray
+
+{- | @a.slice()@ — the bytes so far, as an immutable @''Uint8Array'@.
+
+Copies, so later writes through @a@ do not show up in the result.
+-}
+freezeByteArray ::
+  Effect f ('MutableObject MutableByteArray) -> Effect f 'Uint8Array
+freezeByteArray = FreezeByteArray
+
+{- | 'freezeByteArray' without the copy: the same object, retyped, so
+nothing is emitted.
+
+Unsafe in the 'Data.Primitive.ByteArray.unsafeFreezeByteArray' sense — a
+later write through the mutable handle is visible through the frozen
+value. Sound when the mutable handle is dead afterwards.
+-}
+unsafeFreezeByteArray ::
+  Effect f ('MutableObject MutableByteArray) -> Effect f 'Uint8Array
+unsafeFreezeByteArray = UnsafeFreezeByteArray
 
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])

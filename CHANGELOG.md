@@ -5,7 +5,12 @@
 * `'Uint8Array` primitive. Host `ByteArray` (base) via `ToJS` / `ToValue` /
   `uint8Array`. Literals emit `new Uint8Array([…])`. `$eq` and `evaluate`
   compare contents. `String` is the comma-joined bytes (`"1,2,3"`).
-  `base >= 4.17`.
+  `base >= 4.17`. A runtime-sized buffer is `newByteArray n`
+  (`new Uint8Array(n)`), an `Effect` of `'MutableObject MutableByteArray`
+  because allocation has identity. `freezeByteArray` is `.slice()` onto
+  `'Uint8Array`; `unsafeFreezeByteArray` is the same object retyped.
+  Size is given up front: JS typed arrays cannot grow.
+
 
 * Fixed: codegen and the optimizer numbered PHOAS tags from the same
   counter (both `-2` downward), so `countEffect` could attribute a

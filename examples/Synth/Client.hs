@@ -59,7 +59,7 @@ noNote :: Expr f 'String
 noNote = ""
 
 -- | Analyser bins, and so the size of the meter's buffer.
-meterBins :: Double
+meterBins :: Int
 meterBins = 32
 
 byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
@@ -118,7 +118,7 @@ mainJS = do
   master <- Audio.gain ctx
   comp <- Audio.compressor ctx
   ana <- Audio.analyser ctx
-  spectrum <- Audio.newByteBuffer (number meterBins)
+  spectrum <- Audio.analysisBuffer meterBins
 
   Audio.setType filt (string "lowpass")
   Audio.connect filt master
@@ -126,9 +126,9 @@ mainJS = do
   Audio.connect comp ana
   Audio.connect ana (Audio.destination ctx :: Effect f ('MutableObject Audio.Node))
   Audio.setValue (Audio.param master "gain") (number 0.8)
-  -- Bin count is fftSize/2, so this makes the meter's buffer span the
-  -- whole spectrum rather than the bottom of it.
-  Audio.setFftSize ana (number (meterBins * 2))
+  -- Sized to the buffer, so the meter sees the whole spectrum rather than
+  -- the bottom of it.
+  Audio.setFftSize ana (Audio.fftSizeFor meterBins)
 
   cutoff0 <- Dom.getValue cutoffEl >>= numberOf
   Audio.setValue (Audio.param filt "frequency") cutoff0

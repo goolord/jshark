@@ -53,6 +53,7 @@ module JShark.Types
   , mathFn1Name
   , mathFn2Name
   , GroupBy
+  , MutableByteArray
   , ClosedExpr
   , ClosedEffect
   , Comparable
@@ -200,6 +201,23 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -> (f u -> f u -> Expr f 'Number)
     -> Effect f ('Array u)
     -- ^ @arr.sort(function(a,b){…})@
+  NewByteArray ::
+    Expr f 'Number
+    -> Effect f ('MutableObject MutableByteArray)
+    -- ^ @new Uint8Array(n)@: @n@ zeroed bytes. The length is fixed at
+    -- allocation, so the size is given up front; allocation has identity,
+    -- so this lives on 'Effect' rather than being a literal.
+  FreezeByteArray ::
+    Effect f ('MutableObject MutableByteArray)
+    -> Effect f 'Uint8Array
+    -- ^ @a.slice()@. Copies, so later writes through the mutable handle
+    -- are not visible in the result.
+  UnsafeFreezeByteArray ::
+    Effect f ('MutableObject MutableByteArray)
+    -> Effect f 'Uint8Array
+    -- ^ The same object at the immutable type: no copy, nothing emitted.
+    -- Unsafe because a later write through the mutable handle /is/ visible
+    -- through the frozen value.
 
 -- | An FFI argument drawn from either syntax tree. This is the sanctioned
 -- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
@@ -217,6 +235,14 @@ data GroupBy (u :: Universe)
 type instance Field (GroupBy u) "key" = 'String
 
 type instance Field (GroupBy u) "items" = 'Array u
+
+{- | A @Uint8Array@ under construction. Mutable, so it is reached through
+'Effect' ('NewByteArray'); 'FreezeByteArray' turns one into the immutable
+@''Uint8Array'@ that 'Expr' works with.
+-}
+data MutableByteArray
+
+type instance Field MutableByteArray "length" = 'Number
 
 -- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
 -- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.

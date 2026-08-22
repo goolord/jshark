@@ -810,6 +810,22 @@ stdlibTests =
               )
           )
           @?= "const n0 = {};\nn0.a = 1.0;\nn0.b = 2.0;"
+    , -- A Uint8Array is mutable, so propagating the literal to each use
+      -- would hand out separate arrays: whoever fills one would not be
+      -- seen by whoever reads the other. Guarded by `isCheapValue`.
+      testCase "multi-use Uint8Array literal stays one array (identity)" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      b <- yield (uint8Array (bytes [0, 0]))
+                      toSyntax_ (ffi "fill" (arg (var b) <: RecNil))
+                      toSyntax_ (ffi "read" (arg (var b) <: RecNil))
+                      toSyntax noOp
+                  )
+              )
+          )
+          @?= "const n0 = new Uint8Array([0, 0]);\nfill(n0);\nread(n0);"
     , testCase "locationHash is window.location.hash, not a bracket key" $ do
         let
           js = T.pack $ renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
@@ -960,6 +976,30 @@ goodPartsTests =
     , testCase "empty uint8Array is new Uint8Array([])" $
         renderJS (pureAST (uint8Array emptyArray8))
           @?= "new Uint8Array([])"
+    , testCase "newByteArray takes the size, not the bytes" $
+        renderJS (effectfulAST (newByteArray (number 4)))
+          @?= "new Uint8Array(4.0)"
+    , testCase "freezeByteArray copies with slice" $
+        renderJS (effectfulAST (freezeByteArray (newByteArray (number 4))))
+          @?= "new Uint8Array(4.0).slice()"
+    , testCase "unsafeFreezeByteArray emits nothing of its own" $
+        renderJS (effectfulAST (unsafeFreezeByteArray (newByteArray (number 4))))
+          @?= "new Uint8Array(4.0)"
+    , -- Allocation has identity: folding two occurrences together would
+      -- hand the writer and the reader different arrays.
+      testCase "multi-use newByteArray stays one allocation (identity)" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      b <- fmap var (toSyntax (newByteArray (number 2)))
+                      toSyntax_ (ffi "fill" (arg b <: RecNil))
+                      toSyntax_ (ffi "read" (arg b <: RecNil))
+                      toSyntax noOp
+                  )
+              )
+          )
+          @?= "const n0 = new Uint8Array(2.0);\nfill(n0);\nread(n0);"
     , testCase "hasOwn uses Object.prototype.hasOwnProperty.call" $
         T.isInfixOf
           "Object.prototype.hasOwnProperty.call"

@@ -131,7 +131,9 @@ evaluateEffectJSONWith
 not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
 is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
 Host `ByteArray` is `'Uint8Array` (`new Uint8Array([…])`); `.==` is
-content equality.
+content equality. A buffer whose length is known but whose bytes are
+not is `newByteArray n` (`new Uint8Array(n)`), mutable; freeze it
+with `freezeByteArray` (`.slice()`) to get `'Uint8Array`.
 
 No `==`, `with`, `eval`, `this`, or implicit `new`. No `/src/`
 literals (`new RegExp`). Functions are unary (`Array.sort`'s compare
