@@ -3,12 +3,13 @@
 module Page (page) where
 
 import Data.Text (pack)
+import qualified Data.Text as T
 import Lucid
 import Types (boardId, canvasH, canvasW)
 
 -- | Breakout shell. @headExtra@ / @source@ are the highlighter and JS pane.
-page :: Html () -> Html () -> Html ()
-page headExtra source = doctypehtml_ $ do
+page :: Html () -> Html () -> T.Text -> Html ()
+page headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
@@ -40,4 +41,4 @@ page headExtra source = doctypehtml_ $ do
         " with types from "
         a_ [href_ "https://github.com/akhesaCaro/haskell-breakout"] "haskell-breakout"
     source
-    script_ [src_ "/breakout/app.js"] ("" :: Html ())
+    script_ [src_ scriptSrc] ("" :: Html ())

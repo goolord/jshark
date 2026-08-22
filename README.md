@@ -41,7 +41,7 @@ cabal run examples  # http://localhost:3000
 ```
 
 `examples/` is TodoMVC and Breakout as named libraries, served together.
-`/` lists them.
+`/` lists them. After the Pages workflow on `master`: https://goolord.github.io/jshark/.
 `test/Main.hs` has more of what compiles to what.
 
 ```

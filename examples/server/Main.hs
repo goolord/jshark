@@ -3,27 +3,38 @@
 module Main (main) where
 
 import qualified Breakout
-import DevServer (Example (..), serveExamples)
+import DevServer (Example (..), exportExamples, serveExamples)
 import JShark.Compiler (compileEffect, readableConfig)
 import JShark.Types (fromSyntax)
 import SourcePane (sourceHead, sourcePane)
+import System.Environment (getArgs)
+import System.Exit (die)
 import qualified TodoMvc
 
 main :: IO ()
 main = do
   breakoutJs <- compileEffect readableConfig (fromSyntax Breakout.mainJS)
   todoJs <- compileEffect readableConfig (fromSyntax TodoMvc.mainJS)
-  serveExamples
-    3000
-    "Examples on http://localhost:3000"
-    [ Example
-        "breakout"
-        "Breakout"
-        (Breakout.page sourceHead (sourcePane breakoutJs))
-        breakoutJs
-    , Example
-        "todo-mvc"
-        "TodoMVC"
-        (TodoMvc.page sourceHead (sourcePane todoJs))
-        todoJs
-    ]
+  let
+    examples =
+      [ Example
+          "breakout"
+          "Breakout"
+          ( \script static ->
+              Breakout.page (sourceHead static) (sourcePane static breakoutJs) script
+          )
+          breakoutJs
+      , Example
+          "todo-mvc"
+          "TodoMVC"
+          ( \script static ->
+              TodoMvc.page (sourceHead static) (sourcePane static todoJs) script
+          )
+          todoJs
+      ]
+  args <- getArgs
+  case args of
+    [] ->
+      serveExamples 3000 "Examples on http://localhost:3000" examples
+    ["export", dest] -> exportExamples dest examples
+    _ -> die "usage: examples | examples export DIR"

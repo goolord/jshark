@@ -140,6 +140,7 @@ executable examples
     , base
     , breakout
     , directory
+    , filepath
     , jshark
     , lucid >= 2.11.20260427 && < 2.12
     , scotty >= 0.30 && < 0.31

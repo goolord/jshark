@@ -6,18 +6,18 @@ import qualified Data.Text as T
 import Lucid
 
 -- | Highlight CSS. Put in @head@ so it is ready before the pane opens.
-sourceHead :: Html ()
-sourceHead = do
-  link_ [rel_ "stylesheet", href_ "/static/github-dark.min.css"]
+sourceHead :: T.Text -> Html ()
+sourceHead staticRoot = do
+  link_ [rel_ "stylesheet", href_ (staticRoot <> "/github-dark.min.css")]
   style_ sourceCss
 
 -- | Collapsed pane of compiled client JS. Scripts follow the markup.
-sourcePane :: T.Text -> Html ()
-sourcePane js = do
+sourcePane :: T.Text -> T.Text -> Html ()
+sourcePane staticRoot js = do
   details_ [class_ "js-source"] $ do
     summary_ "JavaScript source"
     pre_ $ code_ [class_ "language-javascript"] (toHtml js)
-  script_ [src_ "/static/highlight.min.js"] ("" :: Html ())
+  script_ [src_ (staticRoot <> "/highlight.min.js")] ("" :: Html ())
   script_ ("hljs.highlightAll();" :: T.Text)
 
 sourceCss :: T.Text
