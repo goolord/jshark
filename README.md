@@ -85,6 +85,12 @@ OOB. `parseInt_` takes a radix. `.==` is `$eq` (`===`, then
 structural arrays and plain objects). Frozen `'Object` is `Expr`;
 `'MutableObject` is `Effect`.
 
+`JShark.Classes` copies `Functor` / `Monad` / `Foldable` / … at kind
+`Universe -> Universe` (object-language maps). Import qualified; they
+are not Prelude. `Semigroup` / `Monoid` on `Expr` *are* the `base`
+classes (`Option` combines innards like `Maybe`). `foldr` is
+`Array.prototype.reduceRight`.
+
 ## Option, Result, products, sums
 
 Host `Maybe` is `Option`. Host `Either` is `Result` and stays

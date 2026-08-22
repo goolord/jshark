@@ -2,6 +2,7 @@
     DataKinds
   , GADTs
   , LambdaCase
+  , OverloadedRecordDot
   , OverloadedStrings
   , RankNTypes
   , ScopedTypeVariables
@@ -19,6 +20,7 @@ import JShark.Api
 import JShark.Compiler
 import qualified JShark.Array as Array
 import qualified JShark.Math as Math
+import JShark.Object ()
 import Support
 import System.Directory (findExecutable, getTemporaryDirectory, removeFile)
 import System.Exit (ExitCode(..))
@@ -70,6 +72,30 @@ bunEvalTests =
             , bunCase getBun "Show number" (Show (number 3))
             , bunCase getBun "Eq numbers" (Eq (number 1) (number 1))
             , bunCase getBun "NEq numbers" (NEq (number 1) (number 2))
+            , bunCase getBun "array map" (Array.map numArray (\x -> x + number 1))
+            , bunCase getBun "array reduceRight"
+                (Array.reduceRight numArray (number 0) (\acc x -> acc - x))
+            , bunCase getBun "array singleton"
+                (Array.singleton (number 7))
+            , bunCase getBun "array singleton length"
+                (Array.length (Array.singleton (number 7)))
+            , bunCase getBun "array join over options"
+                ( Array.join
+                    (Literal (ValueArray [ValueOption Nothing, ValueOption (Just (ValueNumber 1))]))
+                    (string "-")
+                )
+            , bunCase getBun "two comparisons share one $eq"
+                (And (number 1 .== number 1) (number 2 .== number 2))
+            , bunCase getBun "letRec value rhs"
+                (letRec (\_ -> number 1 + number 2) (\n -> n))
+            , bunCase getBun "option semigroup Maybe"
+                (JShark.Api.some (string "a") <> JShark.Api.some (string "b"))
+            , bunCase getBun "array groupBy keys"
+                ( Array.map
+                    (Array.groupBy numArray $ \n ->
+                      if_ (n .== number 1) (string "one") (string "two"))
+                    (\g -> g.key)
+                )
             , bunCase getBun "array index" (Array.index numArray (number 1))
             , bunCase getBun "array index 1.9 is the integer slot"
                 (Array.index numArray (number 1.9))

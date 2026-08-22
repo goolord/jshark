@@ -32,6 +32,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import qualified JShark.Ajax as Ajax
 import qualified JShark.Array as Array
+import qualified JShark.Classes as C
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
@@ -296,6 +297,162 @@ stdlibTests = testGroup "stdlib"
       let js = T.pack $ renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
       T.isInfixOf "Math.trunc" js @?= True
       T.isInfixOf "throw" js @?= True
+  , testCase "Array.map evaluates" $
+      case
+        evaluate
+          ( Eq
+              (Array.map numArray (\x -> x + number 1))
+              (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Array.filter evaluates" $
+      case
+        evaluate
+          ( Eq
+              (Array.filter numArray (\x -> x .> number 1))
+              (Literal (ValueArray [ValueNumber 2]))
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Array.groupBy is first-seen [{key, items}]" $ do
+      let xs = Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 1])
+          grouped =
+            Array.groupBy xs (\n -> if_ (n .== number 1) (string "one") (string "two"))
+          keys = Array.map grouped (\g -> GetField @"key" g)
+          firstItems = GetField @"items" (Array.index grouped (number 0))
+      case evaluate (Eq keys (Literal (ValueArray [ValueString "one", ValueString "two"]))) of
+        ValueBool b -> b @?= True
+      evaluateNumber (Array.length firstItems) @?= 2
+  , testCase "Array.groupBy emits $groupBy" $
+      T.isInfixOf "$groupBy"
+        (T.pack (renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))))
+        @?= True
+  , testCase "Classes.fmap Array" $
+      case
+        evaluate
+          ( Eq
+              (C.fmap (\x -> x + number 1) numArray)
+              (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Classes.liftA2 Option" $ do
+      case evaluate (C.liftA2 (+) (some (number 2)) (some (number 3))) of
+        ValueOption (Just (ValueNumber n)) -> n @?= 5
+        _ -> assertFailure "expected Some 5"
+      case evaluate (C.liftA2 (+) (none :: Expr f ('Option 'Number)) (some (number 3))) of
+        ValueOption Nothing -> pure ()
+        _ -> assertFailure "expected None"
+  , testCase "Classes.traverse Array Option" $ do
+      let pos x = if_ (x .> number 0) (some x) none
+      case evaluate (Eq (C.traverse pos numArray) (some (Literal (ValueArray [ValueNumber 1, ValueNumber 2])))) of
+        ValueBool b -> b @?= True
+      case evaluate (C.traverse pos (Literal (ValueArray [ValueNumber 1, ValueNumber (-1)]))) of
+        ValueOption Nothing -> pure ()
+        _ -> assertFailure "expected None"
+  , testCase "Classes.join Array" $
+      case
+        evaluate
+          ( Eq
+              ( C.join
+                  ( Literal
+                      ( ValueArray
+                          [ ValueArray [ValueNumber 1]
+                          , ValueArray [ValueNumber 2, ValueNumber 3]
+                          ]
+                      )
+                  )
+              )
+              (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Classes.fmap Function" $
+      evaluateNumber (apply (C.fmap (\y -> y + 1) (lambda (\x -> x * 2))) (number 3)) @?= 7
+  , testCase "Classes.bimap Result" $
+      case
+        evaluate
+          (C.bimap id (\x -> x + 1) (ok (number 2) :: Expr f ('Result 'String 'Number)))
+      of
+        ValueResult (Right (ValueNumber n)) -> n @?= 3
+        _ -> assertFailure "expected Ok 3"
+  , testCase "Classes Semigroup Array" $
+      case
+        evaluate
+          ( Eq
+              (numArray C.<> Literal (ValueArray [ValueNumber 3]))
+              (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Classes Category Function" $
+      evaluateNumber
+        (apply (C.fmap (\y -> y + 1) (lambda (\x -> x * 2)) C.. lambda (\x -> x + 1)) (number 3))
+        @?= 9
+  , testCase "Classes.mzipWith Array" $
+      case
+        evaluate
+          ( Eq
+              (C.mzipWith (+) numArray (Literal (ValueArray [ValueNumber 10, ValueNumber 20, ValueNumber 30])))
+              (Literal (ValueArray [ValueNumber 11, ValueNumber 22]))
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Classes.foldMap Array String" $
+      case
+        evaluate
+          ( Eq
+              (C.foldMap (\n -> if_ (n .== number 1) (string "a") (string "b")) numArray)
+              (string "ab")
+          )
+      of
+        ValueBool b -> b @?= True
+  , testCase "Classes.foldr is reduceRight" $ do
+      evaluateNumber (C.foldr (-) (number 0) numArray) @?= -1
+      evaluateNumber (C.foldl (-) (number 0) numArray) @?= -3
+      T.isInfixOf ".reduceRight"
+        (T.pack (renderJS (pureAST (C.foldr (+) (number 0) numArray))))
+        @?= True
+  , testCase "LetRec value rhs evaluates" $
+      evaluateNumber (letRec (\_ -> number 1 + number 2) (\n -> n)) @?= 3
+  , testCase "Classes.mfix Function" $
+      evaluateNumber
+        (apply (C.mfix (\a -> lambda (\r -> if_ (r .== number 0) (number 1) a))) (number 0))
+        @?= 1
+  , testCase "Classes Semigroup Option is Maybe" $ do
+      case evaluate (some (string "a") C.<> some (string "b")) of
+        ValueOption (Just (ValueString s)) -> s @?= "ab"
+        _ -> assertFailure "expected Some \"ab\""
+      case evaluate ((none :: Expr f ('Option 'String)) C.<> some (string "x")) of
+        ValueOption (Just (ValueString s)) -> s @?= "x"
+        _ -> assertFailure "expected Some \"x\""
+  , testCase "Classes.elem Array uses $eq" $
+      case evaluate (C.elem (number 2) numArray) of
+        ValueBool b -> b @?= True
+  , testCase "Array.singleton is a one-element array" $ do
+      evaluateNumber (Array.length (Array.singleton (number 7))) @?= 1
+      T.isInfixOf "[]" (T.pack (renderJS (pureAST (Array.singleton (number 7)))))
+        @?= False
+  , testCase "unit array literal keeps its slots" $
+      renderJS (pureAST (Literal (ValueArray [ValueUnit, ValueUnit])))
+        @?= "[undefined, undefined]"
+  , testCase "Array.join renders null as the empty string" $ do
+      let opts =
+            Literal
+              ( ValueArray
+                  [ValueOption Nothing, ValueOption (Just (ValueNumber 1))]
+              )
+      case evaluate (Array.join opts (string "-")) of
+        ValueString s -> s @?= "-1"
+      case evaluate (Show opts) of
+        ValueString s -> s @?= ",1"
+  , testCase "$eq is defined once for two comparisons" $ do
+      let js = T.pack (renderJS (pureProgram (lambda2 (\a b -> (a .== b) .|| (b .== a)))))
+      -- Two call sites on binders; the other `$eq(` are the recursive ones
+      -- inside the single definition.
+      T.count "function $eq" js @?= 1
+      T.count "$eq(n" js @?= 2
   , testCase "Array.length renders as .length" $
       renderJS (pureAST (Array.length numArray)) @?= "[1.0, 2.0].length"
   , testCase "Array.map renders as .map with a callback" $
@@ -439,7 +596,7 @@ stdlibTests = testGroup "stdlib"
   , testCase ".!= is !$eq" $ do
       let js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.!=)))
       T.isInfixOf "$eq" js @?= True
-      T.isPrefixOf "!" js @?= True
+      T.isInfixOf "!($eq(" js @?= True
   , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
       renderJS (effectfulAST (ffi "setTimeout" (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)))
         @?= "setTimeout(function (n0) {return (tick())}, 0.0)"

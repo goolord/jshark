@@ -2,9 +2,12 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | JS @Array.prototype@ wrappers. Opaque to 'JShark.evaluate' except 'index'.
-Read wrappers are closed-name 'Expr' nodes. 'push' is a 'CallMethod' on
-'Effect'. Import qualified; names clash with 'Prelude'.
+{- | JS @Array.prototype@ wrappers.
+Read wrappers are closed-name 'Expr' nodes; 'evaluate' handles
+'index', 'map', 'filter', 'reduce', 'reduceRight', 'groupBy', 'zipWith',
+and 'singleton'.
+'push' is a 'CallMethod' on 'Effect'. Import qualified; names clash
+with 'Prelude'.
 -}
 module JShark.Array
   ( index
@@ -24,6 +27,10 @@ module JShark.Array
   , pushMany_
   , fromEffects
   , reduce
+  , reduceRight
+  , singleton
+  , groupBy
+  , zipWith
   , arraySlice
   , sort
   )
@@ -32,7 +39,7 @@ where
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
-import Prelude hiding (concat, filter, length, map)
+import Prelude hiding (concat, filter, length, map, zipWith)
 
 -- | @arr[i]@
 index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
@@ -120,6 +127,32 @@ fromEffects = ArrayLit
 reduce ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
 reduce arr z f = ExprReduce arr z (\a x -> f (var a) (var x))
+
+-- | @arr.reduceRight(function(acc,x){…}, z)@. JS callback is still @(acc, x)@.
+reduceRight ::
+  Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
+reduceRight arr z f = ExprReduceRight arr z (\a x -> f (var a) (var x))
+
+-- | @[x]@. One-element array; used by 'JShark.Classes.pure'.
+singleton :: Expr f u -> Expr f ('Array u)
+singleton x = ExprMap (Literal (ValueArray [ValueUnit])) (\_ -> x)
+
+{- | @Object.groupBy@ as @[{key, items}]@. The key callback is unary
+('String'); first-seen key order. Not a null-prototype object.
+-}
+groupBy ::
+  Expr f ('Array u)
+  -> (Expr f u -> Expr f 'String)
+  -> Expr f ('Array ('Object (GroupBy u)))
+groupBy arr f = ExprGroupBy arr (\x -> f (var x))
+
+-- | @zipWith@; result length is @Math.min@.
+zipWith ::
+  (Expr f a -> Expr f b -> Expr f c)
+  -> Expr f ('Array a)
+  -> Expr f ('Array b)
+  -> Expr f ('Array c)
+zipWith f xs ys = ExprZipWith xs ys (\a b -> f (var a) (var b))
 
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+* `Array.groupBy` is ES2024 `Object.groupBy` as `[{key, items}]` (first-seen
+  keys; not a null-prototype object), row `GroupBy`. `evaluate` and
+  `$groupBy` agree.
+* `$eq` / `$groupBy` / `$zipWith` are defined once per program instead of
+  being re-emitted at every call site.
+* Fixed: an array literal dropped `ValueUnit` elements, so `Array.singleton`
+  (and `Classes.pure` / `traverse` on `Array`) compiled to `[]`.
+* Fixed: `evaluate` of `Array.join` and of `Show` on an array rendered
+  `null` / `undefined` as `"null"` / `"undefined"`; JS renders them as `""`.
+* `JShark.Classes`: universe-indexed copies of the `base` classes that
+  apply (`Functor` through `MonadFix` / `MonadZip` / `Category` /
+  `Bifoldable` / `Bitraversable`). `Semigroup` / `Monoid` on
+  `Expr f ('Array u)` (and `Option`, `Result`, `Function`) are the
+  real `base` classes. `Option` `<>` combines innards like `Maybe`
+  (not first-`Some`). `foldr` is `Array.reduceRight`. `Foldable.elem`
+  is `.==` / `$eq` on Array, Option, and Result. `Array.zipWith` is
+  `$zipWith` (`Math.min` length). `evaluate` of `LetRec` ties the knot
+  for any rhs (not only `Lambda`), so `MonadFix (Function r)` works; a
+  rhs that forces its own binder now diverges instead of erroring.
+* `evaluate` now folds `Array.map` / `filter` / `reduce` / `reduceRight` /
+  `groupBy` / `singleton` / `concat` / `includes` / `join` / `length`.
 * `evaluate` and JS agree on more Good Parts edges: array index is
   `Math.trunc` + throw (no `a[1.9]` / NaN holes); frozen fields are
   evaluated eagerly and compared by last-wins value; `.==` is `$eq`

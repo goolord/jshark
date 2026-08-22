@@ -59,6 +59,7 @@ library
     JShark
     JShark.Api
     JShark.Array
+    JShark.Classes
     JShark.Console
     JShark.Json
     JShark.Math

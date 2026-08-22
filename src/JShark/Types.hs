@@ -3,6 +3,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -15,6 +16,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {- | Two PHOAS syntax trees for a typed subset of JavaScript.
 
@@ -51,6 +53,7 @@ module JShark.Types
   , MathFn2 (..)
   , mathFn1Name
   , mathFn2Name
+  , GroupBy
   , ClosedExpr
   , ClosedEffect
   , Comparable
@@ -204,6 +207,13 @@ instances. The index on 'Object' / 'MutableObject' is this host 'Type', not a 'U
 -}
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
+-- | @Object.groupBy@ reified as @[{key, items}]@. Not a null-prototype dict.
+data GroupBy (u :: Universe)
+
+type instance Field (GroupBy u) "key" = 'String
+
+type instance Field (GroupBy u) "items" = 'Array u
+
 {- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
 value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
 -}
@@ -336,7 +346,9 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     (f u -> Expr f u)
     -> (f u -> Expr f v)
     -> Expr f v
-    -- ^ Recursive let
+    {- ^ Recursive let. The rhs must be productive; 'JShark.evaluate' ties
+        the knot, so one that forces its own binder diverges.
+    -}
   Lambda ::
     (f u -> Expr f v)
     -> Expr f ('Function u v)
@@ -432,6 +444,23 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> (f v -> f u -> Expr f v)
     -> Expr f v
     -- ^ @arr.reduce(function(acc,x){…}, z)@.
+  ExprReduceRight ::
+    Expr f ('Array u)
+    -> Expr f v
+    -> (f v -> f u -> Expr f v)
+    -> Expr f v
+    -- ^ @arr.reduceRight(function(acc,x){…}, z)@.
+  ExprGroupBy ::
+    Expr f ('Array u)
+    -> (f u -> Expr f 'String)
+    -> Expr f ('Array ('Object (GroupBy u)))
+    -- ^ @Object.groupBy@ then @[{key, items}]@. Key callback stays on 'Expr'.
+  ExprZipWith ::
+    Expr f ('Array a)
+    -> Expr f ('Array b)
+    -> (f a -> f b -> Expr f c)
+    -> Expr f ('Array c)
+    -- ^ @zipWith@; length is @Math.min@.
   UnsafeNullable ::
     Expr f u
     -> Expr f ('Option u)
@@ -579,8 +608,39 @@ instance forall u. u ~ 'String => Exts.IsString (Value u) where
 instance forall (f :: (Universe -> Type)) u. u ~ 'String => Exts.IsString (Expr f u) where
   fromString s = Literal (Exts.fromString s)
 
-instance forall (f :: Universe -> Type) u. u ~ 'String => Semigroup (Expr f u) where
+instance Semigroup (Expr f 'String) where
   (<>) = Concat
+
+instance Monoid (Expr f 'String) where
+  mempty = Literal (ValueString mempty)
+
+instance Semigroup (Expr f ('Array u)) where
+  (<>) = ExprBinary StdConcat
+
+instance Monoid (Expr f ('Array u)) where
+  mempty = Literal (ValueArray [])
+
+{- | @base@ 'Maybe': combine innards when both are 'Some'. Not 'Alternative'.
+The right argument is needed in both arms, so it is bound once with 'Let'.
+-}
+instance Semigroup (Expr f u) => Semigroup (Expr f ('Option u)) where
+  o <> d =
+    Let d $ \dv ->
+      OptionCase o (Var dv) $ \x ->
+        OptionCase (Var dv) (UnsafeNullable (Var x)) $ \y ->
+          UnsafeNullable (Var x <> Var y)
+
+instance Semigroup (Expr f u) => Monoid (Expr f ('Option u)) where
+  mempty = Literal (ValueOption Nothing)
+
+instance Semigroup (Expr f ('Result e a)) where
+  l <> r = ResultCase l (\_ -> r) (\_ -> l)
+
+instance Semigroup (Expr f a) => Semigroup (Expr f ('Function r a)) where
+  g <> h = Lambda (\x -> Apply g (Var x) <> Apply h (Var x))
+
+instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
+  mempty = Lambda (\_ -> mempty)
 
 {- | 'Num' / 'Fractional' / 'Floating' for JS numbers:
 

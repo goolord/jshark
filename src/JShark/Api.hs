@@ -20,6 +20,7 @@ module JShark.Api
   , Arg (..)
   , Field
   , Comparable
+  , GroupBy
 
     -- * Literals
   , number
@@ -230,6 +231,10 @@ lambda3 f = lambda (\x -> lambda2 (\y z -> f x y z))
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
+{- | Recursive @let@. The right-hand side must be productive — a 'lambda',
+or a value that does not force the binder. 'JShark.evaluate' ties the knot,
+so a strict self-reference (@letRec (\\x -> x + 1)@) diverges.
+-}
 letRec :: (Expr f u -> Expr f u) -> (Expr f u -> Expr f v) -> Expr f v
 letRec r b = LetRec (\x -> r (var x)) (\x -> b (var x))
 
