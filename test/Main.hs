@@ -267,18 +267,18 @@ stdlibTests = testGroup "stdlib"
   , testCase "Array.index renders as bracket indexing" $
       renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
         @?= "xs()[i()]"
-  , testCase "Array.length_ renders as .length" $
-      renderJS (pureAST (Array.length_ numArray)) @?= "[1.0, 2.0].length"
-  , testCase "Array.map_ renders as .map with a callback" $
-      renderJS (pureAST (Array.map_ numArray (\x -> x + number 1)))
+  , testCase "Array.length renders as .length" $
+      renderJS (pureAST (Array.length numArray)) @?= "[1.0, 2.0].length"
+  , testCase "Array.map renders as .map with a callback" $
+      renderJS (pureAST (Array.map numArray (\x -> x + number 1)))
         @?= "[1.0, 2.0].map(function (n0) {return n0 + 1.0})"
   , testCase "Array.filterE renders an effectful callback" $
       renderJS (effectfulAST (fromSyntax (do
         toSyntax_ $ Array.filterE numArray (\x -> ffi "pred" (arg x <: RecNil))
         toSyntax noOp)))
         @?= "[1.0, 2.0].filter(function (n0) {return pred(n0)});"
-  , testCase "Array.map_ callback with an internal let is inlined when used once" $
-      renderJS (pureAST (Array.map_ numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
+  , testCase "Array.map callback with an internal let is inlined when used once" $
+      renderJS (pureAST (Array.map numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
         @?= "[1.0, 2.0].map(function (n0) {return (n0 + 1.0) * 2.0})"
   , testCase "Array.join renders as .join" $
       renderJS (pureAST (Array.join numArray (string ",")))
@@ -406,8 +406,8 @@ goodPartsTests = testGroup "good parts"
             T.isInfixOf ".value" (T.pack js) @?= True
   , testCase "orElse on none" $
       evaluateNumber (orElse (none :: Expr f ('Option 'Number)) (number 3)) @?= 3
-  , testCase "reduce_ evaluates" $
-      evaluateNumber (Array.reduce_ numArray (number 0) (\a x -> a + x)) @?= 3
+  , testCase "reduce evaluates" $
+      evaluateNumber (Array.reduce numArray (number 0) (\a x -> a + x)) @?= 3
   , testCase "arraySlice evaluates" $
       evaluateNumber (Array.index (Array.arraySlice numArray (number 1) (number 2)) (number 0)) @?= 2
   , testCase "arraySlice negatives count from the end" $
@@ -436,8 +436,8 @@ goodPartsTests = testGroup "good parts"
   , testCase "obj literal quotes keys" $
       renderJS (effectfulAST (Object.obj [Object.field @"x" (number 1)] :: Effect f ('Object LitRow)))
         @?= "{\"x\": 1.0}"
-  , testCase "sort_ emits a binary compare callback" $
-      renderJS (effectfulAST (Array.sort_ numArray (\a b -> a - b)))
+  , testCase "sort emits a binary compare callback" $
+      renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
         @?= "[1.0, 2.0].sort(function (n0, n1) {return n0 - n1})"
   , testCase "ifE of throw vs number keeps the result bind" $
       renderJS (effectfulAST (ifE condE (throw_ "boom") (expr (number 1))))

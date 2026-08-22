@@ -325,7 +325,7 @@ bannerText ctx msg = do
 -- Helpers -----------------------------------------------------------------
 
 clampPaddle :: Expr f 'Number -> Expr f 'Number
-clampPaddle = Math.max_ 0 . Math.min_ (number paddleMaxX)
+clampPaddle = Math.max 0 . Math.min (number paddleMaxX)
 
 hitsRect ::
      Expr f 'Number

@@ -24,6 +24,8 @@
 * `%` / bitwise (`rem_`, `bitAnd`…`ushr`), `parseInt_` (radix required).
 * Array `reduce_`, `arraySlice`, `sort_`; `Regex` via `new RegExp`;
   `obj`/`field` literals, `Object.create`, `delete_`, `hasOwn`.
+* Qualified stdlib drops the `_` suffix (`Array.length`, `Math.max`,
+  `Console.error`, …); those modules `hiding` Prelude/base clashes.
 * `IsString` for `Value 'String`, `Expr f 'String`, and `ExprF _ _ 'String`
   so OverloadedStrings literals work at each pure AST layer.
 * `Num` / `Fractional` for `Value 'Number` and `Expr f 'Number`

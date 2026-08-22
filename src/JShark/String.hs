@@ -4,8 +4,9 @@
 #-}
 -- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
 -- Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
+-- Import qualified; names clash with 'Prelude'.
 module JShark.String
-  ( length_
+  ( length
   , indexOf
   , slice
   , toUpper
@@ -15,11 +16,12 @@ module JShark.String
   , replace
   ) where
 
+import Prelude hiding (length)
 import JShark.Types
 
 -- | @s.length@
-length_ :: Expr f 'String -> Expr f 'Number
-length_ = ExprUnary StdStrLen
+length :: Expr f 'String -> Expr f 'Number
+length = ExprUnary StdStrLen
 
 -- | @s.indexOf(sub)@
 indexOf :: Expr f 'String -> Expr f 'String -> Expr f 'Number

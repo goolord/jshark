@@ -15,7 +15,7 @@ module JShark.Object
   , obj
   , field
   , create
-  , delete_
+  , delete
   , hasOwn
   , unsafeObject
   , unsafeObjectGet
@@ -53,8 +53,8 @@ create :: Effect f ('Object proto) -> Effect f ('Object child)
 create proto = FFI "Object.create" (ArgEffect proto <: RecNil)
 
 -- | @delete o[k]@
-delete_ :: Effect f ('Object r) -> Expr f 'String -> Effect f 'Bool
-delete_ = DeleteProp
+delete :: Effect f ('Object r) -> Expr f 'String -> Effect f 'Bool
+delete = DeleteProp
 
 -- | @Object.prototype.hasOwnProperty.call(o, k)@ — the book's enumeration guard.
 hasOwn :: Effect f ('Object r) -> Expr f 'String -> Effect f 'Bool

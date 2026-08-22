@@ -3,6 +3,7 @@
   , GADTs
   , OverloadedStrings
 #-}
+-- | JS @Math@ wrappers. Import qualified; names clash with 'Prelude'.
 module JShark.Math
   ( inc
   , dec
@@ -32,8 +33,8 @@ module JShark.Math
   , trunc
   , pow
   , atan2
-  , max_
-  , min_
+  , max
+  , min
   , hypot
   , random
   ) where
@@ -92,11 +93,11 @@ ceil = MathUnary MathCeil
 round = MathUnary MathRound
 trunc = MathUnary MathTrunc
 
-pow, atan2, max_, min_, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pow, atan2, max, min, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pow = MathBinary MathPow
 atan2 = MathBinary MathAtan2
-max_ = MathBinary MathMax
-min_ = MathBinary MathMin
+max = MathBinary MathMax
+min = MathBinary MathMin
 hypot = MathBinary MathHypot
 
 -- | @Math.random()@. Not pure (yields a different value each call), so

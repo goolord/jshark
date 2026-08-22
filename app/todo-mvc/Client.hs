@@ -201,8 +201,8 @@ mainJS = do
             Dom.appendChild list li
 
         active <- incomplete items
-        let activeN = Array.length_ active
-            totalN = Array.length_ items
+        let activeN = Array.length active
+            totalN = Array.length items
             hasTodos = totalN .> 0
         Dom.setInnerText countEl (Show activeN)
         ifS (activeN .== 1)
@@ -235,7 +235,7 @@ mainJS = do
         addEventListener_ "submit" form $ do
           inputRaw <- Dom.getValue input
           let todoTitle = String.trim inputRaw
-          whenS (String.length_ todoTitle .> 0) $ do
+          whenS (String.length todoTitle .> 0) $ do
             nid <- get @"nextId" state
             todo <- mkTodo todoTitle nid
             items <- get @"todos" state
