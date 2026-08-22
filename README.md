@@ -1,4 +1,5 @@
 ## 🦈 JShark
+https://goolord.github.io/jshark/
 
 Haskell EDSL that emits JavaScript. Binders are PHOAS: a variable is
 `f u` for some `f :: Universe -> Type`, and a closed term is `forall f`.
