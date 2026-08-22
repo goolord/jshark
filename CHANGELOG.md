@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+* Dependency bounds follow PVP for the APIs we import: lower bound is
+  the version that added the symbol, upper bound is the next `A`
+  (`text < 3`, `lucid < 3`, `scotty < 1`). We do not pin the current `B`.
 * One `examples` executable serves Breakout and TodoMVC (`cabal run examples`,
   port 3000). `/` is a directory listing; each app lives at `/<name>`.
   The apps are named libraries (`breakout`, `todo-mvc`); the executable
