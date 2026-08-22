@@ -28,6 +28,7 @@ module JShark.Api
   , true_
   , false_
   , string
+  , uint8Array
   , emptyArray
   , toString
 
@@ -141,6 +142,7 @@ module JShark.Api
   )
 where
 
+import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.TypeLits (KnownSymbol)
@@ -264,6 +266,10 @@ false_ = bool False
 
 string :: Text -> Expr f 'String
 string = Literal . ValueString
+
+-- | @new Uint8Array([…])@ from a host 'ByteArray'.
+uint8Array :: ByteArray -> Expr f 'Uint8Array
+uint8Array = Literal . ValueUint8Array
 
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])

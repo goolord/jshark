@@ -10,6 +10,7 @@ module Main (main) where
 
 import BunTests (bunEvalTests)
 import qualified Control.Exception as Ex
+import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -116,6 +117,17 @@ evaluatorTests =
     , testCase "Show of Result is JS String(object)" $
         case evaluate (Show (ok (number 5) :: Expr f ('Result 'String 'Number))) of
           ValueString s -> s @?= "[object Object]"
+    , testCase "Uint8Array literals compare by contents" $ do
+        case evaluate (uint8Array (bytes [1, 2, 3]) .== uint8Array (bytes [1, 2, 3])) of
+          ValueBool b -> b @?= True
+        case evaluate (uint8Array (bytes [1, 2]) .== uint8Array (bytes [1, 2, 3])) of
+          ValueBool b -> b @?= False
+    , testCase "Show of Uint8Array is comma-joined bytes" $
+        case evaluate (Show (uint8Array sampleArray)) of
+          ValueString s -> s @?= "1,2,3"
+    , testCase "typeof of Uint8Array is object" $
+        case evaluate (typeOf (uint8Array sampleArray)) of
+          ValueString s -> s @?= "object"
     , testCase "evaluateCached agrees with evaluate on a shared heap node" $ do
         let
           x = number 21 + number 21
@@ -930,6 +942,12 @@ goodPartsTests =
     , testCase "regex source escapes quotes" $
         renderJS (pureAST (Regex.test (Regex.regex "a\"b") (string "x")))
           @?= "new RegExp(\"a\\\"b\").test(\"x\")"
+    , testCase "uint8Array is new Uint8Array, not a JS Array" $
+        renderJS (pureAST (uint8Array sampleArray))
+          @?= "new Uint8Array([1, 2, 3])"
+    , testCase "empty uint8Array is new Uint8Array([])" $
+        renderJS (pureAST (uint8Array emptyArray8))
+          @?= "new Uint8Array([])"
     , testCase "hasOwn uses Object.prototype.hasOwnProperty.call" $
         T.isInfixOf
           "Object.prototype.hasOwnProperty.call"
@@ -977,9 +995,13 @@ genericTests =
         G.fromValue (evaluate (G.toJS (Just (1 :: Int)))) @?= Just (1 :: Int)
         G.fromValue (evaluate (G.toJS (Left "e" :: Either Text Double)))
           @?= (Left "e" :: Either Text Double)
+        G.fromValue (evaluate (G.toJS sampleArray)) @?= sampleArray
     , testCase "toObject renders record fields" $
         renderJS (effectfulAST (G.toObject (Person "Ada" 36)))
           @?= "{\"fullName\": \"Ada\", \"years\": 36.0}"
+    , testCase "toObject renders a ByteArray field as Uint8Array" $
+        renderJS (effectfulAST (G.toObject (Packet sampleArray)))
+          @?= "{\"octets\": new Uint8Array([1, 2, 3])}"
     , testCase "toObject renders list and Maybe fields" $
         renderJS (effectfulAST (G.toObject (Tagged "x" ["a", "b"] Nothing)))
           @?= "{\"label\": \"x\", \"tags\": [\"a\", \"b\"], \"nickname\": null}"
@@ -1277,6 +1299,8 @@ optimizeTests =
           @?= "foo()"
     , testCase "typeof of a literal folds" $
         renderJS (pureAST (typeOf (number 1))) @?= "\"number\""
+    , testCase "typeof of Uint8Array folds to object" $
+        renderJS (pureAST (typeOf (uint8Array sampleArray))) @?= "\"object\""
     , testCase "string Semigroup is Concat" $
         renderJS (pureAST (("a" :: Expr f 'String) <> "b")) @?= "\"ab\""
     , testCase "try_ renders try/catch" $
@@ -1497,3 +1521,9 @@ compilerTests =
             )
         out @?= "let n0;\nif (cond()) {\n  n0 = 1.0;\n} else {\n  n0 = 2.0;\n}"
     ]
+
+emptyArray8 :: ByteArray
+emptyArray8 = bytes []
+
+sampleArray :: ByteArray
+sampleArray = bytes [1, 2, 3]

@@ -145,6 +145,13 @@ bunEvalTests =
             , bunCase
                 "result ok unit"
                 (ok (Literal ValueUnit) :: Expr f ('Result 'String 'Unit))
+            , bunCase "Uint8Array contents" (uint8Array (bytes [1, 2, 3]))
+            , bunCase
+                "Uint8Array Eq"
+                (uint8Array (bytes [1, 2]) .== uint8Array (bytes [1, 2]))
+            , bunCase
+                "Show Uint8Array"
+                (Show (uint8Array (bytes [1, 2, 3])))
             , testCase "prettyJS compileEffect ifE+LambdaE" $ do
                 clearCompilerCache
                 out <- compileEffect readableConfig prettyIfLambda
@@ -396,6 +403,14 @@ encodeJSValue = \case
   ValueResult (Right x) -> encodeResult True x
   ValueResult (Left x) -> encodeResult False x
   ValueRegex s -> encodeJSString (T.unpack s)
+  ValueUint8Array ba ->
+    "{"
+      ++ intercalate
+        ","
+        [ encodeJSString (show i) ++ ":" ++ show w
+        | (i, w) <- zip [0 :: Int ..] (byteElems ba)
+        ]
+      ++ "}"
   ValueFrozen {} -> error "encodeJSValue: frozen objects are not JSON"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
 

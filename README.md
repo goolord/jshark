@@ -117,13 +117,15 @@ evaluateEffectJSONWith
 `Result` (below) — eliminate them with `optionCase` / `resultCase`,
 not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
 is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
+Host `ByteArray` is `'Uint8Array` (`new Uint8Array([…])`); `.==` is
+content equality.
 
 No `==`, `with`, `eval`, `this`, or implicit `new`. No `/src/`
 literals (`new RegExp`). Functions are unary (`Array.sort`'s compare
 is the binary exception). Array index is `Math.trunc` and throws on
 OOB. `parseInt_` takes a radix. `.==` is `$eq` (`===`, then
-structural arrays and plain objects). Frozen `'Object` is `Expr`;
-`'MutableObject` is `Effect`.
+structural arrays, `Uint8Array` contents, and plain objects). Frozen
+`'Object` is `Expr`; `'MutableObject` is `Effect`.
 
 `JShark.Classes` copies `Functor` / `Monad` / `Foldable` / … at kind
 `Universe -> Universe` (object-language maps). Import qualified; they

@@ -43,6 +43,7 @@ module JShark.Generic
   )
 where
 
+import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -134,6 +135,7 @@ type family ScalarU (a :: Type) :: Universe where
   ScalarU Text = 'String
   ScalarU Bool = 'Bool
   ScalarU () = 'Unit
+  ScalarU ByteArray = 'Uint8Array
 
 -- | Host type → JShark universe for 'ToJS' / 'ToValue' only. No
 -- catch-all: records are 'toObject', not 'Expr'.
@@ -144,6 +146,7 @@ type family UniverseOf (a :: Type) :: Universe where
   UniverseOf Text = ScalarU Text
   UniverseOf Bool = ScalarU Bool
   UniverseOf () = ScalarU ()
+  UniverseOf ByteArray = ScalarU ByteArray
   UniverseOf [a] = 'Array (UniverseOf a)
   UniverseOf (Maybe a) = 'Option (UniverseOf a)
   UniverseOf (Either e a) = 'Result (UniverseOf e) (UniverseOf a)
@@ -157,6 +160,7 @@ type family FieldU (a :: Type) :: Universe where
   FieldU Text = ScalarU Text
   FieldU Bool = ScalarU Bool
   FieldU () = ScalarU ()
+  FieldU ByteArray = ScalarU ByteArray
   FieldU [a] = 'Array (FieldU a)
   FieldU (Maybe a) = 'Option (FieldU a)
   FieldU (Either e a) = 'Result (FieldU e) (FieldU a)
@@ -224,6 +228,13 @@ instance ToValue () where
   toValue _ = ValueUnit
   fromValue ValueUnit = ()
 
+instance ToJS ByteArray where
+  toJS = Literal . toValue
+
+instance ToValue ByteArray where
+  toValue = ValueUint8Array
+  fromValue (ValueUint8Array ba) = ba
+
 instance ToValue a => ToJS [a] where
   toJS = Literal . toValue
 
@@ -283,6 +294,7 @@ type family KindOf (a :: Type) :: FieldKind where
   KindOf Text = 'Prim
   KindOf Bool = 'Prim
   KindOf () = 'Prim
+  KindOf ByteArray = 'Prim
   KindOf [a] = 'List (KindOf a)
   KindOf (Maybe a) = 'Opt (KindOf a)
   KindOf (Either _ _) = 'Prim

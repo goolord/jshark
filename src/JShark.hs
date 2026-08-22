@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
@@ -123,6 +124,7 @@ where
 -- through 'Arg', not by treating effects as expressions.
 
 import Control.Monad (foldM)
+import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
@@ -141,6 +143,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
 import Data.Word (Word32)
+import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
+import GHC.Word (Word8 (..))
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import JShark.Rec
 import JShark.Types
@@ -183,6 +187,7 @@ valueEq (ValueResult a) (ValueResult b) = case (a, b) of
   (Right x, Right y) -> valueEq x y
   _ -> False
 valueEq (ValueRegex a) (ValueRegex b) = a == b
+valueEq (ValueUint8Array a) (ValueUint8Array b) = a == b
 valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
 valueEq (ValueFunction _) (ValueFunction _) =
   error "evaluate: functions cannot be compared for equality"
@@ -241,6 +246,7 @@ jsShow (ValueOption Nothing) = "null"
 jsShow (ValueOption (Just x)) = jsShow x
 jsShow ValueResult {} = "[object Object]"
 jsShow (ValueRegex s) = s
+jsShow (ValueUint8Array ba) = jsShowUint8Array ba
 jsShow ValueFrozen {} = "[object Object]"
 jsShow (ValueFunction _) = error "evaluate: cannot show a function"
 
@@ -267,6 +273,7 @@ typeOfValue = \case
   ValueOption (Just v) -> typeOfValue v
   ValueResult {} -> "object"
   ValueRegex {} -> "object"
+  ValueUint8Array {} -> "object"
   ValueFrozen {} -> "object"
 
 jsShowNumber :: Double -> String
@@ -457,6 +464,20 @@ escapeJsString = concatMap esc
          in
           "\\u" ++ replicate (4 - length h) '0' ++ h
     | otherwise = [c]
+
+uint8Elems :: ByteArray -> [Word8]
+uint8Elems (ByteArray ba#) =
+  [W8# (indexWord8Array# ba# i#) | I# i# <- [0 .. I# (sizeofByteArray# ba#) - 1]]
+
+-- | JS @String(uint8arr)@ is @Array.prototype.toString@: comma-joined bytes.
+jsShowUint8Array :: ByteArray -> Text
+jsShowUint8Array = T.intercalate "," . map (T.pack . show) . uint8Elems
+
+jsUint8ArrayLit :: ByteArray -> Doc
+jsUint8ArrayLit ba =
+  "new Uint8Array"
+    <> P.parens
+      (P.brackets (P.hcat (P.punctuate ", " (map (P.int . fromIntegral) (uint8Elems ba)))))
 
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
 -- 'Embed' is a typed hole filler: applying a PHOAS continuation to
@@ -768,6 +789,7 @@ goOpen cache e = case e of
   Literal ValueBool {} -> go cache e
   Literal ValueUnit -> go cache e
   Literal ValueRegex {} -> go cache e
+  Literal ValueUint8Array {} -> go cache e
   FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit (goOpen cache)) fs
   GetField @k o -> do
     ov <- goOpen cache o
@@ -823,11 +845,11 @@ data Helper = HelperEq | HelperGroupBy | HelperZipWith
 
 helperSource :: Helper -> Doc
 helperSource = \case
-  -- @===@ then structural arrays / plain objects (frozen records, 'Result').
-  -- Identity-only @===@ would make two equal @[1]@ / @{x:1}@ bindings
-  -- disagree with 'evaluate'.
+  -- @===@ then structural arrays / Uint8Array contents / plain objects
+  -- (frozen records, 'Result'). Identity-only @===@ would make two equal
+  -- @[1]@ / @{x:1}@ / @Uint8Array@ bindings disagree with 'evaluate'.
   HelperEq ->
-    "function $eq(a,b){if(a===b)return true;if(Array.isArray(a)&&Array.isArray(b)){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$eq(a[i],b[i]))return false;return true}if(a&&b&&a.constructor===Object&&b.constructor===Object){var ka=Object.keys(a);if(ka.length!==Object.keys(b).length)return false;for(var j=0;j<ka.length;j++){var k=ka[j];if(!Object.prototype.hasOwnProperty.call(b,k)||!$eq(a[k],b[k]))return false}return true}return false}"
+    "function $eq(a,b){if(a===b)return true;if(Array.isArray(a)&&Array.isArray(b)){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$eq(a[i],b[i]))return false;return true}if(a instanceof Uint8Array&&b instanceof Uint8Array){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true}if(a&&b&&a.constructor===Object&&b.constructor===Object){var ka=Object.keys(a);if(ka.length!==Object.keys(b).length)return false;for(var j=0;j<ka.length;j++){var k=ka[j];if(!Object.prototype.hasOwnProperty.call(b,k)||!$eq(a[k],b[k]))return false}return true}return false}"
   -- First-seen keys, arrays of items. Not a null-prototype @Object.groupBy@.
   HelperGroupBy ->
     "function $groupBy(a,f){var g=Object.create(null),ks=[],i,k;for(i=0;i<a.length;i++){k=f(a[i]);if(!Object.prototype.hasOwnProperty.call(g,k)){ks.push(k);g[k]=[]}g[k].push(a[i])}return ks.map(function(k){return {key:k,items:g[k]}})}"
@@ -1461,6 +1483,7 @@ isCheapValue = \case
   ValueResult (Left v) -> isCheapValue v
   ValueResult (Right v) -> isCheapValue v
   ValueRegex {} -> False
+  ValueUint8Array {} -> False
   ValueArray {} -> False
   ValueFunction {} -> False
   ValueFrozen {} -> False
@@ -2566,6 +2589,7 @@ pureAST' !s0 = \case
     ValueResult (Left x) -> renderResultLit False s0 x
     ValueRegex s ->
       (s0, Code mempty ("new RegExp" <> P.parens (jsQuote s)))
+    ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))
     ValueBool True -> (s0, Code mempty "true")
     ValueBool False -> (s0, Code mempty "false")
     ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"

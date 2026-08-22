@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* `'Uint8Array` primitive. Host `ByteArray` (base) via `ToJS` / `ToValue` /
+  `uint8Array`. Literals emit `new Uint8Array([…])`. `$eq` and `evaluate`
+  compare contents. `String` is the comma-joined bytes (`"1,2,3"`).
+  `base >= 4.17`.
+
 * `JShark.Bun.evaluateEffectJSON` compiles a closed `Effect` to an IIFE and
   runs it with `bun`, returning `JSON.stringify` of the result. Pure `Expr`
   still uses the Haskell `evaluate` tree-walk; an `Effect` has FFI,

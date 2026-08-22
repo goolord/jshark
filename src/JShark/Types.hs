@@ -64,6 +64,7 @@ module JShark.Types
 where
 
 import Control.Monad (ap, void)
+import Data.Array.Byte (ByteArray)
 import Data.Kind
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -87,6 +88,8 @@ data Universe
     Result Universe Universe
   | Regex
   | Bool
+  | -- | JS @Uint8Array@. Host 'ByteArray'.
+    Uint8Array
   | -- | Frozen record. Row @r@ is a host 'Type', not a 'Universe' constructor.
     Object Type
   | -- | Mutable JS object. Same row @r@ as 'Object'.
@@ -102,6 +105,10 @@ data Value :: Universe -> Type where
   ValueResult :: Either (Value e) (Value a) -> Value ('Result e a)
   ValueRegex :: Text -> Value 'Regex
   ValueBool :: Bool -> Value 'Bool
+  ValueUint8Array ::
+    ByteArray
+    -> Value 'Uint8Array
+    -- ^ Contents of a @Uint8Array@ (unpinned 'ByteArray').
   ValueFrozen ::
     [FieldLit Value r]
     -> Value ('Object r)
