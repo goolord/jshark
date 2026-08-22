@@ -302,9 +302,10 @@ drawBanner ctx state = do
   fill ctx (string bannerFill)
   set @"textAlign" ctx (string "center")
   toSyntax $
-    G.whenTag @"Win" ph
-      (\_ -> stmts $ bannerText ctx (string "You win"))
-      (stmts $ bannerText ctx (string "Game over"))
+    G.caseSum ph $
+      G.on @"Play" (\_ -> noOp) $
+      G.on @"Win" (\_ -> stmts $ bannerText ctx (string "You win")) $
+      G.Case_ (\_ -> stmts $ bannerText ctx (string "Game over"))
   set @"textAlign" ctx (string "left")
 
 bannerText ::
@@ -357,12 +358,16 @@ phaseSum state = fmap toEffect (get @"phase" state)
 whenPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenPlay state body = do
   ph <- phaseSum state
-  toSyntax $ G.whenTag @"Play" ph (\_ -> stmts body) noOp
+  toSyntax $ G.caseSum ph $
+    G.on @"Play" (\_ -> stmts body) $
+    G.Case_ (\_ -> noOp)
 
 unlessPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 unlessPlay state body = do
   ph <- phaseSum state
-  toSyntax $ G.whenTag @"Play" ph (\_ -> noOp) (stmts body)
+  toSyntax $ G.caseSum ph $
+    G.on @"Play" (\_ -> noOp) $
+    G.Case_ (\_ -> stmts body)
 
 setPhase :: Effect f (ObjectOf Game) -> Phase -> EffectSyntax f (f 'Unit)
 setPhase state p = do

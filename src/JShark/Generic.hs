@@ -3,9 +3,12 @@
   , DataKinds
   , FlexibleContexts
   , FlexibleInstances
+  , GADTs
   , MultiParamTypeClasses
+  , PatternSynonyms
   , ScopedTypeVariables
   , TypeApplications
+  , TypeAbstractions
   , TypeFamilies
   , TypeOperators
   , UndecidableInstances
@@ -31,6 +34,11 @@ module JShark.Generic
   , newRecord
   , toSum
   , toSumArray
+  , CtorNames
+  , CaseSum(..)
+  , data Case_
+  , on
+  , caseSum
   , whenTag
   , sumTag
   ) where
@@ -49,7 +57,7 @@ import GHC.TypeLits
   , symbolVal
   , type (+)
   )
-import JShark.Api (bool, expr, hold, ifE, none, number, some, string, yield, (.==))
+import JShark.Api (bool, expr, hold, ifE, none, number, some, string, throw_, yield, (.==))
 import JShark.Array (push_)
 import JShark.Object (field, get, newObject, obj, unsafeObjectAssign, unsafeObjectGet)
 import JShark.Types
@@ -302,7 +310,7 @@ instance TypeError ('Text "JShark.Generic: sum types are not records") =>
   GToObject (l :+: r) row where
   gtoFields _ = error "JShark.Generic: sum types"
 
--- | Tagged sum row. Only 'tag' is a 'Field'; payload is 'whenTag'.
+-- | Tagged sum row. Only 'tag' is a 'Field'; payload is 'caseSum' / 'whenTag'.
 data Tagged (a :: Type)
 
 type instance Field (Tagged a) "tag" = 'String
@@ -416,8 +424,97 @@ toSumArray xs = fromSyntax $ do
 sumTag :: Effect f (SumOf a) -> EffectSyntax f (Expr f 'String)
 sumTag = get @"tag"
 
+-- | Constructor names of @a@ in declaration order.
+type family CtorNames a :: [Symbol] where
+  CtorNames a = GCtorNames (Rep a)
+
+type family GCtorNames (r :: Type -> Type) :: [Symbol] where
+  GCtorNames (D1 _ f) = GCtorNames f
+  GCtorNames (l :+: r) = AppendSym (GCtorNames l) (GCtorNames r)
+  GCtorNames (C1 ('MetaCons n _ _) _) = '[n]
+  GCtorNames V1 =
+    TypeError ('Text "JShark.Generic: caseSum expects a non-empty sum type")
+  GCtorNames _ =
+    TypeError ('Text "JShark.Generic: caseSum expects a sum type")
+
+type family AppendSym (xs :: [Symbol]) (ys :: [Symbol]) :: [Symbol] where
+  AppendSym '[] ys = ys
+  AppendSym (x ': xs) ys = x ': AppendSym xs ys
+
+-- | Handler chain indexed by constructor names. @caseSum s arms@
+-- requires @arms :: CaseSum a f v (CtorNames a)@. 'CaseAny' / 'Case_'
+-- inhabit any leftover suffix (does not extend the name list).
+data CaseSum a f v (ns :: [Symbol]) where
+  CaseEnd :: CaseSum a f v '[]
+  CaseAny :: (Expr f 'String -> Effect f v) -> CaseSum a f v ns
+  CaseCons ::
+       forall (name :: Symbol) ns a f v.
+       ( KnownSymbol name
+       , Unpayload (IsUnit (CtorU a name)) (CtorU a name)
+       )
+    => (Expr f (CtorU a name) -> Effect f v)
+    -> CaseSum a f v ns
+    -> CaseSum a f v (name ': ns)
+
+-- | Suffix wildcard. Same as 'CaseAny'.
+pattern Case_ :: (Expr f 'String -> Effect f v) -> CaseSum a f v ns
+pattern Case_ k = CaseAny k
+
+-- | @on @"Ctor" handler rest@
+on ::
+     forall (name :: Symbol) a f v ns.
+     ( KnownSymbol name
+     , Unpayload (IsUnit (CtorU a name)) (CtorU a name)
+     )
+  => (Expr f (CtorU a name) -> Effect f v)
+  -> CaseSum a f v ns
+  -> CaseSum a f v (name ': ns)
+on = CaseCons
+
+-- | Exhaustive @if (s.tag === "C1") … else if …@. Every named arm
+-- tests its tag. 'CaseEnd' throws on leftover tags; 'CaseAny' /
+-- 'Case_' is a suffix wildcard (remaining constructors + unknown).
+-- Named arms must be a prefix of 'CtorNames' in declaration order.
+--
+-- @
+-- caseSum shape $
+--   on @"Circle" (\\r -> …) $
+--   on @"Rect"   (\\p -> …) $
+--   CaseEnd
+-- @
+--
+-- @
+-- caseSum phase $
+--   on @"Play" (\\_ -> …) $
+--   Case_ (\\_ -> noOp)
+-- @
+caseSum ::
+     forall a f v.
+     Effect f (SumOf a)
+  -> CaseSum a f v (CtorNames a)
+  -> Effect f v
+caseSum s arms = fromSyntax $ do
+  o <- hold s
+  t <- get @"tag" o
+  toSyntax (emitCase t o arms)
+
+emitCase ::
+     forall a f v ns r.
+     Expr f 'String
+  -> Effect f ('Object r)
+  -> CaseSum a f v ns
+  -> Effect f v
+emitCase t o (CaseCons @name hit rest) =
+  ifE (expr (t .== string (T.pack (symbolVal (Proxy @name)))))
+    (hit (unpayload @(IsUnit (CtorU a name)) @(CtorU a name) o))
+    (emitCase t o rest)
+emitCase t _ (CaseAny k) = k t
+emitCase t _ CaseEnd =
+  throw_ (string (T.pack "JShark.Generic: caseSum: unhandled ") <> t)
+
 -- | @if (s.tag === "Ctor") hit(s.payload) else miss@. Nullary ctors
--- pass 'Unit'; they do not read @payload@.
+-- pass 'Unit'; they do not read @payload@. One-arm; use 'caseSum' for
+-- an exhaustive match.
 whenTag ::
      forall (name :: Symbol) a f v.
      (KnownSymbol name, Unpayload (IsUnit (CtorU a name)) (CtorU a name))

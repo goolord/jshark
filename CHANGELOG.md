@@ -9,8 +9,12 @@
 * `JShark.Generic`: `Generic` records as objects (`toObject` /
   `toObjectArray` / `newRecord`, row `As a`; `ViaGeneric` for `'Object a`).
   Primitives via `ToJS` / `ToValue` (`Int` is IEEE `Number`).
-  Sums as `{tag, payload}` (`toSum` / `toSumArray` / `whenTag` / `sumTag`,
-  row `Tagged a`). `Either` stays `Result`.
+  Sums as `{tag, payload}` (`toSum` / `toSumArray` / `caseSum` / `whenTag` /
+  `sumTag`, row `Tagged a`). `Either` stays `Result`.
+* `caseSum` / `on` / `CaseEnd` / `CaseAny` (`Case_`): coverage-checked
+  Generic sum case. Named arms are a prefix of `CtorNames a`. Every
+  named arm tests its tag; `CaseEnd` throws on leftovers; `CaseAny` is
+  a suffix wildcard. `whenTag` is the one-arm matcher.
 * `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
   `render` is `bindRec`, not a persisted field.
 * `call0` accepts `ToEffect` (`Expr` or `Effect`).

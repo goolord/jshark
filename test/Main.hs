@@ -507,6 +507,44 @@ genericTests = testGroup "generic"
               yield w)
             (expr (number 0)))))
         @?= True
+  , testCase "caseSum nullary checks every named tag" $ do
+      let js = T.pack $ renderJS (effectfulAST
+            (G.caseSum @Color (ffi "color" RecNil) $
+               G.on @"Red" (\_ -> expr (string "r")) $
+               G.on @"Green" (\_ -> expr (string "g")) $
+               G.on @"Blue" (\_ -> expr (string "b")) $
+               G.CaseEnd))
+      T.isInfixOf ".tag" js @?= True
+      T.isInfixOf "=== \"Red\"" js @?= True
+      T.isInfixOf "=== \"Green\"" js @?= True
+      T.isInfixOf "=== \"Blue\"" js @?= True
+      T.isInfixOf "throw" js @?= True
+  , testCase "caseSum Case_ is a suffix wildcard" $ do
+      let js = T.pack $ renderJS (effectfulAST
+            (G.caseSum @Color (ffi "color" RecNil) $
+               G.on @"Red" (\_ -> expr (string "r")) $
+               G.Case_ (\_ -> expr (string "other"))))
+      T.isInfixOf "=== \"Red\"" js @?= True
+      T.isInfixOf "=== \"Green\"" js @?= False
+      T.isInfixOf "=== \"Blue\"" js @?= False
+  , testCase "caseSum unary payload is the value" $
+      T.isInfixOf ".payload" (T.pack $ renderJS (effectfulAST
+        (G.caseSum @Shape (ffi "shape" RecNil) $
+           G.on @"Circle" (\r -> expr r) $
+           G.on @"Rect" (\_ -> expr (number 0)) $
+           G.CaseEnd)))
+        @?= True
+  , testCase "caseSum n-ary payload fields are gettable" $
+      T.isInfixOf "[\"0\"]" (T.pack $ renderJS (effectfulAST (fromSyntax $ do
+        s <- hold (ffi "shape" RecNil)
+        toSyntax $
+          G.caseSum @Shape s $
+            G.on @"Circle" (\_ -> expr (number 0)) $
+            G.on @"Rect" (\p -> fromSyntax $ do
+              w <- Object.get @"0" (Lift p)
+              yield w) $
+            G.CaseEnd)))
+        @?= True
   ]
 
 optimizeTests :: TestTree
