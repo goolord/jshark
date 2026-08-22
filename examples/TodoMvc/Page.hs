@@ -1,6 +1,4 @@
-{-# LANGUAGE
-    OverloadedStrings
-#-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Page (page) where
 

@@ -1,20 +1,20 @@
-{-# LANGUAGE
-    DataKinds
-  , OverloadedStrings
-#-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 
--- | Wrappers over the JS @console@ object.
--- Import qualified; names clash with 'Prelude'.
+{- | Wrappers over the JS @console@ object.
+Import qualified; names clash with 'Prelude'.
+-}
 module JShark.Console
   ( log
   , warn
   , error
   , info
-  ) where
+  )
+where
 
-import Prelude hiding (error, log)
 import JShark.Api
-import JShark.Rec ((<:), Rec(..))
+import JShark.Rec (Rec (..), (<:))
+import Prelude hiding (error, log)
 
 console_ :: String -> Expr f u -> EffectSyntax f ()
 console_ name x = toSyntax_ (ffi ("console." ++ name) (arg x <: RecNil))

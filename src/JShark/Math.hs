@@ -1,11 +1,10 @@
-{-# LANGUAGE
-    DataKinds
-  , GADTs
-  , OverloadedStrings
-#-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 
--- | JS @Math@ names that are not Haskell 'Num'/'Fractional'/'Floating'.
--- Import qualified; remaining names still clash with 'Prelude' (@floor@, @round@, …).
+{- | JS @Math@ names that are not Haskell 'Num'/'Fractional'/'Floating'.
+Import qualified; remaining names still clash with 'Prelude' (@floor@, @round@, …).
+-}
 module JShark.Math
   ( inc
   , dec
@@ -28,15 +27,16 @@ module JShark.Math
   , min
   , hypot
   , random
-  ) where
+  )
+where
 
+import JShark.Api (ffi, lambda)
+import JShark.Rec (Rec (..))
 import JShark.Types
-import JShark.Api (lambda, ffi)
-import JShark.Rec (Rec(..))
-import Prelude hiding (floor, round, max, min, atan2)
+import Prelude hiding (atan2, floor, max, min, round)
 
 inc :: Expr f ('Function 'Number 'Number)
-inc = lambda (+1)
+inc = lambda (+ 1)
 
 dec :: Expr f ('Function 'Number 'Number)
 dec = lambda (\x -> x - 1)
@@ -62,8 +62,14 @@ log2e = 1.4426950408889634
 log10e :: Expr f 'Number
 log10e = 0.4342944819032518
 
-cbrt, log2, log10, floor, ceil, round, trunc
-  :: Expr f 'Number -> Expr f 'Number
+cbrt
+  , log2
+  , log10
+  , floor
+  , ceil
+  , round
+  , trunc ::
+    Expr f 'Number -> Expr f 'Number
 cbrt = MathUnary MathCbrt
 log2 = MathUnary MathLog2
 log10 = MathUnary MathLog10
@@ -78,7 +84,8 @@ max = MathBinary MathMax
 min = MathBinary MathMin
 hypot = MathBinary MathHypot
 
--- | @Math.random()@. Not pure (yields a different value each call), so
--- it's an 'Effect'.
+{- | @Math.random()@. Not pure (yields a different value each call), so
+it's an 'Effect'.
+-}
 random :: Effect f 'Number
 random = ffi "Math.random" RecNil

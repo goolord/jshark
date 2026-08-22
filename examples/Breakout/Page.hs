@@ -34,7 +34,9 @@ page headExtra source = doctypehtml_ $ do
       p_ "Arrows or mouse to move. Space to restart after win or loss."
       p_ $ do
         "JShark port of the "
-        a_ [href_ "https://github.com/end3r/Gamedev-Canvas-workshop"] "MDN canvas workshop"
+        a_
+          [href_ "https://github.com/end3r/Gamedev-Canvas-workshop"]
+          "MDN canvas workshop"
         " with types from "
         a_ [href_ "https://github.com/akhesaCaro/haskell-breakout"] "haskell-breakout"
     source

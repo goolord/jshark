@@ -1,18 +1,17 @@
-{-# LANGUAGE 
-    DeriveGeneric
-  , OverloadedStrings
-#-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 
--- | Host-side Breakout model. 'Generic' rows become JS objects via
--- 'JShark.Generic'. Layout matches the MDN canvas workshop grid;
--- 'Game' / 'Brick' / 'Ball' follow the Haskell breakout domain split
--- (state, bricks, ball) without Gloss physics or items.
+{- | Host-side Breakout model. 'Generic' rows become JS objects via
+'JShark.Generic'. Layout matches the MDN canvas workshop grid;
+'Game' / 'Brick' / 'Ball' follow the Haskell breakout domain split
+(state, bricks, ball) without Gloss physics or items.
+-}
 module Types
-  ( Ball(..)
-  , Paddle(..)
-  , Brick(..)
-  , Game(..)
-  , Phase(..)
+  ( Ball (..)
+  , Paddle (..)
+  , Brick (..)
+  , Game (..)
+  , Phase (..)
   , canvasW
   , canvasH
   , ballR
@@ -33,7 +32,8 @@ module Types
   , ballFill
   , ink
   , bannerFill
-  ) where
+  )
+where
 
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -81,12 +81,12 @@ data Ball = Ball
   , dx :: Double
   , dy :: Double
   }
-  deriving (Generic)
+  deriving Generic
 
 data Paddle = Paddle
   { px :: Double
   }
-  deriving (Generic)
+  deriving Generic
 
 data Brick = Brick
   { bx :: Double
@@ -94,7 +94,7 @@ data Brick = Brick
   , alive :: Bool
   , color :: Text
   }
-  deriving (Generic)
+  deriving Generic
 
 data Game = Game
   { ball :: Ball
@@ -106,7 +106,7 @@ data Game = Game
   , leftOn :: Bool
   , rightOn :: Bool
   }
-  deriving (Generic)
+  deriving Generic
 
 startBall :: Ball
 startBall = Ball (canvasW / 2) (canvasH - 30) 2 (-2)

@@ -26,16 +26,20 @@ serveExamples port banner examples = do
   putStrLn banner
   hFlush stdout
   shots <- traverse exampleShot examples
-  assets <- fmap concat $ traverse staticAsset
-    [ "highlight.min.js"
-    , "github-dark.min.css"
-    ]
+  assets <-
+    fmap concat $
+      traverse
+        staticAsset
+        [ "highlight.min.js"
+        , "github-dark.min.css"
+        ]
   scotty port $ do
     get "/" $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
       html $ renderText (indexPage shots)
     forM_ examples $ \ex -> do
-      let base = "/" <> T.unpack (exampleName ex)
+      let
+        base = "/" <> T.unpack (exampleName ex)
       get (fromString base) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
         html $ renderText (examplePage ex)
@@ -56,7 +60,8 @@ serveExamples port banner examples = do
 
 exampleShot :: Example -> IO (Example, Maybe FilePath)
 exampleShot ex = do
-  path <- getDataFileName ("examples/static/" <> T.unpack (exampleName ex) <> ".png")
+  path <-
+    getDataFileName ("examples/static/" <> T.unpack (exampleName ex) <> ".png")
   exists <- doesFileExist path
   pure (ex, if exists then Just path else Nothing)
 

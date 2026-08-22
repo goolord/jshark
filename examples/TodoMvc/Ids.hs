@@ -1,9 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | DOM ids and the hash/filter strings they imply. Page and Client
--- must use these; do not restate the literals in either file.
+{- | DOM ids and the hash/filter strings they imply. Page and Client
+must use these; do not restate the literals in either file.
+-}
 module Ids
-  ( Route(..)
+  ( Route (..)
   , routes
   , routeAll
   , routeActive
@@ -20,7 +21,8 @@ module Ids
   , idTodoCount
   , idTodoCountSuffix
   , idClearCompleted
-  ) where
+  )
+where
 
 import Data.Text (Text)
 
@@ -30,7 +32,7 @@ data Route = Route
   , routeValue :: Text
   , routeLabel :: Text
   }
-  deriving (Eq)
+  deriving Eq
 
 routeAll, routeActive, routeCompleted :: Route
 routeAll = Route "filter-all" "#/" "all" "All"

@@ -1,32 +1,29 @@
-{-# LANGUAGE
-    AllowAmbiguousTypes
-  , DataKinds
-  , DeriveGeneric
-  , OverloadedRecordDot
-  , OverloadedStrings
-  , ScopedTypeVariables
-  , TypeApplications
-  , TypeFamilies
-#-}
-
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Breakout client: MDN canvas draw loop, Haskell 'Game' row.
 module Client (mainJS) where
 
 import GHC.Generics (Generic)
+import JShark.Api
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
+import JShark.Generic (MutableObjectOf, SumOf)
 import qualified JShark.Generic as G
 import qualified JShark.Math as Math
+import JShark.Rec (Rec (..))
 import qualified JShark.Timers as Timers
-import JShark.Api
-import JShark.Generic (MutableObjectOf, SumOf)
-import JShark.Rec (Rec(..))
 import Types
   ( Ball
   , Game
-  , Phase(..)
+  , Phase (..)
   , ballFill
   , ballR
   , bannerFill
@@ -47,13 +44,19 @@ import Types
   )
 
 -- | One-shot latch so a frame breaks at most one brick.
-data Once = Once { fired :: Bool }
-  deriving (Generic)
+data Once = Once
+  { fired :: Bool
+  }
+  deriving Generic
 
--- | Instantaneous frame rate from rAF timestamps. Not game state.
--- @lastMs = -1@ means no sample yet (not @0@, which is a valid rAF time).
-data Fps = Fps { lastMs :: Double, fps :: Double }
-  deriving (Generic)
+{- | Instantaneous frame rate from rAF timestamps. Not game state.
+@lastMs = -1@ means no sample yet (not @0@, which is a valid rAF time).
+-}
+data Fps = Fps
+  { lastMs :: Double
+  , fps :: Double
+  }
+  deriving Generic
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
@@ -62,7 +65,7 @@ mainJS = do
   whenSomeE ctxOpt $ \ctx -> boot canvas ctx
 
 boot ::
-     Effect f ('MutableObject Dom.DomElement)
+  Effect f ('MutableObject Dom.DomElement)
   -> Expr f ('MutableObject Canvas.Context2D)
   -> EffectSyntax f (f 'Unit)
 boot canvas ctx = do
@@ -78,19 +81,26 @@ boot canvas ctx = do
     paint ctxH state meter
 
 wire ::
-     Effect f ('MutableObject Dom.DomElement)
+  Effect f ('MutableObject Dom.DomElement)
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 wire canvas state = do
   addEventListener "keydown" window $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       code <- getProp' e "code"
-      toSyntax $ stringCaseE code
-        [ ("Space", discard (stmts $ do
-            toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-            tryRestart state))
-        ]
-        (stmts $ bindArrows state code true_)
+      toSyntax $
+        stringCaseE
+          code
+          [
+            ( "Space"
+            , discard
+                ( stmts $ do
+                    toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+                    tryRestart state
+                )
+            )
+          ]
+          (stmts $ bindArrows state code true_)
   addEventListener "keyup" window $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       code <- getProp' e "code"
@@ -106,16 +116,18 @@ wire canvas state = do
   done
 
 bindArrows ::
-     Effect f (MutableObjectOf Game)
+  Effect f (MutableObjectOf Game)
   -> Expr f 'String
   -> Expr f 'Bool
   -> EffectSyntax f (f 'Unit)
 bindArrows state code held =
-  toSyntax $ stringCaseE code
-    [ ("ArrowRight", discard (stmts $ set @"rightOn" state held))
-    , ("ArrowLeft", discard (stmts $ set @"leftOn" state held))
-    ]
-    noOp
+  toSyntax $
+    stringCaseE
+      code
+      [ ("ArrowRight", discard (stmts $ set @"rightOn" state held))
+      , ("ArrowLeft", discard (stmts $ set @"leftOn" state held))
+      ]
+      noOp
 
 -- | In-place overwrite so the rAF closure keeps the same object identity.
 tryRestart :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
@@ -138,7 +150,10 @@ movePaddle state = do
   px0 <- pad.px
   goR <- state.rightOn
   goL <- state.leftOn
-  ifS (goR .&& px0 .< number paddleMaxX) (set @"px" pad (px0 + number paddleSpeed)) done
+  ifS
+    (goR .&& px0 .< number paddleMaxX)
+    (set @"px" pad (px0 + number paddleSpeed))
+    done
   px1 <- pad.px
   ifS (goL .&& px1 .> 0) (set @"px" pad (px1 - number paddleSpeed)) done
 
@@ -185,16 +200,17 @@ bounce state = do
   ddx <- b.dx
   ddy <- b.dy
   px0 <- pad.px
-  let r = number ballR
-      w = number canvasW
-      h = number canvasH
-      nx = bx0 + ddx
-      ny = by0 + ddy
+  let
+    r = number ballR
+    w = number canvasW
+    h = number canvasH
+    nx = bx0 + ddx
+    ny = by0 + ddy
   bounceWalls b ddx r w nx
   bounceFloor state b bx0 ddy px0 r h ny
 
 bounceWalls ::
-     Expr f (MutableObjectOf Ball)
+  Expr f (MutableObjectOf Ball)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -204,7 +220,7 @@ bounceWalls b ddx r w nx =
   whenS (nx .> (w - r) .|| nx .< r) $ set @"dx" b (negate ddx)
 
 bounceFloor ::
-     Effect f (MutableObjectOf Game)
+  Effect f (MutableObjectOf Game)
   -> Expr f (MutableObjectOf Ball)
   -> Expr f 'Number
   -> Expr f 'Number
@@ -217,18 +233,21 @@ bounceFloor state b bx0 ddy px0 r h ny =
   ifS
     (ny .< r)
     (set @"dy" b (negate ddy))
-    (whenS (ny .> (h - r)) $
-       ifS
-         (overlapsPaddle bx0 px0)
-         (do
-            set @"dx" b (paddleKick bx0 px0)
-            ddy1 <- b.dy
-            set @"dy" b (negate (abs ddy1)))
-         (do
-            lv <- state.lives
-            set @"lives" state (lv - 1)
-            lv1 <- state.lives
-            ifS (lv1 .<= 0) (setPhase state Lose) (resetBall state)))
+    ( whenS (ny .> (h - r)) $
+        ifS
+          (overlapsPaddle bx0 px0)
+          ( do
+              set @"dx" b (paddleKick bx0 px0)
+              ddy1 <- b.dy
+              set @"dy" b (negate (abs ddy1))
+          )
+          ( do
+              lv <- state.lives
+              set @"lives" state (lv - 1)
+              lv1 <- state.lives
+              ifS (lv1 .<= 0) (setPhase state Lose) (resetBall state)
+          )
+    )
 
 resetBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 resetBall state = do
@@ -238,7 +257,7 @@ resetBall state = do
   set @"paddle" state (var p)
 
 paint ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf Game)
   -> Effect f (MutableObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
@@ -253,7 +272,7 @@ paint ctx state meter = do
   unlessPlay state $ drawBanner ctx state
 
 drawBricks ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBricks ctx state = do
@@ -269,7 +288,7 @@ drawBricks ctx state = do
       done
 
 drawBall ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBall ctx state = do
@@ -284,7 +303,7 @@ drawBall ctx state = do
   done
 
 drawPaddle ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawPaddle ctx state = do
@@ -301,7 +320,7 @@ drawPaddle ctx state = do
   done
 
 drawHud ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf Game)
   -> Effect f (MutableObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
@@ -313,13 +332,15 @@ drawHud ctx state meter = do
   fill ctx (string ink)
   _ <- Canvas.fillText ctx (string "Score: " <> toString sc) 8 20
   set @"textAlign" ctx (string "center")
-  _ <- Canvas.fillText ctx (string "FPS: " <> toString n) (number (canvasW / 2)) 20
+  _ <-
+    Canvas.fillText ctx (string "FPS: " <> toString n) (number (canvasW / 2)) 20
   set @"textAlign" ctx (string "left")
-  _ <- Canvas.fillText ctx (string "Lives: " <> toString lv) (number (canvasW - 80)) 20
+  _ <-
+    Canvas.fillText ctx (string "Lives: " <> toString lv) (number (canvasW - 80)) 20
   done
 
 drawBanner ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBanner ctx state = do
@@ -327,15 +348,15 @@ drawBanner ctx state = do
   set @"font" ctx (string "28px Georgia")
   fill ctx (string bannerFill)
   set @"textAlign" ctx (string "center")
-  toSyntax $
-    G.caseSum ph $
-      G.on @"Play" (\_ -> noOp) $
-      G.on @"Win" (\_ -> stmts $ bannerText ctx (string "You win")) $
-      G.Case_ (\_ -> stmts $ bannerText ctx (string "Game over"))
+  toSyntax
+    $ G.caseSum ph
+    $ G.on @"Play" (\_ -> noOp)
+    $ G.on @"Win" (\_ -> stmts $ bannerText ctx (string "You win"))
+    $ G.Case_ (\_ -> stmts $ bannerText ctx (string "Game over"))
   set @"textAlign" ctx (string "left")
 
 bannerText ::
-     Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Canvas.Context2D)
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 bannerText ctx msg = do
@@ -349,10 +370,12 @@ bannerText ctx msg = do
       (number (canvasH / 2 + 28))
   done
 
-tickFps :: Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+tickFps ::
+  Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 tickFps meter now = do
   prev <- meter.lastMs
-  let dt = now - prev
+  let
+    dt = now - prev
   whenS (prev .>= 0 .&& dt .<= 250) $
     set @"fps" meter (Math.round (number 1000 / Math.max 1 dt))
   set @"lastMs" meter now
@@ -363,7 +386,7 @@ clampPaddle :: Expr f 'Number -> Expr f 'Number
 clampPaddle = Math.max 0 . Math.min (number paddleMaxX)
 
 hitsRect ::
-     Expr f 'Number
+  Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -379,31 +402,44 @@ overlapsPaddle ballX paddleX =
 
 paddleKick :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 paddleKick ballX paddleX =
-  let mid = paddleX + number (paddleW / 2)
-      hit = (ballX - mid) / number (paddleW / 2)
-   in hit * 3
+  let
+    mid = paddleX + number (paddleW / 2)
+    hit = (ballX - mid) / number (paddleW / 2)
+   in
+    hit * 3
 
-fill :: Effect f ('MutableObject Canvas.Context2D) -> Expr f 'String -> EffectSyntax f (f 'Unit)
+fill ::
+  Effect f ('MutableObject Canvas.Context2D)
+  -> Expr f 'String
+  -> EffectSyntax f (f 'Unit)
 fill ctx col = set @"fillStyle" ctx col
 
-phaseSum :: Effect f (MutableObjectOf Game) -> EffectSyntax f (Effect f (SumOf Phase))
+phaseSum ::
+  Effect f (MutableObjectOf Game) -> EffectSyntax f (Effect f (SumOf Phase))
 phaseSum state = fmap toEffect (state.phase)
 
-onPhase
-  :: Effect f (MutableObjectOf Game)
+onPhase ::
+  Effect f (MutableObjectOf Game)
   -> Effect f 'Unit
   -> Effect f 'Unit
   -> EffectSyntax f (f 'Unit)
 onPhase state play miss = do
   ph <- phaseSum state
-  toSyntax $ G.caseSum ph $
-    G.on @"Play" (\_ -> play) $
-    G.Case_ (\_ -> miss)
+  toSyntax
+    $ G.caseSum ph
+    $ G.on @"Play" (\_ -> play)
+    $ G.Case_ (\_ -> miss)
 
-whenPlay :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+whenPlay ::
+  Effect f (MutableObjectOf Game)
+  -> EffectSyntax f (f 'Unit)
+  -> EffectSyntax f (f 'Unit)
 whenPlay state body = onPhase state (stmts body) noOp
 
-unlessPlay :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+unlessPlay ::
+  Effect f (MutableObjectOf Game)
+  -> EffectSyntax f (f 'Unit)
+  -> EffectSyntax f (f 'Unit)
 unlessPlay state body = onPhase state noOp (stmts body)
 
 setPhase :: Effect f (MutableObjectOf Game) -> Phase -> EffectSyntax f (f 'Unit)

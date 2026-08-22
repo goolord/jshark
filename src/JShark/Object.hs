@@ -1,18 +1,16 @@
-{-# LANGUAGE
-    AllowAmbiguousTypes
-  , DataKinds
-  , FlexibleInstances
-  , MultiParamTypeClasses
-  , OverloadedStrings
-  , TypeApplications
-  , ScopedTypeVariables
-  , TypeFamilies
-  , TypeOperators
-  , UndecidableInstances
-#-}
-
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- Orphans: HasField is GHC.Records; Effect/Expr live in Types (cannot import us).
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module JShark.Object
   ( Field
   , get
@@ -27,39 +25,55 @@ module JShark.Object
   , unsafeObject
   , unsafeObjectGet
   , unsafeObjectAssign
-  , HasField(..)
-  ) where
+  , HasField (..)
+  )
+where
 
-import Data.Text (Text)
 import Data.Proxy
-import GHC.Records (HasField(..))
+import Data.Text (Text)
+import GHC.Records (HasField (..))
 import GHC.TypeLits
-import JShark.Rec (Rec(..), (<:))
+import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
--- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is
--- 'getField' on 'Effect' or 'Expr' @'MutableObject@ (both yield
--- 'EffectSyntax'). Frozen @o.k@ on @'Expr' f ('Object r)@ is a pure
--- 'GetField'. PHOAS binders @f ('MutableObject r)@ need 'get' or
--- @(Var x).k@; frozen binders use @(Var x).k@.
-get :: forall k r f. KnownSymbol k => Effect f ('MutableObject r) -> EffectSyntax f (Expr f (Field r k))
+{- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is
+'getField' on 'Effect' or 'Expr' @'MutableObject@ (both yield
+'EffectSyntax'). Frozen @o.k@ on @'Expr' f ('Object r)@ is a pure
+'GetField'. PHOAS binders @f ('MutableObject r)@ need 'get' or
+@(Var x).k@; frozen binders use @(Var x).k@.
+-}
+get ::
+  forall k r f.
+  KnownSymbol k =>
+  Effect f ('MutableObject r) -> EffectSyntax f (Expr f (Field r k))
 get x = fmap Var $ toSyntax $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
 
-instance (KnownSymbol k, u ~ Field r k) =>
-  HasField k (Effect f ('MutableObject r)) (EffectSyntax f (Expr f u)) where
+instance
+  (KnownSymbol k, u ~ Field r k) =>
+  HasField k (Effect f ('MutableObject r)) (EffectSyntax f (Expr f u))
+  where
   getField = get @k
 
-instance (KnownSymbol k, u ~ Field r k) =>
-  HasField k (Expr f ('MutableObject r)) (EffectSyntax f (Expr f u)) where
+instance
+  (KnownSymbol k, u ~ Field r k) =>
+  HasField k (Expr f ('MutableObject r)) (EffectSyntax f (Expr f u))
+  where
   getField o = get @k (Lift o)
 
-instance (KnownSymbol k, u ~ Field r k) =>
-  HasField k (Expr f ('Object r)) (Expr f u) where
+instance
+  (KnownSymbol k, u ~ Field r k) =>
+  HasField k (Expr f ('Object r)) (Expr f u)
+  where
   getField = GetField @k
 
 -- | Assign a typed field (@o.k = v@).
-set :: forall k r f. KnownSymbol k => Effect f ('MutableObject r) -> Expr f (Field r k) -> EffectSyntax f (f 'Unit)
-set o v = toSyntax $ UnsafeObjectAssign (UnsafeObjectGet o (symbolVal (Proxy :: Proxy k))) (Lift v)
+set ::
+  forall k r f.
+  KnownSymbol k =>
+  Effect f ('MutableObject r) -> Expr f (Field r k) -> EffectSyntax f (f 'Unit)
+set o v =
+  toSyntax $
+    UnsafeObjectAssign (UnsafeObjectGet o (symbolVal (Proxy :: Proxy k))) (Lift v)
 
 -- | Empty object of a known record type.
 newObject :: Effect f ('MutableObject r)
@@ -77,8 +91,9 @@ obj = ObjectLit
 frozen :: [FieldLit f r] -> Expr f ('Object r)
 frozen = FrozenLit
 
--- | @Object.create(proto)@. Prototypal inheritance without @new@.
--- The child's row is independent of the prototype's.
+{- | @Object.create(proto)@. Prototypal inheritance without @new@.
+The child's row is independent of the prototype's.
+-}
 create :: Effect f ('MutableObject proto) -> Effect f ('MutableObject child)
 create proto = FFI "Object.create" (ArgEffect proto <: RecNil)
 
@@ -88,7 +103,8 @@ delete = DeleteProp
 
 -- | @Object.prototype.hasOwnProperty.call(o, k)@ — the book's enumeration guard.
 hasOwn :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
-hasOwn o k = FFI "Object.prototype.hasOwnProperty.call" (ArgEffect o <: ArgExpr k <: RecNil)
+hasOwn o k =
+  FFI "Object.prototype.hasOwnProperty.call" (ArgEffect o <: ArgExpr k <: RecNil)
 
 unsafeObject :: Text -> Effect f ('MutableObject a)
 unsafeObject = UnsafeObject

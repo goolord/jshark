@@ -1,11 +1,10 @@
-{-# LANGUAGE
-    DataKinds
-  , OverloadedStrings
-#-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 
--- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
--- Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
--- Import qualified; names clash with 'Prelude'.
+{- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
+Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
+Import qualified; names clash with 'Prelude'.
+-}
 module JShark.String
   ( length
   , indexOf
@@ -15,10 +14,11 @@ module JShark.String
   , trim
   , split
   , replace
-  ) where
+  )
+where
 
-import Prelude hiding (length)
 import JShark.Types
+import Prelude hiding (length)
 
 -- | @s.length@
 length :: Expr f 'String -> Expr f 'Number

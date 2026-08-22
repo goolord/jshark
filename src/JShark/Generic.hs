@@ -1,22 +1,21 @@
-{-# LANGUAGE
-    AllowAmbiguousTypes
-  , DataKinds
-  , FlexibleContexts
-  , FlexibleInstances
-  , GADTs
-  , MultiParamTypeClasses
-  , PatternSynonyms
-  , ScopedTypeVariables
-  , TypeApplications
-  , TypeAbstractions
-  , TypeFamilies
-  , TypeOperators
-  , UndecidableInstances
-#-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeAbstractions #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
--- | 'Generic' product records and tagged sums as JShark objects.
--- Records: row 'As' @a@ (or @type instance Field a k = ViaGeneric a k@).
--- Sums: @{tag, payload}@ on row 'Tagged' @a@.
+{- | 'Generic' product records and tagged sums as JShark objects.
+Records: row 'As' @a@ (or @type instance Field a k = ViaGeneric a k@).
+Sums: @{tag, payload}@ on row 'Tagged' @a@.
+-}
 module JShark.Generic
   ( As
   , MutableObjectOf
@@ -28,29 +27,30 @@ module JShark.Generic
   , FieldU
   , GField
   , ViaGeneric
-  , ToJS(..)
-  , ToValue(..)
+  , ToJS (..)
+  , ToValue (..)
   , toObject
   , toObjectArray
   , newRecord
   , toSum
   , toSumArray
   , CtorNames
-  , CaseSum(..)
+  , CaseSum (..)
   , data Case_
   , on
   , caseSum
   , whenTag
   , sumTag
-  ) where
+  )
+where
 
 import Data.Kind (Type)
-import Data.Proxy (Proxy(..))
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics
 import GHC.TypeLits
-  ( ErrorMessage(..)
+  ( ErrorMessage (..)
   , KnownSymbol
   , Nat
   , Symbol
@@ -58,14 +58,26 @@ import GHC.TypeLits
   , symbolVal
   , type (+)
   )
-import Unsafe.Coerce (unsafeCoerce)
-import JShark.Api (bool, expr, hold, ifE, none, number, some, string, throw_, (.==))
+import JShark.Api
+  ( bool
+  , expr
+  , hold
+  , ifE
+  , none
+  , number
+  , some
+  , string
+  , throw_
+  , (.==)
+  )
 import JShark.Array (fromEffects)
 import JShark.Object (field, get, newObject, obj, unsafeObjectGet)
 import JShark.Types
+import Unsafe.Coerce (unsafeCoerce)
 
--- | Row phantom for a 'Generic' record @a@. Existing rows ('Window')
--- stay manual; they do not become 'As'.
+{- | Row phantom for a 'Generic' record @a@. Existing rows ('Window')
+stay manual; they do not become 'As'.
+-}
 data As (a :: Type)
 
 -- | @'MutableObject' ('As' a)@
@@ -87,7 +99,8 @@ type family GFieldRep (r :: Type -> Type) (k :: Symbol) :: Universe where
   GFieldRep (S1 ('MetaSel ('Just _) _ _ _) _) k =
     TypeError ('Text "JShark.Generic: no field " ':<>: 'ShowType k)
   GFieldRep (S1 ('MetaSel 'Nothing _ _ _) _) _ =
-    TypeError ('Text "JShark.Generic: positional fields not supported; use record selectors")
+    TypeError
+      ('Text "JShark.Generic: positional fields not supported; use record selectors")
   GFieldRep (l :*: r) k = GFieldProd (GHasField l k) l r k
   GFieldRep (_ :+: _) _ =
     TypeError ('Text "JShark.Generic: sum types are not records")
@@ -104,7 +117,10 @@ type family GHasField (r :: Type -> Type) (k :: Symbol) :: Bool where
   GHasField (C1 _ f) k = GHasField f k
   GHasField U1 _ = 'False
 
-type family GFieldProd (has :: Bool) (l :: Type -> Type) (r :: Type -> Type) (k :: Symbol) :: Universe where
+type family
+  GFieldProd (has :: Bool) (l :: Type -> Type) (r :: Type -> Type) (k :: Symbol) ::
+    Universe
+  where
   GFieldProd 'True l _ k = GFieldRep l k
   GFieldProd 'False _ r k = GFieldRep r k
 
@@ -121,8 +137,9 @@ type family ScalarU (a :: Type) :: Universe where
   ScalarU Bool = 'Bool
   ScalarU () = 'Unit
 
--- | Host type → JShark universe for 'ToJS' / 'ToValue' only. No
--- catch-all: records are 'toObject', not 'Expr'.
+{- | Host type → JShark universe for 'ToJS' / 'ToValue' only. No
+catch-all: records are 'toObject', not 'Expr'.
+-}
 type family UniverseOf (a :: Type) :: Universe where
   UniverseOf Double = ScalarU Double
   UniverseOf Float = ScalarU Float
@@ -134,8 +151,9 @@ type family UniverseOf (a :: Type) :: Universe where
   UniverseOf (Maybe a) = 'Option (UniverseOf a)
   UniverseOf (Either e a) = 'Result (UniverseOf e) (UniverseOf a)
 
--- | Field-position universe. Nested products use 'As'; nested sums use
--- 'Tagged'.
+{- | Field-position universe. Nested products use 'As'; nested sums use
+'Tagged'.
+-}
 type family FieldU (a :: Type) :: Universe where
   FieldU Double = ScalarU Double
   FieldU Float = ScalarU Float
@@ -167,57 +185,67 @@ class ToJS a => ToValue a where
 
 instance ToJS Double where
   toJS = number
+
 instance ToValue Double where
   toValue = ValueNumber
   fromValue (ValueNumber d) = d
 
 instance ToJS Float where
   toJS = number . realToFrac
+
 instance ToValue Float where
   toValue = ValueNumber . realToFrac
   fromValue (ValueNumber d) = realToFrac d
 
--- | IEEE 'Number'. Integers outside (-2^53, 2^53) round. 'fromValue'
--- uses 'truncate' (toward 0), matching a host 'toJS' roundtrip, not
--- JS ToInt32.
+{- | IEEE 'Number'. Integers outside (-2^53, 2^53) round. 'fromValue'
+uses 'truncate' (toward 0), matching a host 'toJS' roundtrip, not
+JS ToInt32.
+-}
 instance ToJS Int where
   toJS = number . fromIntegral
+
 instance ToValue Int where
   toValue = ValueNumber . fromIntegral
   fromValue (ValueNumber d) = truncate d
 
 instance ToJS Text where
   toJS = string
+
 instance ToValue Text where
   toValue = ValueString
   fromValue (ValueString s) = s
 
 instance ToJS Bool where
   toJS = bool
+
 instance ToValue Bool where
   toValue = ValueBool
   fromValue (ValueBool b) = b
 
 instance ToJS () where
   toJS _ = Literal ValueUnit
+
 instance ToValue () where
   toValue _ = ValueUnit
   fromValue ValueUnit = ()
 
 instance ToValue a => ToJS [a] where
   toJS = Literal . toValue
+
 instance ToValue a => ToValue [a] where
   toValue = ValueArray . map toValue
   fromValue (ValueArray xs) = map fromValue xs
 
 instance ToValue a => ToJS (Maybe a) where
   toJS = Literal . toValue
+
 instance ToValue a => ToValue (Maybe a) where
   toValue = ValueOption . fmap toValue
   fromValue (ValueOption m) = fmap fromValue m
 
 instance (ToValue e, ToValue a) => ToJS (Either e a) where
   toJS = Literal . toValue
+
 instance (ToValue e, ToValue a) => ToValue (Either e a) where
   toValue (Left e) = ValueResult (Left (toValue e))
   toValue (Right a) = ValueResult (Right (toValue a))
@@ -225,15 +253,20 @@ instance (ToValue e, ToValue a) => ToValue (Either e a) where
   fromValue (ValueResult (Right a)) = Right (fromValue a)
 
 -- | Record → object literal. Row is 'As' @a@. Not on 'ToJS' / 'evaluate'.
-toObject :: (Generic a, GToObject (Rep a) (As a)) => a -> Effect f ('MutableObject (As a))
+toObject ::
+  (Generic a, GToObject (Rep a) (As a)) => a -> Effect f ('MutableObject (As a))
 toObject = obj . gtoFields . from
 
 -- | @[Person]@ / @todos@. One array of 'toObject' elements.
-toObjectArray :: (Generic a, GToObject (Rep a) (As a)) => [a] -> Effect f ('Array ('MutableObject (As a)))
+toObjectArray ::
+  (Generic a, GToObject (Rep a) (As a)) =>
+  [a] -> Effect f ('Array ('MutableObject (As a)))
 toObjectArray = fromEffects . map toObject
 
 -- | Empty object of row 'As' @a@. Constrained so @newRecord \@Int@ is rejected.
-newRecord :: forall a f. (Generic a, GToObject (Rep a) (As a)) => Effect f ('MutableObject (As a))
+newRecord ::
+  forall a f.
+  (Generic a, GToObject (Rep a) (As a)) => Effect f ('MutableObject (As a))
 newRecord = newObject
   where
     -- Mention 'toObject' so 'GToObject' is used; never applied.
@@ -271,33 +304,59 @@ class DispatchField (k :: FieldKind) a where
 instance (ToValue a, FieldU a ~ UniverseOf a) => DispatchField 'Prim a where
   dispatchField = toJS
 
-instance (Generic a, GToObject (Rep a) (As a), FieldU a ~ 'MutableObject (As a)) => DispatchField 'Rec a where
+instance
+  (Generic a, GToObject (Rep a) (As a), FieldU a ~ 'MutableObject (As a)) =>
+  DispatchField 'Rec a
+  where
   dispatchField = embedObject . toObject
 
-instance (Generic a, GToSum a (Rep a), FieldU a ~ 'MutableObject (Tagged a)) => DispatchField 'Sum a where
+instance
+  (Generic a, GToSum a (Rep a), FieldU a ~ 'MutableObject (Tagged a)) =>
+  DispatchField 'Sum a
+  where
   dispatchField = embedObject . toSum
 
 instance (ToValue a, FieldU [a] ~ UniverseOf [a]) => DispatchField ('List 'Prim) [a] where
   dispatchField = toJS
 
-instance (Generic a, GToObject (Rep a) (As a), FieldU [a] ~ 'Array ('MutableObject (As a))) =>
-  DispatchField ('List 'Rec) [a] where
+instance
+  ( Generic a
+  , GToObject (Rep a) (As a)
+  , FieldU [a] ~ 'Array ('MutableObject (As a))
+  ) =>
+  DispatchField ('List 'Rec) [a]
+  where
   dispatchField = embedObject . toObjectArray
 
-instance (Generic a, GToSum a (Rep a), FieldU [a] ~ 'Array ('MutableObject (Tagged a))) =>
-  DispatchField ('List 'Sum) [a] where
+instance
+  (Generic a, GToSum a (Rep a), FieldU [a] ~ 'Array ('MutableObject (Tagged a))) =>
+  DispatchField ('List 'Sum) [a]
+  where
   dispatchField = embedObject . toSumArray
 
-instance (ToValue a, FieldU (Maybe a) ~ UniverseOf (Maybe a)) => DispatchField ('Opt 'Prim) (Maybe a) where
+instance
+  (ToValue a, FieldU (Maybe a) ~ UniverseOf (Maybe a)) =>
+  DispatchField ('Opt 'Prim) (Maybe a)
+  where
   dispatchField = toJS
 
-instance (Generic a, GToObject (Rep a) (As a), FieldU (Maybe a) ~ 'Option ('MutableObject (As a))) =>
-  DispatchField ('Opt 'Rec) (Maybe a) where
+instance
+  ( Generic a
+  , GToObject (Rep a) (As a)
+  , FieldU (Maybe a) ~ 'Option ('MutableObject (As a))
+  ) =>
+  DispatchField ('Opt 'Rec) (Maybe a)
+  where
   dispatchField Nothing = none
   dispatchField (Just x) = some (embedObject (toObject x))
 
-instance (Generic a, GToSum a (Rep a), FieldU (Maybe a) ~ 'Option ('MutableObject (Tagged a))) =>
-  DispatchField ('Opt 'Sum) (Maybe a) where
+instance
+  ( Generic a
+  , GToSum a (Rep a)
+  , FieldU (Maybe a) ~ 'Option ('MutableObject (Tagged a))
+  ) =>
+  DispatchField ('Opt 'Sum) (Maybe a)
+  where
   dispatchField Nothing = none
   dispatchField (Just x) = some (embedObject (toSum x))
 
@@ -316,16 +375,23 @@ instance GToObject U1 row where
 instance (GToObject l row, GToObject r row) => GToObject (l :*: r) row where
   gtoFields (l :*: r) = gtoFields l <> gtoFields r
 
-instance (KnownSymbol k, DispatchField (KindOf t) t, Field row k ~ FieldU t) =>
-  GToObject (S1 ('MetaSel ('Just k) su ss ds) (Rec0 t)) row where
+instance
+  (KnownSymbol k, DispatchField (KindOf t) t, Field row k ~ FieldU t) =>
+  GToObject (S1 ('MetaSel ('Just k) su ss ds) (Rec0 t)) row
+  where
   gtoFields (M1 (K1 x)) = [FieldLit @k (dispatchField @(KindOf t) x)]
 
-instance TypeError ('Text "JShark.Generic: positional fields not supported; use record selectors") =>
-  GToObject (S1 ('MetaSel 'Nothing su ss ds) t) row where
+instance
+  TypeError
+    ('Text "JShark.Generic: positional fields not supported; use record selectors") =>
+  GToObject (S1 ('MetaSel 'Nothing su ss ds) t) row
+  where
   gtoFields _ = impossible
 
-instance TypeError ('Text "JShark.Generic: sum types are not records") =>
-  GToObject (l :+: r) row where
+instance
+  TypeError ('Text "JShark.Generic: sum types are not records") =>
+  GToObject (l :+: r) row
+  where
   gtoFields _ = impossible
 
 -- | Tagged sum row. Only 'tag' is a 'Field'; payload is 'caseSum' / 'whenTag'.
@@ -352,7 +418,15 @@ type family GCtorU (a :: Type) (n :: Symbol) (r :: Type -> Type) :: Universe whe
   GCtorU _ n _ =
     TypeError ('Text "JShark.Generic: no constructor " ':<>: 'ShowType n)
 
-type family GCtorPick (a :: Type) (n :: Symbol) (has :: Bool) (l :: Type -> Type) (r :: Type -> Type) :: Universe where
+type family
+  GCtorPick
+    (a :: Type)
+    (n :: Symbol)
+    (has :: Bool)
+    (l :: Type -> Type)
+    (r :: Type -> Type) ::
+    Universe
+  where
   GCtorPick a n 'True l _ = GCtorU a n l
   GCtorPick a n 'False _ r = GCtorU a n r
 
@@ -375,7 +449,15 @@ type family GPayField (r :: Type -> Type) (n :: Symbol) (k :: Symbol) :: Univers
   GPayField _ n _ =
     TypeError ('Text "JShark.Generic: no constructor " ':<>: 'ShowType n)
 
-type family GPayPick (has :: Bool) (l :: Type -> Type) (r :: Type -> Type) (n :: Symbol) (k :: Symbol) :: Universe where
+type family
+  GPayPick
+    (has :: Bool)
+    (l :: Type -> Type)
+    (r :: Type -> Type)
+    (n :: Symbol)
+    (k :: Symbol) ::
+    Universe
+  where
   GPayPick 'True l _ n k = GPayField l n k
   GPayPick 'False _ r n k = GPayField r n k
 
@@ -395,7 +477,15 @@ type family PayIfEq (a :: Symbol) (b :: Symbol) (u :: Universe) :: Universe wher
   PayIfEq a _ _ =
     TypeError ('Text "JShark.Generic: no payload field " ':<>: 'ShowType a)
 
-type family PayInPick (has :: Bool) (l :: Type -> Type) (r :: Type -> Type) (ix :: Nat) (k :: Symbol) :: Universe where
+type family
+  PayInPick
+    (has :: Bool)
+    (l :: Type -> Type)
+    (r :: Type -> Type)
+    (ix :: Nat)
+    (k :: Symbol) ::
+    Universe
+  where
   PayInPick 'True l _ ix k = GPayIn l ix k
   PayInPick 'False l r ix k = GPayIn r (ix + FieldCount l) k
 
@@ -403,7 +493,8 @@ type family GPayHas (p :: Type -> Type) (k :: Symbol) (ix :: Nat) :: Bool where
   GPayHas (S1 ('MetaSel ('Just k) _ _ _) _) k _ = 'True
   GPayHas (S1 ('MetaSel ('Just _) _ _ _) _) _ _ = 'False
   GPayHas (S1 ('MetaSel 'Nothing _ _ _) _) k ix = SymEq k (NatSym ix)
-  GPayHas (l :*: r) k ix = OrBool (GPayHas l k ix) (GPayHas r k (ix + FieldCount l))
+  GPayHas (l :*: r) k ix =
+    OrBool (GPayHas l k ix) (GPayHas r k (ix + FieldCount l))
   GPayHas U1 _ _ = 'False
 
 type family SymEq (a :: Symbol) (b :: Symbol) :: Bool where
@@ -426,14 +517,16 @@ type family NatSym (n :: Nat) :: Symbol where
   NatSym 5 = "5"
   NatSym 6 = "6"
   NatSym 7 = "7"
-  NatSym _ = TypeError ('Text "JShark.Generic: at most 8 positional payload fields")
+  NatSym _ =
+    TypeError ('Text "JShark.Generic: at most 8 positional payload fields")
 
 -- | Sum → @{tag: "Ctor", payload?}@.
 toSum :: (Generic a, GToSum a (Rep a)) => a -> Effect f (SumOf a)
 toSum = gtoSum . from
 
 -- | @[Color]@. One array of 'toSum' elements.
-toSumArray :: (Generic a, GToSum a (Rep a)) => [a] -> Effect f ('Array (SumOf a))
+toSumArray ::
+  (Generic a, GToSum a (Rep a)) => [a] -> Effect f ('Array (SumOf a))
 toSumArray = fromEffects . map toSum
 
 sumTag :: Effect f (SumOf a) -> EffectSyntax f (Expr f 'String)
@@ -456,18 +549,19 @@ type family AppendSym (xs :: [Symbol]) (ys :: [Symbol]) :: [Symbol] where
   AppendSym '[] ys = ys
   AppendSym (x ': xs) ys = x ': AppendSym xs ys
 
--- | Handler chain indexed by constructor names. @caseSum s arms@
--- requires @arms :: CaseSum a f v (CtorNames a)@. 'CaseAny' / 'Case_'
--- inhabit any leftover suffix (does not extend the name list).
+{- | Handler chain indexed by constructor names. @caseSum s arms@
+requires @arms :: CaseSum a f v (CtorNames a)@. 'CaseAny' / 'Case_'
+inhabit any leftover suffix (does not extend the name list).
+-}
 data CaseSum a f v (ns :: [Symbol]) where
   CaseEnd :: CaseSum a f v '[]
   CaseAny :: (Expr f 'String -> Effect f v) -> CaseSum a f v ns
   CaseCons ::
-       forall (name :: Symbol) ns a f v.
-       ( KnownSymbol name
-       , Unpayload (IsUnit (CtorU a name)) (CtorU a name)
-       )
-    => (Expr f (CtorU a name) -> Effect f v)
+    forall (name :: Symbol) ns a f v.
+    ( KnownSymbol name
+    , Unpayload (IsUnit (CtorU a name)) (CtorU a name)
+    ) =>
+    (Expr f (CtorU a name) -> Effect f v)
     -> CaseSum a f v ns
     -> CaseSum a f v (name ': ns)
 
@@ -477,34 +571,35 @@ pattern Case_ k = CaseAny k
 
 -- | @on @"Ctor" handler rest@
 on ::
-     forall (name :: Symbol) a f v ns.
-     ( KnownSymbol name
-     , Unpayload (IsUnit (CtorU a name)) (CtorU a name)
-     )
-  => (Expr f (CtorU a name) -> Effect f v)
+  forall (name :: Symbol) a f v ns.
+  ( KnownSymbol name
+  , Unpayload (IsUnit (CtorU a name)) (CtorU a name)
+  ) =>
+  (Expr f (CtorU a name) -> Effect f v)
   -> CaseSum a f v ns
   -> CaseSum a f v (name ': ns)
 on = CaseCons
 
--- | Exhaustive @if (s.tag === "C1") … else if …@. Every named arm
--- tests its tag. 'CaseEnd' throws on leftover tags; 'CaseAny' /
--- 'Case_' is a suffix wildcard (remaining constructors + unknown).
--- Named arms must be a prefix of 'CtorNames' in declaration order.
---
--- @
--- caseSum shape $
---   on @"Circle" (\\r -> …) $
---   on @"Rect"   (\\p -> …) $
---   CaseEnd
--- @
---
--- @
--- caseSum phase $
---   on @"Play" (\\_ -> …) $
---   Case_ (\\_ -> noOp)
--- @
+{- | Exhaustive @if (s.tag === "C1") … else if …@. Every named arm
+tests its tag. 'CaseEnd' throws on leftover tags; 'CaseAny' /
+'Case_' is a suffix wildcard (remaining constructors + unknown).
+Named arms must be a prefix of 'CtorNames' in declaration order.
+
+@
+caseSum shape $
+  on @"Circle" (\\r -> …) $
+  on @"Rect"   (\\p -> …) $
+  CaseEnd
+@
+
+@
+caseSum phase $
+  on @"Play" (\\_ -> …) $
+  Case_ (\\_ -> noOp)
+@
+-}
 withTag ::
-     Effect f (SumOf a)
+  Effect f (SumOf a)
   -> (Expr f 'String -> Effect f (SumOf a) -> Effect f v)
   -> Effect f v
 withTag s k = fromSyntax $ do
@@ -513,33 +608,35 @@ withTag s k = fromSyntax $ do
   toSyntax (k t o)
 
 caseSum ::
-     forall a f v.
-     Effect f (SumOf a)
+  forall a f v.
+  Effect f (SumOf a)
   -> CaseSum a f v (CtorNames a)
   -> Effect f v
 caseSum s arms = withTag s (\t o -> emitCase t o arms)
 
 emitCase ::
-     forall a f v ns r.
-     Expr f 'String
+  forall a f v ns r.
+  Expr f 'String
   -> Effect f ('MutableObject r)
   -> CaseSum a f v ns
   -> Effect f v
 emitCase t o (CaseCons @name hit rest) =
-  ifE (expr (t .== string (T.pack (symbolVal (Proxy @name)))))
+  ifE
+    (expr (t .== string (T.pack (symbolVal (Proxy @name)))))
     (hit (unpayload @(IsUnit (CtorU a name)) @(CtorU a name) o))
     (emitCase t o rest)
 emitCase t _ (CaseAny k) = k t
 emitCase t _ CaseEnd =
   throw_ (string (T.pack "JShark.Generic: caseSum: unhandled ") <> t)
 
--- | @if (s.tag === "Ctor") hit(s.payload) else miss@. Nullary ctors
--- pass 'Unit'; they do not read @payload@. One-arm; use 'caseSum' for
--- an exhaustive match.
+{- | @if (s.tag === "Ctor") hit(s.payload) else miss@. Nullary ctors
+pass 'Unit'; they do not read @payload@. One-arm; use 'caseSum' for
+an exhaustive match.
+-}
 whenTag ::
-     forall (name :: Symbol) a f v.
-     (KnownSymbol name, Unpayload (IsUnit (CtorU a name)) (CtorU a name))
-  => Effect f (SumOf a)
+  forall (name :: Symbol) a f v.
+  (KnownSymbol name, Unpayload (IsUnit (CtorU a name)) (CtorU a name)) =>
+  Effect f (SumOf a)
   -> (Expr f (CtorU a name) -> Effect f v)
   -> Effect f v
   -> Effect f v
@@ -573,23 +670,29 @@ instance (GToSum a l, GToSum a r) => GToSum a (l :+: r) where
 instance KnownSymbol name => GToSum a (C1 ('MetaCons name fx rec) U1) where
   gtoSum _ = emitTagged @a (symbolVal (Proxy @name))
 
-instance (KnownSymbol name, DispatchField (KindOf t) t) =>
-  GToSum a (C1 ('MetaCons name fx rec) (S1 m (Rec0 t))) where
+instance
+  (KnownSymbol name, DispatchField (KindOf t) t) =>
+  GToSum a (C1 ('MetaCons name fx rec) (S1 m (Rec0 t)))
+  where
   gtoSum (M1 (M1 (K1 x))) =
     emitTaggedPayload @a (symbolVal (Proxy @name)) (dispatchField @(KindOf t) x)
 
-instance (KnownSymbol name, GToPayloadN 0 (l :*: r) (Payload a name)) =>
-  GToSum a (C1 ('MetaCons name fx rec) (l :*: r)) where
+instance
+  (KnownSymbol name, GToPayloadN 0 (l :*: r) (Payload a name)) =>
+  GToSum a (C1 ('MetaCons name fx rec) (l :*: r))
+  where
   gtoSum (M1 p) =
     emitTaggedPayload @a
       (symbolVal (Proxy @name))
       (embedObject (obj (gPayloadFieldsN @0 @(l :*: r) @(Payload a name) p)))
 
--- | Internal row so @{tag, payload}@ can be one 'ObjectLit' without a
--- public 'Field' on 'Tagged'.
+{- | Internal row so @{tag, payload}@ can be one 'ObjectLit' without a
+public 'Field' on 'Tagged'.
+-}
 data PayloadRow (u :: Universe)
 
 type instance Field (PayloadRow u) "tag" = 'String
+
 type instance Field (PayloadRow u) "payload" = u
 
 emitTagged :: forall a f. String -> Effect f (SumOf a)
@@ -598,10 +701,12 @@ emitTagged name = obj [field @"tag" (string (T.pack name))]
 emitTaggedPayload :: forall a f u. String -> Expr f u -> Effect f (SumOf a)
 emitTaggedPayload name p =
   unsafeCoerce
-    (obj
-       [ field @"tag" (string (T.pack name))
-       , field @"payload" p
-       ] :: Effect f ('MutableObject (PayloadRow u)))
+    ( obj
+        [ field @"tag" (string (T.pack name))
+        , field @"payload" p
+        ] ::
+        Effect f ('MutableObject (PayloadRow u))
+    )
 
 class GToPayloadN (n :: Nat) (p :: Type -> Type) (row :: Type) where
   gPayloadFieldsN :: p x -> [FieldLit f row]
@@ -609,15 +714,24 @@ class GToPayloadN (n :: Nat) (p :: Type -> Type) (row :: Type) where
 instance GToPayloadN n U1 row where
   gPayloadFieldsN _ = []
 
-instance (KnownSymbol k, DispatchField (KindOf t) t, Field row k ~ FieldU t) =>
-  GToPayloadN n (S1 ('MetaSel ('Just k) su ss ds) (Rec0 t)) row where
+instance
+  (KnownSymbol k, DispatchField (KindOf t) t, Field row k ~ FieldU t) =>
+  GToPayloadN n (S1 ('MetaSel ('Just k) su ss ds) (Rec0 t)) row
+  where
   gPayloadFieldsN (M1 (K1 x)) = [FieldLit @k (dispatchField @(KindOf t) x)]
 
-instance (KnownSymbol (NatSym n), DispatchField (KindOf t) t, Field row (NatSym n) ~ FieldU t) =>
-  GToPayloadN n (S1 ('MetaSel 'Nothing su ss ds) (Rec0 t)) row where
+instance
+  ( KnownSymbol (NatSym n)
+  , DispatchField (KindOf t) t
+  , Field row (NatSym n) ~ FieldU t
+  ) =>
+  GToPayloadN n (S1 ('MetaSel 'Nothing su ss ds) (Rec0 t)) row
+  where
   gPayloadFieldsN (M1 (K1 x)) = [FieldLit @(NatSym n) (dispatchField @(KindOf t) x)]
 
-instance (GToPayloadN n l row, GToPayloadN (n + FieldCount l) r row) =>
-  GToPayloadN n (l :*: r) row where
+instance
+  (GToPayloadN n l row, GToPayloadN (n + FieldCount l) r row) =>
+  GToPayloadN n (l :*: r) row
+  where
   gPayloadFieldsN (l :*: r) =
     gPayloadFieldsN @n l <> gPayloadFieldsN @(n + FieldCount l) r

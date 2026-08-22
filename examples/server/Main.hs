@@ -13,7 +13,9 @@ main :: IO ()
 main = do
   breakoutJs <- compileEffect readableConfig (fromSyntax Breakout.mainJS)
   todoJs <- compileEffect readableConfig (fromSyntax TodoMvc.mainJS)
-  serveExamples 3000 "Examples on http://localhost:3000"
+  serveExamples
+    3000
+    "Examples on http://localhost:3000"
     [ Example
         "breakout"
         "Breakout"
