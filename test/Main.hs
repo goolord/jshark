@@ -982,6 +982,21 @@ goodPartsTests =
     , testCase "freezeByteArray copies with slice" $
         renderJS (effectfulAST (freezeByteArray (newByteArray (number 4))))
           @?= "new Uint8Array(4.0).slice()"
+    , -- A snapshot must stay where it was taken. Splicing `.slice()`
+      -- to the read would see the write. Guarded by `movableEffect`.
+      testCase "freezeByteArray stays bound across a later write" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      buf <- fmap var (toSyntax (newByteArray (number 2)))
+                      frozen <- toSyntax (freezeByteArray (expr buf))
+                      toSyntax_ (ffi "write" (arg buf <: RecNil))
+                      yield (var frozen)
+                  )
+              )
+          )
+          @?= "const n0 = new Uint8Array(2.0);\nconst n1 = n0.slice();\nwrite(n0);\nn1"
     , testCase "unsafeFreezeByteArray emits nothing of its own" $
         renderJS (effectfulAST (unsafeFreezeByteArray (newByteArray (number 4))))
           @?= "new Uint8Array(4.0)"

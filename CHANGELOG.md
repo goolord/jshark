@@ -6,10 +6,12 @@
   `uint8Array`. Literals emit `new Uint8Array([…])`. `$eq` and `evaluate`
   compare contents. `String` is the comma-joined bytes (`"1,2,3"`).
   `base >= 4.17`. A runtime-sized buffer is `newByteArray n`
-  (`new Uint8Array(n)`), an `Effect` of `'MutableObject MutableByteArray`
-  because allocation has identity. `freezeByteArray` is `.slice()` onto
-  `'Uint8Array`; `unsafeFreezeByteArray` is the same object retyped.
-  Size is given up front: JS typed arrays cannot grow.
+  (`new Uint8Array(n)`), an `Effect` of `'MutableByteArray` — its own
+  universe, not a `'MutableObject` row, so `newObject` / `Object.set`
+  do not typecheck. `freezeByteArray` is `.slice()` onto `'Uint8Array`
+  (EDSL-immutable; JS can still write the copy);
+  `unsafeFreezeByteArray` is the same object retyped. Size is given
+  up front: JS typed arrays cannot grow.
 
 
 * Fixed: codegen and the optimizer numbered PHOAS tags from the same

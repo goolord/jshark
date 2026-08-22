@@ -1558,6 +1558,7 @@ isPureEffectStamp e = case e of
   Try {} -> False
   DeleteProp {} -> False
   ArraySort {} -> False
+  FreezeByteArray {} -> False
   _ ->
     getAll
       ( foldEff

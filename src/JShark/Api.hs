@@ -33,7 +33,6 @@ module JShark.Api
   , toString
 
     -- * Byte arrays
-  , MutableByteArray
   , newByteArray
   , freezeByteArray
   , unsafeFreezeByteArray
@@ -274,6 +273,8 @@ string :: Text -> Expr f 'String
 string = Literal . ValueString
 
 -- | @new Uint8Array([…])@ from a host 'ByteArray'.
+--
+-- EDSL-immutable: JS can still write the object.
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
 
@@ -284,15 +285,16 @@ size is known but whose contents are not, which is what a JS API filling a
 buffer wants. Bind it: two occurrences would be two arrays.
 -}
 newByteArray ::
-  Expr f 'Number -> Effect f ('MutableObject MutableByteArray)
+  Expr f 'Number -> Effect f 'MutableByteArray
 newByteArray = NewByteArray
 
-{- | @a.slice()@ — the bytes so far, as an immutable @''Uint8Array'@.
+{- | @a.slice()@ — the bytes so far, as an @''Uint8Array'@.
 
 Copies, so later writes through @a@ do not show up in the result.
+Immutability is EDSL-only: JS can still write the copy.
 -}
 freezeByteArray ::
-  Effect f ('MutableObject MutableByteArray) -> Effect f 'Uint8Array
+  Effect f 'MutableByteArray -> Effect f 'Uint8Array
 freezeByteArray = FreezeByteArray
 
 {- | 'freezeByteArray' without the copy: the same object, retyped, so
@@ -303,7 +305,7 @@ later write through the mutable handle is visible through the frozen
 value. Sound when the mutable handle is dead afterwards.
 -}
 unsafeFreezeByteArray ::
-  Effect f ('MutableObject MutableByteArray) -> Effect f 'Uint8Array
+  Effect f 'MutableByteArray -> Effect f 'Uint8Array
 unsafeFreezeByteArray = UnsafeFreezeByteArray
 
 emptyArray :: Expr f ('Array u)

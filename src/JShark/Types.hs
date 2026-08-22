@@ -53,7 +53,6 @@ module JShark.Types
   , mathFn1Name
   , mathFn2Name
   , GroupBy
-  , MutableByteArray
   , ClosedExpr
   , ClosedEffect
   , Comparable
@@ -89,8 +88,12 @@ data Universe
     Result Universe Universe
   | Regex
   | Bool
-  | -- | JS @Uint8Array@. Host 'ByteArray'.
+  | -- | JS @Uint8Array@. Host 'ByteArray'. EDSL-immutable; JS can still write.
     Uint8Array
+  | -- | @Uint8Array@ under construction. Allocation has identity, so this
+    -- lives on 'Effect' ('NewByteArray'), not as a 'MutableObject' row —
+    -- 'JShark.Object.newObject' / 'JShark.Object.set' must not typecheck.
+    MutableByteArray
   | -- | Frozen record. Row @r@ is a host 'Type', not a 'Universe' constructor.
     Object Type
   | -- | Mutable JS object. Same row @r@ as 'Object'.
@@ -203,17 +206,18 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -- ^ @arr.sort(function(a,b){…})@
   NewByteArray ::
     Expr f 'Number
-    -> Effect f ('MutableObject MutableByteArray)
+    -> Effect f 'MutableByteArray
     -- ^ @new Uint8Array(n)@: @n@ zeroed bytes. The length is fixed at
     -- allocation, so the size is given up front; allocation has identity,
     -- so this lives on 'Effect' rather than being a literal.
   FreezeByteArray ::
-    Effect f ('MutableObject MutableByteArray)
+    Effect f 'MutableByteArray
     -> Effect f 'Uint8Array
     -- ^ @a.slice()@. Copies, so later writes through the mutable handle
-    -- are not visible in the result.
+    -- are not visible in the result. The copy is still a JS @Uint8Array@
+    -- — EDSL-immutable only.
   UnsafeFreezeByteArray ::
-    Effect f ('MutableObject MutableByteArray)
+    Effect f 'MutableByteArray
     -> Effect f 'Uint8Array
     -- ^ The same object at the immutable type: no copy, nothing emitted.
     -- Unsafe because a later write through the mutable handle /is/ visible
@@ -235,14 +239,6 @@ data GroupBy (u :: Universe)
 type instance Field (GroupBy u) "key" = 'String
 
 type instance Field (GroupBy u) "items" = 'Array u
-
-{- | A @Uint8Array@ under construction. Mutable, so it is reached through
-'Effect' ('NewByteArray'); 'FreezeByteArray' turns one into the immutable
-@''Uint8Array'@ that 'Expr' works with.
--}
-data MutableByteArray
-
-type instance Field MutableByteArray "length" = 'Number
 
 -- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
 -- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
