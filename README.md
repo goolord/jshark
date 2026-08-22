@@ -1,9 +1,19 @@
 ## 🦈 JShark
 
-Haskell EDSL that emits JavaScript. Two PHOAS trees: pure `Expr`, impure
-`Effect`, and a closed term is `forall f`. The JS is Crockford's Good
-Parts: `===` / `!==`, `const`, and none of `==`, `with`, or `eval`. FFI
-takes an `Arg` (expression or effect); raw names live on `Effect`.
+Haskell EDSL that emits JavaScript. Binders are PHOAS: a variable is
+`f u` for some `f :: Universe -> Type`, and a closed term is `forall f`.
+A term cannot mention a name that is not in scope, and substitution is
+ordinary Haskell function application, so you get capture avoidance
+without a name supply. The same tree can be evaluated, optimized, and
+compiled without renaming anything by hand.
+
+There are two trees. `Expr` is pure: literals, arithmetic, `===` / `!==`,
+functions, `const` lets, and a fixed set of string, array, Math, and
+JSON methods. `Effect` is impure: statements, FFI, mutation, DOM, I/O,
+and free-text names. They join at FFI through `Arg`, so you can hand an effect
+to FFI without first lifting it into `Expr`. The optimizer can fold `Expr` without
+pretending FFI is pure, and codegen can print expressions and statements
+differently.
 
 ```haskell
 {-# LANGUAGE OverloadedStrings #-}

@@ -102,6 +102,18 @@ with2 e1 e2 k = fromSyntax $ do
   y <- toSyntax e2
   toSyntax (expr (k (Var x) (Var y)))
 
+-- Self-contained: Boolean(1) is not folded, so prettyJS must keep a real if
+-- inside a LambdaE and still be valid JS.
+prettyIfLambda :: forall f. Effect f 'Number
+prettyIfLambda = fromSyntax $ do
+  r <- toSyntax $ ApplyE
+    (lambdaE (\x ->
+        ifE (ffi "Boolean" (arg (number 1) <: RecNil))
+          x
+          (expr (number 0))))
+    (expr (number 6))
+  yield (Var r)
+
 codegenTests :: TestTree
 codegenTests = testGroup "codegen"
   [ testCase "nested single-use lets are both inlined" $
@@ -483,6 +495,29 @@ compilerTests = testGroup "compiler"
           cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable
       out <- compileWith cfg src
       out @?= src
+  , testCase "prettyJS breaks if/else and function bodies onto their own lines" $
+      prettyJS "if (cond()) {foo();} else {bar();}"
+        @?= "if (cond()) {\n  foo();\n} else {\n  bar();\n}"
+  , testCase "prettyJS does not split braces that live inside a string" $
+      prettyJS "foo(\"{;}\");"
+        @?= "foo(\"{;}\");"
+  , testCase "prettyJS keeps else and catch on the closing brace line" $
+      prettyJS "try {foo();} catch (n0) {bar();}"
+        @?= "try {\n  foo();\n} catch (n0) {\n  bar();\n}"
+  , testCase "prettyJS joins empty if/else and keeps `}(` on one line" $
+      prettyJS "if (c) {\n}\nelse {\n  foo();\n}\n(bar)()"
+        @?= "if (c) {} else {\n  foo();\n}(bar)()"
+  , testCase "prettyJS keeps IIFE call on the closing brace" $
+      prettyJS "function () {return 1;}()"
+        @?= "function () {\n  return 1;\n}()"
+  , testCase "prettyJS does not treat elsewhere as else" $
+      prettyJS "if (c) {}elsewhere"
+        @?= "if (c) {}\nelsewhere"
+  , testCase "readableConfig pretty-prints ifE" $ do
+      clearCompilerCache
+      out <- compileEffect readableConfig
+        (fromSyntax (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp))
+      out @?= "let n0;\nif (cond()) {\n  n0 = 1.0;\n} else {\n  n0 = 2.0;\n}"
   ]
 
 -- Run generated JS with bun and compare JSON.stringify of the result to
@@ -537,6 +572,18 @@ bunEvalTests =
             , bunCase getBun "Math.round negative half" (Math.round (number (-2.5)))
             , bunCase getBun "Math.pow" (Math.pow (number 2) (number 10))
             , bunCase getBun "Math.sin 0" (Math.sin (number 0))
+            , testCase "prettyJS compileEffect ifE+LambdaE" $ do
+                bun <- getBun >>= \case
+                  Just b -> pure b
+                  Nothing -> assertFailure "bun not found on PATH"
+                clearCompilerCache
+                out <- compileEffect readableConfig prettyIfLambda
+                assertBool "indented if body" ("{\n" `T.isInfixOf` out)
+                got <- bunJSONStringify bun (wrapReadableExpr out)
+                assertEqual
+                  ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> T.unpack out)
+                  "6"
+                  got
             ]
       ]
 
@@ -546,6 +593,17 @@ bunCase getBun name e = testCase name $ do
   case m of
     Nothing -> assertFailure "bun not found on PATH"
     Just bun -> assertBunAgrees bun e
+
+-- Readable effect snippets are statements plus a trailing result
+-- expression. Wrap so bunJSONStringify can treat them as a value.
+wrapReadableExpr :: Text -> String
+wrapReadableExpr src =
+  let ls = filter (not . T.null) (T.lines (T.strip src))
+   in case reverse ls of
+        [] -> "undefined"
+        result : revStmts ->
+          T.unpack $ T.unlines $
+            "(() => {" : reverse revStmts ++ ["return " <> result, "})()"]
 
 assertBunAgrees :: FilePath -> (forall f. Expr f u) -> IO ()
 assertBunAgrees bun e = do

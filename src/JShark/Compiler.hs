@@ -45,6 +45,7 @@ module JShark.Compiler
   , compileTerser
   , compileEffect
   , compilePure
+  , prettyJS
 
     -- * Cache
   , clearCompilerCache
@@ -52,6 +53,7 @@ module JShark.Compiler
 
 import Control.Exception (IOException, SomeException, catch, throwIO)
 import Control.Monad (guard)
+import Data.Char (isAlphaNum, isSpace)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -341,16 +343,83 @@ compileEsbuild = compileWith (CompilerConfig (Esbuild defaultEsbuildConfig) Memo
 compileTerser :: Text -> IO Text
 compileTerser = compileWith (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified)
 
+-- | Indent generated JavaScript. Understands double/single-quoted strings
+-- (with backslash escapes). JShark does not emit regex or template
+-- literals, so those are not treated as strings. Not a general JS parser.
+prettyJS :: Text -> Text
+prettyJS = T.pack . formatJS . T.unpack . T.strip
+
+formatJS :: String -> String
+formatJS = go 0
+  where
+    indent n = replicate (n * 2) ' '
+
+    go :: Int -> String -> String
+    go _ [] = []
+    go n ('"':xs) = '"' : string '"' xs (go n)
+    go n ('\'':xs) = '\'' : string '\'' xs (go n)
+    go n ('{':xs) =
+      let xs' = dropWhile isSpace xs
+       in case xs' of
+            '}':rest -> "{}" ++ afterClose n rest
+            _ -> '{' : '\n' : indent (n + 1) ++ go (n + 1) xs'
+    go n ('}':xs) =
+      let n' = max 0 (n - 1)
+       in '\n' : indent n' ++ '}' : afterClose n' (dropWhile isSpace xs)
+    go n (';':xs) =
+      let xs' = dropWhile isSpace xs
+       in ';' : case xs' of
+            '}':_ -> go n xs'
+            [] -> []
+            _ -> '\n' : indent n ++ go n xs'
+    go n (c:xs)
+      | isSpace c =
+          let xs' = dropWhile isSpace xs
+           in case xs' of
+                [] -> []
+                '}':_ -> go n xs'
+                _ -> ' ' : go n xs'
+      | otherwise = c : go n xs
+
+    afterClose n s =
+      case dropWhile isSpace s of
+        s' | Just rest <- keyword "else" s' -> ' ' : go n ("else" ++ rest)
+           | Just rest <- keyword "catch" s' -> ' ' : go n ("catch" ++ rest)
+        -- Stay on this line for expression tails (`})`, `}()`, `},`, `};`).
+        c:_ | c `elem` (");,.}(" :: String) -> go n (dropWhile isSpace s)
+        [] -> []
+        s' -> '\n' : indent n ++ go n s'
+
+    keyword kw s = case splitAt (length kw) s of
+      (pre, rest)
+        | pre == kw, not (startsIdent rest) -> Just rest
+      _ -> Nothing
+
+    startsIdent (c:_) = isAlphaNum c || c == '_' || c == '$'
+    startsIdent [] = False
+
+    string _ [] _ = []
+    string q (c:cs) k
+      | c == '\\' = case cs of
+          d:ds -> c : d : string q ds k
+          [] -> [c]
+      | c == q = c : k cs
+      | otherwise = c : string q cs k
+
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffect cfg eff = compileWith cfg
+compileEffect cfg eff = finishStyle (configStyle cfg) <$> compileWith cfg
   (T.pack (renderJS (effectDoc (configStyle cfg) eff)))
 
 -- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePure cfg e = compileWith cfg
+compilePure cfg e = finishStyle (configStyle cfg) <$> compileWith cfg
   (T.pack (renderJS (pureDoc (configStyle cfg) e)))
+
+finishStyle :: OutputStyle -> Text -> Text
+finishStyle Readable = prettyJS
+finishStyle Minified = id
 
 styleConfig :: CompilerConfig -> CompilerConfig
 styleConfig cfg = case configStyle cfg of
