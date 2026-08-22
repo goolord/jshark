@@ -22,6 +22,7 @@ module Support
   , with2
   , prettyIfLambda
   , numArray
+  , mulDiv
   ) where
 
 import Data.Text (Text)
@@ -99,3 +100,6 @@ prettyIfLambda = fromSyntax $ do
 
 numArray :: forall f. Expr f ('Array 'Number)
 numArray = Literal (ValueArray [ValueNumber 1, ValueNumber 2])
+
+mulDiv :: forall f. Expr f 'Number
+mulDiv = number 6 * number 7 / number 2

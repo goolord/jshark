@@ -71,7 +71,22 @@ cabal run examples  # http://localhost:3000
 ## vs Haskell / JavaScript
 
 The host is Haskell; the object language is a typed Good Parts subset
-of JS. `evaluate` walks the tree; codegen prints JS.
+of JS. `evaluate` walks a pure `Expr`; `evaluateEffectJSON` runs an
+`Effect` with `bun` and returns its JSON. Codegen prints JS.
+
+Bare bun has no `document`. Pass `domBunConfig` to run an `Effect`
+against browser globals (happy-dom, registered in-process), which is
+what makes `JShark.Dom` and `JShark.Storage` testable:
+
+```haskell
+import JShark.Bun
+
+-- <div id="a"></div>, then setInnerText "hello", then read it back
+evaluateEffectJSONWith
+  domBunConfig {bunEnv = HappyDom defaultHappyDomOptions {happyDomBody = "<div id=\"a\"></div>"}}
+  effect
+-- "\"hello\""
+```
 
 `do` is `EffectSyntax`. `Maybe` and `Either` are `Option` and
 `Result` (below) — eliminate them with `optionCase` / `resultCase`,

@@ -8,9 +8,26 @@
   mutation, and I/O, so bun is the runtime. The result is JSON text, not a
   `Value`: a `MutableObject` or function has no `Value` constructor. The
   JSON leaves through a temp file, so `Console.log` in the program under
-  evaluation does not corrupt it. Runs are capped by
-  `JShark.Bun.Internal.bunTimeoutMicroseconds` (10s), since `while_` and
-  `Timers` can express a program that never terminates.
+  evaluation does not corrupt it. A run that outlives
+  `JShark.Bun.Internal.bunTimeoutMicroseconds` (10s) is killed, since
+  `while_` and `Timers` can express a program that never terminates.
+* A promise-valued program (`JShark.Promise`, `JShark.Ajax`) is awaited
+  before serialization instead of stringifying as `{}`. Only a thenable is
+  awaited, so a synchronous program gains no microtask tick that would let
+  a pending timer fire first.
+* `evaluateEffectJSONWith` takes a `BunConfig`, whose `BunEnv` picks the
+  globals the program runs against. `Sandbox` (the default) is bare bun:
+  no `document`, no `window`. `HappyDom` registers browser globals
+  in-process via `@happy-dom/global-registrator`, so `JShark.Dom`,
+  `JShark.Storage`, and `window.location` work; `domBunConfig` is that
+  with defaults (`domTimeoutMicroseconds`), and `HappyDomOptions` seeds
+  `document.body.innerHTML` and the URL. bun resolves the package with
+  `--install=fallback` (`node_modules` first, else its install cache), so
+  the first run needs network; the module name is fixed rather than
+  configurable, since it lands in an `import` specifier. happy-dom
+  implements no 2D canvas, so `Canvas.getContext2d` is `none` there.
+  `Bun.WebView` is not used: on Windows with Chrome 151 it fails to attach
+  (`'Runtime.evaluate' wasn't found`), and it is still experimental.
 * `Array.groupBy` is ES2024 `Object.groupBy` as `[{key, items}]` (first-seen
   keys; not a null-prototype object), row `GroupBy`. `evaluate` and
   `$groupBy` agree.
