@@ -8,7 +8,7 @@ ordinary Haskell function application, so you get capture avoidance
 without a name supply. The same tree can be evaluated, optimized, and
 compiled without renaming anything by hand.
 
-There are two trees. `Expr` is pure: literals, arithmetic, `===` / `!==`,
+There are two trees. `Expr` is pure: literals, arithmetic, `.==` / `.!=`,
 functions, `const` lets, and a fixed set of string, array, Math, and
 JSON methods. `Effect` is impure: statements, FFI, mutation, DOM, I/O,
 and free-text names. They join at FFI through `Arg`, so you can hand an effect
@@ -35,6 +35,29 @@ main = compileEffect readableConfig (greet "world") >>= T.putStrLn
 console.log("hello, world");
 ```
 
+`ffi` is a free-text call. Arguments are a `Rec` of `Arg`: `arg` wraps
+an `Expr`; `ArgEffect` passes an `Effect` without lifting it into `Expr`.
+
+```haskell
+import JShark.Api
+import JShark.Rec (Rec (..), (<:))
+
+sumLog = fromSyntax $ do
+  toSyntax_ $
+    ffi
+      "console.log"
+      ( arg (string "max")
+          <: arg (number 2)
+          <: arg (number 9)
+          <: RecNil
+      )
+  done
+```
+
+```js
+console.log("max", 2.0, 9.0);
+```
+
 ```
 cabal build
 cabal test          # bun on PATH for the JS-vs-interpreter checks
@@ -47,47 +70,20 @@ cabal run examples  # http://localhost:3000
 
 ## vs Haskell / JavaScript
 
-The host is Haskell. The runtime is a typed Good Parts subset of JS.
-`evaluate` walks the tree in Haskell; codegen prints JS.
+The host is Haskell; the object language is a typed Good Parts subset
+of JS. `evaluate` walks the tree; codegen prints JS.
 
-Binders are PHOAS, so host `case` and capture-avoiding substitution
-work in Haskell. Emitted JS is strict. Host sharing
-(`let x = e in x + x`) is recovered only by `evaluateCached`
-(StableName memo), not by `evaluate`. `do` is `EffectSyntax`
-(statements), not `IO`. `Maybe` / `Either` are not ADTs in JS: they
-become `Option` / `Result` encodings (below). You eliminate them with
-`optionCase` / `resultCase`, not Haskell `case`. Generic sums are
-`{tag, payload}` objects; `caseSum` is an `if (s.tag === "Ctor")`
-chain. `CaseEnd` throws on leftovers. Named arms must be a prefix of
-declaration order.
+`do` is `EffectSyntax`. `Maybe` and `Either` are `Option` and
+`Result` (below) — eliminate them with `optionCase` / `resultCase`,
+not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
+is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
 
-Numbers follow JS, not Prelude. `rem_` is `%` (sign of the dividend),
-not `mod`. Bitwise ops use ToInt32. `Math.round` is `floor(x + 0.5)`
-(half toward +Infinity): `round 2.5` is `2` in Haskell and `3` here.
-`Int` is IEEE `Number`; `fromValue` truncates. `.==` / `.!=` emit
-`$eq` / `!$eq` (`===` then structural arrays and plain objects).
-Only numbers, strings, and bools are `Comparable`, not objects.
-
-No `==`, `with`, `eval`, `this`, or implicit `new`. Functions stay
-unary: `lambda2` is `function(x){ return function(y){ return x + y } }`,
-not `function(x, y)`. `Array.sort`'s compare is the exception (a
-binary JS callback). `parseInt_` requires a radix. Regex is
-`new RegExp("src")`, not `/src/`. `stringCaseE` is `switch` with no
-fall-through; first label wins. `&&` / `||` short-circuit. Array
-index is `Math.trunc`; out of bounds is a hard error, not
-`undefined`. Frozen `'Object r` is an `Expr` (pure field get).
-`'MutableObject` is an `Effect`. Named stdlib is a closed constructor
-set; free-text names live on `Effect` FFI.
-
-`Option` is not a JS type. `none` is `null`; `some x` unwraps to `x`.
-`typeof null` is `"object"`. You cannot unwrap with `if_` plus a
-coerce. `optionCase` is a primitive (`n === null ? none : some`). A
-non-literal `some` is `UnsafeNullable`: the interpreter treats it as
-`Some`; a real `null` comes from `none` or FFI (`Storage.getItem`,
-`Canvas.getContext2d`).
-
-`Result` is not a JS built-in. It is `{ok: true, value: v}` /
-`{ok: false, value: e}`. `ok` of `Unit` is `{ok: true, value: undefined}`.
+No `==`, `with`, `eval`, `this`, or implicit `new`. No `/src/`
+literals (`new RegExp`). Functions are unary (`Array.sort`'s compare
+is the binary exception). Array index is `Math.trunc` and throws on
+OOB. `parseInt_` takes a radix. `.==` is `$eq` (`===`, then
+structural arrays and plain objects). Frozen `'Object` is `Expr`;
+`'MutableObject` is `Effect`.
 
 ## Option, Result, products, sums
 
