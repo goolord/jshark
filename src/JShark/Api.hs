@@ -1,5 +1,7 @@
 {-# LANGUAGE
-    DataKinds
+    AllowAmbiguousTypes
+  , DataKinds
+  , KindSignatures
   , FlexibleContexts
   , FlexibleInstances
   , GADTs
@@ -77,8 +79,6 @@ module JShark.Api
     -- * Syntax
   , noOp
   , hold
-  , obj
-  , objE
   , stmts
   , done
   , call0
@@ -95,9 +95,12 @@ module JShark.Api
   , (.||)
   ) where
 
+import Data.Kind (Type)
 import Data.Text (Text)
+import GHC.TypeLits (KnownSymbol)
 import JShark.Types
-import JShark.Object
+import JShark.Object hiding (get, set)
+import qualified JShark.Object as Object
 import JShark.Rec (Rec(..), (<:))
 
 data Window
@@ -108,10 +111,10 @@ window :: Effect f ('Object Window)
 window = unsafeObject "window"
 
 host :: EffectSyntax f (Expr f 'String)
-host = get @"location.host" window
+host = Object.get @"location.host" window
 
 locationHash :: EffectSyntax f (Expr f 'String)
-locationHash = get @"location.hash" window
+locationHash = Object.get @"location.hash" window
 
 emptyObject :: Effect f ('Object ())
 emptyObject = newObject
@@ -228,7 +231,7 @@ instance ToEffect f u (Effect f u) where
 instance ToEffect f u (Expr f u) where
   toEffect = Lift
 
-instance ToEffect f u (f u) where
+instance {-# OVERLAPPABLE #-} ToEffect f u (f u) where
   toEffect = Lift . Var
 
 class ToExpr f u a where
@@ -243,11 +246,22 @@ instance ToExpr f u (f u) where
 hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold e = fmap (expr . Var) (toSyntax e)
 
-obj :: f ('Object ()) -> Effect f ('Object ())
-obj = toEffect
+-- | Recover the record phantom from an object handle. Closed so
+-- 'Effect'/'Expr' win over a bare PHOAS binder @f ('Object r)@.
+type family ObjectRow (a :: Type) :: Type where
+  ObjectRow (Effect f ('Object r)) = r
+  ObjectRow (Expr f ('Object r)) = r
+  ObjectRow (f ('Object r)) = r
 
-objE :: Expr f ('Object ()) -> Effect f ('Object ())
-objE = toEffect
+get :: forall k a f. (KnownSymbol k, ToEffect f ('Object (ObjectRow a)) a)
+    => a -> EffectSyntax f (Expr f (Field (ObjectRow a) k))
+get o = Object.get @k @(ObjectRow a)
+  (toEffect o :: Effect f ('Object (ObjectRow a)))
+
+set :: forall k a f. (KnownSymbol k, ToEffect f ('Object (ObjectRow a)) a)
+    => a -> Expr f (Field (ObjectRow a) k) -> EffectSyntax f (f 'Unit)
+set o v = Object.set @k @(ObjectRow a)
+  (toEffect o :: Effect f ('Object (ObjectRow a))) v
 
 getProp :: Effect f ('Object a) -> String -> EffectSyntax f (Expr f u)
 getProp o name = fmap Var $ toSyntax $ unsafeObjectGet o name

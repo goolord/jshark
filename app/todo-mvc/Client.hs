@@ -66,20 +66,20 @@ parseState s = try_
 hydrate :: Expr f ('Object AppState) -> EffectSyntax f (Expr f ('Object AppState))
 hydrate blob = do
   st <- toSyntax emptyState
-  t <- get @"todos" (expr blob)
+  t <- get @"todos" blob
   isT <- toSyntax $ ffi "Array.isArray" (arg t <: RecNil)
   ifS (Var isT)
-    (set @"todos" (Lift (Var st)) t)
-    (set @"todos" (Lift (Var st)) emptyTodos)
-  n <- get @"nextId" (expr blob)
+    (set @"todos" st t)
+    (set @"todos" st emptyTodos)
+  n <- get @"nextId" blob
   fin <- toSyntax $ ffi "Number.isFinite" (arg n <: RecNil)
   ifS (typeOf n .== "number" .&& Var fin)
-    (set @"nextId" (Lift (Var st)) n)
-    (set @"nextId" (Lift (Var st)) 1)
-  f <- get @"filter" (expr blob)
+    (set @"nextId" st n)
+    (set @"nextId" st 1)
+  f <- get @"filter" blob
   ifS (knownFilter f)
-    (set @"filter" (Lift (Var st)) f)
-    (set @"filter" (Lift (Var st)) (string valueAll))
+    (set @"filter" st f)
+    (set @"filter" st (string valueAll))
   pure (Var st)
 
 knownFilter :: Expr f 'String -> Expr f 'Bool
@@ -93,9 +93,9 @@ callRender state = do
 mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f ('Object Todo))
 mkTodo title tid = do
   o <- toSyntax emptyTodo
-  set @"title" (Lift (Var o)) title
-  set @"completed" (Lift (Var o)) false_
-  set @"id" (Lift (Var o)) tid
+  set @"title" o title
+  set @"completed" o false_
+  set @"id" o tid
   pure (Var o)
 
 hashRecognized :: Expr f 'String -> Expr f 'Bool
@@ -117,7 +117,7 @@ byId = Dom.lookupId . string
 
 incomplete :: Expr f ('Array ('Object Todo)) -> EffectSyntax f (Expr f ('Array ('Object Todo)))
 incomplete todos = Array.filterE_ todos $ \t -> do
-  c <- get @"completed" (expr t)
+  c <- get @"completed" t
   toSyntax $ expr (c .!= true_)
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
@@ -141,11 +141,11 @@ mainJS = do
   whenSomeS saved $ \raw -> do
     parsed <- toSyntax $ parseState raw
     whenSomeS (Var parsed) $ \blob -> do
-      t <- get @"todos" (expr blob)
+      t <- get @"todos" blob
       set @"todos" state t
-      n <- get @"nextId" (expr blob)
+      n <- get @"nextId" blob
       set @"nextId" state n
-      f <- get @"filter" (expr blob)
+      f <- get @"filter" blob
       set @"filter" state f
 
   render <- toSyntax $ LambdaE $ \_ -> stmts $ do
@@ -155,9 +155,9 @@ mainJS = do
     Dom.setInnerHTML list ""
 
     forEach_ todos $ \todo -> do
-      tid <- get @"id" (expr todo)
-      title <- get @"title" (expr todo)
-      completed <- get @"completed" (expr todo)
+      tid <- get @"id" todo
+      title <- get @"title" todo
+      completed <- get @"completed" todo
       let showTodo =
             if_ (filt .== string valueAll) true_
               (if_ (filt .== string valueActive) (completed .!= true_) completed)
@@ -173,8 +173,8 @@ mainJS = do
         Dom.setAttribute checkbox "type" "checkbox"
         whenS completed $ setProp checkbox "checked" true_
         onClick_ checkbox $ do
-          cur <- get @"completed" (expr todo)
-          set @"completed" (expr todo) (cur .!= true_)
+          cur <- get @"completed" todo
+          set @"completed" todo (cur .!= true_)
           callRender state
 
         label <- Dom.createElement "label"
@@ -185,7 +185,7 @@ mainJS = do
         onClick_ destroy $ do
           todos' <- get @"todos" state
           kept <- Array.filterE_ todos' $ \t -> do
-            i <- get @"id" (expr t)
+            i <- get @"id" t
             toSyntax $ expr (i .!= tid)
           set @"todos" state kept
           callRender state
@@ -220,10 +220,10 @@ mainJS = do
         done) filterLinks
 
     blob <- toSyntax emptyState
-    set @"todos" (Lift (Var blob)) todos
+    set @"todos" blob todos
     nid <- get @"nextId" state
-    set @"nextId" (Lift (Var blob)) nid
-    set @"filter" (Lift (Var blob)) filt
+    set @"nextId" blob nid
+    set @"filter" blob filt
     Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
 
   set @"render" state (Var render)

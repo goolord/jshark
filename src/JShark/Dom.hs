@@ -31,7 +31,7 @@ module JShark.Dom
 import Data.Text (Text)
 import JShark
 import JShark.Api
-import JShark.Object
+import JShark.Object hiding (get, set)
 import JShark.Types
 import JShark.Rec (Rec(..), (<:))
 
@@ -79,13 +79,13 @@ removeChild :: Effect f ('Object DomElement) -> Effect f ('Object DomElement) ->
 removeChild parent child = toSyntax $ callMethod parent "removeChild" (ArgEffect child <: RecNil)
 
 innerHTML :: Effect f ('Object DomElement) -> EffectSyntax f (Expr f 'String)
-innerHTML = get @"innerHTML"
+innerHTML el = get @"innerHTML" el
 
 setInnerHTML :: Effect f ('Object DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 setInnerHTML el x = toSyntax $ unsafeObjectAssign (unsafeObjectGet el "innerHTML") (Lift x)
 
 innerText :: Effect f ('Object DomElement) -> EffectSyntax f (Expr f 'String)
-innerText = get @"innerText"
+innerText el = get @"innerText" el
 
 setInnerText :: Effect f ('Object DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 setInnerText el x = toSyntax $ unsafeObjectAssign (unsafeObjectGet el "innerText") (Lift x)

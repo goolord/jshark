@@ -14,7 +14,7 @@ module JShark.Storage
   ) where
 
 import JShark.Api
-import JShark.Object
+import JShark.Object hiding (get, set)
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
