@@ -51,7 +51,6 @@ library
     JShark.Ajax
     JShark.Object
     JShark.Dom
-    JShark.ExprF
     JShark.Rec
     JShark.Compiler
   other-modules:

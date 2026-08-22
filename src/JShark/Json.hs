@@ -6,6 +6,7 @@
 module JShark.Json
   ( stringify
   , unsafeParse
+  , tryParse
   ) where
 
 import JShark.Api
@@ -21,3 +22,12 @@ stringify = ExprUnary StdStringify
 -- result type is asserted by the caller and not checked.
 unsafeParse :: Expr f 'String -> Effect f u
 unsafeParse x = ffi "JSON.parse" (arg x <: RecNil)
+
+-- | @JSON.parse@ that yields 'none' on throw.
+tryParse :: Expr f 'String -> Effect f ('Option u)
+tryParse s = try_
+  (fromSyntax $ do
+    x <- toSyntax (unsafeParse s)
+    yield (some (Var x))
+  )
+  (expr none)

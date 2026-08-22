@@ -12,7 +12,7 @@ module JShark.Ajax where
 
 import JShark
 import JShark.Api
-import JShark.Object
+import qualified JShark.Console as Console
 import JShark.Types
 import Network.HTTP.Types
 import JShark.Rec (Rec(..), (<:))
@@ -41,7 +41,7 @@ ex = do
   open GET "https://postman-echo.com/get?foo1=bar1&foo2=bar2" True xhrObj
   send xhrObj
   foo <- get @"responseText" xhrObj
-  consoleLog foo
+  Console.log foo
   toSyntax noOp
 
 ex2 :: IO ()

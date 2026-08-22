@@ -15,18 +15,14 @@ import JShark.Api
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
--- | @console.log(x)@
 log :: Expr f u -> EffectSyntax f ()
-log = consoleLog
+log x = toSyntax_ (ffi "console.log" (arg x <: RecNil))
 
--- | @console.warn(x)@
 warn :: Expr f u -> EffectSyntax f ()
 warn x = toSyntax_ (ffi "console.warn" (arg x <: RecNil))
 
--- | @console.error(x)@
 error_ :: Expr f u -> EffectSyntax f ()
 error_ x = toSyntax_ (ffi "console.error" (arg x <: RecNil))
 
--- | @console.info(x)@
 info :: Expr f u -> EffectSyntax f ()
 info x = toSyntax_ (ffi "console.info" (arg x <: RecNil))

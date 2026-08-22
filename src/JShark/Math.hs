@@ -39,7 +39,7 @@ module JShark.Math
   ) where
 
 import JShark.Types
-import JShark.Api
+import JShark.Api (lambda, ffi)
 import JShark.Rec (Rec(..))
 import Prelude hiding (pi, sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, log, floor, round, max, min)
 
@@ -75,29 +75,29 @@ log10e = 0.4342944819032518
 
 sin, cos, tan, asin, acos, atan, sqrt, cbrt, exp, log, log2, log10, floor, ceil, round, trunc
   :: Expr f 'Number -> Expr f 'Number
-sin = mathUnary MathSin
-cos = mathUnary MathCos
-tan = mathUnary MathTan
-asin = mathUnary MathAsin
-acos = mathUnary MathAcos
-atan = mathUnary MathAtan
-sqrt = mathUnary MathSqrt
-cbrt = mathUnary MathCbrt
-exp = mathUnary MathExp
-log = mathUnary MathLog
-log2 = mathUnary MathLog2
-log10 = mathUnary MathLog10
-floor = mathUnary MathFloor
-ceil = mathUnary MathCeil
-round = mathUnary MathRound
-trunc = mathUnary MathTrunc
+sin = MathUnary MathSin
+cos = MathUnary MathCos
+tan = MathUnary MathTan
+asin = MathUnary MathAsin
+acos = MathUnary MathAcos
+atan = MathUnary MathAtan
+sqrt = MathUnary MathSqrt
+cbrt = MathUnary MathCbrt
+exp = MathUnary MathExp
+log = MathUnary MathLog
+log2 = MathUnary MathLog2
+log10 = MathUnary MathLog10
+floor = MathUnary MathFloor
+ceil = MathUnary MathCeil
+round = MathUnary MathRound
+trunc = MathUnary MathTrunc
 
 pow, atan2, max_, min_, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pow = mathBinary MathPow
-atan2 = mathBinary MathAtan2
-max_ = mathBinary MathMax
-min_ = mathBinary MathMin
-hypot = mathBinary MathHypot
+pow = MathBinary MathPow
+atan2 = MathBinary MathAtan2
+max_ = MathBinary MathMax
+min_ = MathBinary MathMin
+hypot = MathBinary MathHypot
 
 -- | @Math.random()@. Not pure (yields a different value each call), so
 -- it's an 'Effect'.

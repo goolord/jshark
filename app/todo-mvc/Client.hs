@@ -2,6 +2,9 @@
     DataKinds
   , OverloadedStrings
   , ScopedTypeVariables
+  ,     TypeApplications
+    , TypeFamilies
+    , AllowAmbiguousTypes
 #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
@@ -14,45 +17,94 @@ import qualified JShark.Json as Json
 import qualified JShark.Storage as Storage
 import qualified JShark.String as String
 import JShark.Api
-import JShark.Object (unsafeObject)
-import JShark.Rec (Rec(..), (<:))
+import JShark.Rec ((<:), Rec(..))
 import JShark.Types
+
+data Todo
+data AppState
+
+type instance Field Todo "title" = 'String
+type instance Field Todo "completed" = 'Bool
+type instance Field Todo "id" = 'Number
+
+type instance Field AppState "todos" = 'Array ('Object Todo)
+type instance Field AppState "filter" = 'String
+type instance Field AppState "nextId" = 'Number
+type instance Field AppState "render" = 'Function 'Unit 'Unit
 
 storageKey :: Expr f 'String
 storageKey = "jshark-todos"
 
--- | Parse persisted state. 'None' on throw, non-object JSON, or arrays.
--- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
--- A true escape (try/catch + JSON.parse), so this is 'ffi' on 'Effect'.
-parseStateJS :: String
-parseStateJS =
-  "(function(s){try{var o=JSON.parse(s);if(!o||typeof o!==\"object\"||Array.isArray(o))return null;return{todos:Array.isArray(o.todos)?o.todos:[],nextId:(typeof o.nextId===\"number\"&&isFinite(o.nextId))?o.nextId:1,filter:(o.filter===\"active\"||o.filter===\"completed\")?o.filter:\"all\"};}catch(e){return null;}})"
+emptyTodos :: Expr f ('Array ('Object Todo))
+emptyTodos = Literal (ValueArray [])
 
-callRender :: Effect f ('Object ()) -> EffectSyntax f (f 'Unit)
+parseObject :: Expr f 'String -> Effect f ('Object ())
+parseObject = Json.unsafeParse
+
+emptyState :: Effect f ('Object AppState)
+emptyState = newObject
+
+emptyTodo :: Effect f ('Object Todo)
+emptyTodo = newObject
+
+-- | Parse persisted state. 'none' on throw, non-object JSON, or arrays.
+-- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
+parseState :: Expr f 'String -> Effect f ('Option ('Object AppState))
+parseState s = try_
+  (fromSyntax $ do
+    o <- toSyntax (parseObject s)
+    isArr <- toSyntax $ ffi "Array.isArray" (arg (Var o) <: RecNil)
+    toSyntax $ ifE (expr (typeOf (Var o) .!= "object" .|| Var isArr))
+      (expr none)
+      (fromSyntax $ do
+        st <- hydrate (Var o)
+        yield (some st)))
+  (expr none)
+
+hydrate :: Expr f ('Object ()) -> EffectSyntax f (Expr f ('Object AppState))
+hydrate blob = do
+  st <- toSyntax emptyState
+  t <- getProp (Lift blob) "todos"
+  isT <- toSyntax $ ffi "Array.isArray" (arg t <: RecNil)
+  ifS (Var isT)
+    (set @"todos" (Lift (Var st)) t)
+    (set @"todos" (Lift (Var st)) emptyTodos)
+  n <- getProp (Lift blob) "nextId"
+  fin <- toSyntax $ ffi "Number.isFinite" (arg n <: RecNil)
+  ifS (typeOf n .== "number" .&& Var fin)
+    (set @"nextId" (Lift (Var st)) n)
+    (set @"nextId" (Lift (Var st)) 1)
+  f <- getProp (Lift blob) "filter"
+  ifS (f .== "active" .|| f .== "completed")
+    (set @"filter" (Lift (Var st)) f)
+    (set @"filter" (Lift (Var st)) "all")
+  pure (Var st)
+
+callRender :: Effect f ('Object AppState) -> EffectSyntax f (f 'Unit)
 callRender state = do
-  r <- getProp state "render"
+  r <- get @"render" state
   call0 r
 
-mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f ('Object ()))
+mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f ('Object Todo))
 mkTodo title tid = do
-  o <- toSyntax emptyObject
-  setProp (obj o) "title" title
-  setProp (obj o) "completed" false_
-  setProp (obj o) "id" tid
-  pure (toExpr o)
+  o <- toSyntax emptyTodo
+  set @"title" (Lift (Var o)) title
+  set @"completed" (Lift (Var o)) false_
+  set @"id" (Lift (Var o)) tid
+  pure (Var o)
 
 hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
   hash .== "#/active" .|| hash .== "#/completed" .|| hash .== "#/"
 
-applyHashFilter :: Effect f ('Object ()) -> Expr f 'String -> EffectSyntax f (f 'Unit)
+applyHashFilter :: Effect f ('Object AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
   ifS (hash .== "#/active")
-    (setProp state "filter" "active")
+    (set @"filter" state "active")
     (ifS (hash .== "#/completed")
-       (setProp state "filter" "completed")
+       (set @"filter" state "completed")
        (ifS (hash .== "#/")
-          (setProp state "filter" "all")
+          (set @"filter" state "all")
           done))
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
@@ -69,29 +121,32 @@ mainJS = do
   filterActive <- Dom.lookupId "filter-active"
   filterCompleted <- Dom.lookupId "filter-completed"
 
-  state <- hold (unsafeObject "{todos:[],filter:\"all\",nextId:1}" :: Effect f ('Object ()))
+  state <- hold emptyState
+  set @"todos" state emptyTodos
+  set @"filter" state "all"
+  set @"nextId" state 1
 
   saved <- Storage.getItem Storage.localStorage storageKey
   whenSomeS saved $ \raw -> do
-    parsed <- toSyntax $ ffi parseStateJS (arg raw <: RecNil)
-    whenSomeS (unsafeNullable (Var parsed) :: Expr f ('Option ('Object ()))) $ \blob -> do
-      t <- getProp' blob "todos"
-      setProp state "todos" t
-      n <- getProp' blob "nextId"
-      setProp state "nextId" n
-      f <- getProp' blob "filter"
-      setProp state "filter" f
+    parsed <- toSyntax $ parseState raw
+    whenSomeS (Var parsed) $ \blob -> do
+      t <- get @"todos" (expr blob)
+      set @"todos" state t
+      n <- get @"nextId" (expr blob)
+      set @"nextId" state n
+      f <- get @"filter" (expr blob)
+      set @"filter" state f
 
   render <- toSyntax $ LambdaE $ \_ -> stmts $ do
-    todos <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
-    filt <- getProp state "filter"
+    todos <- get @"todos" state
+    filt <- get @"filter" state
 
     Dom.setInnerHTML list ""
 
     forEach_ todos $ \todo -> do
-      tid <- getProp' todo "id"
-      title <- getProp' todo "title"
-      completed <- getProp' todo "completed"
+      tid <- get @"id" (expr todo)
+      title <- get @"title" (expr todo)
+      completed <- get @"completed" (expr todo)
       let showTodo =
             if_ (filt .== "all") true_
               (if_ (filt .== "active") (completed .!= true_) completed)
@@ -107,8 +162,8 @@ mainJS = do
         Dom.setAttribute checkbox "type" "checkbox"
         whenS completed $ setProp checkbox "checked" true_
         onClick_ checkbox $ do
-          cur <- getProp' todo "completed"
-          setProp' todo "completed" (cur .!= true_)
+          cur <- get @"completed" (expr todo)
+          set @"completed" (expr todo) (cur .!= true_)
           callRender state
 
         label <- Dom.createElement "label"
@@ -117,11 +172,11 @@ mainJS = do
         destroy <- Dom.createElement "button"
         Dom.setAttribute destroy "class" "destroy"
         onClick_ destroy $ do
-          todos' <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
+          todos' <- get @"todos" state
           kept <- Array.filterE_ todos' $ \t -> do
-            i <- getProp' t "id"
+            i <- get @"id" (expr t)
             toSyntax $ expr (i .!= tid)
-          setProp state "todos" kept
+          set @"todos" state kept
           callRender state
 
         Dom.appendChild view checkbox
@@ -131,7 +186,7 @@ mainJS = do
         Dom.appendChild list li
 
     active <- Array.filterE_ todos $ \t -> do
-      c <- getProp' t "completed"
+      c <- get @"completed" (expr t)
       toSyntax $ expr (c .!= true_)
     let activeN = Array.length_ active
         totalN = Array.length_ todos
@@ -158,33 +213,33 @@ mainJS = do
          (Dom.classAdd filterCompleted "selected")
          (Dom.classAdd filterAll "selected"))
 
-    blob <- toSyntax emptyObject
-    setProp' blob "todos" todos
-    nid <- getProp state "nextId"
-    setProp' blob "nextId" nid
-    setProp' blob "filter" filt
+    blob <- toSyntax emptyState
+    set @"todos" (Lift (Var blob)) todos
+    nid <- get @"nextId" state
+    set @"nextId" (Lift (Var blob)) nid
+    set @"filter" (Lift (Var blob)) filt
     Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
 
-  setProp state "render" (Var render)
+  set @"render" state (Var render)
 
   addEventListener_ "submit" form $ do
     inputRaw <- Dom.getValue input
     let title = String.trim inputRaw
     whenS (String.length_ title .> 0) $ do
-      nid <- getProp state "nextId"
+      nid <- get @"nextId" state
       todo <- mkTodo title nid
-      todos <- getProp state "todos"
+      todos <- get @"todos" state
       Array.push_ todos todo
-      setProp state "nextId" (nid + 1)
+      set @"nextId" state (nid + 1)
       Dom.setValue input ""
       callRender state
 
   onClick_ clearBtn $ do
-    todos <- getProp state "todos" :: EffectSyntax f (Expr f ('Array ('Object ())))
+    todos <- get @"todos" state
     kept <- Array.filterE_ todos $ \t -> do
-      c <- getProp' t "completed"
+      c <- get @"completed" (expr t)
       toSyntax $ expr (c .!= true_)
-    setProp state "todos" kept
+    set @"todos" state kept
     callRender state
 
   -- Hash is the sole filter driver (links are plain <a href="#/...">).

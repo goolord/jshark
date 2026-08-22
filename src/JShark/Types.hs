@@ -1,7 +1,9 @@
 {-# LANGUAGE
-    DataKinds
+    ConstraintKinds
+  , DataKinds
   , DeriveFunctor
   , DerivingStrategies
+  , FlexibleInstances
   , GADTs
   , KindSignatures
   , LambdaCase
@@ -61,6 +63,8 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v
   IfE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. A 'Lift'ed condition must not depend on 'Let' decls that only run once; an 'FFI' condition is re-emitted into the @if@ test.
   While :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. The rendered condition is re-emitted on every iteration, so it must not depend on declarations that only run once. Use 'FFI' (not a bound var) when the test itself is a call.
+  OptionCaseE :: Expr f ('Option u) -> Effect f v -> (f u -> Effect f v) -> Effect f v -- ^ Effectful 'optionCase'.
+  Try :: Effect f u -> Effect f u -> Effect f u -- ^ @try { a } catch { b }@. Same result type in both arms.
 
 -- | An FFI argument drawn from either syntax tree. This is the sanctioned
 -- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
@@ -81,14 +85,15 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ @||@
   Eq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Strict equality: @===@ (never @==@)
   NEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Strict inequality: @!==@ (never @!=@)
-  GTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>@
-  LTh :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<@
-  GTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>=@
-  LTEq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<=@
+  GTh :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>@ (numbers, strings, bools — not objects)
+  LTh :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<@
+  GTEq :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>=@
+  LTEq :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<=@
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ PHOAS let; codegen emits @const@
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ Weak PHOAS lambda: binder is @f u@
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
   Show :: Expr f u -> Expr f 'String -- ^ @String(x)@
+  TypeOf :: Expr f u -> Expr f 'String -- ^ @typeof x@ (closed name; @null@ is @\"object\"@)
   Var :: f u -> Expr f u -- ^ PHOAS variable (Kmett's Place / return)
   If :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u -- ^ Ternary: @c ? t : e@
   -- Option is JS @null@ / the value itself. Intro via 'UnsafeNullable' or
@@ -106,12 +111,8 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   ExprTernary :: StdTernary a b c d -> Expr f a -> Expr f b -> Expr f c -> Expr f d -- ^ Closed-name ternary (@slice@, @replace@).
   ExprMap :: Expr f ('Array u) -> (f u -> Expr f v) -> Expr f ('Array v) -- ^ @arr.map(function(x){…})@. Callback stays on 'Expr'.
   ExprFilter :: Expr f ('Array u) -> (f u -> Expr f 'Bool) -> Expr f ('Array u) -- ^ @arr.filter(function(x){…})@. Callback stays on 'Expr'.
-  -- Untyped field read. Getters may have effects, so this is not DCE'd.
-  -- Prefer 'StdArrLen' / 'StdStrLen' for @.length@.
-  ExprProp :: Expr f u -> Text -> Expr f v -- ^ @receiver.prop@
   UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
-  UnsafeFromSome :: Expr f ('Option u) -> Expr f u -- ^ After a null check, the JS value is @u@. Codegen is identity.
-  UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Embed an 'Effect' as a pure 'Expr'. Optimizer splice placeholder; at the surface, pass effects to FFI via 'ArgEffect' instead.
+  UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Optimizer splice only; not part of the surface API. Pass effects to FFI via 'ArgEffect'.
 
 -- | Closed unary names on 'Expr'. There is no way to write @alert@ here.
 data StdUnary :: Universe -> Universe -> Type where
@@ -181,22 +182,17 @@ type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
 -- | Closed effectful term: no free PHOAS binders. The end @forall f. 'Effect' f u@.
 type ClosedEffect (u :: Universe) = forall (f :: Universe -> Type). Effect f u
 
--- | First-order fragment used by the original unused-binding experiment
--- ('JShark.ExprF'). Only 'Literal'/'Plus'/'Let'/'Lambda'/'Apply'/'Var'.
--- Full-program optimization uses 'JShark.optimize' on 'Expr' instead.
-data ExprF :: (Type -> Type -> Type) -> (Universe -> Type) -> Universe -> Type where
-  LiteralF :: Value u -> ExprF g f u
-  PlusF :: ExprF g f 'Number -> ExprF g f 'Number -> ExprF g f 'Number
-  LetF :: ExprF g f u -> g (f u) (ExprF g f v) -> ExprF g f v
-  LambdaF :: g (f u) (ExprF g f v) -> ExprF g f ('Function u v)
-  ApplyF :: ExprF g f ('Function u v) -> ExprF g f u -> ExprF g f v
-  VarF :: f u -> ExprF g f u
+-- | Ordering on the Good Parts primitives. Objects/arrays use JS
+-- 'ToPrimitive' and are not constructible here.
+class Comparable (u :: Universe)
+instance Comparable 'Number
+instance Comparable 'String
+instance Comparable 'Bool
 
--- | 'IsString' for JS string literals at each pure AST layer:
+-- | 'IsString' for JS string literals:
 --
 -- * @Value 'String@ — @"hi"@
 -- * @Expr f 'String@ — @"hi"@ as 'Literal'
--- * @ExprF g f 'String@ — same for the ExprF fragment
 --
 -- Prefer an explicit type signature when the hole is ambiguous with
 -- 'String'/'Text'. Use 'JShark.Api.string' for runtime 'Text' values.
@@ -206,20 +202,18 @@ instance forall u. (u ~ 'String) => Exts.IsString (Value u) where
 instance forall (f :: (Universe -> Type)) u. (u ~ 'String) => Exts.IsString (Expr f u) where
   fromString s = Literal (Exts.fromString s)
 
-instance forall g (f :: Universe -> Type) u. (u ~ 'String) => Exts.IsString (ExprF g f u) where
-  fromString s = LiteralF (Exts.fromString s)
+instance forall (f :: Universe -> Type) u. (u ~ 'String) => Semigroup (Expr f u) where
+  (<>) = Concat
 
--- | 'Num' / 'Fractional' for JS numbers at each pure AST layer that
--- supports them:
+-- | 'Num' / 'Fractional' for JS numbers:
 --
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
 -- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
 --   ('Plus'/'Times'/…) and fold later in codegen
 --
--- 'ExprF' only has 'PlusF', so it has no 'Num' instance. Prefer a
--- signature when the hole is ambiguous. Use 'JShark.Api.number' for
--- arbitrary runtime 'Double's (integer literals can use 'Num' directly).
+-- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
+-- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
 instance forall u. (u ~ 'Number) => Num (Value u) where
   (+) = liftValue2 (+)
   (*) = liftValue2 (*)
@@ -254,9 +248,6 @@ instance forall (f :: Universe -> Type) u. (u ~ 'Number) => Fractional (Expr f u
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).
-
-bindEffect :: Effect v a -> (v a -> Effect v b) -> Effect v b
-bindEffect = Bind
 
 -- Analogous to RelativeMSyntax in section 3.3.
 data EffectSyntax :: (Universe -> Type) -> Type -> Type where

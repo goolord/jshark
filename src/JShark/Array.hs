@@ -27,7 +27,7 @@ import JShark.Types
 
 -- | @arr[i]@
 index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
-index = exprIndex
+index = ExprIndex
 
 -- | @arr.length@
 length_ :: Expr f ('Array u) -> Expr f 'Number

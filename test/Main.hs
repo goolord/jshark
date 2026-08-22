@@ -10,14 +10,12 @@ module Main (main) where
 
 import Control.Exception (IOException, bracket, catch)
 import Data.Char (isSpace)
-import Data.Functor.Const (Const(..))
 import Data.List (dropWhileEnd, intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
 import JShark.Api
 import JShark.Compiler
-import qualified JShark.ExprF as ExprF
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
 import System.Directory
@@ -53,7 +51,6 @@ tests = testGroup "jshark"
   , controlFlowTests
   , stdlibTests
   , optimizeTests
-  , exprFTests
   , compilerTests
   , bunEvalTests
   ]
@@ -61,7 +58,7 @@ tests = testGroup "jshark"
 evaluatorTests :: TestTree
 evaluatorTests = testGroup "evaluate"
   [ testCase "addition" $
-      evaluateNumber (plus (number 1) (number 2)) @?= 3
+      evaluateNumber (number 1 + number 2) @?= 3
   , testCase "subtraction" $
       evaluateNumber ((number 5 :: Expr f 'Number) - number 2) @?= 3
   , testCase "multiplication and division" $
@@ -73,7 +70,7 @@ evaluatorTests = testGroup "evaluate"
   , testCase "lambda application" $
       evaluateNumber (apply (lambda (\x -> x * 2)) (number 21)) @?= 42
   , testCase "evaluateCached agrees with evaluate on a shared heap node" $ do
-      let x = plus (number 21) (number 21)
+      let x = number 21 + number 21
           e = x + x
       cached <- evaluateCached e
       case cached of
@@ -132,7 +129,7 @@ codegenTests = testGroup "codegen"
       renderJS (effectfulProgram (with1 fooE (\x -> x + x)))
         @?= "(() => {\n  const n0 = foo();\n  return n0 + n0;\n})()"
   , testCase "effectful console.log FFI call" $
-      renderJS (effectfulAST (fromSyntax (consoleLog ("hi" :: Expr f 'String) *> toSyntax noOp)))
+      renderJS (effectfulAST (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp)))
         @?= "console.log(\"hi\");"
   , testCase "OverloadedStrings Expr literal" $
       renderJS (pureAST ("hi" :: Expr f 'String)) @?= "\"hi\""
@@ -163,10 +160,10 @@ controlFlowTests = testGroup "control flow"
   , testCase "optionCase on None" $
       evaluateNumber (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1)) @?= 0
   , testCase "ifE renders an if/else statement with a shared result variable" $
-      renderJS (effectfulAST (fromSyntax (toSyntax (ifEE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)))
+      renderJS (effectfulAST (fromSyntax (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)))
         @?= "let n0;\nif (cond()) {n0 = 1.0;}\nelse {n0 = 2.0;}"
   , testCase "whileE re-emits an FFI condition" $
-      renderJS (effectfulAST (fromSyntax (toSyntax_ (whileE condE (ffi "foo" RecNil)) *> toSyntax noOp)))
+      renderJS (effectfulAST (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp)))
         @?= "while (cond()) {foo();}"
   ]
 
@@ -275,7 +272,7 @@ stdlibTests = testGroup "stdlib"
 optimizeTests :: TestTree
 optimizeTests = testGroup "optimize"
   [ testCase "literal arithmetic folds" $
-      renderJS (pureAST (plus (number 1) (number 2))) @?= "3.0"
+      renderJS (pureAST (number 1 + number 2)) @?= "3.0"
   , testCase "nested single-use lets fold" $
       renderJS (pureAST (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x))))
         @?= "3.0"
@@ -304,78 +301,34 @@ optimizeTests = testGroup "optimize"
   , testCase "unused stringify is kept (can throw)" $
       renderJS (pureAST (let_ (Json.stringify (number 1)) (\_ -> number 2)))
         @?= "JSON.stringify(1.0);\n2.0"
-  , testCase "unused exprProp is kept as a statement" $
-      renderJS (pureAST (let_ (exprProp (number 1) "x" :: Expr f 'Number) (\_ -> number 2)))
-        @?= "1.0.x;\n2.0"
-  , testCase "GTh of array literals is not folded" $
-      renderJS (pureAST (GTh numArray numArray))
-        @?= "[1.0, 2.0] > [1.0, 2.0]"
   , testCase "optionCase of a Literal ValueOption folds" $
       renderJS (pureAST (optionCase (Literal (ValueOption (Just (ValueNumber 5)))) (number 0) (\x -> x + 1)))
         @?= "6.0"
   , testCase "optionCase of some of a folded literal peels" $
-      renderJS (pureAST (optionCase (some (plus (number 1) (number 2))) (number 0) (\x -> x + 1)))
+      renderJS (pureAST (optionCase (some (number 1 + number 2)) (number 0) (\x -> x + 1)))
         @?= "4.0"
-  , testCase "if_ True does not fold the dead branch" $
-      renderJS (pureAST (if_ (bool True) (number 1) (exprProp (number 1) "x" :: Expr f 'Number)))
+  , testCase "if_ True takes the true branch" $
+      renderJS (pureAST (if_ (bool True) (number 1) (number 99)))
         @?= "1.0"
-  , testCase "false && does not fold the RHS" $
-      renderJS (pureAST (And (bool False) (Eq (exprProp (number 1) "x" :: Expr f 'Number) (number 0))))
+  , testCase "false && folds the RHS" $
+      renderJS (pureAST (And (bool False) (Eq (number 1) (number 0))))
         @?= "false"
   , testCase "while false becomes a no-op" $
-      renderJS (effectfulAST (while_ (bool False) (ffi "foo" RecNil)))
+      renderJS (effectfulAST (while_ (expr (bool False)) (ffi "foo" RecNil)))
         @?= ""
   , testCase "ifE of True takes the true branch" $
-      renderJS (effectfulAST (ifE (bool True) (ffi "foo" RecNil) (ffi "bar" RecNil)))
+      renderJS (effectfulAST (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil)))
         @?= "foo()"
-  ]
-
-exprFTests :: TestTree
-exprFTests = testGroup "ExprF removeUnusedBindings"
-  [ testCase "drops an unused let" $ do
-      let e = ExprF.LetF (ExprF.LiteralF (ValueNumber 1)) (\_ -> ExprF.LiteralF (ValueNumber 2))
-          e' = ExprF.removeUnusedBindings e
-      case e' of
-        ExprF.LiteralF (ValueNumber 2) -> pure ()
-        _ -> assertFailure "expected LiteralF 2 after DCE"
-  , testCase "keeps a let that is used twice" $ do
-      let e = ExprF.LetF (ExprF.LiteralF (ValueNumber 5)) (\x -> ExprF.PlusF (ExprF.VarF x) (ExprF.VarF x))
-          e' = ExprF.removeUnusedBindings e
-      case e' of
-        ExprF.LetF (ExprF.LiteralF (ValueNumber 5)) body ->
-          case body (Const (0 :: Int)) of
-            ExprF.PlusF (ExprF.VarF (Const 0)) (ExprF.VarF (Const 0)) -> pure ()
-            _ -> assertFailure "expected body x + x"
-        _ -> assertFailure "expected LetF 5 in x + x"
-  , testCase "bottom-up: dropping an inner let frees the outer binder" $ do
-      let e =
-            ExprF.LetF (ExprF.LiteralF (ValueNumber 1)) $ \x ->
-              ExprF.LetF (ExprF.VarF x) $ \_y ->
-                ExprF.LiteralF (ValueNumber 2)
-          e' = ExprF.removeUnusedBindings e
-      case e' of
-        ExprF.LiteralF (ValueNumber 2) -> pure ()
-        _ -> assertFailure "expected both lets to disappear"
-  , testCase "keeps a lambda even when the parameter is unused" $ do
-      let e = ExprF.LambdaF (\_ -> ExprF.LiteralF (ValueNumber 1))
-          e' = ExprF.removeUnusedBindings e
-      case e' of
-        ExprF.LambdaF{} -> pure ()
-        _ -> assertFailure "expected LambdaF to remain"
-  , testCase "OverloadedStrings ExprF literal" $
-      case ("hi" :: ExprF (->) f 'String) of
-        ExprF.LiteralF (ValueString s) -> s @?= "hi"
-        _ -> assertFailure "expected LiteralF string"
-  , testCase "removeUnusedBindingsExpr round-trips a fragment Expr" $ do
-      let e = let_ (number 1) (\_ -> number 2)
-      case ExprF.removeUnusedBindingsExpr e of
-        Just (Literal (ValueNumber 2)) -> pure ()
-        Just _ -> assertFailure "expected Literal 2 after DCE"
-        Nothing -> assertFailure "expected fragment conversion to succeed"
-  , testCase "removeUnusedBindingsExpr rejects non-fragment Expr" $
-      case ExprF.removeUnusedBindingsExpr (if_ (bool True) (number 1) (number 2)) of
-        Nothing -> pure ()
-        Just _ -> assertFailure "expected Nothing for if_"
+  , testCase "typeof of a literal folds" $
+      renderJS (pureAST (typeOf (number 1))) @?= "\"number\""
+  , testCase "string Semigroup is Concat" $
+      renderJS (pureAST (("a" :: Expr f 'String) <> "b")) @?= "\"ab\""
+  , testCase "try_ renders try/catch" $
+      renderJS (effectfulAST (try_ (ffi "foo" RecNil) (expr (number 0))))
+        @?= "let n0;\ntry {n0 = foo();}\ncatch (n1) {n0 = 0.0;}\nn0"
+  , testCase "optionCaseE of none takes the none branch" $
+      renderJS (effectfulAST (optionCaseE (none :: Expr f ('Option 'Number)) (ffi "missing" RecNil) (\x -> expr x)))
+        @?= "missing()"
   ]
 
 compilerTests :: TestTree
@@ -396,8 +349,8 @@ compilerTests = testGroup "compiler"
       clearCompilerCache
   , testCase "compilePure passthrough emits an IIFE" $ do
       clearCompilerCache
-      out <- compilePure passthroughConfig (plus (number 1) (number 2))
-      out @?= T.pack (renderJS (pureProgram (plus (number 1) (number 2))))
+      out <- compilePure passthroughConfig (number 1 + number 2)
+      out @?= T.pack (renderJS (pureProgram (number 1 + number 2)))
       assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
       assertBool "result is returned so minifiers cannot DCE it" ("return" `T.isInfixOf` out)
   , testCase "disk cache roundtrips passthrough output" $ do
@@ -436,7 +389,7 @@ compilerTests = testGroup "compiler"
         Just _ -> do
           -- Constant-folded to a pure literal IIFE; esbuild DCE's that
           -- unless Compiler re-anchors via export default and strips it.
-          let snippet = plus (number 1) (number 2)
+          let snippet = number 1 + number 2
               raw = T.pack (renderJS (pureProgram snippet))
               cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified
           out <- compilePure cfg snippet
@@ -487,7 +440,7 @@ compilerTests = testGroup "compiler"
   , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
       clearCompilerCache
       out <- compileEffect readableConfig
-        (fromSyntax (consoleLog ("hi" :: Expr f 'String) *> toSyntax noOp))
+        (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
       out @?= "console.log(\"hi\");"
   , testCase "readableConfig compilePure has no IIFE and inlines single-use lets" $ do
       clearCompilerCache
@@ -526,7 +479,7 @@ bunEvalTests =
               assertFailure "bun not found on PATH; install https://bun.sh"
       , after AllSucceed "bun is on PATH" $
           testGroup "eval"
-            [ bunCase getBun "addition" (plus (number 1) (number 2))
+            [ bunCase getBun "addition" (number 1 + number 2)
             , bunCase getBun "subtraction" ((number 5 :: Expr f 'Number) - number 2)
             , bunCase getBun "multiplication and division"
                 ((number 6 :: Expr f 'Number) * number 7 / number 2)

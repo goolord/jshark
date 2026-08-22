@@ -9,7 +9,91 @@
   , TypeFamilies
   , OverloadedStrings
 #-}
-module JShark.Api where
+module JShark.Api
+  ( -- * Types
+    Expr
+  , Effect
+  , EffectSyntax
+  , Universe(..)
+  , Value(..)
+  , Arg(..)
+  , Field
+  , Comparable
+    -- * Literals
+  , number
+  , bool
+  , true_
+  , false_
+  , string
+    -- * Variables and lifting
+  , var
+  , expr
+  , yield
+  , arg
+  , ToEffect(..)
+  , ToExpr(..)
+    -- * Functions and binding
+  , lambda
+  , lambdaE
+  , apply
+  , let_
+    -- * Control
+  , if_
+  , ifE
+  , when_
+  , while_
+  , whenS
+  , ifS
+  , forEach
+  , forEach_
+  , try_
+    -- * Option
+  , some
+  , none
+  , optionCase
+  , optionCaseE
+  , whenSomeS
+  , unsafeNullable
+    -- * FFI
+  , ffi
+  , callMethod
+    -- * Objects
+  , emptyObject
+  , newObject
+  , get
+  , set
+  , getProp
+  , setProp
+  , getProp'
+  , setProp'
+    -- * Events / window
+  , window
+  , host
+  , locationHash
+  , onClick
+  , onClick_
+  , addEventListener
+  , addEventListener_
+    -- * Syntax
+  , noOp
+  , hold
+  , obj
+  , objE
+  , stmts
+  , done
+  , call0
+    -- * Operators
+  , not_
+  , typeOf
+  , (.==)
+  , (.!=)
+  , (.>)
+  , (.<)
+  , (.>=)
+  , (.<=)
+  , (.&&)
+  , (.||)
+  ) where
 
 import Data.Text (Text)
 import JShark.Types
@@ -26,59 +110,42 @@ window = unsafeObject "window"
 host :: EffectSyntax f (Expr f 'String)
 host = get @"location.host" window
 
--- | @window.location.hash@
 locationHash :: EffectSyntax f (Expr f 'String)
 locationHash = get @"location.hash" window
 
--- | Empty untyped object literal (@{}@), pinned to @'Object ()@.
 emptyObject :: Effect f ('Object ())
-emptyObject = unsafeObject "{}"
+emptyObject = newObject
 
 onClick :: Effect f ('Object obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
 onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "onclick") (LambdaE f)
 
--- | 'onClick' with an 'EffectSyntax' body (no manual 'fromSyntax'/'toSyntax' noOp).
 onClick_ :: Effect f ('Object obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 onClick_ el body = onClick el $ \_ -> stmts body
 
-consoleLog :: Expr f u -> EffectSyntax f ()
-consoleLog u = toSyntax (ffi "console.log" (arg u <: RecNil)) *> pure ()
-
 ffi :: String -> Rec (Arg f) us -> Effect f v
-ffi name args = FFI name args
+ffi = FFI
 
--- | @recv.method(args…)@.
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
 callMethod = CallMethod
 
 expr :: Expr f u -> Effect f u
 expr = Lift
 
-plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plus = Plus
+yield :: Expr f u -> EffectSyntax f (f u)
+yield = toSyntax . Lift
 
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
 apply = Apply
 
--- | PHOAS variable: Kmett's @var = return@ / @Place@.
 var :: f u -> Expr f u
 var = Var
 
-lambda ::
-     (Expr f u -> Expr f v)
-  -> Expr f ('Function u v)
+lambda :: (Expr f u -> Expr f v) -> Expr f ('Function u v)
 lambda f = Lambda (\x -> f (var x))
 
-lambdaE ::
-    (Effect f u -> Effect f v)
-  -> Effect f ('Function u v)
+lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
--- | Embed a 'Double' as a number literal.
---
--- Integer literals can use the 'Num' instance on 'Expr' directly
--- (@3 :: Expr f 'Number@). Prefer 'number' when you already have a
--- runtime 'Double' (including non-integers).
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
 
@@ -92,119 +159,66 @@ false_ = bool False
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
--- | @arr.forEach(function(x){…})@. 'callMethod' + 'LambdaE', not a dedicated AST node.
 forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
 forEach arr f = callMethod (expr arr) "forEach" (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
 
--- | 'forEach' with an 'EffectSyntax' body.
 forEach_ :: Expr f ('Array u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
 forEach_ arr f = toSyntax $ forEach arr (\x -> stmts (f x))
 
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
-let_ ::
-     Expr f u
-  -> (Expr f u -> Expr f v)
-  -> Expr f v
+let_ :: Expr f u -> (Expr f u -> Expr f v) -> Expr f v
 let_ e f = Let e (\x -> f (var x))
 
--- Control flow -----------------------------------------------------------
-
--- | Ternary conditional: @if_ c t e@ compiles to @c ? t : e@.
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ = If
 
--- | Effectful conditional with an 'Expr' test.
-ifE :: Expr f 'Bool -> Effect f u -> Effect f u -> Effect f u
-ifE c = IfE (Lift c)
+-- | Effectful conditional. Lift an 'Expr' test with 'expr'.
+ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
+ifE = IfE
 
--- | Effectful conditional with an 'Effect' test (re-emitted into the @if@).
--- Use @ifEE (ffi "cond" RecNil)@ when the test itself must re-run.
-ifEE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
-ifEE = IfE
+when_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
+when_ c t = IfE c t noOp
 
--- | Run an effect only when the condition holds, otherwise do nothing.
-when_ :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-when_ c t = IfE (Lift c) t noOp
+while_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
+while_ = While
 
--- | 'when_' with an 'Effect' test.
-whenE :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-whenE c t = IfE c t noOp
+try_ :: Effect f u -> Effect f u -> Effect f u
+try_ = Try
 
--- | Loop while the condition holds.
-while_ :: Expr f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-while_ c = While (Lift c)
-
--- | 'while_' with an 'Effect' test. Use @whileE (ffi "cond" RecNil)@
--- when the test itself must re-run each iteration.
-whileE :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-whileE = While
-
--- Option --------------------------------------------------------------
-
--- | Present value. Literals pack as 'ValueOption'; otherwise a typed
--- 'UnsafeNullable' (not treated as a known Some by the optimizer, so
--- FFI nulls such as 'getItem' keep their @=== null@ check).
 some :: Expr f u -> Expr f ('Option u)
 some (Literal v) = Literal (ValueOption (Just v))
 some x = UnsafeNullable x
 
--- | Absent value: JS @null@.
 none :: Expr f ('Option u)
 none = Literal (ValueOption Nothing)
 
--- | Eliminate an 'Option', analogous to 'maybe'.
 optionCase :: Expr f ('Option u) -> Expr f v -> (Expr f u -> Expr f v) -> Expr f v
 optionCase opt noneBranch someBranch = OptionCase opt noneBranch (\x -> someBranch (var x))
 
--- | Untyped field read on the pure tree. Getters may have effects, so
--- this is not DCE'd. Prefer 'getProp' on 'Effect', or 'StdArrLen' /
--- 'StdStrLen' for @.length@.
-exprProp :: Expr f u -> Text -> Expr f v
-exprProp = ExprProp
-
-exprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
-exprIndex = ExprIndex
-
-mathUnary :: MathFn1 -> Expr f 'Number -> Expr f 'Number
-mathUnary = MathUnary
-
-mathBinary :: MathFn2 -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-mathBinary = MathBinary
-
--- | After a null check, reinterpret @'Option u@ as @u@. Codegen is identity.
-fromSome :: Expr f ('Option u) -> Expr f u
-fromSome = UnsafeFromSome
-
--- | Effectful 'optionCase': @null@ takes the none branch, otherwise
--- the value is passed to the some branch.
 optionCaseE :: Expr f ('Option u) -> Effect f v -> (Expr f u -> Effect f v) -> Effect f v
-optionCaseE opt noneBranch someBranch =
-  IfE (Lift (opt .== none)) noneBranch (someBranch (fromSome opt))
+optionCaseE opt noneBranch someBranch = OptionCaseE opt noneBranch (\x -> someBranch (var x))
 
--- | Reinterpret a value that may be a JS null (e.g. the result of
--- @localStorage.getItem@) as an 'Option'. See the note on 'UnsafeNullable'.
 unsafeNullable :: Expr f u -> Expr f ('Option u)
 unsafeNullable = UnsafeNullable
+
+typeOf :: Expr f u -> Expr f 'String
+typeOf = TypeOf
+
+not_ :: Expr f 'Bool -> Expr f 'Bool
+not_ c = c .== false_
 
 addEventListener :: Text -> Effect f ('Object obj) -> (f u -> Effect f a) -> EffectSyntax f ()
 addEventListener name el handler =
   toSyntax_ $ callMethod el "addEventListener" (arg (string name) <: ArgEffect (LambdaE handler) <: RecNil)
 
--- | 'addEventListener' with an 'EffectSyntax' body.
 addEventListener_ :: Text -> Effect f ('Object obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
 
--- Lifting ----------------------------------------------------------------
-
--- | Wrap a pure expression as an FFI argument. Effectful arguments
--- (object handles, 'LambdaE') use 'ArgEffect' so the two trees stay distinct.
 arg :: Expr f u -> Arg f u
 arg = ArgExpr
 
--- | Convert binders (@f u@), expressions, and effects into an 'Effect'
--- suitable for FFI / property access without manual 'Lift'/'Var'.
 class ToEffect f u a where
   toEffect :: a -> Effect f u
 
@@ -217,7 +231,6 @@ instance ToEffect f u (Expr f u) where
 instance ToEffect f u (f u) where
   toEffect = Lift . Var
 
--- | Convert binders and expressions into an 'Expr'.
 class ToExpr f u a where
   toExpr :: a -> Expr f u
 
@@ -227,77 +240,54 @@ instance ToExpr f u (Expr f u) where
 instance ToExpr f u (f u) where
   toExpr = Var
 
--- | Bind an effect once (@const n = e@) and return a reusable handle.
 hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold e = fmap (expr . Var) (toSyntax e)
 
--- | 'f' binder for an untyped object as an 'Effect' handle.
 obj :: f ('Object ()) -> Effect f ('Object ())
 obj = toEffect
 
--- | 'Expr' untyped object as an 'Effect' handle.
 objE :: Expr f ('Object ()) -> Effect f ('Object ())
 objE = toEffect
 
--- | Read a property (@o.name@).
 getProp :: Effect f ('Object a) -> String -> EffectSyntax f (Expr f u)
 getProp o name = fmap Var $ toSyntax $ unsafeObjectGet o name
 
--- | Assign a property (@o.name = v@).
 setProp :: Effect f ('Object a) -> String -> Expr f u -> EffectSyntax f (f 'Unit)
 setProp o name v = toSyntax $ unsafeObjectAssign (unsafeObjectGet o name) (Lift v)
 
--- | Read a property from an 'Effect', 'Expr', or binder (untyped objects).
 getProp' :: forall f o u. ToEffect f ('Object ()) o => o -> String -> EffectSyntax f (Expr f u)
 getProp' o name = getProp (toEffect o :: Effect f ('Object ())) name
 
--- | Assign a property on an 'Effect', 'Expr', or binder (untyped objects).
 setProp' :: forall f o u. ToEffect f ('Object ()) o => o -> String -> Expr f u -> EffectSyntax f (f 'Unit)
 setProp' o name v = setProp (toEffect o :: Effect f ('Object ())) name v
 
--- | Turn an 'EffectSyntax' block into a single 'Effect' (for 'when_'/'ifE'/handlers).
 stmts :: EffectSyntax f (f 'Unit) -> Effect f 'Unit
 stmts = fromSyntax
 
--- | End an 'EffectSyntax' block with @undefined@ / unit.
 done :: EffectSyntax f (f 'Unit)
 done = toSyntax noOp
 
--- | 'when_' with an 'EffectSyntax' body.
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-whenS c body = toSyntax $ when_ c (stmts body)
+whenS c body = toSyntax $ when_ (expr c) (stmts body)
 
--- | 'whenE' with an 'EffectSyntax' body.
-whenES :: Effect f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-whenES c body = toSyntax $ whenE c (stmts body)
-
--- | Run the body when the option is present, with the unwrapped value.
-whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
-whenSomeS opt k = whenS (opt .!= none) (k (fromSome opt))
-
--- | 'ifE' with 'EffectSyntax' branches.
 ifS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-ifS c t e = toSyntax $ ifE c (stmts t) (stmts e)
+ifS c t e = toSyntax $ ifE (expr c) (stmts t) (stmts e)
 
--- | 'ifEE' with 'EffectSyntax' branches.
-ifES :: Effect f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-ifES c t e = toSyntax $ ifEE c (stmts t) (stmts e)
+whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
+whenSomeS opt k = toSyntax $ optionCaseE opt noOp (\x -> stmts (k x))
 
--- | Call a nullary JS function that returns unit (@fn()@).
 call0 :: forall f. Expr f ('Function 'Unit 'Unit) -> EffectSyntax f (f 'Unit)
 call0 fn = toSyntax (ApplyE (Lift fn) noOp :: Effect f 'Unit)
-
--- Binary operators (JS expression constructors) --------------------------
 
 infix 4 .==, .!=, .>, .<, .>=, .<=
 infixr 3 .&&
 infixr 2 .||
 
 (.==), (.!=) :: Expr f a -> Expr f a -> Expr f 'Bool
-(.==) = Eq   -- compiles to ===
-(.!=) = NEq  -- compiles to !==
+(.==) = Eq
+(.!=) = NEq
 
-(.>), (.<), (.>=), (.<=) :: Expr f a -> Expr f a -> Expr f 'Bool
+(.>), (.<), (.>=), (.<=) :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
 (.>) = GTh
 (.<) = LTh
 (.>=) = GTEq

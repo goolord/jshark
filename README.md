@@ -10,13 +10,13 @@ Codegen constant-folds literals and drops dead pure bindings, then inlines singl
 
 ```haskell
 import qualified Data.Text.IO as TIO
-import JShark.Api (number, plus)
+import JShark.Api (number)
 import JShark.Compiler
 
 main :: IO ()
 main = do
-  pretty <- compilePure readableConfig (plus (number 1) (number 2))
-  minified <- compilePure defaultCompilerConfig (plus (number 1) (number 2))
+  pretty <- compilePure readableConfig (number 1 + number 2)
+  minified <- compilePure defaultCompilerConfig (number 1 + number 2)
   TIO.putStrLn pretty
   TIO.putStrLn minified
 ```
@@ -39,26 +39,18 @@ Opens a classic TodoMVC UI on [http://localhost:3000](http://localhost:3000): Sc
 ### Status
 
 The core language currently supports:
-- Arithmetic, string, and boolean expressions (`+`, `-`, `*`, `/`, `&&`, `||`, comparisons, `Show`/`String()` casting)
+- Arithmetic, string, and boolean expressions (`+`, `-`, `*`, `/`, `&&`, `||`, `===`, comparisons on numbers/strings/bools, `Show`/`typeof`, string `<>`)
 - `let`, lambdas/application, and a ternary conditional (`if_`)
-- `Option` type with `optionCase` (`maybe`-style); `some`/`none` are library wrappers over a nullable cast and JS `null`
-- Effectful statements: `let`-style binding (`EffectSyntax`), `forEach`, effectful conditionals (`ifE`/`when_`) and `while_` loops, and an escape hatch FFI for calling into arbitrary JS
-- A small typed object/property-access mechanism (`Field`) used by the `Dom` and `Ajax` modules
-- Named stdlib on the pure tree is closed-name constructors (`toUpper`,
-  `length_`, `stringify`, `map_`, `filter_`, …), like `exprIndex` / `Math.*`.
-  True escapes (`alert`, raw `foo()`, free-text methods) use `ffi` /
-  `callMethod` on `Effect`. Untyped field reads use `exprProp` (not DCE'd;
-  getters may have effects) or `getProp'` inside `filterE`/`mapE`.
-  `UnsafeEffectExpr` is an optimizer splice, not an FFI path.
-  `JSON.stringify` is `stringify` on `Expr` (unused calls are kept; it can
-  throw). `JSON.parse` is `unsafeParse` on `Effect` (it can throw).
-  Effect tests that must re-run use `ifEE`/`whileE`/`whenE`.
+- `Option` with `optionCase` / `optionCaseE`; `some`/`none` wrap a nullable cast and JS `null`
+- Effectful statements: `EffectSyntax` (`yield`, `hold`), `forEach`, `ifE`/`when_`/`while_` (pass `expr c` or `ffi "cond" RecNil`), `try_`, and `ffi` / `callMethod`
+- Typed records: `Field` + `get @` / `set @` / `newObject`. Untyped FFI blobs use `getProp`/`setProp`
+- Named stdlib on `Expr` is closed-name (`toUpper`, `length_`, `stringify`, `map_`, `filter_`, `Array.index`, `Math.*`). True escapes (`alert`, raw `foo()`, free-text methods) use `ffi` / `callMethod` on `Effect`. `JSON.parse` is `unsafeParse` / `tryParse` on `Effect`.
 
 Stdlib/browser wrappers built on top of the core language:
 - `JShark.Array`: `index`, `length_`, `map_`/`mapE`, `filter_`/`filterE`, `includes`, `concat_`, `join`, `push`
 - `JShark.String`: `length_`, `indexOf`, `slice`, `toUpper`, `toLower`, `trim`, `split`, `replace`
 - `JShark.Math`: constants (`pi`, `e`, ...) plus `sin`/`cos`/`tan`/`sqrt`/`pow`/`atan2`/`max_`/`min_`/`random`/etc.
-- `JShark.Json`: `stringify` (`Expr`), `unsafeParse` (`Effect`)
+- `JShark.Json`: `stringify` (`Expr`), `unsafeParse` / `tryParse` (`Effect`)
 - `JShark.Console`: `log`, `warn`, `error_`, `info`
 - `JShark.Storage`: `localStorage`/`sessionStorage`, `getItem`, `setItem`, `removeItem`, `clear`
 - `JShark.Timers`: `setTimeout`, `setInterval`, `clearTimeout`, `clearInterval`
