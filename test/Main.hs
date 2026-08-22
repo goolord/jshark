@@ -604,6 +604,10 @@ optimizeTests = testGroup "optimize"
       renderJS (pureAST (let_ (number 1) (\_ -> number 2))) @?= "2.0"
   , testCase "unused FFI let is kept as a statement" $
       renderJS (effectfulAST (Bind fooE (\_ -> Lift (number 1)))) @?= "foo();\n1.0"
+  , testCase "top-level do-notation bind chain compiles" $ do
+      let chain = foldr (\_ k -> toSyntax (ffi "step" RecNil) *> k) (toSyntax noOp) [1..40 :: Int]
+      out <- compileEffect readableConfig (fromSyntax chain)
+      assertBool "emitted js" (T.length out > 20)
   , testCase "lambda application of a literal folds" $
       renderJS (pureAST (apply (lambda (\x -> x * 2)) (number 21))) @?= "42.0"
   , testCase "if_ of True takes the true branch" $
@@ -690,7 +694,7 @@ compilerTests = testGroup "compiler"
   , testCase "compilePure passthrough emits an IIFE" $ do
       clearCompilerCache
       out <- compilePure passthroughConfig (number 1 + number 2)
-      out @?= T.pack (renderJS (pureProgram (number 1 + number 2)))
+      out @?= T.pack (renderJSCompact (pureProgram (number 1 + number 2)))
       assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
       assertBool "result is returned so minifiers cannot DCE it" ("return" `T.isInfixOf` out)
   , testCase "disk cache roundtrips passthrough output" $ do

@@ -51,7 +51,7 @@ module JShark.Compiler
   , clearCompilerCache
   ) where
 
-import Control.Exception (IOException, SomeException, catch, throwIO)
+import Control.Exception (IOException, SomeException, catch, evaluate, throwIO)
 import Control.Monad (guard)
 import Data.Char (isAlphaNum, isSpace)
 import Data.Bits (xor)
@@ -80,7 +80,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
 
-import JShark (effectfulAST, effectfulProgram, pureAST, pureProgram, renderJS)
+import JShark (effectfulAST, effectfulProgram, pureAST, pureProgram, renderJSCompact)
 import JShark.Types (ClosedEffect, ClosedExpr)
 import Text.PrettyPrint (Doc)
 
@@ -410,13 +410,17 @@ formatJS = go 0
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffect cfg eff = finishStyle (configStyle cfg) <$> compileWith cfg
-  (T.pack (renderJS (effectDoc (configStyle cfg) eff)))
+compileEffect cfg eff = forceCompiled =<< finishStyle (configStyle cfg) <$> compileWith cfg
+  (T.pack (renderJSCompact (effectDoc (configStyle cfg) eff)))
 
 -- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePure cfg e = finishStyle (configStyle cfg) <$> compileWith cfg
-  (T.pack (renderJS (pureDoc (configStyle cfg) e)))
+compilePure cfg e = forceCompiled =<< finishStyle (configStyle cfg) <$> compileWith cfg
+  (T.pack (renderJSCompact (pureDoc (configStyle cfg) e)))
+
+-- | Banner-before-serve only means JS is ready if this ran.
+forceCompiled :: Text -> IO Text
+forceCompiled t = t <$ evaluate (T.length t)
 
 finishStyle :: OutputStyle -> Text -> Text
 finishStyle Readable = prettyJS

@@ -53,6 +53,7 @@ module JShark
   , effectfulProgram
   , printComputation
   , renderJS
+  , renderJSCompact
   ) where
 
 -- Indexed PHOAS (binders @f u@, closed terms @forall f@) in the style of
@@ -653,11 +654,16 @@ fromRightE :: Either [Char] c -> c
 fromRightE = either error id
 
 printComputation :: Doc -> IO ()
-printComputation (computation) = do
-  putStrLn $ P.renderStyle P.style computation
+printComputation computation = putStrLn (renderJSCompact computation)
 
 renderJS :: Doc -> String
 renderJS = P.renderStyle P.style
+
+-- | Linear dump. HughesPJ 'PageMode' on a large inlined @bindRec@
+-- body is superlinear (breakout sat in 'renderJS' for tens of seconds).
+-- 'compileEffect' uses this, then 'prettyJS' for 'Readable'.
+renderJSCompact :: Doc -> String
+renderJSCompact = P.renderStyle P.style { P.mode = P.LeftMode }
 
 -- | @o.foo@ when @foo@ is an identifier; @o["0"]@ otherwise.
 jsDotOrBracket :: Doc -> String -> Doc
@@ -882,6 +888,101 @@ countEffect t = \case
 
 countFieldLit :: Int -> FieldLit Stamp r -> Int
 countFieldLit t (FieldLit e) = countExpr t e
+
+-- Re-opt only small trees. A second walk of a @bindRec@ / do-chain
+-- paint body is what hung todo-mvc and breakout.
+optSmall :: Int
+optSmall = 16
+
+sizeFieldLit :: FieldLit Stamp r -> Int
+sizeFieldLit (FieldLit e) = sizeExpr e
+
+sizeExpr :: Expr Stamp u -> Int
+sizeExpr = \case
+  Literal{} -> 1
+  Var (Embed e) -> sizeExpr e
+  Var{} -> 1
+  Concat x y -> 1 + sizeExpr x + sizeExpr y
+  Plus x y -> 1 + sizeExpr x + sizeExpr y
+  Times x y -> 1 + sizeExpr x + sizeExpr y
+  Minus x y -> 1 + sizeExpr x + sizeExpr y
+  Negate x -> 1 + sizeExpr x
+  FracDiv x y -> 1 + sizeExpr x + sizeExpr y
+  Rem x y -> 1 + sizeExpr x + sizeExpr y
+  BitAnd x y -> 1 + sizeExpr x + sizeExpr y
+  BitOr x y -> 1 + sizeExpr x + sizeExpr y
+  BitXor x y -> 1 + sizeExpr x + sizeExpr y
+  Shl x y -> 1 + sizeExpr x + sizeExpr y
+  Shr x y -> 1 + sizeExpr x + sizeExpr y
+  UShr x y -> 1 + sizeExpr x + sizeExpr y
+  And x y -> 1 + sizeExpr x + sizeExpr y
+  Or x y -> 1 + sizeExpr x + sizeExpr y
+  Eq x y -> 1 + sizeExpr x + sizeExpr y
+  NEq x y -> 1 + sizeExpr x + sizeExpr y
+  GTh x y -> 1 + sizeExpr x + sizeExpr y
+  LTh x y -> 1 + sizeExpr x + sizeExpr y
+  GTEq x y -> 1 + sizeExpr x + sizeExpr y
+  LTEq x y -> 1 + sizeExpr x + sizeExpr y
+  Let x g -> 1 + sizeExpr x + sizeExpr (g nestedDummy)
+  LetRec r b -> 1 + sizeExpr (r nestedDummy) + sizeExpr (b nestedDummy)
+  Lambda g -> 1 + sizeExpr (g nestedDummy)
+  Apply f x -> 1 + sizeExpr f + sizeExpr x
+  Show x -> 1 + sizeExpr x
+  TypeOf x -> 1 + sizeExpr x
+  If c u v -> 1 + sizeExpr c + sizeExpr u + sizeExpr v
+  OptionCase o n s -> 1 + sizeExpr o + sizeExpr n + sizeExpr (s nestedDummy)
+  ResultOk x -> 1 + sizeExpr x
+  ResultErr x -> 1 + sizeExpr x
+  ResultCase o e s -> 1 + sizeExpr o + sizeExpr (e nestedDummy) + sizeExpr (s nestedDummy)
+  UnsafeEffectExpr e -> 1 + sizeEffect e
+  ExprUnary _ x -> 1 + sizeExpr x
+  ExprBinary _ x y -> 1 + sizeExpr x + sizeExpr y
+  ExprTernary _ x y z -> 1 + sizeExpr x + sizeExpr y + sizeExpr z
+  ExprMap x f -> 1 + sizeExpr x + sizeExpr (f nestedDummy)
+  ExprFilter x f -> 1 + sizeExpr x + sizeExpr (f nestedDummy)
+  ExprReduce x z f -> 1 + sizeExpr x + sizeExpr z + sizeExpr (f nestedDummy nestedDummy)
+  ExprIndex x i -> 1 + sizeExpr x + sizeExpr i
+  MathUnary _ x -> 1 + sizeExpr x
+  MathBinary _ x y -> 1 + sizeExpr x + sizeExpr y
+  UnsafeNullable x -> 1 + sizeExpr x
+  FrozenLit fs -> 1 + sum (map sizeFieldLit fs)
+  GetField o -> 1 + sizeExpr o
+
+sizeEffect :: Effect Stamp u -> Int
+sizeEffect = \case
+  Lift x -> 1 + sizeExpr x
+  FFI _ args -> 1 + recFold (\n a -> n + sizeArg a) 0 args
+  UnsafeObject{} -> 1
+  UnsafeObjectGet x _ -> 1 + sizeEffect x
+  UnsafeObjectAssign x y -> 1 + sizeEffect x + sizeEffect y
+  CallMethod x _ args -> 1 + sizeEffect x + recFold (\n a -> n + sizeArg a) 0 args
+  Bind x f -> 1 + sizeEffect x + sizeEffect (f nestedDummy)
+  BindRec r b -> 1 + sizeEffect (r nestedDummy) + sizeEffect (b nestedDummy)
+  LambdaE f -> 1 + sizeEffect (f nestedDummy)
+  ApplyE f x -> 1 + sizeEffect f + sizeEffect x
+  IfE c u v -> 1 + sizeEffect c + sizeEffect u + sizeEffect v
+  While c b -> 1 + sizeEffect c + sizeEffect b
+  OptionCaseE o n s -> 1 + sizeExpr o + sizeEffect n + sizeEffect (s nestedDummy)
+  ResultCaseE o e s -> 1 + sizeExpr o + sizeEffect (e nestedDummy) + sizeEffect (s nestedDummy)
+  Throw x -> 1 + sizeExpr x
+  Try a k -> 1 + sizeEffect a + sizeEffect (k nestedDummy)
+  ObjectLit fs -> 1 + sum (map sizeFieldLit fs)
+  DeleteProp o k -> 1 + sizeEffect o + sizeExpr k
+  ArraySort xs f -> 1 + sizeExpr xs + sizeExpr (f nestedDummy nestedDummy)
+
+sizeArg :: Arg Stamp u -> Int
+sizeArg (ArgExpr e) = sizeExpr e
+sizeArg (ArgEffect e) = sizeEffect e
+
+reoptSmallExpr :: Int -> (Stamp u -> Expr Stamp v) -> Stamp u -> Expr Stamp v
+reoptSmallExpr t f
+  | sizeExpr (f nestedDummy) <= optSmall = reoptExpr t f
+  | otherwise = f
+
+reoptSmallEff :: Int -> (Stamp u -> Effect Stamp v) -> Stamp u -> Effect Stamp v
+reoptSmallEff t f
+  | sizeEffect (f nestedDummy) <= optSmall = reoptEff t f
+  | otherwise = f
 
 mapFieldLit :: (forall u. Expr f u -> Expr f u) -> FieldLit f r -> FieldLit f r
 mapFieldLit g (FieldLit @k e) = FieldLit @k (g e)
@@ -1252,21 +1353,22 @@ optLet t0 x f =
       (t2, tag, body) = optUnder t1 f
    in elimLetFrom t2 x' f tag body
 
--- Count, then either drop, inline via 'Embed', or rebuild the PHOAS
--- function. Inline re-applies @f@ so the universe of the hole is the
--- universe of @x@ — no cast. That re-walks a chain of single-use lets
--- (O(n²)); folding the original @f@ would skip nested let-elim.
+-- Count uses on the already-optimized body. Splice without a second
+-- full opt of @f@ when the body is large (do-notation tails).
 elimLetFrom :: Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> Int -> Expr Stamp v -> (Int, Expr Stamp v)
 elimLetFrom t x f tag body =
   let uses = countExpr tag body
-      rebuild = Let x (reoptExpr t f)
+      rebuild = Let x (reoptSmallExpr t f)
+      splice
+        | sizeExpr body > optSmall = (t, inlineExpr f x)
+        | otherwise = optExpr t (inlineExpr f x)
    in case uses of
         -- uses==1 is always a single strict use: countExpr already
         -- treats lambda/loop/?:/&&-|| RHS positions as 2.
         0 | isPureExpr x -> (t, body)
         0 -> (t, rebuild)
-        1 -> optExpr t (inlineExpr f x)
-        _ | isCheap x -> optExpr t (inlineExpr f x)
+        1 -> splice
+        _ | isCheap x -> splice
         _ -> (t, rebuild)
 
 boundAsExpr :: Effect Stamp u -> Expr Stamp u
@@ -1282,13 +1384,15 @@ optBind t0 x f =
 elimBindFrom :: Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> Int -> Effect Stamp v -> (Int, Effect Stamp v)
 elimBindFrom t x f tag body =
   let uses = countEffect tag body
-      rebuild = Bind x (reoptEff t f)
-      inline = optEffect t (inlineEff f (boundAsExpr x))
+      rebuild = Bind x (reoptSmallEff t f)
+      splice
+        | sizeEffect body > optSmall = (t, inlineEff f (boundAsExpr x))
+        | otherwise = optEffect t (inlineEff f (boundAsExpr x))
    in case uses of
         0 | isPureEffect x -> (t, body)
         0 -> (t, rebuild)
-        1 -> inline
-        _ | isCheapEffect x -> inline
+        1 -> splice
+        _ | isCheapEffect x -> splice
         _ -> (t, rebuild)
 
 optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u)
@@ -1354,14 +1458,8 @@ optExpr t0 = \case
         (t2, y') = optExpr t1 y
      in (t2, foldOrdNeq GT LTEq x' y')
   Let x f -> optLet t0 x f
-  LetRec r b ->
-    let tag = t0
-        (t1, _) = optExpr (t0 - 1) (r (Stamp tag))
-        (t2, _) = optExpr t1 (b (Stamp tag))
-     in (t2, LetRec (reoptExpr t2 r) (reoptExpr t2 b))
-  Lambda f ->
-    let (t1, _, _) = optUnder t0 f
-     in (t1, Lambda (reoptExpr t1 f))
+  LetRec r b -> (t0, LetRec (reoptSmallExpr t0 r) (reoptSmallExpr t0 b))
+  Lambda f -> (t0, Lambda (reoptSmallExpr t0 f))
   Apply f x ->
     let (t1, f') = optExpr t0 f
         (t2, x') = optExpr t1 x
@@ -1482,14 +1580,8 @@ optEffect t0 = \case
         (t2, args') = optArgs t1 args
      in (t2, CallMethod x' n args')
   Bind x f -> optBind t0 x f
-  BindRec r b ->
-    let tag = t0
-        (t1, _) = optEffect (t0 - 1) (r (Stamp tag))
-        (t2, _) = optEffect t1 (b (Stamp tag))
-     in (t2, BindRec (reoptEff t2 r) (reoptEff t2 b))
-  LambdaE f ->
-    let (t1, _, _) = optUnderE t0 f
-     in (t1, LambdaE (reoptEff t1 f))
+  BindRec r b -> (t0, BindRec (reoptSmallEff t0 r) (reoptSmallEff t0 b))
+  LambdaE f -> (t0, LambdaE (reoptSmallEff t0 f))
   ApplyE f x ->
     let (t1, f') = optEffect t0 f
         (t2, x') = optEffect t1 x
