@@ -100,20 +100,20 @@ wire ::
 wire canvas state = do
   addEventListener "keydown" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
-      code <- getProp (Lift (Var e)) "code"
+      code <- eventProp e "code"
       toSyntax $ stringCaseE code
         [ ("Space", discard (stmts $ do
-            toSyntax $ callMethod (Lift (Var e)) "preventDefault" RecNil
+            eventCall e "preventDefault" RecNil
             tryRestart state))
         ]
         (stmts $ bindArrows state code true_)
   addEventListener "keyup" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
-      code <- getProp (Lift (Var e)) "code"
+      code <- eventProp e "code"
       bindArrows state code false_
   addEventListener "mousemove" canvas $ \(e :: f ('MutableObject ())) ->
     stmts $ do
-      cx <- getProp (Lift (Var e)) "clientX"
+      cx <- eventProp e "clientX"
       rect <- hold $ callMethod canvas "getBoundingClientRect" RecNil
       left <- getProp rect "left"
       whenPlay state $ do
@@ -380,6 +380,12 @@ tickFps meter now = do
   set @"lastMs" meter now
 
 -- Helpers -----------------------------------------------------------------
+
+eventProp :: f ('MutableObject ()) -> String -> EffectSyntax f (Expr f u)
+eventProp e k = getProp (Lift (Var e)) k
+
+eventCall :: f ('MutableObject ()) -> String -> Rec (Arg f) us -> EffectSyntax f (f u)
+eventCall e name args = toSyntax $ callMethod (Lift (Var e)) name args
 
 clampPaddle :: Expr f 'Number -> Expr f 'Number
 clampPaddle = Math.max 0 . Math.min (number paddleMaxX)

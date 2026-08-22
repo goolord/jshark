@@ -159,8 +159,7 @@ arc ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 arc ctx x y r start end =
-  toSyntax $
-    callMethod ctx "arc" (arg x <: arg y <: arg r <: arg start <: arg end <: RecNil)
+  ctxCall ctx "arc" (arg x <: arg y <: arg r <: arg start <: arg end <: RecNil)
 
 fillText, strokeText ::
      Effect f ('MutableObject Context2D)

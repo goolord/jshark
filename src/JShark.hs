@@ -1375,6 +1375,17 @@ elimBindFrom t x f tag body =
       }
     t x tag body
 
+optBin
+  :: Int
+  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
+  -> Expr Stamp u
+  -> Expr Stamp u
+  -> (Int, Expr Stamp 'Bool)
+optBin t0 k x y =
+  let (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+   in (t2, k x' y')
+
 optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u)
 optExpr t0 = \case
   Literal v -> (t0, Literal v)
@@ -1413,30 +1424,12 @@ optExpr t0 = \case
           _ ->
             let (t2, y') = optExpr t1 y
              in (t2, foldOr x' y')
-  Eq x y ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, foldEq x' y')
-  NEq x y ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, foldNEq x' y')
-  GTh x y ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, foldOrd GT GTh x' y')
-  LTh x y ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, foldOrd LT LTh x' y')
-  GTEq x y ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, foldOrdNeq LT GTEq x' y')
-  LTEq x y ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, foldOrdNeq GT LTEq x' y')
+  Eq x y -> optBin t0 foldEq x y
+  NEq x y -> optBin t0 foldNEq x y
+  GTh x y -> optBin t0 (foldOrd GT GTh) x y
+  LTh x y -> optBin t0 (foldOrd LT LTh) x y
+  GTEq x y -> optBin t0 (foldOrdNeq LT GTEq) x y
+  LTEq x y -> optBin t0 (foldOrdNeq GT LTEq) x y
   Let x f -> optLet t0 x f
   LetRec r b ->
     let tag = t0
@@ -1892,15 +1885,9 @@ effectfulAST' !s0 = \case
      in (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
   ArraySort xs f ->
     let (s1, Code xDecl xRef) = pureAST' s0 xs
-        (nA, s2) = allocIdent s1
-        (nB, s3) = allocIdent s2
-        (s4, Code bDecl bRef) = pureAST' s3 (f (Name nA) (Name nB))
-        acc = 'n' : show nA
-        x = 'n' : show nB
-        cb = "function" <+> P.parens ((P.text acc <> ",") <+> P.text x)
-          <+> P.braces (bDecl $$ "return" <+> bRef)
+        (s2, cb) = renderBinaryFn s1 f
         call = xRef <> ".sort" <> P.parens cb
-     in (s4, fxCode xDecl call)
+     in (s2, fxCode xDecl call)
   ResultCaseE res errF okF -> renderResultCaseE s0 res errF okF
   StringCaseE scrut arms def -> renderStringCaseE s0 scrut arms def
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)
@@ -1915,10 +1902,7 @@ effectfulAST' !s0 = \case
     let (s1, Code rDecl rRef) = effectfulAST' s0 recv
         (s2, argDecl, argRefs) = renderArgList argAST s1 args
      in (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> P.text name <> P.parens argRefs))
-  LambdaE f ->
-    let (nParam, s1) = allocIdent s0
-        (s2, Code exprXDecl exprXRef) = effectfulAST' s1 (f (Name nParam))
-     in (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+  LambdaE f -> emitEffectLambda s0 f
   ApplyE fex ex ->
     let (s1, Code exprXDecl exprXRef) = effectfulAST' s0 fex
         (s2, Code exprYDecl exprYRef) = effectfulAST' s1 ex
@@ -1991,10 +1975,7 @@ pureAST' !s0 = \case
   Negate x ->
     let (s1, Code x1Decl x1Ref) = pureAST' s0 x
      in (s1, Code x1Decl $ "-" <> P.parens x1Ref)
-  Lambda f ->
-    let (nParam, s1) = allocIdent s0
-        (s2, Code exprXDecl exprXRef) = pureAST' s1 (f (Name nParam))
-     in (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+  Lambda f -> emitExprLambda s0 f
   And x y -> renderBin "&&" s0 x y
   Or x y -> renderBin "||" s0 x y
   Eq x y -> renderBin "===" s0 x y
@@ -2073,15 +2054,9 @@ pureAST' !s0 = \case
   ExprReduce recv z f ->
     let (s1, Code rDecl rRef) = pureAST' s0 recv
         (s2, Code zDecl zRef) = pureAST' s1 z
-        (nAcc, s3) = allocIdent s2
-        (nX, s4) = allocIdent s3
-        (s5, Code bDecl bRef) = pureAST' s4 (f (Name nAcc) (Name nX))
-        acc = 'n' : show nAcc
-        x = 'n' : show nX
-        cb = "function" <+> P.parens ((P.text acc <> ",") <+> P.text x)
-          <+> P.braces (bDecl $$ "return" <+> bRef)
+        (s3, cb) = renderBinaryFn s2 f
         call = rRef <> ".reduce" <> P.parens (cb <> ", " <> zRef)
-     in (s5, Code (rDecl $$ zDecl) call)
+     in (s3, Code (rDecl $$ zDecl) call)
   ExprIndex arr idx ->
     let (s1, Code aDecl aRef) = pureAST' s0 arr
         (s2, Code iDecl iRef) = pureAST' s1 idx
@@ -2226,6 +2201,36 @@ renderResultCaseE s0 res errF okF
                  (oDecl $$ assignResult resultVar oRef) mempty
                  (eDecl $$ assignResult resultVar eRef) mempty
        in (s4, Code stmt (P.text resultVar))
+
+emitExprLambda :: CG -> (Stamp u -> Expr Stamp v) -> (CG, Code)
+emitExprLambda = emitLambdaWith pureAST'
+
+emitEffectLambda :: CG -> (Stamp u -> Effect Stamp v) -> (CG, Code)
+emitEffectLambda = emitLambdaWith effectfulAST'
+
+emitLambdaWith
+  :: (CG -> t -> (CG, Code))
+  -> CG
+  -> (Stamp u -> t)
+  -> (CG, Code)
+emitLambdaWith walker s0 f =
+  let (nParam, s1) = allocIdent s0
+      (s2, Code exprXDecl exprXRef) = walker s1 (f (Name nParam))
+   in (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+
+renderBinaryFn ::
+     CG
+  -> (Stamp a -> Stamp b -> Expr Stamp c)
+  -> (CG, Doc)
+renderBinaryFn s0 f =
+  let (nA, s1) = allocIdent s0
+      (nB, s2) = allocIdent s1
+      (s3, Code bDecl bRef) = pureAST' s2 (f (Name nA) (Name nB))
+      acc = 'n' : show nA
+      x = 'n' : show nB
+      cb = "function" <+> P.parens ((P.text acc <> ",") <+> P.text x)
+        <+> P.braces (bDecl $$ "return" <+> bRef)
+   in (s3, cb)
 
 renderCallbackMethod ::
      String
