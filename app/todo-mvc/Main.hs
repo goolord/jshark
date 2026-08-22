@@ -2,7 +2,7 @@
     OverloadedStrings
 #-}
 
-module Main where
+module Main (main) where
 
 import Client (mainJS)
 import qualified Data.Text.Lazy as TL

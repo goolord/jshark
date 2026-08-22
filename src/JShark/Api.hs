@@ -81,6 +81,7 @@ module JShark.Api
   , hold
   , stmts
   , done
+  , fromSyntax
   , call0
     -- * Operators
   , not_

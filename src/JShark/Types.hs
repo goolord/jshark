@@ -24,12 +24,32 @@
 -- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
 -- Named stdlib on 'Expr' is a closed set of constructors; free-text
 -- escapes live on 'Effect'.
-module JShark.Types where
+module JShark.Types
+  ( Universe(..)
+  , Value(..)
+  , Effect(..)
+  , Arg(..)
+  , Expr(..)
+  , StdUnary(..)
+  , StdBinary(..)
+  , StdTernary(..)
+  , MathFn1(..)
+  , MathFn2(..)
+  , mathFn1Name
+  , mathFn2Name
+  , ClosedExpr
+  , ClosedEffect
+  , Comparable
+  , EffectSyntax(..)
+  , toSyntax
+  , toSyntax_
+  , fromSyntax
+  ) where
+
 import Control.Monad (ap, void)
 import Data.Kind
 import Data.Text (Text)
 import JShark.Rec
-import Text.PrettyPrint (Doc)
 import qualified GHC.Exts as Exts
 
 data Universe
@@ -278,14 +298,3 @@ toSyntax_ = void . toSyntax
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
-
-data Code = Code 
-  { codeDecl :: Doc 
-  , codeRef :: Doc
-  }
-
-instance Semigroup Code where
-  (Code a b) <> (Code x y) = Code (a <> b) (x <> y)
-
-instance Monoid Code where
-  mempty = Code mempty mempty

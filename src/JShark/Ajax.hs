@@ -8,11 +8,19 @@
   , TypeFamilies
   , ScopedTypeVariables
 #-}
-module JShark.Ajax where
+module JShark.Ajax
+  ( XHR
+  , new
+  , open
+  , send
+  , sendPost
+  , readyStateDone
+  , statusOK
+  , FetchResponse
+  , fetch
+  ) where
 
-import JShark
 import JShark.Api
-import qualified JShark.Console as Console
 import JShark.Types
 import Network.HTTP.Types
 import JShark.Rec (Rec(..), (<:))
@@ -34,18 +42,6 @@ sendPost x y = toSyntax_ $ callMethod x "send" (arg y <: RecNil)
 data XHR
 
 type instance Field XHR "responseText" = 'String
-
-ex :: EffectSyntax f (f 'Unit)
-ex = do 
-  xhrObj <- new
-  open GET "https://postman-echo.com/get?foo1=bar1&foo2=bar2" True xhrObj
-  send xhrObj
-  foo <- get @"responseText" xhrObj
-  Console.log foo
-  toSyntax noOp
-
-ex2 :: IO ()
-ex2 = printComputation $ effectfulAST (fromSyntax ex)
 
 readyStateDone :: Effect f 'Number
 readyStateDone = expr 4

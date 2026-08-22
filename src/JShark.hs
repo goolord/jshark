@@ -392,6 +392,17 @@ printComputation (computation) = do
 renderJS :: Doc -> String
 renderJS = P.renderStyle P.style
 
+data Code = Code
+  { codeDecl :: Doc
+  , codeRef :: Doc
+  }
+
+instance Semigroup Code where
+  Code a b <> Code x y = Code (a <> b) (x <> y)
+
+instance Monoid Code where
+  mempty = Code mempty mempty
+
 renderCode :: Code -> Doc
 renderCode (Code a b) = a $$ b
 

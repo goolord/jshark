@@ -7,7 +7,15 @@
   , TypeFamilies
   , TypeOperators
 #-}
-module JShark.Object where
+module JShark.Object
+  ( Field
+  , get
+  , set
+  , newObject
+  , unsafeObject
+  , unsafeObjectGet
+  , unsafeObjectAssign
+  ) where
 
 import Data.Kind
 import Data.Text
