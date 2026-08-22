@@ -3,6 +3,7 @@
   , BangPatterns
   , ConstraintKinds
   , DataKinds
+  , FlexibleInstances
   , GADTs
   ,     LambdaCase
   , OverloadedStrings
@@ -974,15 +975,39 @@ sizeArg :: Arg Stamp u -> Int
 sizeArg (ArgExpr e) = sizeExpr e
 sizeArg (ArgEffect e) = sizeEffect e
 
-reoptSmallExpr :: Int -> (Stamp u -> Expr Stamp v) -> Stamp u -> Expr Stamp v
-reoptSmallExpr t f
-  | sizeExpr (f nestedDummy) <= optSmall = reoptExpr t f
-  | otherwise = f
+-- | First-order reopen: rename the tag allocated by 'optUnder'. Never
+-- re-applies the original PHOAS @f@.
+rebindExpr :: Int -> Expr Stamp v -> Stamp u -> Expr Stamp v
+rebindExpr tag body s = renameExpr tag (stampId s) body
 
-reoptSmallEff :: Int -> (Stamp u -> Effect Stamp v) -> Stamp u -> Effect Stamp v
-reoptSmallEff t f
-  | sizeEffect (f nestedDummy) <= optSmall = reoptEff t f
-  | otherwise = f
+rebindEff :: Int -> Effect Stamp v -> Stamp u -> Effect Stamp v
+rebindEff tag body s = renameEff tag (stampId s) body
+
+rebindExpr2 :: Int -> Int -> Expr Stamp v -> Stamp a -> Stamp b -> Expr Stamp v
+rebindExpr2 tA tB body a b =
+  renameExpr tA (stampId a) (renameExpr tB (stampId b) body)
+
+keepExprCont
+  :: Int
+  -> Int
+  -> Expr Stamp v
+  -> (Stamp u -> Expr Stamp v)
+  -> Stamp u
+  -> Expr Stamp v
+keepExprCont t tag body f
+  | sizeExpr body <= optSmall = reoptExpr t f
+  | otherwise = rebindExpr tag body
+
+keepEffCont
+  :: Int
+  -> Int
+  -> Effect Stamp v
+  -> (Stamp u -> Effect Stamp v)
+  -> Stamp u
+  -> Effect Stamp v
+keepEffCont t tag body f
+  | sizeEffect body <= optSmall = reoptEff t f
+  | otherwise = rebindEff tag body
 
 mapFieldLit :: (forall u. Expr f u -> Expr f u) -> FieldLit f r -> FieldLit f r
 mapFieldLit g (FieldLit @k e) = FieldLit @k (g e)
@@ -996,12 +1021,12 @@ lookupField = findLit . reverse
         Just Refl -> Just e
         Nothing -> findLit rest
 
-fieldsPure :: [FieldLit f r] -> Bool
+fieldsPure :: PhoasDummy f => [FieldLit f r] -> Bool
 fieldsPure = all (\(FieldLit e) -> isPureExpr e)
 
 -- | Last-wins, and only when every sibling is observationally pure
 -- (so projecting @.b@ cannot DCE @JSON.stringify@ in @.a@).
-projectFrozenField :: forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
+projectFrozenField :: forall k r f. (KnownSymbol k, PhoasDummy f) => [FieldLit f r] -> Maybe (Expr f (Field r k))
 projectFrozenField fs
   | fieldsPure fs = lookupField @k fs
   | otherwise = Nothing
@@ -1016,7 +1041,7 @@ withFrozenField (ValueFrozen fs) k =
     Just e -> k e
     Nothing -> cannotEval "GetField of a frozen object with effectful fields"
 
-foldGetField :: forall k r f. KnownSymbol k => Expr f ('Object r) -> Maybe (Expr f (Field r k))
+foldGetField :: forall k r f. (KnownSymbol k, PhoasDummy f) => Expr f ('Object r) -> Maybe (Expr f (Field r k))
 foldGetField = \case
   FrozenLit fs -> projectFrozenField @k fs
   If (Literal (ValueBool True)) t _ -> foldGetField @k t
@@ -1102,6 +1127,86 @@ flattenEff = \case
   DeleteProp o k -> DeleteProp (flattenEff o) (flattenExpr k)
   ArraySort xs f -> ArraySort (flattenExpr xs) (\a b -> flattenExpr (f a b))
 
+renameArg :: Int -> Int -> Arg Stamp u -> Arg Stamp u
+renameArg old new (ArgExpr e) = ArgExpr (renameExpr old new e)
+renameArg old new (ArgEffect e) = ArgEffect (renameEff old new e)
+
+-- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
+-- does not need a cast. Used after the one 'optUnder' apply of @f@.
+renameExpr :: Int -> Int -> Expr Stamp u -> Expr Stamp u
+renameExpr old new = \case
+  Var (Embed e) -> renameExpr old new (flattenExpr e)
+  Var (Stamp t) | t == old -> Var (Stamp new)
+  Var s -> Var s
+  Literal x -> Literal x
+  Concat x y -> Concat (renameExpr old new x) (renameExpr old new y)
+  Plus x y -> Plus (renameExpr old new x) (renameExpr old new y)
+  Times x y -> Times (renameExpr old new x) (renameExpr old new y)
+  Minus x y -> Minus (renameExpr old new x) (renameExpr old new y)
+  Negate x -> Negate (renameExpr old new x)
+  FracDiv x y -> FracDiv (renameExpr old new x) (renameExpr old new y)
+  Rem x y -> Rem (renameExpr old new x) (renameExpr old new y)
+  BitAnd x y -> BitAnd (renameExpr old new x) (renameExpr old new y)
+  BitOr x y -> BitOr (renameExpr old new x) (renameExpr old new y)
+  BitXor x y -> BitXor (renameExpr old new x) (renameExpr old new y)
+  Shl x y -> Shl (renameExpr old new x) (renameExpr old new y)
+  Shr x y -> Shr (renameExpr old new x) (renameExpr old new y)
+  UShr x y -> UShr (renameExpr old new x) (renameExpr old new y)
+  And x y -> And (renameExpr old new x) (renameExpr old new y)
+  Or x y -> Or (renameExpr old new x) (renameExpr old new y)
+  Eq x y -> Eq (renameExpr old new x) (renameExpr old new y)
+  NEq x y -> NEq (renameExpr old new x) (renameExpr old new y)
+  GTh x y -> GTh (renameExpr old new x) (renameExpr old new y)
+  LTh x y -> LTh (renameExpr old new x) (renameExpr old new y)
+  GTEq x y -> GTEq (renameExpr old new x) (renameExpr old new y)
+  LTEq x y -> LTEq (renameExpr old new x) (renameExpr old new y)
+  Let x g -> Let (renameExpr old new x) (renameExpr old new . g)
+  LetRec rhs body -> LetRec (renameExpr old new . rhs) (renameExpr old new . body)
+  Lambda g -> Lambda (renameExpr old new . g)
+  Apply f x -> Apply (renameExpr old new f) (renameExpr old new x)
+  Show x -> Show (renameExpr old new x)
+  TypeOf x -> TypeOf (renameExpr old new x)
+  If c u v -> If (renameExpr old new c) (renameExpr old new u) (renameExpr old new v)
+  OptionCase o n s -> OptionCase (renameExpr old new o) (renameExpr old new n) (renameExpr old new . s)
+  ResultOk x -> ResultOk (renameExpr old new x)
+  ResultErr x -> ResultErr (renameExpr old new x)
+  ResultCase o e s -> ResultCase (renameExpr old new o) (renameExpr old new . e) (renameExpr old new . s)
+  UnsafeEffectExpr e -> UnsafeEffectExpr (renameEff old new e)
+  ExprUnary n x -> ExprUnary n (renameExpr old new x)
+  ExprBinary n x y -> ExprBinary n (renameExpr old new x) (renameExpr old new y)
+  ExprTernary n x y z -> ExprTernary n (renameExpr old new x) (renameExpr old new y) (renameExpr old new z)
+  ExprMap x f -> ExprMap (renameExpr old new x) (renameExpr old new . f)
+  ExprFilter x f -> ExprFilter (renameExpr old new x) (renameExpr old new . f)
+  ExprReduce x z f -> ExprReduce (renameExpr old new x) (renameExpr old new z) (\a b -> renameExpr old new (f a b))
+  ExprIndex x i -> ExprIndex (renameExpr old new x) (renameExpr old new i)
+  MathUnary n x -> MathUnary n (renameExpr old new x)
+  MathBinary n x y -> MathBinary n (renameExpr old new x) (renameExpr old new y)
+  UnsafeNullable x -> UnsafeNullable (renameExpr old new x)
+  FrozenLit fs -> FrozenLit (map (mapFieldLit (renameExpr old new)) fs)
+  GetField @k o -> GetField @k (renameExpr old new o)
+
+renameEff :: Int -> Int -> Effect Stamp u -> Effect Stamp u
+renameEff old new = \case
+  Lift x -> Lift (renameExpr old new x)
+  FFI n args -> FFI n (mapRec (renameArg old new) args)
+  UnsafeObject o -> UnsafeObject o
+  UnsafeObjectGet x s -> UnsafeObjectGet (renameEff old new x) s
+  UnsafeObjectAssign x y -> UnsafeObjectAssign (renameEff old new x) (renameEff old new y)
+  CallMethod x n args -> CallMethod (renameEff old new x) n (mapRec (renameArg old new) args)
+  Bind x f -> Bind (renameEff old new x) (renameEff old new . f)
+  BindRec rhs body -> BindRec (renameEff old new . rhs) (renameEff old new . body)
+  LambdaE f -> LambdaE (renameEff old new . f)
+  ApplyE f x -> ApplyE (renameEff old new f) (renameEff old new x)
+  IfE c u v -> IfE (renameEff old new c) (renameEff old new u) (renameEff old new v)
+  While c b -> While (renameEff old new c) (renameEff old new b)
+  OptionCaseE o n s -> OptionCaseE (renameExpr old new o) (renameEff old new n) (renameEff old new . s)
+  ResultCaseE o e s -> ResultCaseE (renameExpr old new o) (renameEff old new . e) (renameEff old new . s)
+  Throw x -> Throw (renameExpr old new x)
+  Try a k -> Try (renameEff old new a) (renameEff old new . k)
+  ObjectLit fs -> ObjectLit (map (mapFieldLit (renameExpr old new)) fs)
+  DeleteProp o k -> DeleteProp (renameEff old new o) (renameExpr old new k)
+  ArraySort xs f -> ArraySort (renameExpr old new xs) (\a b -> renameExpr old new (f a b))
+
 inlineExpr :: (Stamp u -> Expr Stamp v) -> Expr Stamp u -> Expr Stamp v
 inlineExpr f x = flattenExpr (f (Embed x))
 
@@ -1144,6 +1249,13 @@ optUnderE t0 f =
       (t1, body) = optEffect (t0 - 1) (f (Stamp tag))
    in (t1, tag, body)
 
+optUnder2 :: Int -> (Stamp a -> Stamp b -> Expr Stamp v) -> (Int, Int, Int, Expr Stamp v)
+optUnder2 t0 f =
+  let tA = t0
+      tB = t0 - 1
+      (t1, body) = optExpr (t0 - 2) (f (Stamp tA) (Stamp tB))
+   in (t1, tA, tB, body)
+
 isCheapValue :: Value u -> Bool
 isCheapValue = \case
   ValueNumber{} -> True
@@ -1174,10 +1286,16 @@ isCheapEffect = \case
   UnsafeObject{} -> False
   _ -> False
 
-pureDummy :: f u
-pureDummy = error "JShark.isPureExpr: binder"
+class PhoasDummy f where
+  phoasDummy :: f u
 
-isPureExpr :: Expr f u -> Bool
+instance PhoasDummy Stamp where
+  phoasDummy = nestedDummy
+
+instance PhoasDummy Value where
+  phoasDummy = error "JShark.isPureExpr: Value binder"
+
+isPureExpr :: PhoasDummy f => Expr f u -> Bool
 isPureExpr = \case
   Literal{} -> True
   Var{} -> True
@@ -1202,24 +1320,24 @@ isPureExpr = \case
   LTh x y -> isPureExpr x && isPureExpr y
   GTEq x y -> isPureExpr x && isPureExpr y
   LTEq x y -> isPureExpr x && isPureExpr y
-  Let x g -> isPureExpr x && isPureExpr (g pureDummy)
-  LetRec r b -> isPureExpr (r pureDummy) && isPureExpr (b pureDummy)
-  Lambda g -> isPureExpr (g pureDummy)
+  Let x g -> isPureExpr x && isPureExpr (g phoasDummy)
+  LetRec r b -> isPureExpr (r phoasDummy) && isPureExpr (b phoasDummy)
+  Lambda g -> isPureExpr (g phoasDummy)
   Apply f x -> isPureExpr f && isPureExpr x
   Show x -> isPureExpr x
   TypeOf x -> isPureExpr x
   If c t e -> isPureExpr c && isPureExpr t && isPureExpr e
-  OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s pureDummy)
+  OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s phoasDummy)
   ResultOk x -> isPureExpr x
   ResultErr x -> isPureExpr x
-  ResultCase o e s -> isPureExpr o && isPureExpr (e pureDummy) && isPureExpr (s pureDummy)
+  ResultCase o e s -> isPureExpr o && isPureExpr (e phoasDummy) && isPureExpr (s phoasDummy)
   UnsafeEffectExpr _ -> False
   ExprUnary n x -> isPureStdUnary n && isPureExpr x
   ExprBinary _ x y -> isPureExpr x && isPureExpr y
   ExprTernary _ x y z -> isPureExpr x && isPureExpr y && isPureExpr z
-  ExprMap x f -> isPureExpr x && isPureExpr (f pureDummy)
-  ExprFilter x f -> isPureExpr x && isPureExpr (f pureDummy)
-  ExprReduce x z f -> isPureExpr x && isPureExpr z && isPureExpr (f pureDummy pureDummy)
+  ExprMap x f -> isPureExpr x && isPureExpr (f phoasDummy)
+  ExprFilter x f -> isPureExpr x && isPureExpr (f phoasDummy)
+  ExprReduce x z f -> isPureExpr x && isPureExpr z && isPureExpr (f phoasDummy phoasDummy)
   ExprIndex x i -> isPureExpr x && isPureExpr i
   MathUnary _ x -> isPureExpr x
   MathBinary _ x y -> isPureExpr x && isPureExpr y
@@ -1353,14 +1471,15 @@ optLet t0 x f =
       (t2, tag, body) = optUnder t1 f
    in elimLetFrom t2 x' f tag body
 
--- Count uses on the already-optimized body. Splice without a second
--- full opt of @f@ when the body is large (do-notation tails).
+-- Count uses on the already-optimized body. Large tails keep that
+-- body (rename-only reopen). Small @f@ may still be applied once more
+-- so nested lets / optionCase peel fold.
 elimLetFrom :: Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> Int -> Expr Stamp v -> (Int, Expr Stamp v)
 elimLetFrom t x f tag body =
   let uses = countExpr tag body
-      rebuild = Let x (reoptSmallExpr t f)
+      rebuild = Let x (rebindExpr tag body)
       splice
-        | sizeExpr body > optSmall = (t, inlineExpr f x)
+        | sizeExpr body > optSmall = (t, rebuild)
         | otherwise = optExpr t (inlineExpr f x)
    in case uses of
         -- uses==1 is always a single strict use: countExpr already
@@ -1384,9 +1503,9 @@ optBind t0 x f =
 elimBindFrom :: Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> Int -> Effect Stamp v -> (Int, Effect Stamp v)
 elimBindFrom t x f tag body =
   let uses = countEffect tag body
-      rebuild = Bind x (reoptSmallEff t f)
+      rebuild = Bind x (rebindEff tag body)
       splice
-        | sizeEffect body > optSmall = (t, inlineEff f (boundAsExpr x))
+        | sizeEffect body > optSmall = (t, rebuild)
         | otherwise = optEffect t (inlineEff f (boundAsExpr x))
    in case uses of
         0 | isPureEffect x -> (t, body)
@@ -1458,8 +1577,14 @@ optExpr t0 = \case
         (t2, y') = optExpr t1 y
      in (t2, foldOrdNeq GT LTEq x' y')
   Let x f -> optLet t0 x f
-  LetRec r b -> (t0, LetRec (reoptSmallExpr t0 r) (reoptSmallExpr t0 b))
-  Lambda f -> (t0, Lambda (reoptSmallExpr t0 f))
+  LetRec r b ->
+    let tag = t0
+        (t1, r') = optExpr (t0 - 1) (r (Stamp tag))
+        (t2, b') = optExpr t1 (b (Stamp tag))
+     in (t2, LetRec (keepExprCont t2 tag r' r) (keepExprCont t2 tag b' b))
+  Lambda f ->
+    let (t1, tag, body) = optUnder t0 f
+     in (t1, Lambda (keepExprCont t1 tag body f))
   Apply f x ->
     let (t1, f') = optExpr t0 f
         (t2, x') = optExpr t1 x
@@ -1490,7 +1615,8 @@ optExpr t0 = \case
              in elimLetFrom t2 x s tag body
           Nothing ->
             let (t2, n') = optExpr t1 n
-             in (t2, OptionCase o' n' (reoptExpr t2 s))
+                (t3, tag, body) = optUnder t2 s
+             in (t3, OptionCase o' n' (keepExprCont t3 tag body s))
   ResultOk x -> fmap ResultOk (optExpr t0 x)
   ResultErr x -> fmap ResultErr (optExpr t0 x)
   ResultCase o e s ->
@@ -1502,7 +1628,10 @@ optExpr t0 = \case
           Just (Right x) ->
             let (t2, tag, body) = optUnder t1 s
              in elimLetFrom t2 x s tag body
-          Nothing -> (t1, ResultCase o' (reoptExpr t1 e) (reoptExpr t1 s))
+          Nothing ->
+            let (t2, tE, e') = optUnder t1 e
+                (t3, tS, s') = optUnder t2 s
+             in (t3, ResultCase o' (keepExprCont t3 tE e' e) (keepExprCont t3 tS s' s))
   UnsafeEffectExpr e ->
     let (t1, e') = optEffect t0 e
      in case e' of
@@ -1522,14 +1651,20 @@ optExpr t0 = \case
      in (t3, ExprTernary n x' y' z')
   ExprMap x f ->
     let (t1, x') = optExpr t0 x
-     in (t1, ExprMap x' (reoptExpr t1 f))
+        (t2, tag, body) = optUnder t1 f
+     in (t2, ExprMap x' (keepExprCont t2 tag body f))
   ExprFilter x f ->
     let (t1, x') = optExpr t0 x
-     in (t1, ExprFilter x' (reoptExpr t1 f))
+        (t2, tag, body) = optUnder t1 f
+     in (t2, ExprFilter x' (keepExprCont t2 tag body f))
   ExprReduce x z f ->
     let (t1, x') = optExpr t0 x
         (t2, z') = optExpr t1 z
-     in (t2, ExprReduce x' z' (reoptExpr2 t2 f))
+        (t3, tA, tB, body) = optUnder2 t2 f
+        wrap a b
+          | sizeExpr body <= optSmall = reoptExpr2 t3 f a b
+          | otherwise = rebindExpr2 tA tB body a b
+     in (t3, ExprReduce x' z' wrap)
   ExprIndex arr idx ->
     let (t1, arr') = optExpr t0 arr
         (t2, idx') = optExpr t1 idx
@@ -1580,8 +1715,14 @@ optEffect t0 = \case
         (t2, args') = optArgs t1 args
      in (t2, CallMethod x' n args')
   Bind x f -> optBind t0 x f
-  BindRec r b -> (t0, BindRec (reoptSmallEff t0 r) (reoptSmallEff t0 b))
-  LambdaE f -> (t0, LambdaE (reoptSmallEff t0 f))
+  BindRec r b ->
+    let tag = t0
+        (t1, r') = optEffect (t0 - 1) (r (Stamp tag))
+        (t2, b') = optEffect t1 (b (Stamp tag))
+     in (t2, BindRec (keepEffCont t2 tag r' r) (keepEffCont t2 tag b' b))
+  LambdaE f ->
+    let (t1, tag, body) = optUnderE t0 f
+     in (t1, LambdaE (keepEffCont t1 tag body f))
   ApplyE f x ->
     let (t1, f') = optEffect t0 f
         (t2, x') = optEffect t1 x
@@ -1613,7 +1754,8 @@ optEffect t0 = \case
              in elimBindFrom t2 (Lift x) s tag body
           Nothing ->
             let (t2, n') = optEffect t1 n
-             in (t2, OptionCaseE o' n' (reoptEff t2 s))
+                (t3, tag, body) = optUnderE t2 s
+             in (t3, OptionCaseE o' n' (keepEffCont t3 tag body s))
   ResultCaseE o e s ->
     let (t1, o') = optExpr t0 o
      in case peelResult o' of
@@ -1623,13 +1765,17 @@ optEffect t0 = \case
           Just (Right x) ->
             let (t2, tag, body) = optUnderE t1 s
              in elimBindFrom t2 (Lift x) s tag body
-          Nothing -> (t1, ResultCaseE o' (reoptEff t1 e) (reoptEff t1 s))
+          Nothing ->
+            let (t2, tE, e') = optUnderE t1 e
+                (t3, tS, s') = optUnderE t2 s
+             in (t3, ResultCaseE o' (keepEffCont t3 tE e' e) (keepEffCont t3 tS s' s))
   Throw x ->
     let (t1, x') = optExpr t0 x
      in (t1, Throw x')
   Try a k ->
     let (t1, a') = optEffect t0 a
-     in (t1, Try a' (reoptEff t1 k))
+        (t2, tag, body) = optUnderE t1 k
+     in (t2, Try a' (keepEffCont t2 tag body k))
   ObjectLit fs ->
     let (t1, fs') = mapAccumField t0 fs
      in (t1, ObjectLit fs')
@@ -1639,7 +1785,11 @@ optEffect t0 = \case
      in (t2, DeleteProp o' k')
   ArraySort xs f ->
     let (t1, xs') = optExpr t0 xs
-     in (t1, ArraySort xs' (reoptExpr2 t1 f))
+        (t2, tA, tB, body) = optUnder2 t1 f
+        wrap a b
+          | sizeExpr body <= optSmall = reoptExpr2 t2 f a b
+          | otherwise = rebindExpr2 tA tB body a b
+     in (t2, ArraySort xs' wrap)
 
 mapAccumField :: Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r])
 mapAccumField t [] = (t, [])
@@ -1657,7 +1807,6 @@ bindEffectCode s0 x f =
       tagged = f (Stamp tag)
       uses = countEffect tag tagged
    in case uses of
-        1 -> effectfulAST' sTag (inlineEff f (UnsafeEffectExpr x))
         0 ->
           let (s1, MkCode xDecl xRef xFX) = effectfulAST' sTag x
               (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f nestedDummy)
@@ -1679,11 +1828,6 @@ bindEffectCode s0 x f =
                   let (nBind, s2) = allocIdent s1
                       (s3, MkCode yDecl yRef yFX) = effectfulAST' s2 (f (Name nBind))
                    in (s3, MkCode (xDecl $$ constBind nBind xRef $$ yDecl) yRef yFX)
-
--- | @UnsafeEffectExpr@ is only introduced here as a subst placeholder so a
--- single-use effect binder can be spliced into an 'Expr' hole; the renderer
--- unwraps it immediately.
-
 
 effectfulAST :: ClosedEffect u -> Doc
 effectfulAST e = renderCode . snd . effectfulAST' startCG $ optimizeEffect e
@@ -1865,7 +2009,6 @@ letCode s0 x g =
       tagged = g (Stamp tag)
       uses = countExpr tag tagged
    in case uses of
-        1 -> pureAST' sTag (inlineExpr g x)
         0 ->
           let (s1, MkCode xDecl xRef _) = pureAST' sTag x
               (s2, y) = pureAST' s1 (g nestedDummy)

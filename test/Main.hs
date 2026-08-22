@@ -615,6 +615,9 @@ optimizeTests = testGroup "optimize"
   , testCase "literal is propagated under a lambda" $
       renderJS (pureAST (let_ (number 5) (\x -> lambda (\_ -> x + number 1))))
         @?= "function (n0) {return (6.0)}"
+  , testCase "let inside a lambda folds" $
+      renderJS (pureAST (lambda (\x -> let_ (number 1) (\y -> y + x))))
+        @?= "function (n0) {return (1.0 + n0)}"
   , testCase "array index of a literal folds" $
       renderJS (pureAST (Array.index numArray (number 0))) @?= "1.0"
   , testCase "let-bound frozen field is cheap and folds" $
