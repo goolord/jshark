@@ -59,8 +59,8 @@ type instance Field TextMetrics "width" = 'Number
 -- | @el.getContext("2d")@. 'none' when the element is not a canvas.
 -- Held so reuse does not re-run 'getContext'.
 getContext2d ::
-     Effect f ('Object DomElement)
-  -> EffectSyntax f (Effect f ('Option ('Object Context2D)))
+     Effect f ('MutableObject DomElement)
+  -> EffectSyntax f (Effect f ('Option ('MutableObject Context2D)))
 getContext2d el =
   hold $
     Bind
@@ -69,20 +69,20 @@ getContext2d el =
 
 -- | @HTMLCanvasElement.width@ / @height@ (drawing buffer, not CSS).
 -- Assigning either resets the bitmap.
-canvasWidth :: Effect f ('Object DomElement) -> EffectSyntax f (Expr f 'Number)
+canvasWidth :: Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'Number)
 canvasWidth el = getProp el "width"
 
-canvasHeight :: Effect f ('Object DomElement) -> EffectSyntax f (Expr f 'Number)
+canvasHeight :: Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'Number)
 canvasHeight el = getProp el "height"
 
-setCanvasWidth :: Effect f ('Object DomElement) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+setCanvasWidth :: Effect f ('MutableObject DomElement) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 setCanvasWidth el n = setProp el "width" n
 
-setCanvasHeight :: Effect f ('Object DomElement) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+setCanvasHeight :: Effect f ('MutableObject DomElement) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 setCanvasHeight el n = setProp el "height" n
 
 fillRect, strokeRect, clearRect ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -96,7 +96,7 @@ clearRect ctx x y w h =
   toSyntax $ callMethod ctx "clearRect" (arg x <: arg y <: arg w <: arg h <: RecNil)
 
 beginPath, closePath, fill, stroke, save, restore ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> EffectSyntax f (f 'Unit)
 beginPath ctx = toSyntax $ callMethod ctx "beginPath" RecNil
 closePath ctx = toSyntax $ callMethod ctx "closePath" RecNil
@@ -106,7 +106,7 @@ save ctx = toSyntax $ callMethod ctx "save" RecNil
 restore ctx = toSyntax $ callMethod ctx "restore" RecNil
 
 moveTo, lineTo ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
@@ -115,7 +115,7 @@ lineTo ctx x y = toSyntax $ callMethod ctx "lineTo" (arg x <: arg y <: RecNil)
 
 -- | @ctx.arc(x, y, r, start, end)@. Clockwise.
 arc ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -127,7 +127,7 @@ arc ctx x y r start end =
     callMethod ctx "arc" (arg x <: arg y <: arg r <: arg start <: arg end <: RecNil)
 
 fillText, strokeText ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'String
   -> Expr f 'Number
   -> Expr f 'Number
@@ -138,24 +138,24 @@ strokeText ctx t x y =
   toSyntax $ callMethod ctx "strokeText" (arg t <: arg x <: arg y <: RecNil)
 
 measureText ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'String
-  -> EffectSyntax f (Effect f ('Object TextMetrics))
+  -> EffectSyntax f (Effect f ('MutableObject TextMetrics))
 measureText ctx t = hold $ callMethod ctx "measureText" (arg t <: RecNil)
 
 translate ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 translate ctx x y =
   toSyntax $ callMethod ctx "translate" (arg x <: arg y <: RecNil)
 
-rotate :: Effect f ('Object Context2D) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+rotate :: Effect f ('MutableObject Context2D) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 rotate ctx a = toSyntax $ callMethod ctx "rotate" (arg a <: RecNil)
 
 scale ::
-     Effect f ('Object Context2D)
+     Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)

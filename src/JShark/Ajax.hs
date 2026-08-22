@@ -27,16 +27,16 @@ import JShark.Rec (Rec(..), (<:))
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 
-new :: EffectSyntax f (Effect f ('Object (XHR)))
+new :: EffectSyntax f (Effect f ('MutableObject (XHR)))
 new = hold $ ffi "new XMLHttpRequest" RecNil
 
-open :: StdMethod -> BS.ByteString -> Bool -> Effect f ('Object (XHR)) -> EffectSyntax f ()
+open :: StdMethod -> BS.ByteString -> Bool -> Effect f ('MutableObject (XHR)) -> EffectSyntax f ()
 open method url async x = toSyntax_ (callMethod x "open" (arg (string (T.decodeUtf8 (renderStdMethod method))) <: arg (string (T.decodeUtf8 url)) <: arg (bool async) <: RecNil))
 
-send :: Effect f ('Object XHR) -> EffectSyntax f ()
+send :: Effect f ('MutableObject XHR) -> EffectSyntax f ()
 send x = toSyntax_ $ callMethod x "send" RecNil
 
-sendPost :: Effect f ('Object XHR) -> Expr f 'String -> EffectSyntax f ()
+sendPost :: Effect f ('MutableObject XHR) -> Expr f 'String -> EffectSyntax f ()
 sendPost x y = toSyntax_ $ callMethod x "send" (arg y <: RecNil)
 
 data XHR
@@ -60,6 +60,6 @@ type instance Field FetchResponse "ok" = 'Bool
 type instance Field FetchResponse "status" = 'Number
 
 -- | @fetch(url)@
-fetch :: Expr f 'String -> EffectSyntax f (Effect f ('Object FetchResponse))
+fetch :: Expr f 'String -> EffectSyntax f (Effect f ('MutableObject FetchResponse))
 fetch url = hold $ ffi "fetch" (arg url <: RecNil)
 

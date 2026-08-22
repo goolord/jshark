@@ -66,8 +66,8 @@ import JShark.Types
 -- stay manual; they do not become 'As'.
 data As (a :: Type)
 
--- | @'Object' ('As' a)@
-type ObjectOf a = 'Object (As a)
+-- | @'MutableObject' ('As' a)@
+type ObjectOf a = 'MutableObject (As a)
 
 type instance Field (As a) k = GField a k
 
@@ -135,7 +135,7 @@ type family FieldU (a :: Type) :: Universe where
   FieldU [a] = 'Array (FieldU a)
   FieldU (Maybe a) = 'Option (FieldU a)
   FieldU (Either e a) = 'Result (FieldU e) (FieldU a)
-  FieldU a = 'Object (RowOf a)
+  FieldU a = 'MutableObject (RowOf a)
 
 type family RowOf (a :: Type) :: Type where
   RowOf a = RowOfRep a (Rep a)
@@ -214,18 +214,18 @@ instance (ToValue e, ToValue a) => ToValue (Either e a) where
   fromValue (ValueResult (Right a)) = Right (fromValue a)
 
 -- | Record → object literal. Row is 'As' @a@. Not on 'ToJS' / 'evaluate'.
-toObject :: (Generic a, GToObject (Rep a) (As a)) => a -> Effect f ('Object (As a))
+toObject :: (Generic a, GToObject (Rep a) (As a)) => a -> Effect f ('MutableObject (As a))
 toObject = obj . gtoFields . from
 
 -- | @[Person]@ / @todos@. Empty array plus 'push' of each 'toObject'.
-toObjectArray :: (Generic a, GToObject (Rep a) (As a)) => [a] -> Effect f ('Array ('Object (As a)))
+toObjectArray :: (Generic a, GToObject (Rep a) (As a)) => [a] -> Effect f ('Array ('MutableObject (As a)))
 toObjectArray xs = fromSyntax $ do
   arr <- toSyntax (expr (Literal (ValueArray [])))
   mapM_ (\x -> push_ (Var arr) (UnsafeEffectExpr (toObject x))) xs
   yield (Var arr)
 
 -- | Empty object of row 'As' @a@. Constrained so @newRecord \@Int@ is rejected.
-newRecord :: forall a f. (Generic a, GToObject (Rep a) (As a)) => Effect f ('Object (As a))
+newRecord :: forall a f. (Generic a, GToObject (Rep a) (As a)) => Effect f ('MutableObject (As a))
 newRecord = newObject `asTypeOf` toObject (undefined :: a)
 
 data FieldKind = Prim | Rec | Sum | List FieldKind | Opt FieldKind
@@ -253,32 +253,32 @@ class DispatchField (k :: FieldKind) a where
 instance (ToValue a, FieldU a ~ UniverseOf a) => DispatchField 'Prim a where
   dispatchField = toJS
 
-instance (Generic a, GToObject (Rep a) (As a), FieldU a ~ 'Object (As a)) => DispatchField 'Rec a where
+instance (Generic a, GToObject (Rep a) (As a), FieldU a ~ 'MutableObject (As a)) => DispatchField 'Rec a where
   dispatchField = UnsafeEffectExpr . toObject
 
-instance (Generic a, GToSum a (Rep a), FieldU a ~ 'Object (Tagged a)) => DispatchField 'Sum a where
+instance (Generic a, GToSum a (Rep a), FieldU a ~ 'MutableObject (Tagged a)) => DispatchField 'Sum a where
   dispatchField = UnsafeEffectExpr . toSum
 
 instance (ToValue a, FieldU [a] ~ UniverseOf [a]) => DispatchField ('List 'Prim) [a] where
   dispatchField = toJS
 
-instance (Generic a, GToObject (Rep a) (As a), FieldU [a] ~ 'Array ('Object (As a))) =>
+instance (Generic a, GToObject (Rep a) (As a), FieldU [a] ~ 'Array ('MutableObject (As a))) =>
   DispatchField ('List 'Rec) [a] where
   dispatchField = UnsafeEffectExpr . toObjectArray
 
-instance (Generic a, GToSum a (Rep a), FieldU [a] ~ 'Array ('Object (Tagged a))) =>
+instance (Generic a, GToSum a (Rep a), FieldU [a] ~ 'Array ('MutableObject (Tagged a))) =>
   DispatchField ('List 'Sum) [a] where
   dispatchField = UnsafeEffectExpr . toSumArray
 
 instance (ToValue a, FieldU (Maybe a) ~ UniverseOf (Maybe a)) => DispatchField ('Opt 'Prim) (Maybe a) where
   dispatchField = toJS
 
-instance (Generic a, GToObject (Rep a) (As a), FieldU (Maybe a) ~ 'Option ('Object (As a))) =>
+instance (Generic a, GToObject (Rep a) (As a), FieldU (Maybe a) ~ 'Option ('MutableObject (As a))) =>
   DispatchField ('Opt 'Rec) (Maybe a) where
   dispatchField Nothing = none
   dispatchField (Just x) = some (UnsafeEffectExpr (toObject x))
 
-instance (Generic a, GToSum a (Rep a), FieldU (Maybe a) ~ 'Option ('Object (Tagged a))) =>
+instance (Generic a, GToSum a (Rep a), FieldU (Maybe a) ~ 'Option ('MutableObject (Tagged a))) =>
   DispatchField ('Opt 'Sum) (Maybe a) where
   dispatchField Nothing = none
   dispatchField (Just x) = some (UnsafeEffectExpr (toSum x))
@@ -315,8 +315,8 @@ data Tagged (a :: Type)
 
 type instance Field (Tagged a) "tag" = 'String
 
--- | @'Object' ('Tagged' a)@ — @{tag, payload}@.
-type SumOf a = 'Object (Tagged a)
+-- | @'MutableObject' ('Tagged' a)@ — @{tag, payload}@.
+type SumOf a = 'MutableObject (Tagged a)
 
 -- | N-ary constructor payload object (keys are field names or @"0"@..).
 data Payload (a :: Type) (name :: Symbol)
@@ -348,7 +348,7 @@ type family GHasCtor (r :: Type -> Type) (n :: Symbol) :: Bool where
 type family GPayloadU (a :: Type) (n :: Symbol) (p :: Type -> Type) :: Universe where
   GPayloadU _ _ U1 = 'Unit
   GPayloadU _ _ (S1 _ (Rec0 t)) = FieldU t
-  GPayloadU a n (_ :*: _) = 'Object (Payload a n)
+  GPayloadU a n (_ :*: _) = 'MutableObject (Payload a n)
 
 type family GPayField (r :: Type -> Type) (n :: Symbol) (k :: Symbol) :: Universe where
   GPayField (D1 _ f) n k = GPayField f n k
@@ -501,7 +501,7 @@ caseSum s arms = fromSyntax $ do
 emitCase ::
      forall a f v ns r.
      Expr f 'String
-  -> Effect f ('Object r)
+  -> Effect f ('MutableObject r)
   -> CaseSum a f v ns
   -> Effect f v
 emitCase t o (CaseCons @name hit rest) =
@@ -535,7 +535,7 @@ type family IsUnit (u :: Universe) :: Bool where
   IsUnit _ = 'False
 
 class Unpayload (b :: Bool) (u :: Universe) where
-  unpayload :: Effect f ('Object r) -> Expr f u
+  unpayload :: Effect f ('MutableObject r) -> Expr f u
 
 instance Unpayload 'True 'Unit where
   unpayload _ = Literal ValueUnit

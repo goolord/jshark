@@ -1,5 +1,6 @@
 {-# LANGUAGE
-    BangPatterns
+    AllowAmbiguousTypes
+  , BangPatterns
   , ConstraintKinds
   , DataKinds
   , GADTs
@@ -26,6 +27,7 @@ module JShark
     , ExprIndex, MathUnary, MathBinary
     , ExprUnary, ExprBinary, ExprTernary, ExprMap, ExprFilter, ExprReduce
     , UnsafeNullable
+    , FrozenLit, GetField
     )
   , Value(..)
   , Arg(..)
@@ -67,8 +69,10 @@ import Data.Int (Int32)
 import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
+import Data.Proxy (Proxy(..))
 import Data.Text (Text)
 import Data.Typeable (Typeable, eqT, type (:~:)(..))
+import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import Data.Word (Word32)
 import Numeric (readInt, showFFloat, showHex)
 import System.IO.Unsafe (unsafePerformIO)
@@ -107,6 +111,8 @@ valueEq (ValueResult a) (ValueResult b) = case (a, b) of
   (Right x, Right y) -> valueEq x y
   _ -> False
 valueEq (ValueRegex a) (ValueRegex b) = a == b
+valueEq ValueFrozen{} ValueFrozen{} =
+  error "evaluate: frozen objects cannot be compared for equality"
 valueEq (ValueFunction _) (ValueFunction _) =
   error "evaluate: functions cannot be compared for equality"
 
@@ -131,6 +137,7 @@ jsShow (ValueOption (Just x)) = jsShow x
 jsShow (ValueResult (Right x)) = jsShow x
 jsShow (ValueResult (Left x)) = jsShow x
 jsShow (ValueRegex s) = s
+jsShow ValueFrozen{} = "[object Object]"
 jsShow (ValueFunction _) = error "evaluate: cannot show a function"
 
 -- | JS @typeof@. @null@ is @\"object\"@.
@@ -146,6 +153,7 @@ typeOfValue = \case
   ValueOption (Just v) -> typeOfValue v
   ValueResult{} -> "object"
   ValueRegex{} -> "object"
+  ValueFrozen{} -> "object"
 
 jsShowNumber :: Double -> String
 jsShowNumber d
@@ -223,6 +231,7 @@ isOrderableValue = \case
 
 eqFoldableValue :: Value u -> Bool
 eqFoldableValue ValueFunction{} = False
+eqFoldableValue ValueFrozen{} = False
 eqFoldableValue _ = True
 
 -- | JS ToInt32 / ToUint32 for bitwise ops and @>>>@.
@@ -431,6 +440,8 @@ evalValue = \case
     MathUnary name x -> ValueNumber (mathUnaryFn name (unNumber (evalValue x)))
     MathBinary name x y -> ValueNumber (mathBinaryFn name (unNumber (evalValue x)) (unNumber (evalValue y)))
     UnsafeNullable x -> ValueOption (Just (evalValue x))
+    FrozenLit fs -> ValueFrozen fs
+    GetField @k o -> withFrozenField @k (evalValue o) evalValue
 
 -- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
 -- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
@@ -518,6 +529,10 @@ goOpen cache e = case e of
   Literal ValueBool{} -> go cache e
   Literal ValueUnit -> go cache e
   Literal ValueRegex{} -> go cache e
+  FrozenLit fs -> pure (ValueFrozen fs)
+  GetField @k o -> do
+    ov <- goOpen cache o
+    withFrozenField @k ov (goOpen cache)
   _ -> pure (evalValue e)
 
 goNode :: forall v. Typeable v => EvalCache -> Expr Value v -> IO (Value v)
@@ -614,6 +629,10 @@ goNode cache = \case
   MathBinary name x y ->
     ValueNumber <$> (mathBinaryFn name <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
   UnsafeNullable x -> ValueOption . Just <$> goOpen cache x
+  FrozenLit fs -> pure (ValueFrozen fs)
+  GetField @k o -> do
+    ov <- goOpen cache o
+    withFrozenField @k ov (goOpen cache)
   where
     num1 f x = ValueNumber . f . unNumber <$> go cache x
     num2 f x y = ValueNumber <$> (f <$> (unNumber <$> go cache x) <*> (unNumber <$> go cache y))
@@ -737,6 +756,8 @@ isSimple = \case
   MathUnary{} -> True
   MathBinary{} -> True
   UnsafeNullable x -> isSimple x
+  FrozenLit{} -> True
+  GetField{} -> True
   -- Single-use Effect spliced into an Expr hole (e.g. inlined 'ffi').
   UnsafeEffectExpr e -> isSimpleEffect e
   _ -> False
@@ -820,6 +841,8 @@ countExpr t = \case
   MathUnary _ x -> countExpr t x
   MathBinary _ x y -> countExpr t x + countExpr t y
   UnsafeNullable x -> countExpr t x
+  FrozenLit fs -> sum (map (countFieldLit t) fs)
+  GetField o -> countExpr t o
 
 countEffect :: Int -> Effect Stamp u -> Int
 countEffect t = \case
@@ -850,6 +873,42 @@ countFieldLit t (FieldLit e) = countExpr t e
 
 mapFieldLit :: (forall u. Expr f u -> Expr f u) -> FieldLit f r -> FieldLit f r
 mapFieldLit g (FieldLit @k e) = FieldLit @k (g e)
+
+lookupField :: forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
+lookupField = findLit . reverse
+  where
+    findLit [] = Nothing
+    findLit (FieldLit @k' e : rest) =
+      case sameSymbol (Proxy @k) (Proxy @k') of
+        Just Refl -> Just e
+        Nothing -> findLit rest
+
+fieldsPure :: [FieldLit f r] -> Bool
+fieldsPure = all (\(FieldLit e) -> isPureExpr e)
+
+-- | Last-wins, and only when every sibling is observationally pure
+-- (so projecting @.b@ cannot DCE @JSON.stringify@ in @.a@).
+projectFrozenField :: forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
+projectFrozenField fs
+  | fieldsPure fs = lookupField @k fs
+  | otherwise = Nothing
+
+withFrozenField
+  :: forall k r a. KnownSymbol k
+  => Value ('Object r)
+  -> (Expr Value (Field r k) -> a)
+  -> a
+withFrozenField (ValueFrozen fs) k =
+  case projectFrozenField @k fs of
+    Just e -> k e
+    Nothing -> cannotEval "GetField of a frozen object with effectful fields"
+
+foldGetField :: forall k r f. KnownSymbol k => Expr f ('Object r) -> Maybe (Expr f (Field r k))
+foldGetField = \case
+  FrozenLit fs -> projectFrozenField @k fs
+  If (Literal (ValueBool True)) t _ -> foldGetField @k t
+  If (Literal (ValueBool False)) _ e -> foldGetField @k e
+  _ -> Nothing
 
 flattenArg :: Arg Stamp u -> Arg Stamp u
 flattenArg (ArgExpr e) = ArgExpr (flattenExpr e)
@@ -905,6 +964,8 @@ flattenExpr = \case
   MathUnary n x -> MathUnary n (flattenExpr x)
   MathBinary n x y -> MathBinary n (flattenExpr x) (flattenExpr y)
   UnsafeNullable x -> UnsafeNullable (flattenExpr x)
+  FrozenLit fs -> FrozenLit (map (mapFieldLit flattenExpr) fs)
+  GetField @k o -> GetField @k (flattenExpr o)
 
 flattenEff :: Effect Stamp u -> Effect Stamp u
 flattenEff = \case
@@ -983,11 +1044,14 @@ isCheapValue = \case
   ValueRegex{} -> False
   ValueArray{} -> False
   ValueFunction{} -> False
+  ValueFrozen{} -> False
 
 isCheap :: Expr Stamp u -> Bool
 isCheap = \case
   Literal v -> isCheapValue v
   UnsafeNullable x -> isCheap x
+  FrozenLit fs -> all (\(FieldLit e) -> isCheap e) fs
+  GetField o -> isCheap o
   _ -> False
 
 isCheapEffect :: Effect Stamp u -> Bool
@@ -997,7 +1061,10 @@ isCheapEffect = \case
   UnsafeObject{} -> False
   _ -> False
 
-isPureExpr :: Expr Stamp u -> Bool
+pureDummy :: f u
+pureDummy = error "JShark.isPureExpr: binder"
+
+isPureExpr :: Expr f u -> Bool
 isPureExpr = \case
   Literal{} -> True
   Var{} -> True
@@ -1022,28 +1089,30 @@ isPureExpr = \case
   LTh x y -> isPureExpr x && isPureExpr y
   GTEq x y -> isPureExpr x && isPureExpr y
   LTEq x y -> isPureExpr x && isPureExpr y
-  Let x g -> isPureExpr x && isPureExpr (g nestedDummy)
-  LetRec r b -> isPureExpr (r nestedDummy) && isPureExpr (b nestedDummy)
-  Lambda g -> isPureExpr (g nestedDummy)
+  Let x g -> isPureExpr x && isPureExpr (g pureDummy)
+  LetRec r b -> isPureExpr (r pureDummy) && isPureExpr (b pureDummy)
+  Lambda g -> isPureExpr (g pureDummy)
   Apply f x -> isPureExpr f && isPureExpr x
   Show x -> isPureExpr x
   TypeOf x -> isPureExpr x
   If c t e -> isPureExpr c && isPureExpr t && isPureExpr e
-  OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s nestedDummy)
+  OptionCase o n s -> isPureExpr o && isPureExpr n && isPureExpr (s pureDummy)
   ResultOk x -> isPureExpr x
   ResultErr x -> isPureExpr x
-  ResultCase o e s -> isPureExpr o && isPureExpr (e nestedDummy) && isPureExpr (s nestedDummy)
+  ResultCase o e s -> isPureExpr o && isPureExpr (e pureDummy) && isPureExpr (s pureDummy)
   UnsafeEffectExpr _ -> False
   ExprUnary n x -> isPureStdUnary n && isPureExpr x
   ExprBinary _ x y -> isPureExpr x && isPureExpr y
   ExprTernary _ x y z -> isPureExpr x && isPureExpr y && isPureExpr z
-  ExprMap x f -> isPureExpr x && isPureExpr (f nestedDummy)
-  ExprFilter x f -> isPureExpr x && isPureExpr (f nestedDummy)
-  ExprReduce x z f -> isPureExpr x && isPureExpr z && isPureExpr (f nestedDummy nestedDummy)
+  ExprMap x f -> isPureExpr x && isPureExpr (f pureDummy)
+  ExprFilter x f -> isPureExpr x && isPureExpr (f pureDummy)
+  ExprReduce x z f -> isPureExpr x && isPureExpr z && isPureExpr (f pureDummy pureDummy)
   ExprIndex x i -> isPureExpr x && isPureExpr i
   MathUnary _ x -> isPureExpr x
   MathBinary _ x y -> isPureExpr x && isPureExpr y
   UnsafeNullable x -> isPureExpr x
+  FrozenLit fs -> all (\(FieldLit e) -> isPureExpr e) fs
+  GetField o -> isPureExpr o
 
 -- | @JSON.stringify@ throws on bigint / circular values, so unused
 -- stringify is kept.
@@ -1363,6 +1432,14 @@ optExpr t0 = \case
         (t2, y') = optExpr t1 y
      in (t2, foldMathBinary n x' y')
   UnsafeNullable x -> fmap UnsafeNullable (optExpr t0 x)
+  FrozenLit fs ->
+    let (t1, fs') = mapAccumField t0 fs
+     in (t1, FrozenLit fs')
+  GetField @k o ->
+    let (t1, o') = optExpr t0 o
+     in case foldGetField @k o' of
+          Just e -> optExpr t1 e
+          Nothing -> (t1, GetField @k o')
   where
     binNum f k x y =
       let (t1, x') = optExpr t0 x
@@ -1727,6 +1804,7 @@ pureAST' !s0 = \case
       (s0, Code mempty ("new RegExp" <> P.parens (jsQuote s)))
     ValueBool True -> (s0, Code mempty "true")
     ValueBool False -> (s0, Code mempty "false")
+    ValueFrozen{} -> error "JShark.pureAST: ValueFrozen is eval-only"
   Concat x y -> renderBin "+" s0 x y
   Plus x y -> renderBin "+" s0 x y
   Minus x y -> renderBin "-" s0 x y
@@ -1744,7 +1822,10 @@ pureAST' !s0 = \case
      in (s1, Code x1Decl $ "String" <> P.parens x1Ref)
   TypeOf x ->
     let (s1, Code x1Decl x1Ref) = pureAST' s0 x
-     in (s1, Code x1Decl $ "typeof" <+> x1Ref)
+        wrapped = case x of
+          FrozenLit{} -> P.parens x1Ref
+          _ -> x1Ref
+     in (s1, Code x1Decl $ "typeof" <+> wrapped)
   Negate x ->
     let (s1, Code x1Decl x1Ref) = pureAST' s0 x
      in (s1, Code x1Decl $ "-" <> P.parens x1Ref)
@@ -1858,6 +1939,10 @@ pureAST' !s0 = \case
         (s2, Code yDecl yRef) = pureAST' s1 y
      in (s2, Code (xDecl $$ yDecl) ("Math." <> P.text (T.unpack (mathFn2Name name)) <> P.parens (xRef <> ", " <> yRef)))
   UnsafeNullable x -> pureAST' s0 x
+  FrozenLit fs -> renderObjectLit s0 fs
+  GetField @k o ->
+    let (s1, Code d r) = pureAST' s0 o
+     in (s1, Code d (jsDotOrBracket r (symbolVal (Proxy @k))))
 
 stdUnaryJS :: StdUnary a b -> Doc -> Doc
 stdUnaryJS n r = case n of

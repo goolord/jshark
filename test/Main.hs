@@ -81,6 +81,20 @@ evaluatorTests = testGroup "evaluate"
       evaluateNumber (let_ (number 21) (\x -> x + x)) @?= 42
   , testCase "lambda application" $
       evaluateNumber (apply (lambda (\x -> x * 2)) (number 21)) @?= 42
+  , testCase "GetField of FrozenLit evaluates" $
+      evaluateNumber ((Object.frozen [Object.field @"x" (number 21)] :: Expr f ('Object LitRow)).x) @?= 21
+  , testCase "let-bound frozen field evaluates" $
+      evaluateNumber (let_ (Object.frozen [Object.field @"x" (number 21)] :: Expr f ('Object LitRow)) (\o -> o.x)) @?= 21
+  , testCase "if_ of frozen fields evaluates" $
+      evaluateNumber
+        ((if_ (bool True)
+            (Object.frozen [Object.field @"x" (number 21)] :: Expr f ('Object LitRow))
+            (Object.frozen [Object.field @"x" (number 0)])).x)
+        @?= 21
+  , testCase "duplicate frozen keys last-wins" $
+      evaluateNumber
+        ((Object.frozen [Object.field @"x" (number 1), Object.field @"x" (number 2)] :: Expr f ('Object LitRow)).x)
+        @?= 2
   , testCase "evaluateCached agrees with evaluate on a shared heap node" $ do
       let x = number 21 + number 21
           e = x + x
@@ -96,6 +110,8 @@ evaluatorTests = testGroup "evaluate"
 -- yield an 'Expr' via 'Var'.
 data LitRow
 type instance Field LitRow "x" = 'Number
+type instance Field LitRow "y" = 'Number
+type instance Field LitRow "s" = 'String
 
 data Person = Person
   { fullName :: Text
@@ -333,7 +349,7 @@ stdlibTests = testGroup "stdlib"
   , testCase "Canvas fillStyle is a Field" $
       renderJS (effectfulAST (fromSyntax (do
         _ <- Object.set @"fillStyle"
-          (UnsafeObject "ctx" :: Effect f ('Object Canvas.Context2D))
+          (UnsafeObject "ctx" :: Effect f ('MutableObject Canvas.Context2D))
           (string "#f00")
         toSyntax noOp)))
         @?= "ctx.fillStyle = \"#f00\";"
@@ -432,11 +448,17 @@ goodPartsTests = testGroup "good parts"
         (T.pack $ renderJS (effectfulAST (Object.hasOwn (UnsafeObject "o") (string "k"))))
         @?= True
   , testCase "create is Object.create" $
-      renderJS (effectfulAST (Object.create (UnsafeObject "p") :: Effect f ('Object ())))
+      renderJS (effectfulAST (Object.create (UnsafeObject "p") :: Effect f ('MutableObject ())))
         @?= "Object.create(p)"
   , testCase "obj literal quotes keys" $
-      renderJS (effectfulAST (Object.obj [Object.field @"x" (number 1)] :: Effect f ('Object LitRow)))
+      renderJS (effectfulAST (Object.obj [Object.field @"x" (number 1)] :: Effect f ('MutableObject LitRow)))
         @?= "{\"x\": 1.0}"
+  , testCase "frozen literal quotes keys" $
+      renderJS (pureAST (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)))
+        @?= "{\"x\": 1.0}"
+  , testCase "typeof of FrozenLit parenthesizes the literal" $
+      renderJS (pureAST (typeOf (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))))
+        @?= "typeof ({\"x\": 1.0})"
   , testCase "sort emits a binary compare callback" $
       renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
         @?= "[1.0, 2.0].sort(function (n0, n1) {return n0 - n1})"
@@ -478,6 +500,9 @@ genericTests = testGroup "generic"
         n <- (Var o).fullName
         yieldString n))
         @?= "{\"fullName\": \"Ada\", \"years\": 36.0}.fullName"
+  , testCase "frozen record dot is a pure Expr" $
+      renderJS (pureAST ((Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)).x))
+        @?= "1.0"
   , testCase "newRecord is an empty object of the Generic row" $
       renderJS (effectfulAST (G.newRecord @Person))
         @?= "{}"
@@ -588,6 +613,20 @@ optimizeTests = testGroup "optimize"
         @?= "function (n0) {return (6.0)}"
   , testCase "array index of a literal folds" $
       renderJS (pureAST (Array.index numArray (number 0))) @?= "1.0"
+  , testCase "let-bound frozen field is cheap and folds" $
+      renderJS (pureAST (let_ (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)) (\o -> o.x)))
+        @?= "1.0"
+  , testCase "GetField does not DCE an impure sibling field" $
+      renderJS (pureAST
+        ((Object.frozen
+            [ Object.field @"s" (Json.stringify (number 1))
+            , Object.field @"y" (number 2)
+            ] :: Expr f ('Object LitRow)).y))
+        @?= "{\"s\": JSON.stringify(1.0), \"y\": 2.0}.y"
+  , testCase "duplicate frozen keys fold last-wins" $
+      renderJS (pureAST
+        ((Object.frozen [Object.field @"x" (number 1), Object.field @"x" (number 2)] :: Expr f ('Object LitRow)).x))
+        @?= "2.0"
   , testCase "Math.sin of 0 folds" $
       renderJS (pureAST (Math.sin (number 0))) @?= "0.0"
   , testCase "Math.sin of a non-zero literal is left to JS" $
@@ -925,6 +964,7 @@ encodeJSValue = \case
   ValueResult (Right x) -> "{\"ok\":" ++ encodeJSValue x ++ "}"
   ValueResult (Left x) -> "{\"err\":" ++ encodeJSValue x ++ "}"
   ValueRegex s -> encodeJSString (T.unpack s)
+  ValueFrozen{} -> error "encodeJSValue: frozen objects are not JSON"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
 
 -- JSON.stringify of a finite number; NaN/Infinity stringify to null.

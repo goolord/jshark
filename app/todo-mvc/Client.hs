@@ -49,7 +49,7 @@ storageKey = "jshark-todos"
 emptyTodos :: Expr f ('Array (ObjectOf Todo))
 emptyTodos = Literal (ValueArray [])
 
-parseObject :: Expr f 'String -> Effect f ('Object ())
+parseObject :: Expr f 'String -> Effect f ('MutableObject ())
 parseObject = Json.unsafeParse
 
 emptyState :: Effect f (ObjectOf AppState)
@@ -72,7 +72,7 @@ parseState s = try_
         yield (some st)))
   (expr none)
 
-hydrate :: Expr f ('Object ()) -> EffectSyntax f (Expr f (ObjectOf AppState))
+hydrate :: Expr f ('MutableObject ()) -> EffectSyntax f (Expr f (ObjectOf AppState))
 hydrate blob = do
   st <- toSyntax emptyState
   t <- getProp (Lift blob) "todos"
@@ -116,7 +116,7 @@ applyHashFilter state hash =
     done
     routes
 
-byId :: Text -> EffectSyntax f (Effect f ('Object Dom.DomElement))
+byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 byId = Dom.lookupId . string
 
 incomplete :: Expr f ('Array (ObjectOf Todo)) -> EffectSyntax f (Expr f ('Array (ObjectOf Todo)))

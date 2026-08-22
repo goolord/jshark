@@ -7,10 +7,12 @@
 * `LetRec` / `BindRec`, `orElse` / `fromOption`, nested-unary `lambda2`/`apply2`/`lambda3`/`apply3`.
 * Statement `if` is `IfE` after `discard` (no `IfS` constructor). `FieldLit` is keyed by `Field r k`.
 * `JShark.Generic`: `Generic` records as objects (`toObject` /
-  `toObjectArray` / `newRecord`, row `As a`; `ViaGeneric` for `'Object a`).
+  `toObjectArray` / `newRecord`, row `As a`; `ViaGeneric` for `'MutableObject a`).
   Primitives via `ToJS` / `ToValue` (`Int` is IEEE `Number`).
   Sums as `{tag, payload}` (`toSum` / `toSumArray` / `caseSum` / `whenTag` /
   `sumTag`, row `Tagged a`). `Either` stays `Result`.
+* Frozen `'Object r` lives on `Expr` (`FrozenLit` / `GetField` / `Object.frozen`).
+  Record-dot there is a pure `Expr`. Mutable objects are `'MutableObject`.
 * `caseSum` / `on` / `CaseEnd` / `CaseAny` (`Case_`): coverage-checked
   Generic sum case. Named arms are a prefix of `CtorNames a`. Every
   named arm tests its tag; `CaseEnd` throws on leftovers; `CaseAny` is
@@ -18,8 +20,9 @@
 * Optimizer/codegen inlining applies the PHOAS continuation to an
   `Embed` hole instead of `unsafeCoerce` on binder tags. `evaluateCached`
   has no `Typeable` on the result; `eqT` is only for a `StableName` hit.
-* `HasField` on `Effect`/`Expr` objects so `OverloadedRecordDot`
-  (`o.fullName`) is `get`. Binders use `get` or `(Var x).k`.
+* `HasField` on mutable `Effect`/`Expr` so `OverloadedRecordDot`
+  (`o.fullName`) is `get`. Frozen `Expr` objects project to `Expr`.
+  Binders use `get` or `(Var x).k`.
 * `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
   `render` is `bindRec`, not a persisted field.
 * `call0` accepts `ToEffect` (`Expr` or `Effect`).

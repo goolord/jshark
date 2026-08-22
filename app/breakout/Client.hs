@@ -64,8 +64,8 @@ mainJS = do
         stmts $ boot canvas (Lift ctx0)
 
 boot ::
-     Effect f ('Object Dom.DomElement)
-  -> Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Canvas.Context2D)
   -> EffectSyntax f (f 'Unit)
 boot canvas ctx = do
   ctxH <- hold ctx
@@ -93,22 +93,22 @@ boot canvas ctx = do
            done)
 
 wire ::
-     Effect f ('Object Dom.DomElement)
+     Effect f ('MutableObject Dom.DomElement)
   -> Effect f (ObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 wire canvas state = do
-  addEventListener "keydown" window $ \(e :: f ('Object ())) ->
+  addEventListener "keydown" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
       code <- getProp (Lift (Var e)) "code"
       bindArrows state code true_
       ifS (code .== "Space") (do
         toSyntax $ callMethod (Lift (Var e)) "preventDefault" RecNil
         tryRestart state) done
-  addEventListener "keyup" window $ \(e :: f ('Object ())) ->
+  addEventListener "keyup" window $ \(e :: f ('MutableObject ())) ->
     stmts $ do
       code <- getProp (Lift (Var e)) "code"
       bindArrows state code false_
-  addEventListener "mousemove" canvas $ \(e :: f ('Object ())) ->
+  addEventListener "mousemove" canvas $ \(e :: f ('MutableObject ())) ->
     stmts $ do
       cx <- getProp (Lift (Var e)) "clientX"
       rect <- hold $ callMethod canvas "getBoundingClientRect" RecNil
@@ -134,7 +134,7 @@ tryRestart state =
     copyGame state (Lift (Var g0))
 
 -- | In-place overwrite so the rAF closure keeps the same object identity.
--- 'Object.assign' copies every enumerable field; new 'Game' keys come along.
+-- Object.assign copies every enumerable field; new 'Game' keys come along.
 copyGame :: Effect f (ObjectOf Game) -> Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
 copyGame dst src = do
   toSyntax_ $ ffi "Object.assign" (ArgEffect dst <: ArgEffect src <: RecNil)
@@ -231,7 +231,7 @@ resetBall state = do
   set @"paddle" state (Var p)
 
 paint ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (ObjectOf Game)
   -> Effect f (ObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
@@ -246,7 +246,7 @@ paint ctx state meter = do
   unlessPlay state $ drawBanner ctx state
 
 drawBricks ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (ObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBricks ctx state = do
@@ -262,7 +262,7 @@ drawBricks ctx state = do
       done
 
 drawBall ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (ObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBall ctx state = do
@@ -277,7 +277,7 @@ drawBall ctx state = do
   done
 
 drawPaddle ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (ObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawPaddle ctx state = do
@@ -294,7 +294,7 @@ drawPaddle ctx state = do
   done
 
 drawHud ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (ObjectOf Game)
   -> Effect f (ObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
@@ -312,7 +312,7 @@ drawHud ctx state meter = do
   done
 
 drawBanner ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (ObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBanner ctx state = do
@@ -328,7 +328,7 @@ drawBanner ctx state = do
   set @"textAlign" ctx (string "left")
 
 bannerText ::
-     Effect f ('Object Canvas.Context2D)
+     Effect f ('MutableObject Canvas.Context2D)
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 bannerText ctx msg = do
@@ -376,7 +376,7 @@ paddleKick ballX paddleX =
       hit = (ballX - mid) / number (paddleW / 2)
    in hit * 3
 
-fill :: Effect f ('Object Canvas.Context2D) -> Expr f 'String -> EffectSyntax f (f 'Unit)
+fill :: Effect f ('MutableObject Canvas.Context2D) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 fill ctx col = set @"fillStyle" ctx col
 
 phaseSum :: Effect f (ObjectOf Game) -> EffectSyntax f (Effect f (SumOf Phase))

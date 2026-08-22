@@ -133,7 +133,7 @@ data Window
 type instance Field Window "location.host" = 'String
 type instance Field Window "location.hash" = 'String
 
-window :: Effect f ('Object Window)
+window :: Effect f ('MutableObject Window)
 window = unsafeObject "window"
 
 host :: EffectSyntax f (Expr f 'String)
@@ -142,13 +142,13 @@ host = Object.get @"location.host" window
 locationHash :: EffectSyntax f (Expr f 'String)
 locationHash = Object.get @"location.hash" window
 
-emptyObject :: Effect f ('Object ())
+emptyObject :: Effect f ('MutableObject ())
 emptyObject = newObject
 
-onClick :: Effect f ('Object obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
+onClick :: Effect f ('MutableObject obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
 onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "onclick") (LambdaE f)
 
-onClick_ :: Effect f ('Object obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
+onClick_ :: Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 onClick_ el body = onClick el $ \_ -> stmts body
 
 ffi :: String -> Rec (Arg f) us -> Effect f v
@@ -290,11 +290,11 @@ typeOf = TypeOf
 not_ :: Expr f 'Bool -> Expr f 'Bool
 not_ c = c .== false_
 
-addEventListener :: Text -> Effect f ('Object obj) -> (f u -> Effect f a) -> EffectSyntax f ()
+addEventListener :: Text -> Effect f ('MutableObject obj) -> (f u -> Effect f a) -> EffectSyntax f ()
 addEventListener name el handler =
   toSyntax_ $ callMethod el "addEventListener" (arg (string name) <: ArgEffect (LambdaE handler) <: RecNil)
 
-addEventListener_ :: Text -> Effect f ('Object obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
+addEventListener_ :: Text -> Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
 
 arg :: Expr f u -> Arg f u
@@ -325,36 +325,36 @@ hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold e = fmap (expr . Var) (toSyntax e)
 
 -- | Recover the record phantom from an object handle. Closed so
--- 'Effect'/'Expr' win over a bare PHOAS binder @f ('Object r)@.
+-- 'Effect'/'Expr' win over a bare PHOAS binder @f ('MutableObject r)@.
 type family ObjectRow (a :: Type) :: Type where
-  ObjectRow (Effect f ('Object r)) = r
-  ObjectRow (Expr f ('Object r)) = r
-  ObjectRow (f ('Object r)) = r
+  ObjectRow (Effect f ('MutableObject r)) = r
+  ObjectRow (Expr f ('MutableObject r)) = r
+  ObjectRow (f ('MutableObject r)) = r
 
 -- | @o.k@. @OverloadedRecordDot@ uses 'HasField' on 'Effect' and 'Expr':
 -- @n <- o.fullName@. PHOAS binders need 'get' or @(Var x).k@. Keys that
 -- are not Haskell identifiers still use @get \@k@.
-get :: forall k a f. (KnownSymbol k, ToEffect f ('Object (ObjectRow a)) a)
+get :: forall k a f. (KnownSymbol k, ToEffect f ('MutableObject (ObjectRow a)) a)
     => a -> EffectSyntax f (Expr f (Field (ObjectRow a) k))
 get o = Object.get @k @(ObjectRow a)
-  (toEffect o :: Effect f ('Object (ObjectRow a)))
+  (toEffect o :: Effect f ('MutableObject (ObjectRow a)))
 
-set :: forall k a f. (KnownSymbol k, ToEffect f ('Object (ObjectRow a)) a)
+set :: forall k a f. (KnownSymbol k, ToEffect f ('MutableObject (ObjectRow a)) a)
     => a -> Expr f (Field (ObjectRow a) k) -> EffectSyntax f (f 'Unit)
 set o v = Object.set @k @(ObjectRow a)
-  (toEffect o :: Effect f ('Object (ObjectRow a))) v
+  (toEffect o :: Effect f ('MutableObject (ObjectRow a))) v
 
-getProp :: Effect f ('Object a) -> String -> EffectSyntax f (Expr f u)
+getProp :: Effect f ('MutableObject a) -> String -> EffectSyntax f (Expr f u)
 getProp o name = fmap Var $ toSyntax $ unsafeObjectGet o name
 
-setProp :: Effect f ('Object a) -> String -> Expr f u -> EffectSyntax f (f 'Unit)
+setProp :: Effect f ('MutableObject a) -> String -> Expr f u -> EffectSyntax f (f 'Unit)
 setProp o name v = toSyntax $ unsafeObjectAssign (unsafeObjectGet o name) (Lift v)
 
-getProp' :: forall f o u. ToEffect f ('Object ()) o => o -> String -> EffectSyntax f (Expr f u)
-getProp' o name = getProp (toEffect o :: Effect f ('Object ())) name
+getProp' :: forall f o u. ToEffect f ('MutableObject ()) o => o -> String -> EffectSyntax f (Expr f u)
+getProp' o name = getProp (toEffect o :: Effect f ('MutableObject ())) name
 
-setProp' :: forall f o u. ToEffect f ('Object ()) o => o -> String -> Expr f u -> EffectSyntax f (f 'Unit)
-setProp' o name v = setProp (toEffect o :: Effect f ('Object ())) name v
+setProp' :: forall f o u. ToEffect f ('MutableObject ()) o => o -> String -> Expr f u -> EffectSyntax f (f 'Unit)
+setProp' o name v = setProp (toEffect o :: Effect f ('MutableObject ())) name v
 
 stmts :: EffectSyntax f (f 'Unit) -> Effect f 'Unit
 stmts = fromSyntax

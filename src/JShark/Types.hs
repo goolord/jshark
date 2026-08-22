@@ -82,7 +82,8 @@ data Universe
   | Result Universe Universe -- ^ Haskell 'Either'; JS @{ok: Bool, value: …}@
   | Regex
   | Bool
-  | Object Type -- ^ Row @r@ is a host 'Type', not a 'Universe' constructor.
+  | Object Type -- ^ Frozen record. Row @r@ is a host 'Type', not a 'Universe' constructor.
+  | MutableObject Type -- ^ Mutable JS object. Same row @r@ as 'Object'.
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -94,11 +95,12 @@ data Value :: Universe -> Type where
   ValueResult :: Either (Value e) (Value a) -> Value ('Result e a)
   ValueRegex :: Text -> Value 'Regex
   ValueBool :: Bool -> Value 'Bool
+  ValueFrozen :: [FieldLit Value r] -> Value ('Object r) -- ^ Eval-only; not a surface literal.
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift :: Expr f u -> Effect f u -- ^ Lift a pure expression into the effectful tree
   FFI :: String -> Rec (Arg f) us -> Effect f u -- ^ Foreign call: @name(args…)@. Args are 'Arg' so an effect (object handle, effectful function) need not pass through 'Expr'.
-  UnsafeObject :: Text -> Effect f ('Object x)
+  UnsafeObject :: Text -> Effect f ('MutableObject x)
   UnsafeObjectGet :: Effect f object -> String -> Effect f u
   UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
   CallMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u -- ^ @recv.method(args…)@
@@ -112,7 +114,7 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ResultCaseE :: Expr f ('Result e a) -> (f e -> Effect f v) -> (f a -> Effect f v) -> Effect f v
   Throw :: Expr f 'String -> Effect f v -- ^ @throw e@. Never returns. Payload is a string.
   Try :: Effect f u -> (f 'String -> Effect f u) -> Effect f u -- ^ @try { a } catch (e) { k e }@
-  ObjectLit :: [FieldLit f r] -> Effect f ('Object r) -- ^ Typed @{k: v, …}@; keys come from 'FieldLit'
+  ObjectLit :: [FieldLit f r] -> Effect f ('MutableObject r) -- ^ Typed @{k: v, …}@; keys come from 'FieldLit'
   DeleteProp :: Effect f object -> Expr f 'String -> Effect f 'Bool -- ^ @delete o[k]@
   ArraySort :: Expr f ('Array u) -> (f u -> f u -> Expr f 'Number) -> Effect f ('Array u) -- ^ @arr.sort(function(a,b){…})@
 
@@ -123,10 +125,10 @@ data Arg :: (Universe -> Type) -> Universe -> Type where
   ArgEffect :: Effect f u -> Arg f u
 
 -- | JS property type of row @r@ at key @k@. Open; each host row supplies
--- instances. The index on 'Object' is this host 'Type', not a 'Universe'.
+-- instances. The index on 'Object' / 'MutableObject' is this host 'Type', not a 'Universe'.
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
--- | One field of an 'ObjectLit'. @k@ is the JS name ('fieldKey'); the
+-- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
 -- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
 data FieldLit (f :: Universe -> Type) (r :: Type) where
   FieldLit :: forall k f r. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
@@ -187,6 +189,8 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   ExprReduce :: Expr f ('Array u) -> Expr f v -> (f v -> f u -> Expr f v) -> Expr f v -- ^ @arr.reduce(function(acc,x){…}, z)@.
   UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
   UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Optimizer splice only; not part of the surface API. Pass effects to FFI via 'ArgEffect'.
+  FrozenLit :: [FieldLit f r] -> Expr f ('Object r) -- ^ Frozen @{k: v, …}@. Identity-insensitive; field reads stay on 'Expr'.
+  GetField :: forall k r f. KnownSymbol k => Expr f ('Object r) -> Expr f (Field r k) -- ^ Pure @o.k@. Folded by 'sameSymbol' against 'FrozenLit'.
 
 -- | Closed unary names on 'Expr'. There is no way to write @alert@ here.
 data StdUnary :: Universe -> Universe -> Type where
