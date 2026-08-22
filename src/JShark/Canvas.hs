@@ -82,8 +82,15 @@ setCanvasWidth el n = setProp el "width" n
 setCanvasHeight :: Effect f ('MutableObject DomElement) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 setCanvasHeight el n = setProp el "height" n
 
+ctxCall
+  :: Effect f ('MutableObject Context2D)
+  -> String
+  -> Rec (Arg f) us
+  -> EffectSyntax f (f 'Unit)
+ctxCall ctx name args = toSyntax $ callMethod ctx name args
+
 ctxCall0 :: Effect f ('MutableObject Context2D) -> String -> EffectSyntax f (f 'Unit)
-ctxCall0 ctx name = toSyntax $ callMethod ctx name RecNil
+ctxCall0 ctx name = ctxCall ctx name RecNil
 
 call2
   :: Effect f ('MutableObject Context2D)
@@ -91,7 +98,7 @@ call2
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-call2 ctx name x y = toSyntax $ callMethod ctx name (arg x <: arg y <: RecNil)
+call2 ctx name x y = ctxCall ctx name (arg x <: arg y <: RecNil)
 
 call3
   :: Effect f ('MutableObject Context2D)
@@ -100,8 +107,7 @@ call3
   -> Expr f b
   -> Expr f c
   -> EffectSyntax f (f 'Unit)
-call3 ctx name a b c =
-  toSyntax $ callMethod ctx name (arg a <: arg b <: arg c <: RecNil)
+call3 ctx name a b c = ctxCall ctx name (arg a <: arg b <: arg c <: RecNil)
 
 call4
   :: Effect f ('MutableObject Context2D)
@@ -112,7 +118,7 @@ call4
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 call4 ctx name x y w h =
-  toSyntax $ callMethod ctx name (arg x <: arg y <: arg w <: arg h <: RecNil)
+  ctxCall ctx name (arg x <: arg y <: arg w <: arg h <: RecNil)
 
 fillRect, strokeRect, clearRect ::
      Effect f ('MutableObject Context2D)

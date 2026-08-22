@@ -454,19 +454,20 @@ tryRunCompile cfg source = case configBackend cfg of
 -- Prefer esbuild, then Closure, then Terser. Never shell out to npx in
 -- Auto: npx may hit the network. Explicit backends may use npx --no-install.
 runAuto :: Text -> IO (Either String Text)
-runAuto source = do
-  tryEsbuild <- hasExecutable "esbuild"
-  if tryEsbuild
-    then runEsbuild defaultEsbuildConfig source
-    else do
-      tryClosure <- (||) <$> hasExecutable "google-closure-compiler" <*> hasExecutable "closure-compiler"
-      if tryClosure
-        then runClosure defaultClosureConfig source
-        else do
-          tryTerser <- hasExecutable "terser"
-          if tryTerser
-            then runTerser defaultTerserConfig source
-            else pure (Left "no minifier on PATH (install esbuild, google-closure-compiler, or terser)")
+runAuto source = go probes
+  where
+    probes =
+      [ (hasExecutable "esbuild", runEsbuild defaultEsbuildConfig source)
+      , ( (||) <$> hasExecutable "google-closure-compiler" <*> hasExecutable "closure-compiler"
+        , runClosure defaultClosureConfig source
+        )
+      , (hasExecutable "terser", runTerser defaultTerserConfig source)
+      ]
+    go [] =
+      pure (Left "no minifier on PATH (install esbuild, google-closure-compiler, or terser)")
+    go ((check, run):rest) = do
+      ok <- check
+      if ok then run else go rest
 
 hasExecutable :: String -> IO Bool
 hasExecutable name = do

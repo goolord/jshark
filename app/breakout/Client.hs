@@ -25,7 +25,8 @@ import JShark.Generic (MutableObjectOf, SumOf)
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
 import Types
-  ( Game
+  ( Ball
+  , Game
   , Phase(..)
   , ballFill
   , ballR
@@ -72,8 +73,7 @@ boot canvas ctx = do
   ctxH <- hold ctx
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
-  g0 <- toSyntax (G.toObject startGame)
-  state <- hold (Lift (Var g0))
+  state <- hold (G.toObject startGame)
   meter <- hold (G.toObject (Fps (-1) 0))
   wire canvas state
   toSyntax $
@@ -212,7 +212,30 @@ bounce state = do
       h = number canvasH
       nx = bx0 + ddx
       ny = by0 + ddy
+  bounceWalls b ddx r w nx
+  bounceFloor state b bx0 ddy px0 r h ny
+
+bounceWalls ::
+     Expr f (MutableObjectOf Ball)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+bounceWalls b ddx r w nx =
   whenS (nx .> (w - r) .|| nx .< r) $ set @"dx" b (negate ddx)
+
+bounceFloor ::
+     Effect f (MutableObjectOf Game)
+  -> Expr f (MutableObjectOf Ball)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+bounceFloor state b bx0 ddy px0 r h ny =
   ifS
     (ny .< r)
     (set @"dy" b (negate ddy))

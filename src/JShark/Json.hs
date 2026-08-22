@@ -26,9 +26,7 @@ unsafeParse x = ffi "JSON.parse" (arg x <: RecNil)
 
 -- | @JSON.parse@ that yields 'none' on throw.
 tryParse :: Expr f 'String -> Effect f ('Option u)
-tryParse s = catch_
-  (fromSyntax $ do
-    x <- toSyntax (unsafeParse s)
-    yield (some (Var x))
-  )
-  (\_ -> expr none)
+tryParse s =
+  catch_
+    (Bind (unsafeParse s) (\x -> Lift (some (Var x))))
+    (\_ -> expr none)

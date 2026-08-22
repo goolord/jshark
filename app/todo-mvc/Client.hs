@@ -14,7 +14,6 @@
 module Client (mainJS, Todo, AppState) where
 
 import Prelude hiding (filter, id)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import qualified JShark.Array as Array
@@ -25,6 +24,7 @@ import qualified JShark.String as String
 import Ids
 import JShark.Api
 import JShark.Generic (MutableObjectOf, newRecord)
+import JShark.Object (field, obj)
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
@@ -55,9 +55,6 @@ parseObject = Json.unsafeParse
 
 emptyState :: Effect f (MutableObjectOf AppState)
 emptyState = newRecord @AppState
-
-emptyTodo :: Effect f (MutableObjectOf Todo)
-emptyTodo = newRecord @Todo
 
 -- | Parse persisted state. 'none' on throw, non-object JSON, or arrays.
 -- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
@@ -93,15 +90,22 @@ hydrate blob = do
 
 mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f (MutableObjectOf Todo))
 mkTodo todoTitle tid = do
-  o <- toSyntax emptyTodo
-  set @"title" o todoTitle
-  set @"completed" o false_
-  set @"id" o tid
+  o <- toSyntax $
+    obj
+      [ field @"title" todoTitle
+      , field @"completed" false_
+      , field @"id" tid
+      ]
   pure (Var o)
 
 hashRecognized :: Expr f 'String -> Expr f 'Bool
 hashRecognized hash =
   foldr (\r acc -> hash .== string (routeHash r) .|| acc) false_ routes
+
+showTodo :: Expr f 'String -> Expr f 'Bool -> Expr f 'Bool
+showTodo filt isDone =
+  if_ (filt .== string valueAll) true_
+    (if_ (filt .== string valueActive) (isDone .!= true_) isDone)
 
 routeSwitch
   :: (Route -> Text)
@@ -125,11 +129,9 @@ highlightFilter filt filterLinks = do
   mapM_ (\(_, el) -> Dom.classRemove el (string classSelected)) filterLinks
   toSyntax $
     routeSwitch routeValue
-      (\r -> Dom.classAdd (fromMaybe missing (lookup r filterLinks)) (string classSelected))
+      (\r -> maybe done (`Dom.classAdd` string classSelected) (lookup r filterLinks))
       filt
       noOp
-  where
-    missing = error "highlightFilter: missing filter link"
 
 persistState
   :: Effect f (MutableObjectOf AppState)
@@ -137,11 +139,14 @@ persistState
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 persistState state items filt = do
-  blob <- toSyntax emptyState
-  set @"todos" blob items
-  set @"filter" blob filt
   nid <- state.nextId
-  set @"nextId" blob nid
+  blob <- toSyntax $
+    obj
+      [ field @"todos" items
+      , field @"filter" filt
+      , field @"nextId" nid
+      ]
+      `asTypeOf` emptyState
   Storage.setItem Storage.localStorage storageKey (Json.stringify (Var blob))
 
 byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
@@ -191,10 +196,7 @@ mainJS = do
           tid <- todo.id
           todoTitle <- todo.title
           isDone <- todo.completed
-          let showTodo =
-                if_ (filt .== string valueAll) true_
-                  (if_ (filt .== string valueActive) (isDone .!= true_) isDone)
-          whenS showTodo $ do
+          whenS (showTodo filt isDone) $ do
             li <- Dom.createElement "li"
             whenS isDone $ Dom.classAdd li "completed"
 

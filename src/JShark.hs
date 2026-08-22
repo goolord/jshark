@@ -687,8 +687,7 @@ effectfulProgram :: ClosedEffect u -> Doc
 effectfulProgram e = renderIIFE . snd . effectfulAST' startCG $ optimizeEffect e
 
 partitionCode :: [Code] -> ([Doc], [Doc])
-partitionCode ((MkCode a b _):cs) = let (as,bs) = partitionCode cs in ((a:as),(b:bs))
-partitionCode [] = ([], [])
+partitionCode = unzip . map (\(MkCode a b _) -> (a, b))
 
 -- Codegen counters: `cgIdent` is the next emitted JS name (`n0`, `n1`, …);
 -- `cgTag` is a decreasing negative id used only for use-counting/inlining
@@ -1953,13 +1952,7 @@ pureAST' !s0 = \case
   Literal v -> case v of
     ValueNumber d -> (s0, Code mempty (P.text $ showFFloat Nothing d ""))
     ValueArray xs ->
-      let foo :: CG -> [Value u] -> (CG, [Code])
-          foo s'0 (x:xs') =
-            let (s'1, x') = pureAST' s'0 (Literal x)
-                (s'2, cs) = foo s'1 xs'
-             in (s'2, x' : cs)
-          foo s' [] = (s', [])
-          (s1, exprs) = foo s0 xs
+      let (s1, exprs) = mapAccumAST (\s x -> pureAST' s (Literal x)) s0 xs
           (exprDecls, exprRefs) = partitionCode exprs
        in (s1, Code (P.vcat exprDecls) $ P.brackets (P.hcat $ P.punctuate ", " exprRefs))
     ValueString s -> (s0, Code mempty (jsQuote s))
@@ -2158,11 +2151,13 @@ renderArrayLit s0 es =
 
 renderObjectLit :: CG -> [FieldLit Stamp r] -> (CG, Code)
 renderObjectLit s0 fs =
-  let step (s, decl, acc) fl@(FieldLit e) =
-        let (s', Code d r) = pureAST' s e
-         in (s', decl $$ d, ((P.doubleQuotes (P.text (fieldKey fl)) <> ":") <+> r) : acc)
-      (s1, decls, pairs) = foldl step (s0, mempty, []) fs
-   in (s1, Code decls (P.braces (P.hcat (P.punctuate ", " (reverse pairs)))))
+  let (s1, parts) = mapAccumAST
+        (\s fl@(FieldLit e) ->
+           let (s', Code d r) = pureAST' s e
+            in (s', (d, (P.doubleQuotes (P.text (fieldKey fl)) <> ":") <+> r)))
+        s0 fs
+      (declList, pairs) = unzip parts
+   in (s1, Code (P.vcat declList) (P.braces (P.hcat (P.punctuate ", " pairs))))
 
 renderResultCase ::
      CG
@@ -2193,13 +2188,12 @@ renderStringCaseE s0 scrut arms def =
         let (s', Code d r) = effectfulAST' s e
             body = if unit then asStmt d r else d $$ assignResult resultVar r
          in (s', body)
-      step s [] = (s, [])
-      step s ((k, e) : rest) =
-        let (s', body) = renderArm s e
-            line = "case" <+> (jsQuote k <> P.colon) <+> bracesNest (body <+> ("break" <> P.semi))
-            (s'', lines') = step s' rest
-         in (s'', line : lines')
-      (s3, caseDocs) = step s2 arms
+      (s3, caseDocs) = mapAccumAST
+        (\s (k, e) ->
+           let (s', body) = renderArm s e
+               line = "case" <+> (jsQuote k <> P.colon) <+> bracesNest (body <+> ("break" <> P.semi))
+            in (s', line))
+        s2 arms
       (s4, defBody) = renderArm s3 def
       defDoc = "default:" <+> bracesNest defBody
       switchStmt = "switch" <+> P.parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
