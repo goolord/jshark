@@ -10,6 +10,7 @@
   , TypeOperators
   , UndecidableInstances
 #-}
+
 -- Orphans: HasField is GHC.Records; Effect/Expr live in Types (cannot import us).
 {-# OPTIONS_GHC -Wno-orphans #-}
 module JShark.Object

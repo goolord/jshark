@@ -13,12 +13,13 @@
   , TypeOperators
   , UndecidableInstances
 #-}
+
 -- | 'Generic' product records and tagged sums as JShark objects.
 -- Records: row 'As' @a@ (or @type instance Field a k = ViaGeneric a k@).
 -- Sums: @{tag, payload}@ on row 'Tagged' @a@.
 module JShark.Generic
   ( As
-  , ObjectOf
+  , MutableObjectOf
   , Tagged
   , SumOf
   , Payload
@@ -67,7 +68,7 @@ import JShark.Types
 data As (a :: Type)
 
 -- | @'MutableObject' ('As' a)@
-type ObjectOf a = 'MutableObject (As a)
+type MutableObjectOf a = 'MutableObject (As a)
 
 type instance Field (As a) k = GField a k
 

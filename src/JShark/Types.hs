@@ -17,6 +17,7 @@
   , TypeFamilies
   , TypeOperators
 #-}
+
 -- | Two PHOAS syntax trees for a typed subset of JavaScript.
 --
 -- Three layers live on the same GADTs:

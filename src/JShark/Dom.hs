@@ -8,6 +8,7 @@
   , TypeFamilies
   , ScopedTypeVariables
 #-}
+
 module JShark.Dom
   ( DomElement
   , lookupId
@@ -96,4 +97,3 @@ getValue el = getProp el "value"
 -- | @el.value = v@.
 setValue :: Effect f ('MutableObject DomElement) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 setValue el v = setProp el "value" v
-

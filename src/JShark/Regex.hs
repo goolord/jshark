@@ -2,6 +2,7 @@
     DataKinds
   , OverloadedStrings
 #-}
+
 -- | Closed-name 'RegExp'. Emitted as @new RegExp("…")@, never a @/re/@ literal.
 module JShark.Regex
   ( regex

@@ -11,6 +11,7 @@
   , TypeFamilies
   , OverloadedStrings
 #-}
+
 module JShark.Api
   ( -- * Types
     Expr

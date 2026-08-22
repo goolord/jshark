@@ -2,6 +2,7 @@
     DataKinds
   , OverloadedStrings
 #-}
+
 -- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
 -- Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
 -- Import qualified; names clash with 'Prelude'.

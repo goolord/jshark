@@ -6,6 +6,7 @@
   , RankNTypes
   , ScopedTypeVariables
 #-}
+
 module BunTests (bunEvalTests) where
 
 import Control.Exception (IOException, bracket, catch)

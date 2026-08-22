@@ -7,6 +7,7 @@
   , ScopedTypeVariables
   , TypeApplications
 #-}
+
 module Main (main) where
 
 import BunTests (bunEvalTests)
@@ -849,4 +850,3 @@ compilerTests = testGroup "compiler"
         (fromSyntax (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp))
       out @?= "let n0;\nif (cond()) {\n  n0 = 1.0;\n} else {\n  n0 = 2.0;\n}"
   ]
-

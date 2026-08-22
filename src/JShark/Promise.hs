@@ -3,6 +3,7 @@
   , KindSignatures
   , OverloadedStrings
 #-}
+
 -- | Minimal @Promise@ wrapper: @.then@/@.catch@ chaining only, not the full API.
 module JShark.Promise
   ( Promise

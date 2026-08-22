@@ -7,6 +7,7 @@
   , RankNTypes
   , TypeOperators
 #-}
+
 -- | A minimal heterogeneous list (record) type, indexed by a type-level
 -- list of kinds. Vendored subset of @Topaz.Rec@ for GHC compatibility.
 module JShark.Rec

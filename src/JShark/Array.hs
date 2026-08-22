@@ -3,6 +3,7 @@
   , GADTs
   , OverloadedStrings
 #-}
+
 -- | JS @Array.prototype@ wrappers. Opaque to 'JShark.evaluate' except 'index'.
 -- Read wrappers are closed-name 'Expr' nodes. 'push' is a 'CallMethod' on
 -- 'Effect'. Import qualified; names clash with 'Prelude'.

@@ -6,6 +6,7 @@
   , RankNTypes
   , ScopedTypeVariables
 #-}
+
 -- | Post-process generated JavaScript: pretty-print or minify, and cache.
 --
 -- Google Closure Compiler is no longer the best default. Its Advanced

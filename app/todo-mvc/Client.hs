@@ -24,7 +24,7 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as String
 import Ids
 import JShark.Api
-import JShark.Generic (ObjectOf, newRecord)
+import JShark.Generic (MutableObjectOf, newRecord)
 import JShark.Rec ((<:), Rec(..))
 import JShark.Types
 
@@ -47,21 +47,21 @@ data AppState = AppState
 storageKey :: Expr f 'String
 storageKey = "jshark-todos"
 
-emptyTodos :: Expr f ('Array (ObjectOf Todo))
+emptyTodos :: Expr f ('Array (MutableObjectOf Todo))
 emptyTodos = Literal (ValueArray [])
 
 parseObject :: Expr f 'String -> Effect f ('MutableObject ())
 parseObject = Json.unsafeParse
 
-emptyState :: Effect f (ObjectOf AppState)
+emptyState :: Effect f (MutableObjectOf AppState)
 emptyState = newRecord @AppState
 
-emptyTodo :: Effect f (ObjectOf Todo)
+emptyTodo :: Effect f (MutableObjectOf Todo)
 emptyTodo = newRecord @Todo
 
 -- | Parse persisted state. 'none' on throw, non-object JSON, or arrays.
 -- Missing fields get TodoMVC defaults (@todos=[]@, @nextId=1@, @filter=all@).
-parseState :: Expr f 'String -> Effect f ('Option (ObjectOf AppState))
+parseState :: Expr f 'String -> Effect f ('Option (MutableObjectOf AppState))
 parseState s = try_
   (fromSyntax $ do
     o <- toSyntax (parseObject s)
@@ -73,7 +73,7 @@ parseState s = try_
         yield (some st)))
   (expr none)
 
-hydrate :: Expr f ('MutableObject ()) -> EffectSyntax f (Expr f (ObjectOf AppState))
+hydrate :: Expr f ('MutableObject ()) -> EffectSyntax f (Expr f (MutableObjectOf AppState))
 hydrate blob = do
   st <- toSyntax emptyState
   t <- getProp (Lift blob) "todos"
@@ -91,7 +91,7 @@ hydrate blob = do
     (discard (stmts $ set @"filter" st (string valueAll)))
   pure (Var st)
 
-mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f (ObjectOf Todo))
+mkTodo :: Expr f 'String -> Expr f 'Number -> EffectSyntax f (Expr f (MutableObjectOf Todo))
 mkTodo todoTitle tid = do
   o <- toSyntax emptyTodo
   set @"title" o todoTitle
@@ -112,7 +112,7 @@ routeSwitch
 routeSwitch key arm scrut def =
   stringCaseE scrut (map (\r -> (key r, discard (stmts (arm r)))) routes) def
 
-applyHashFilter :: Effect f (ObjectOf AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
+applyHashFilter :: Effect f (MutableObjectOf AppState) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 applyHashFilter state hash =
   toSyntax $
     routeSwitch routeHash (\r -> set @"filter" state (string (routeValue r))) hash noOp
@@ -132,8 +132,8 @@ highlightFilter filt filterLinks = do
     missing = error "highlightFilter: missing filter link"
 
 persistState
-  :: Effect f (ObjectOf AppState)
-  -> Expr f ('Array (ObjectOf Todo))
+  :: Effect f (MutableObjectOf AppState)
+  -> Expr f ('Array (MutableObjectOf Todo))
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 persistState state items filt = do
@@ -147,7 +147,7 @@ persistState state items filt = do
 byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 byId = Dom.lookupId . string
 
-incomplete :: Expr f ('Array (ObjectOf Todo)) -> EffectSyntax f (Expr f ('Array (ObjectOf Todo)))
+incomplete :: Expr f ('Array (MutableObjectOf Todo)) -> EffectSyntax f (Expr f ('Array (MutableObjectOf Todo)))
 incomplete items = Array.filterE_ items $ \t -> do
   c <- t.completed
   toSyntax $ expr (c .!= true_)

@@ -5,6 +5,7 @@
   , ScopedTypeVariables
   , TypeFamilies
 #-}
+
 module Support
   ( LitRow
   , Person(..)

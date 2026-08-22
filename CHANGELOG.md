@@ -23,7 +23,7 @@
 * `HasField` on mutable `Effect`/`Expr` so `OverloadedRecordDot`
   (`o.fullName`) is `get`. Frozen `Expr` objects project to `Expr`.
   Binders use `get` or `(Var x).k`.
-* `todo-mvc`: `Todo` / `AppState` are `Generic` records (`ObjectOf`);
+* `todo-mvc`: `Todo` / `AppState` are `Generic` records (`MutableObjectOf`);
   `render` is `bindRec`, not a persisted field.
 * `call0` accepts `ToEffect` (`Expr` or `Effect`).
 * `JShark.Canvas`: 2D context (`getContext2d`, rects/path/text,

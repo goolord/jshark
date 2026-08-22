@@ -8,6 +8,7 @@
   , TypeApplications
   , TypeFamilies
 #-}
+
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Breakout client: MDN canvas draw loop, Haskell 'Game' row.
@@ -20,7 +21,7 @@ import qualified JShark.Generic as G
 import qualified JShark.Math as Math
 import qualified JShark.Timers as Timers
 import JShark.Api
-import JShark.Generic (ObjectOf, SumOf)
+import JShark.Generic (MutableObjectOf, SumOf)
 import JShark.Rec (Rec(..), (<:))
 import JShark.Types
 import Types
@@ -94,7 +95,7 @@ boot canvas ctx = do
 
 wire ::
      Effect f ('MutableObject Dom.DomElement)
-  -> Effect f (ObjectOf Game)
+  -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 wire canvas state = do
   addEventListener "keydown" window $ \(e :: f ('MutableObject ())) ->
@@ -121,7 +122,7 @@ wire canvas state = do
   done
 
 bindArrows ::
-     Effect f (ObjectOf Game)
+     Effect f (MutableObjectOf Game)
   -> Expr f 'String
   -> Expr f 'Bool
   -> EffectSyntax f (f 'Unit)
@@ -132,7 +133,7 @@ bindArrows state code held =
     ]
     noOp
 
-tryRestart :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+tryRestart :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 tryRestart state =
   unlessPlay state $ do
     g0 <- toSyntax (G.toObject startGame)
@@ -140,12 +141,12 @@ tryRestart state =
 
 -- | In-place overwrite so the rAF closure keeps the same object identity.
 -- Object.assign copies every enumerable field; new 'Game' keys come along.
-copyGame :: Effect f (ObjectOf Game) -> Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+copyGame :: Effect f (MutableObjectOf Game) -> Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 copyGame dst src = do
   toSyntax_ $ ffi "Object.assign" (ArgEffect dst <: ArgEffect src <: RecNil)
   done
 
-step :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+step :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 step state =
   whenPlay state $ do
     movePaddle state
@@ -153,7 +154,7 @@ step state =
     bounce state
     advanceBall state
 
-movePaddle :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+movePaddle :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 movePaddle state = do
   pad <- state.paddle
   px0 <- pad.px
@@ -163,7 +164,7 @@ movePaddle state = do
   px1 <- pad.px
   ifS (goL .&& px1 .> 0) (set @"px" pad (px1 - number paddleSpeed)) done
 
-advanceBall :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+advanceBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 advanceBall state = do
   b <- state.ball
   bx0 <- b.x
@@ -173,7 +174,7 @@ advanceBall state = do
   set @"x" b (bx0 + ddx)
   set @"y" b (by0 + ddy)
 
-collideBricks :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+collideBricks :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 collideBricks state = do
   b <- state.ball
   bx0 <- b.x
@@ -197,7 +198,7 @@ collideBricks state = do
         whenS (sc1 .== number (fromIntegral brickCount)) $
           setPhase state Win
 
-bounce :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+bounce :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 bounce state = do
   b <- state.ball
   pad <- state.paddle
@@ -228,7 +229,7 @@ bounce state = do
             lv1 <- state.lives
             ifS (lv1 .<= 0) (setPhase state Lose) (resetBall state)))
 
-resetBall :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit)
+resetBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 resetBall state = do
   b <- toSyntax (G.toObject startBall)
   set @"ball" state (Var b)
@@ -237,8 +238,8 @@ resetBall state = do
 
 paint ::
      Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (ObjectOf Game)
-  -> Effect f (ObjectOf Fps)
+  -> Effect f (MutableObjectOf Game)
+  -> Effect f (MutableObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
 paint ctx state meter = do
   _ <- Canvas.clearRect ctx 0 0 (number canvasW) (number canvasH)
@@ -252,7 +253,7 @@ paint ctx state meter = do
 
 drawBricks ::
      Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (ObjectOf Game)
+  -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBricks ctx state = do
   field <- state.bricks
@@ -268,7 +269,7 @@ drawBricks ctx state = do
 
 drawBall ::
      Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (ObjectOf Game)
+  -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBall ctx state = do
   b <- state.ball
@@ -283,7 +284,7 @@ drawBall ctx state = do
 
 drawPaddle ::
      Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (ObjectOf Game)
+  -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawPaddle ctx state = do
   pad <- state.paddle
@@ -300,8 +301,8 @@ drawPaddle ctx state = do
 
 drawHud ::
      Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (ObjectOf Game)
-  -> Effect f (ObjectOf Fps)
+  -> Effect f (MutableObjectOf Game)
+  -> Effect f (MutableObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
 drawHud ctx state meter = do
   sc <- state.score
@@ -318,7 +319,7 @@ drawHud ctx state meter = do
 
 drawBanner ::
      Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (ObjectOf Game)
+  -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 drawBanner ctx state = do
   ph <- phaseSum state
@@ -347,7 +348,7 @@ bannerText ctx msg = do
       (number (canvasH / 2 + 28))
   done
 
-tickFps :: Effect f (ObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+tickFps :: Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 tickFps meter now = do
   prev <- meter.lastMs
   let dt = now - prev
@@ -384,11 +385,11 @@ paddleKick ballX paddleX =
 fill :: Effect f ('MutableObject Canvas.Context2D) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 fill ctx col = set @"fillStyle" ctx col
 
-phaseSum :: Effect f (ObjectOf Game) -> EffectSyntax f (Effect f (SumOf Phase))
+phaseSum :: Effect f (MutableObjectOf Game) -> EffectSyntax f (Effect f (SumOf Phase))
 phaseSum state = fmap toEffect (state.phase)
 
 onPhase
-  :: Effect f (ObjectOf Game)
+  :: Effect f (MutableObjectOf Game)
   -> Effect f 'Unit
   -> Effect f 'Unit
   -> EffectSyntax f (f 'Unit)
@@ -398,13 +399,13 @@ onPhase state play miss = do
     G.on @"Play" (\_ -> play) $
     G.Case_ (\_ -> miss)
 
-whenPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+whenPlay :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenPlay state body = onPhase state (stmts body) noOp
 
-unlessPlay :: Effect f (ObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+unlessPlay :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 unlessPlay state body = onPhase state noOp (stmts body)
 
-setPhase :: Effect f (ObjectOf Game) -> Phase -> EffectSyntax f (f 'Unit)
+setPhase :: Effect f (MutableObjectOf Game) -> Phase -> EffectSyntax f (f 'Unit)
 setPhase state p = do
   s <- toSyntax (G.toSum p)
   set @"phase" state (Var s)

@@ -5,6 +5,7 @@
   , TypeApplications
   , TypeFamilies
 #-}
+
 -- | Canvas 2D. Get a context from a canvas element, then draw.
 -- Styles are 'Field's ('fillStyle', 'strokeStyle', 'lineWidth', …).
 module JShark.Canvas

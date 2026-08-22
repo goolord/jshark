@@ -1,5 +1,7 @@
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE 
+    DeriveGeneric
+  , OverloadedStrings
+#-}
 
 -- | Host-side Breakout model. 'Generic' rows become JS objects via
 -- 'JShark.Generic'. Layout matches the MDN canvas workshop grid;

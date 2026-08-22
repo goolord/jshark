@@ -5,7 +5,7 @@
   , DataKinds
   , FlexibleInstances
   , GADTs
-  ,     LambdaCase
+  , LambdaCase
   , OverloadedStrings
   , PatternSynonyms
   , PolyKinds
@@ -2267,4 +2267,3 @@ renderArgList f s0 args =
   let (s1, cs) = recCodes f s0 args
       (decls, refs) = partitionCode cs
    in (s1, P.vcat decls, P.hcat (P.punctuate ", " refs))
-

@@ -3,6 +3,7 @@
   , GADTs
   , OverloadedStrings
 #-}
+
 -- | JS @Math@ names that are not Haskell 'Num'/'Fractional'/'Floating'.
 -- Import qualified; remaining names still clash with 'Prelude' (@floor@, @round@, …).
 module JShark.Math

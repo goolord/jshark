@@ -8,6 +8,7 @@
   , TypeFamilies
   , ScopedTypeVariables
 #-}
+
 module JShark.Ajax
   ( XHR
   , new
@@ -62,4 +63,3 @@ type instance Field FetchResponse "status" = 'Number
 -- | @fetch(url)@
 fetch :: Expr f 'String -> EffectSyntax f (Effect f ('MutableObject FetchResponse))
 fetch url = hold $ ffi "fetch" (arg url <: RecNil)
-

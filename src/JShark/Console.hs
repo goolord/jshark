@@ -2,6 +2,7 @@
     DataKinds
   , OverloadedStrings
 #-}
+
 -- | Wrappers over the JS @console@ object.
 -- Import qualified; names clash with 'Prelude'.
 module JShark.Console
