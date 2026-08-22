@@ -5,6 +5,7 @@
   , OverloadedStrings
   , RankNTypes
   , TypeApplications
+  , TypeFamilies
 #-}
 module Main (main) where
 
@@ -38,6 +39,8 @@ import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import qualified JShark.Json as Json
 import qualified JShark.Math as Math
+import qualified JShark.Object as Object
+import qualified JShark.Regex as Regex
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 
@@ -50,6 +53,7 @@ tests = testGroup "jshark"
   , codegenTests
   , controlFlowTests
   , stdlibTests
+  , goodPartsTests
   , optimizeTests
   , compilerTests
   , bunEvalTests
@@ -82,6 +86,9 @@ evaluatorTests = testGroup "evaluate"
 -- Non-foldable holes so snapshot tests can pin JS shape rather than
 -- constant-folded results. Foreign calls live on 'Effect'; bind then
 -- yield an 'Expr' via 'Var'.
+data LitRow
+type instance Field LitRow "x" = 'Number
+
 fooE, barE :: Effect f u
 fooE = ffi "foo" RecNil
 barE = ffi "bar" RecNil
@@ -181,9 +188,9 @@ controlFlowTests = testGroup "control flow"
       renderJS (effectfulAST (when_ condE (ffi "foo" RecNil)))
         @?= "if (cond()) {foo();}"
   , testCase "ifS of two CallMethods skips the result bind" $
-      renderJS (effectfulAST (IfS condE
-        (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "a") <: RecNil))
-        (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "b") <: RecNil))))
+      renderJS (effectfulAST (ifE condE
+        (discard (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "a") <: RecNil)))
+        (discard (callMethod (UnsafeObject "el") "setAttribute" (arg (string "k") <: arg (string "b") <: RecNil)))))
         @?= "if (cond()) {el.setAttribute(\"k\", \"a\");}\nelse {el.setAttribute(\"k\", \"b\");}"
   , testCase "ifE of two getAttributes keeps the result bind" $
       renderJS (effectfulAST (ifE condE
@@ -195,9 +202,12 @@ controlFlowTests = testGroup "control flow"
         (UnsafeObjectAssign (UnsafeObject "x") (expr (number 1)))
         (expr (number 2))))
         @?= "let n0;\nif (cond()) {n0 = x = 1.0;}\nelse {n0 = 2.0;}\nn0"
-  , testCase "try_ of Unit skips the result bind" $
+  , testCase "try_ of two Unit arms skips the result bind" $
+      renderJS (effectfulAST (try_ noOp noOp))
+        @?= "try {}\ncatch (n0) {}"
+  , testCase "try_ of FFI vs Unit keeps the result bind" $
       renderJS (effectfulAST (try_ (ffi "foo" RecNil) noOp))
-        @?= "try {foo();}\ncatch (n0) {}"
+        @?= "let n0;\ntry {n0 = foo();}\ncatch (n1) {}\nn0"
   ]
 
 numArray :: forall f. Expr f ('Array 'Number)
@@ -300,6 +310,69 @@ stdlibTests = testGroup "stdlib"
   , testCase "sendPost emits xhr.send(body)" $
       renderJS (effectfulAST (fromSyntax (Ajax.sendPost (UnsafeObject "xhr") (string "hi") *> toSyntax noOp)))
         @?= "xhr.send(\"hi\");"
+  ]
+
+goodPartsTests :: TestTree
+goodPartsTests = testGroup "good parts"
+  [ testCase "rem and bitwise evaluate" $ do
+      evaluateNumber (rem_ (number 7) (number 3)) @?= 1
+      evaluateNumber (bitAnd (number 7) (number 3)) @?= 3
+      evaluateNumber (ushr (number (-1)) (number 0)) @?= 4294967295
+  , testCase "parseInt_ requires a radix and evaluates" $
+      evaluateNumber (parseInt_ (string "10") (number 16)) @?= 16
+  , testCase "parseInt_ keeps an optional sign" $
+      evaluateNumber (parseInt_ (string "-10") (number 10)) @?= -10
+  , testCase "resultCase on ok" $
+      evaluateNumber (resultCase (ok (number 5) :: Expr f ('Result 'String 'Number)) (\_ -> number 0) (\x -> x + 1)) @?= 6
+  , testCase "ok of Unit emits undefined, not an empty property" $
+      renderJS (pureAST (ok (Literal ValueUnit) :: Expr f ('Result 'String 'Unit)))
+        @?= "{ok: true, value: undefined}"
+  , testCase "resultCase picks .ok and unwraps .value" $
+      let getR :: Effect f ('Result 'String 'Number)
+          getR = ffi "r" RecNil
+          js = renderJS (effectfulAST
+            (Bind getR (\r -> Lift (resultCase (var r) (\_ -> number 0) id))))
+       in do
+            T.isInfixOf ".ok" (T.pack js) @?= True
+            T.isInfixOf ".value" (T.pack js) @?= True
+  , testCase "orElse on none" $
+      evaluateNumber (orElse (none :: Expr f ('Option 'Number)) (number 3)) @?= 3
+  , testCase "reduce_ evaluates" $
+      evaluateNumber (Array.reduce_ numArray (number 0) (\a x -> a + x)) @?= 3
+  , testCase "arraySlice evaluates" $
+      evaluateNumber (Array.index (Array.arraySlice numArray (number 1) (number 2)) (number 0)) @?= 2
+  , testCase "arraySlice negatives count from the end" $
+      evaluateNumber (Array.index (Array.arraySlice numArray (number (-1)) (number 2)) (number 0)) @?= 2
+  , testCase "apply2 is curried Apply" $
+      evaluateNumber (apply2 (lambda2 (\x y -> x + y)) (number 1) (number 2)) @?= 3
+  , testCase "try_ of two Unit arms still skips the result bind" $
+      renderJS (effectfulAST (try_ noOp noOp))
+        @?= "try {}\ncatch (n0) {}"
+  , testCase "throw_ renders throw" $
+      renderJS (effectfulAST (throw_ (string "boom") :: Effect f 'Unit))
+        @?= "throw \"boom\";"
+  , testCase "regex is new RegExp, not a literal" $
+      renderJS (pureAST (Regex.test (Regex.regex "ab") (string "xab")))
+        @?= "new RegExp(\"ab\").test(\"xab\")"
+  , testCase "regex source escapes quotes" $
+      renderJS (pureAST (Regex.test (Regex.regex "a\"b") (string "x")))
+        @?= "new RegExp(\"a\\\"b\").test(\"x\")"
+  , testCase "hasOwn uses Object.prototype.hasOwnProperty.call" $
+      T.isInfixOf "Object.prototype.hasOwnProperty.call"
+        (T.pack $ renderJS (effectfulAST (Object.hasOwn (UnsafeObject "o") (string "k"))))
+        @?= True
+  , testCase "create is Object.create" $
+      renderJS (effectfulAST (Object.create (UnsafeObject "p") :: Effect f ('Object ())))
+        @?= "Object.create(p)"
+  , testCase "obj literal quotes keys" $
+      renderJS (effectfulAST (Object.obj [Object.field @"x" (number 1)] :: Effect f ('Object LitRow)))
+        @?= "{\"x\": 1.0}"
+  , testCase "sort_ emits a binary compare callback" $
+      renderJS (effectfulAST (Array.sort_ numArray (\a b -> a - b)))
+        @?= "[1.0, 2.0].sort(function (n0, n1) {return n0 - n1})"
+  , testCase "ifE of throw vs number keeps the result bind" $
+      renderJS (effectfulAST (ifE condE (throw_ "boom") (expr (number 1))))
+        @?= "let n0;\nif (cond()) {throw \"boom\";}\nelse {n0 = 1.0;}\nn0"
   ]
 
 optimizeTests :: TestTree
@@ -658,6 +731,9 @@ encodeJSValue = \case
   ValueArray xs -> "[" ++ intercalate "," (map encodeJSValue xs) ++ "]"
   ValueOption Nothing -> "null"
   ValueOption (Just x) -> encodeJSValue x
+  ValueResult (Right x) -> "{\"ok\":" ++ encodeJSValue x ++ "}"
+  ValueResult (Left x) -> "{\"err\":" ++ encodeJSValue x ++ "}"
+  ValueRegex s -> encodeJSString (T.unpack s)
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
 
 -- JSON.stringify of a finite number; NaN/Infinity stringify to null.

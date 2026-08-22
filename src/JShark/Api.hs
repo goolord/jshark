@@ -36,9 +36,15 @@ module JShark.Api
   , ToExpr(..)
     -- * Functions and binding
   , lambda
+  , lambda2
+  , lambda3
   , lambdaE
   , apply
+  , apply2
+  , apply3
   , let_
+  , letRec
+  , bindRec
     -- * Control
   , if_
   , ifE
@@ -49,6 +55,8 @@ module JShark.Api
   , forEach
   , forEach_
   , try_
+  , catch_
+  , throw_
     -- * Option
   , some
   , none
@@ -56,6 +64,13 @@ module JShark.Api
   , optionCaseE
   , whenSomeS
   , unsafeNullable
+  , orElse
+  , fromOption
+    -- * Result
+  , ok
+  , err
+  , resultCase
+  , resultCaseE
     -- * FFI
   , ffi
   , callMethod
@@ -78,6 +93,7 @@ module JShark.Api
   , addEventListener_
     -- * Syntax
   , noOp
+  , discard
   , hold
   , stmts
   , done
@@ -94,6 +110,14 @@ module JShark.Api
   , (.<=)
   , (.&&)
   , (.||)
+  , rem_
+  , bitAnd
+  , bitOr
+  , bitXor
+  , shl
+  , shr
+  , ushr
+  , parseInt_
   ) where
 
 import Data.Kind (Type)
@@ -141,14 +165,35 @@ yield = toSyntax . Lift
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
 apply = Apply
 
+-- | Nested unary application, not a binary JS call.
+apply2 :: Expr f ('Function a ('Function b c)) -> Expr f a -> Expr f b -> Expr f c
+apply2 f x y = apply (apply f x) y
+
+apply3 :: Expr f ('Function a ('Function b ('Function c d))) -> Expr f a -> Expr f b -> Expr f c -> Expr f d
+apply3 f x y z = apply (apply2 f x y) z
+
 var :: f u -> Expr f u
 var = Var
 
 lambda :: (Expr f u -> Expr f v) -> Expr f ('Function u v)
 lambda f = Lambda (\x -> f (var x))
 
+-- | Nested unary functions. Not a binary JS @function(a, b)@.
+lambda2 :: (Expr f a -> Expr f b -> Expr f c) -> Expr f ('Function a ('Function b c))
+lambda2 f = lambda (\x -> lambda (\y -> f x y))
+
+-- | Nested unary functions. Not a ternary JS @function(a, b, c)@.
+lambda3 :: (Expr f a -> Expr f b -> Expr f c -> Expr f d) -> Expr f ('Function a ('Function b ('Function c d)))
+lambda3 f = lambda (\x -> lambda2 (\y z -> f x y z))
+
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
+
+letRec :: (Expr f u -> Expr f u) -> (Expr f u -> Expr f v) -> Expr f v
+letRec r b = LetRec (\x -> r (var x)) (\x -> b (var x))
+
+bindRec :: (Effect f u -> Effect f u) -> (Effect f u -> Effect f v) -> Effect f v
+bindRec r b = BindRec (\x -> r (Lift (var x))) (\x -> b (Lift (var x)))
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
@@ -182,14 +227,25 @@ if_ = If
 ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
 ifE = IfE
 
+-- | Drop a result, forcing 'Unit'. Lets statement-'if' be 'IfE' of two
+-- unit arms (polymorphic 'FFI' / 'CallMethod' are not unit witnesses).
+discard :: Effect f u -> Effect f 'Unit
+discard e = Bind e (\_ -> noOp)
+
 when_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
-when_ c t = IfS c t noOp
+when_ c t = IfE c (discard t) noOp
 
 while_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
 while_ = While
 
 try_ :: Effect f u -> Effect f u -> Effect f u
-try_ = Try
+try_ a b = Try a (\_ -> b)
+
+catch_ :: Effect f u -> (Expr f 'String -> Effect f u) -> Effect f u
+catch_ a k = Try a (\e -> k (var e))
+
+throw_ :: Expr f 'String -> Effect f v
+throw_ = Throw
 
 some :: Expr f u -> Expr f ('Option u)
 some (Literal v) = Literal (ValueOption (Just v))
@@ -206,6 +262,26 @@ optionCaseE opt noneBranch someBranch = OptionCaseE opt noneBranch (\x -> someBr
 
 unsafeNullable :: Expr f u -> Expr f ('Option u)
 unsafeNullable = UnsafeNullable
+
+orElse :: Expr f ('Option u) -> Expr f u -> Expr f u
+orElse o d = optionCase o d id
+
+fromOption :: Expr f u -> Expr f ('Option u) -> Expr f u
+fromOption = flip orElse
+
+ok :: Expr f a -> Expr f ('Result e a)
+ok (Literal v) = Literal (ValueResult (Right v))
+ok x = ResultOk x
+
+err :: Expr f e -> Expr f ('Result e a)
+err (Literal v) = Literal (ValueResult (Left v))
+err x = ResultErr x
+
+resultCase :: Expr f ('Result e a) -> (Expr f e -> Expr f v) -> (Expr f a -> Expr f v) -> Expr f v
+resultCase r onErr onOk = ResultCase r (\e -> onErr (var e)) (\a -> onOk (var a))
+
+resultCaseE :: Expr f ('Result e a) -> (Expr f e -> Effect f v) -> (Expr f a -> Effect f v) -> Effect f v
+resultCaseE r onErr onOk = ResultCaseE r (\e -> onErr (var e)) (\a -> onOk (var a))
 
 typeOf :: Expr f u -> Expr f 'String
 typeOf = TypeOf
@@ -286,7 +362,7 @@ whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenS c body = toSyntax $ when_ (expr c) (stmts body)
 
 ifS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-ifS c t e = toSyntax $ IfS (expr c) (stmts t) (stmts e)
+ifS c t e = toSyntax $ IfE (expr c) (discard (stmts t)) (discard (stmts e))
 
 whenSomeS :: Expr f ('Option u) -> (Expr f u -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
 whenSomeS opt k = toSyntax $ optionCaseE opt noOp (\x -> stmts (k x))
@@ -311,3 +387,18 @@ infixr 2 .||
 (.&&), (.||) :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 (.&&) = And
 (.||) = Or
+
+rem_ :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+rem_ = Rem
+
+bitAnd, bitOr, bitXor, shl, shr, ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitAnd = BitAnd
+bitOr = BitOr
+bitXor = BitXor
+shl = Shl
+shr = Shr
+ushr = UShr
+
+-- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
+parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number
+parseInt_ = ExprBinary StdParseInt

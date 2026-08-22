@@ -1,5 +1,6 @@
 {-# LANGUAGE
-    ConstraintKinds
+    AllowAmbiguousTypes
+  , ConstraintKinds
   , DataKinds
   , DeriveFunctor
   , DerivingStrategies
@@ -9,14 +10,24 @@
   , LambdaCase
   , OverloadedStrings
   , RankNTypes
+  , ScopedTypeVariables
   , StandaloneDeriving
+  , TypeAbstractions
+  , TypeApplications
+  , TypeFamilies
   , TypeOperators
 #-}
 -- | Two PHOAS syntax trees for a typed subset of JavaScript.
 --
--- * 'Expr' is the /pure/ tree: Crockford's good parts as expressions
---   (literals, arithmetic, @===@, functions, @const@-bound lets, arrays).
--- * 'Effect' is the /impure/ tree: statements, FFI, mutation, I/O.
+-- Three layers live on the same GADTs:
+--
+-- * Good Parts kernel on 'Expr': literals, @===@, @?:@, @&&@/@||@,
+--   unary functions, @const@ lets, arrays. No @==@, @with@, @eval@,
+--   @new@, or @this@. Functions are unary; nest them (see 'JShark.Api.lambda2').
+-- * Haskell sums encoded as JS: 'Option' is @null@ / the value;
+--   'Result' is @{ok: Bool, value: …}@, not a JS built-in.
+-- * Closed stdlib names ('ExprUnary' / 'MathUnary' / …) plus 'Effect'
+--   for statements, FFI, mutation, and I/O.
 --
 -- Binders are parametric (@f :: Universe -> Type@), i.e. weak PHOAS.
 -- A closed term is an end over that parameter: 'ClosedExpr' / 'ClosedEffect'
@@ -29,6 +40,9 @@ module JShark.Types
   , Value(..)
   , Effect(..)
   , Arg(..)
+  , Field
+  , FieldLit(..)
+  , fieldKey
   , Expr(..)
   , StdUnary(..)
   , StdBinary(..)
@@ -48,7 +62,9 @@ module JShark.Types
 
 import Control.Monad (ap, void)
 import Data.Kind
+import Data.Proxy (Proxy(..))
 import Data.Text (Text)
+import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 import JShark.Rec
 import qualified GHC.Exts as Exts
 
@@ -57,10 +73,12 @@ data Universe
   | String
   | Unit
   | Array Universe
-  | Function Universe Universe
+  | Function Universe Universe -- ^ Unary. Nest for n-ary JS functions.
   | Option Universe
+  | Result Universe Universe -- ^ Haskell 'Either'; JS @{ok: Bool, value: …}@
+  | Regex
   | Bool
-  | Object Type
+  | Object Type -- ^ Row @r@ is a host 'Type', not a 'Universe' constructor.
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
@@ -69,6 +87,8 @@ data Value :: Universe -> Type where
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
   ValueOption :: Maybe (Value u) -> Value ('Option u)
+  ValueResult :: Either (Value e) (Value a) -> Value ('Result e a)
+  ValueRegex :: Text -> Value 'Regex
   ValueBool :: Bool -> Value 'Bool
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
@@ -79,19 +99,36 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
   CallMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u -- ^ @recv.method(args…)@
   Bind :: Effect f u -> (f u -> Effect f v) -> Effect f v -- ^ PHOAS bind (@const n = e@)
+  BindRec :: (f u -> Effect f u) -> (f u -> Effect f v) -> Effect f v -- ^ Recursive bind (@let n; n = …n…@)
   LambdaE :: (f u -> Effect f v) -> Effect f ('Function u v) -- ^ Effectful function (weak PHOAS: binder is @f u@, not @Effect@)
   ApplyE :: Effect f ('Function u v) -> Effect f u -> Effect f v
-  IfE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. A 'Lift'ed condition must not depend on 'Let' decls that only run once; an 'FFI' condition is re-emitted into the @if@ test.
-  IfS :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -> Effect f 'Unit -- ^ Statement @if@. Result is 'Unit'; codegen never binds it.
+  IfE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u -- ^ Effectful conditional. Statement @if@ is 'IfE' of two 'Unit' arms (see 'JShark.Api.discard'). A 'Lift'ed condition must not depend on 'Let' decls that only run once; an 'FFI' condition is re-emitted into the @if@ test.
   While :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit -- ^ Loop while the condition holds. The rendered condition is re-emitted on every iteration, so it must not depend on declarations that only run once. Use 'FFI' (not a bound var) when the test itself is a call.
   OptionCaseE :: Expr f ('Option u) -> Effect f v -> (f u -> Effect f v) -> Effect f v -- ^ Effectful 'optionCase'.
-  Try :: Effect f u -> Effect f u -> Effect f u -- ^ @try { a } catch { b }@. Same result type in both arms.
+  ResultCaseE :: Expr f ('Result e a) -> (f e -> Effect f v) -> (f a -> Effect f v) -> Effect f v
+  Throw :: Expr f 'String -> Effect f v -- ^ @throw e@. Never returns. Payload is a string.
+  Try :: Effect f u -> (f 'String -> Effect f u) -> Effect f u -- ^ @try { a } catch (e) { k e }@
+  ObjectLit :: [FieldLit f r] -> Effect f ('Object r) -- ^ Typed @{k: v, …}@; keys come from 'FieldLit'
+  DeleteProp :: Effect f object -> Expr f 'String -> Effect f 'Bool -- ^ @delete o[k]@
+  ArraySort :: Expr f ('Array u) -> (f u -> f u -> Expr f 'Number) -> Effect f ('Array u) -- ^ @arr.sort(function(a,b){…})@
 
 -- | An FFI argument drawn from either syntax tree. This is the sanctioned
 -- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
 data Arg :: (Universe -> Type) -> Universe -> Type where
   ArgExpr :: Expr f u -> Arg f u
   ArgEffect :: Effect f u -> Arg f u
+
+-- | JS property type of row @r@ at key @k@. Open; each host row supplies
+-- instances. The index on 'Object' is this host 'Type', not a 'Universe'.
+type family Field (r :: Type) (k :: Symbol) :: Universe
+
+-- | One field of an 'ObjectLit'. @k@ is the JS name ('fieldKey'); the
+-- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
+data FieldLit (f :: Universe -> Type) (r :: Type) where
+  FieldLit :: forall k f r. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
+
+fieldKey :: FieldLit f r -> String
+fieldKey (FieldLit @k _) = symbolVal (Proxy :: Proxy k)
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   -- Good Parts: values, arithmetic, strict equality, functions, @const@ lets
@@ -102,6 +139,13 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Subtraction: @-@
   Negate :: Expr f 'Number -> Expr f 'Number -- ^ @-(x)@
   FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Division: @/@
+  Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ Remainder: @%@ (JS, not floor-mod)
+  BitAnd :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ @&@ after ToInt32
+  BitOr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ @|@
+  BitXor :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ @^@
+  Shl :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ @<<@
+  Shr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ @>>@
+  UShr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -- ^ @>>>@
   And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ @&&@
   Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool -- ^ @||@
   Eq :: Expr f a -> Expr f a -> Expr f 'Bool -- ^ Strict equality: @===@ (never @==@)
@@ -111,6 +155,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   GTEq :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool -- ^ @>=@
   LTEq :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool -- ^ @<=@
   Let :: Expr f u -> (f u -> Expr f v) -> Expr f v -- ^ PHOAS let; codegen emits @const@
+  LetRec :: (f u -> Expr f u) -> (f u -> Expr f v) -> Expr f v -- ^ Recursive let
   Lambda :: (f u -> Expr f v) -> Expr f ('Function u v) -- ^ Weak PHOAS lambda: binder is @f u@
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
   Show :: Expr f u -> Expr f 'String -- ^ @String(x)@
@@ -122,6 +167,9 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   -- uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
   -- @if_ (opt .== none)@ plus a type-changing coerce.
   OptionCase :: Expr f ('Option u) -> Expr f v -> (f u -> Expr f v) -> Expr f v -- ^ Eliminate an 'Option', analogous to 'maybe'.
+  ResultOk :: Expr f a -> Expr f ('Result e a)
+  ResultErr :: Expr f e -> Expr f ('Result e a)
+  ResultCase :: Expr f ('Result e a) -> (f e -> Expr f v) -> (f a -> Expr f v) -> Expr f v -- ^ Eliminate a 'Result', analogous to 'either'.
   -- Constrained JS surface (fixed names / universes; not a general FFI).
   -- True escapes ('alert', raw @foo()@, free-text methods) live on 'Effect'.
   ExprIndex :: Expr f ('Array u) -> Expr f 'Number -> Expr f u -- ^ Array indexing: @arr[i]@.
@@ -132,6 +180,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
   ExprTernary :: StdTernary a b c d -> Expr f a -> Expr f b -> Expr f c -> Expr f d -- ^ Closed-name ternary (@slice@, @replace@).
   ExprMap :: Expr f ('Array u) -> (f u -> Expr f v) -> Expr f ('Array v) -- ^ @arr.map(function(x){…})@. Callback stays on 'Expr'.
   ExprFilter :: Expr f ('Array u) -> (f u -> Expr f 'Bool) -> Expr f ('Array u) -- ^ @arr.filter(function(x){…})@. Callback stays on 'Expr'.
+  ExprReduce :: Expr f ('Array u) -> Expr f v -> (f v -> f u -> Expr f v) -> Expr f v -- ^ @arr.reduce(function(acc,x){…}, z)@.
   UnsafeNullable :: Expr f u -> Expr f ('Option u) -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
   UnsafeEffectExpr :: Effect f u -> Expr f u -- ^ Optimizer splice only; not part of the surface API. Pass effects to FFI via 'ArgEffect'.
 
@@ -151,11 +200,14 @@ data StdBinary :: Universe -> Universe -> Universe -> Type where
   StdIncludes :: StdBinary ('Array u) u 'Bool
   StdConcat   :: StdBinary ('Array u) ('Array u) ('Array u)
   StdJoin     :: StdBinary ('Array u) 'String 'String
+  StdTest     :: StdBinary 'Regex 'String 'Bool
+  StdParseInt :: StdBinary 'String 'Number 'Number -- ^ radix required (book appendix A)
 
 -- | Closed ternary names on 'Expr'.
 data StdTernary :: Universe -> Universe -> Universe -> Universe -> Type where
-  StdSlice   :: StdTernary 'String 'Number 'Number 'String
-  StdReplace :: StdTernary 'String 'String 'String 'String
+  StdSlice    :: StdTernary 'String 'Number 'Number 'String
+  StdArrSlice :: StdTernary ('Array u) 'Number 'Number ('Array u)
+  StdReplace  :: StdTernary 'String 'String 'String 'String
 
 -- | Closed unary @Math.*@ names. JS identifier is 'mathFn1Name'.
 data MathFn1

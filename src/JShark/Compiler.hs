@@ -344,8 +344,9 @@ compileTerser :: Text -> IO Text
 compileTerser = compileWith (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified)
 
 -- | Indent generated JavaScript. Understands double/single-quoted strings
--- (with backslash escapes). JShark does not emit regex or template
--- literals, so those are not treated as strings. Not a general JS parser.
+-- (with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
+-- not @/re/@ literals, so those are not treated as strings. Not a general
+-- JS parser.
 prettyJS :: Text -> Text
 prettyJS = T.pack . formatJS . T.unpack . T.strip
 

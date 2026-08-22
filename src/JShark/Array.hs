@@ -19,6 +19,9 @@ module JShark.Array
   , join
   , push
   , push_
+  , reduce_
+  , arraySlice
+  , sort_
   ) where
 
 import JShark.Api
@@ -76,3 +79,17 @@ push arr x = callMethod (expr arr) "push" (arg x <: RecNil)
 -- | 'push' in 'EffectSyntax'.
 push_ :: Expr f ('Array u) -> Expr f u -> EffectSyntax f (f 'Unit)
 push_ arr x = toSyntax $ push arr x
+
+-- | @arr.reduce(function(acc,x){…}, z)@
+reduce_ :: Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
+reduce_ arr z f = ExprReduce arr z (\a x -> f (var a) (var x))
+
+-- | @arr.slice(start, end)@. Copy; does not mutate.
+arraySlice :: Expr f ('Array u) -> Expr f 'Number -> Expr f 'Number -> Expr f ('Array u)
+arraySlice = ExprTernary StdArrSlice
+
+-- | @arr.sort(function(a,b){…})@. Mutates in place. The compare callback
+-- is a binary JS function (not curried 'lambda2'); it should return a
+-- 'Number' (negative / zero / positive).
+sort_ :: Expr f ('Array u) -> (Expr f u -> Expr f u -> Expr f 'Number) -> Effect f ('Array u)
+sort_ arr cmp = ArraySort arr (\a b -> cmp (var a) (var b))

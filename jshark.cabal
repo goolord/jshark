@@ -67,6 +67,7 @@ library
     JShark.Object
     JShark.Dom
     JShark.Rec
+    JShark.Regex
     JShark.Compiler
   build-depends:
     , base >= 4.14 && < 5
