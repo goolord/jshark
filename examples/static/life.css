@@ -54,6 +54,11 @@ a {
   max-width: 48rem;
   margin: 1.25rem auto 2rem;
   padding: 0 1rem;
+  contain: layout style paint;
+}
+
+#life-index-host {
+  contain: layout style paint;
 }
 
 .life-index h2 {
@@ -67,11 +72,12 @@ a {
 
 .life-index-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.35rem 2rem;
   font-size: 0.85rem;
   color: #94a3b8;
   text-align: left;
+  contain: layout style;
 }
 
 .index-row {
@@ -119,7 +125,9 @@ a {
   position: fixed;
   z-index: 1000;
   pointer-events: none;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   visibility: hidden;
   left: 0;
   top: 0;
@@ -148,6 +156,7 @@ a {
 }
 
 .life-tooltip-swatch {
+  display: inline-block;
   width: 0.65rem;
   height: 0.65rem;
   border-radius: 1px;
