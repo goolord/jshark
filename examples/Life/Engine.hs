@@ -195,7 +195,8 @@ stepGeneration state = do
   prevPop <- state.pop
   gen <- state.gen
   let
-    stepTagVal = rem_ gen (number 2)
+    -- Tags 1/2 only: zero-initialized stamps must differ from the active tag.
+    stepTagVal = rem_ gen (number 2) + number 1
   Array.clear_ nextLiveList
   expanded <- expandBoundsForLive alive w h x0 y0 x1 y1
   x0e <- expanded.bx0

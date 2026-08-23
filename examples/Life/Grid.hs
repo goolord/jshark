@@ -455,23 +455,26 @@ drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom = do
   Canvas.save ctx
   Canvas.translate ctx panX panY
   Canvas.scale ctx scale scale
-  forRange_ (number 0) (number 256) $ \sid -> do
-    fillCtx ctx (Array.index paletteCss sid)
-    forRange_ (number 0) (Array.length liveList) $ \k -> do
-      let
-        gi = Array.index liveList k
-        x = rem_ gi w
-        y = Math.floor (gi / w)
-      whenS
-        ( x .>= gx0
-            .&& x .< gx1
-            .&& y .>= gy0
-            .&& y .< gy1
-        )
-        ( do
-            sp <- u8Get species gi
-            whenS (sp .== sid) (Canvas.fillRect ctx x y (number 1) (number 1))
-        )
+  prevSp <- hold (toObject (StepScratch (-1) 0 0 0 0))
+  forRange_ (number 0) (Array.length liveList) $ \k -> do
+    let
+      gi = Array.index liveList k
+      x = rem_ gi w
+      y = Math.floor (gi / w)
+    whenS
+      ( x .>= gx0
+          .&& x .< gx1
+          .&& y .>= gy0
+          .&& y .< gy1
+      )
+      ( do
+          sp <- u8Get species gi
+          prevSid <- prevSp.pop
+          whenS (sp .!= prevSid) $ do
+            fillCtx ctx (Array.index paletteCss sp)
+            set @"pop" prevSp sp
+          Canvas.fillRect ctx x y (number 1) (number 1)
+      )
   Canvas.restore ctx
   done
 
