@@ -195,7 +195,8 @@ stepGeneration state = do
   prevPop <- state.pop
   gen <- state.gen
   let
-    -- Tags 1/2 only: zero-initialized stamps must differ from the active tag.
+    -- Tags 1/2 alternate; stamps start at 0. Dense 'stepGrid' scans skip stamps;
+    -- sparse dedup requires the active tag never be 0.
     stepTagVal = rem_ gen (number 2) + number 1
   Array.clear_ nextLiveList
   expanded <- expandBoundsForLive alive w h x0 y0 x1 y1

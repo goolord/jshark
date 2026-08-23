@@ -907,6 +907,23 @@ stdlibTests =
               )
           )
           @?= "ctx.fillRect(0.0, 0.0, 10.0, 20.0);"
+    , testCase "Canvas.rect renders a 2D call" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      _ <-
+                        Canvas.rect
+                          (UnsafeObject "ctx")
+                          (number 1)
+                          (number 2)
+                          (number 3)
+                          (number 4)
+                      toSyntax noOp
+                  )
+              )
+          )
+          @?= "ctx.rect(1.0, 2.0, 3.0, 4.0);"
     , testCase "Canvas fillStyle is a Field" $
         renderJS
           ( effectfulAST

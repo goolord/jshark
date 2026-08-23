@@ -15,6 +15,7 @@ module JShark.Canvas
   , setCanvasWidth
   , setCanvasHeight
   , fillRect
+  , rect
   , strokeRect
   , clearRect
   , beginPath
@@ -134,6 +135,7 @@ call4 ctx name x y w h =
   ctxCall ctx name (arg x <: arg y <: arg w <: arg h <: RecNil)
 
 fillRect
+  , rect
   , strokeRect
   , clearRect ::
     Effect f ('MutableObject Context2D)
@@ -143,6 +145,7 @@ fillRect
     -> Expr f 'Number
     -> EffectSyntax f (f 'Unit)
 fillRect ctx = call4 ctx "fillRect"
+rect ctx = call4 ctx "rect"
 strokeRect ctx = call4 ctx "strokeRect"
 clearRect ctx = call4 ctx "clearRect"
 

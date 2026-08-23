@@ -46,6 +46,7 @@ import Types
   , gridH
   , gridW
   , hoverRadius
+  , indexRefreshMs
   , ink
   , lifeTooltipId
   , lifeTooltipNameId
@@ -651,14 +652,19 @@ tickIndex ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 tickIndex state registry tracker seen listEl now = do
-  alive <- state.alive
-  species <- state.species
-  pal <- state.palette
-  liveX0 <- state.boundX0
-  liveY0 <- state.boundY0
-  liveX1 <- state.boundX1
-  liveY1 <- state.boundY1
-  stepIndexTracker alive species pal registry tracker seen listEl now liveX0 liveY0 liveX1 liveY1
+  pending <- getProp tracker "pending"
+  indexLastMs <- getProp tracker "lastMs"
+  let
+    refresh = number (fromIntegral indexRefreshMs)
+  whenS (not_ pending .&& (indexLastMs .== 0 .|| now - indexLastMs .>= refresh)) $ do
+    alive <- state.alive
+    species <- state.species
+    pal <- state.palette
+    liveX0 <- state.boundX0
+    liveY0 <- state.boundY0
+    liveX1 <- state.boundX1
+    liveY1 <- state.boundY1
+    stepIndexTracker alive species pal registry tracker seen listEl now liveX0 liveY0 liveX1 liveY1
 
 fill ::
   Effect f ('MutableObject Canvas.Context2D)

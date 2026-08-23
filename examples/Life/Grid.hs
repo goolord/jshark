@@ -41,6 +41,12 @@ data StepScratch = StepScratch
   }
   deriving Generic
 
+data DrawScratch = DrawScratch
+  { lastSp :: Double
+  , pathLen :: Double
+  }
+  deriving Generic
+
 data BoundScratch = BoundScratch
   { bx0 :: Double
   , by0 :: Double
@@ -217,6 +223,7 @@ stepGrid
         x
         y
     runIndex i = do
+      -- Stamp dedup only on the sparse path; dense scans call 'runCell' directly.
       s <- u8Get stepStamp i
       whenS (s .!= stepTag) $ do
         setU8 stepStamp i stepTag
@@ -436,6 +443,9 @@ drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom = do
   Canvas.fillRect ctx (number 0) (number 0) cw ch
   let
     scale = px * zoom
+    maxPathLen = number 4096
+    sorted =
+      Array.toSorted liveList (\i j -> u8Index species i - u8Index species j)
     gx0 =
       Math.max
         (number 0)
@@ -455,10 +465,10 @@ drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom = do
   Canvas.save ctx
   Canvas.translate ctx panX panY
   Canvas.scale ctx scale scale
-  prevSp <- hold (toObject (StepScratch (-1) 0 0 0 0))
-  forRange_ (number 0) (Array.length liveList) $ \k -> do
+  drawScratch <- hold (toObject (DrawScratch (-1) 0))
+  forRange_ (number 0) (Array.length sorted) $ \k -> do
     let
-      gi = Array.index liveList k
+      gi = Array.index sorted k
       x = rem_ gi w
       y = Math.floor (gi / w)
     whenS
@@ -469,12 +479,20 @@ drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom = do
       )
       ( do
           sp <- u8Get species gi
-          prevSid <- prevSp.pop
-          whenS (sp .!= prevSid) $ do
+          prevSp <- drawScratch.lastSp
+          pathCount <- drawScratch.pathLen
+          whenS (sp .!= prevSp .|| pathCount .>= maxPathLen) $ do
+            whenS (prevSp .>= 0) (Canvas.fill ctx)
+            Canvas.beginPath ctx
             fillCtx ctx (Array.index paletteCss sp)
-            set @"pop" prevSp sp
-          Canvas.fillRect ctx x y (number 1) (number 1)
+            set @"lastSp" drawScratch sp
+            set @"pathLen" drawScratch (number 0)
+          len0 <- drawScratch.pathLen
+          Canvas.rect ctx x y (number 1) (number 1)
+          set @"pathLen" drawScratch (len0 + number 1)
       )
+  activeSp <- drawScratch.lastSp
+  whenS (activeSp .>= 0) (Canvas.fill ctx)
   Canvas.restore ctx
   done
 
