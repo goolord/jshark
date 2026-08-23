@@ -1,0 +1,93 @@
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: Georgia, serif;
+}
+
+main {
+  max-width: 48rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+h1 {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+canvas {
+  background: #0f172a;
+  display: block;
+  margin: 1.5rem auto;
+  cursor: crosshair;
+  width: 768px;
+  height: 576px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+canvas:focus {
+  outline: 1px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.help {
+  font-size: 0.9rem;
+  margin-top: 0.75rem;
+}
+
+p {
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+a {
+  color: #38bdf8;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  justify-content: center;
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 1px;
+  display: inline-block;
+}
+
+.swatch--still {
+  background: hsl(210, 62%, 58%);
+}
+
+.swatch--osc {
+  background: hsl(110, 58%, 52%);
+}
+
+.swatch--ship {
+  background: hsl(20, 72%, 55%);
+}
+
+.swatch--soup {
+  background: #484858;
+}
+
+.swatch--manual {
+  background: hsl(280, 45%, 68%);
+}

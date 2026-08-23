@@ -162,6 +162,22 @@ library todo-mvc
   hs-source-dirs:
     examples/TodoMvc
 
+library life
+  import: example-lib
+  build-depends:
+    , array
+  exposed-modules:
+    Life
+  other-modules:
+    Client
+    Engine
+    Grid
+    Page
+    Patterns
+    Types
+  hs-source-dirs:
+    examples/Life
+
 executable examples
   import: warnings, lucid-dep
   main-is:
@@ -180,6 +196,7 @@ executable examples
     , directory >= 1.3 && < 2
     , filepath
     , jshark
+    , life
     , scotty >= 0.20 && < 1
     , synth
     , text
@@ -207,6 +224,7 @@ test-suite jshark-test
     , breakout
     , jshark
     , jshark-lucid
+    , life
     , synth
     , todo-mvc
     , tasty

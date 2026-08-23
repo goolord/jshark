@@ -212,4 +212,5 @@ staticFiles =
   , "breakout.css"
   , "synth.css"
   , "todo-mvc.css"
+  , "life.css"
   ]

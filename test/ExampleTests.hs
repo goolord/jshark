@@ -20,6 +20,7 @@ import JShark (effectfulProgram, renderJSCompact)
 import JShark.Api (stmts)
 import JShark.Bun.Internal (runJS)
 import JShark.Types (ClosedEffect, Universe (Unit))
+import qualified Life
 import qualified Synth
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -33,6 +34,7 @@ exampleTests =
       [ parseCase "breakout" (stmts Breakout.mainJS)
       , parseCase "todo-mvc" (stmts TodoMvc.mainJS)
       , parseCase "synth" (stmts Synth.mainJS)
+      , parseCase "life" (stmts Life.mainJS)
       ]
 
 parseCase :: String -> ClosedEffect 'Unit -> TestTree

@@ -6,6 +6,7 @@ import qualified Breakout
 import DevServer (Example (..), exportExamples, serveExamples)
 import JShark.Compiler (compileEffect, readableConfig)
 import JShark.Types (fromSyntax)
+import qualified Life
 import SourcePane (sourceHead, sourcePane)
 import qualified Synth
 import System.Environment (getArgs)
@@ -17,6 +18,7 @@ main = do
   breakoutJs <- compileEffect readableConfig (fromSyntax Breakout.mainJS)
   todoJs <- compileEffect readableConfig (fromSyntax TodoMvc.mainJS)
   synthJs <- compileEffect readableConfig (fromSyntax Synth.mainJS)
+  lifeJs <- compileEffect readableConfig (fromSyntax Life.mainJS)
   let
     examples =
       [ Example
@@ -40,6 +42,13 @@ main = do
               Synth.page static (sourceHead static) (sourcePane static synthJs) script
           )
           synthJs
+      , Example
+          "life"
+          "Game of Life"
+          ( \script static ->
+              Life.page static (sourceHead static) (sourcePane static lifeJs) script
+          )
+          lifeJs
       ]
   args <- getArgs
   case args of
