@@ -308,68 +308,71 @@ renderGridViewport ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-renderGridViewport pixels alive species pal w h px cw ch panX panY zoom = do
-  let
-    pixLen = u8Len pixels
-    bgCells = pixLen / number 4
-  forRange_ (number 0) bgCells $ \cell ->
+renderGridViewport pixels alive species pal w h px cw ch panX panY zoom boundX0 boundY0 boundX1 boundY1 = do
+  toSyntax_ (clearRgbaImageData pixels)
+  whenS (boundX1 .>= boundX0) $ do
     let
-      base = cell * number 4
-     in
-      do
-        setU8 pixels base 15
-        setU8 pixels (base + 1) 23
-        setU8 pixels (base + 2) 42
-        setU8 pixels (base + 3) 255
-  let
-    cellDraw = Math.max (number 1) (Math.floor (px * zoom))
-    gx0 =
-      Math.max
-        (number 0)
-        (Math.floor ((number 0 - panX) / zoom / px))
-    gx1 =
-      Math.min
-        w
-        (Math.ceil ((cw - panX) / zoom / px))
-    gy0 =
-      Math.max
-        (number 0)
-        (Math.floor ((number 0 - panY) / zoom / px))
-    gy1 =
-      Math.min
-        h
-        (Math.ceil ((ch - panY) / zoom / px))
-  forRange_ gy0 gy1 $ \y ->
-    forRange_ gx0 gx1 $ \x -> do
-      let
-        gi = cellIdx w x y
-      a <- u8Get alive gi
-      whenS (a .== 1) $ do
-        sp <- u8Get species gi
-        let
-          palBase = sp * number 3
-        r <- u8Get pal palBase
-        g <- u8Get pal (palBase + 1)
-        b <- u8Get pal (palBase + 2)
-        let
-          sx = Math.floor (x * px * zoom + panX)
-          sy = Math.floor (y * px * zoom + panY)
-        forRange_ (number 0) cellDraw $ \dy ->
+      cellDraw = Math.max (number 1) (Math.floor (px * zoom))
+      scale = px * zoom
+      gx0 =
+        Math.max
+          (number 0)
+          (Math.floor ((number 0 - panX) / scale) - number 1)
+      gx1 =
+        Math.min
+          w
+          (Math.ceil ((cw - panX) / scale) + number 1)
+      gy0 =
+        Math.max
+          (number 0)
+          (Math.floor ((number 0 - panY) / scale) - number 1)
+      gy1 =
+        Math.min
+          h
+          (Math.ceil ((ch - panY) / scale) + number 1)
+      ix0 = Math.max gx0 boundX0
+      iy0 = Math.max gy0 boundY0
+      ix1 = Math.min gx1 (boundX1 + number 1)
+      iy1 = Math.min gy1 (boundY1 + number 1)
+    whenS (ix1 .> ix0 .&& iy1 .> iy0) $
+      forRange_ iy0 iy1 $ \y ->
+        forRange_ ix0 ix1 $ \x -> do
           let
-            py = sy + dy
-           in
-            whenS (py .>= 0 .&& py .< ch) $
-              forRange_ (number 0) cellDraw $ \dx ->
+            gi = cellIdx w x y
+          a <- u8Get alive gi
+          whenS (a .== 1) $ do
+            sp <- u8Get species gi
+            let
+              palBase = sp * number 3
+            r <- u8Get pal palBase
+            g <- u8Get pal (palBase + 1)
+            b <- u8Get pal (palBase + 2)
+            let
+              sx = Math.floor (x * scale + panX)
+              sy = Math.floor (y * scale + panY)
+              dx0 = Math.max (number 0) (number 0 - sx)
+              dy0 = Math.max (number 0) (number 0 - sy)
+              dx1 = Math.min cellDraw (cw - sx)
+              dy1 = Math.min cellDraw (ch - sy)
+            whenS (dx1 .> dx0 .&& dy1 .> dy0) $
+              forRange_ dy0 dy1 $ \dy ->
                 let
-                  pxX = sx + dx
-                  pix = (py * cw + pxX) * number 4
+                  py = sy + dy
                  in
-                  whenS (pxX .>= 0 .&& pxX .< cw) $
-                    do
-                      setU8 pixels pix r
-                      setU8 pixels (pix + 1) g
-                      setU8 pixels (pix + 2) b
+                  forRange_ dx0 dx1 $ \dx ->
+                    let
+                      pxX = sx + dx
+                      pix = (py * cw + pxX) * number 4
+                     in
+                      do
+                        setU8 pixels pix r
+                        setU8 pixels (pix + 1) g
+                        setU8 pixels (pix + 2) b
   done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number

@@ -105,8 +105,8 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
 
 shellCss :: T.Text
 shellCss =
-  "html,body.life-shell{margin:0;min-height:100%;background:#0f172a;overflow:auto}\
-  \.life-frame{display:block;width:100%;min-height:100vh;height:100vh;border:0;background:#0f172a;overflow:auto}"
+  "html,body.life-shell{margin:0;height:100%;background:#0f172a;overflow:hidden}\
+  \.life-frame{display:block;width:100%;height:100%;border:0;background:#0f172a}"
 
 bootJs :: T.Text -> T.Text
 bootJs inner =
@@ -223,8 +223,8 @@ rgbCss (r, g, b) =
 --   (cabal data-files 404 in some run paths).
 toolsCss :: T.Text
 toolsCss =
-  ".life-stage{position:relative;width:768px;margin:1.5rem auto}\
-  \.life-stage canvas{display:block;margin:0;width:768px;height:576px;\
+  ".life-stage{position:relative;width:768px;max-width:100%;margin:1.5rem auto;overflow:visible}\
+  \.life-stage canvas{display:block;margin:0;width:768px;max-width:100%;height:auto;aspect-ratio:768/576;\
   \image-rendering:pixelated;image-rendering:crisp-edges;cursor:crosshair}\
   \.life-tools{position:absolute;right:8px;bottom:8px;z-index:5;display:flex;\
   \flex-wrap:wrap;justify-content:flex-end;gap:0.28rem;max-width:22rem;\

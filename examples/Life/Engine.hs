@@ -171,10 +171,10 @@ stepGeneration state = do
         ifS
           (bx1n .< bx0n)
           ( do
-              set @"boundX0" state (fromIntegral initialBoundX0)
-              set @"boundY0" state (fromIntegral initialBoundY0)
-              set @"boundX1" state (fromIntegral initialBoundX1)
-              set @"boundY1" state (fromIntegral initialBoundY1)
+              set @"boundX0" state 1
+              set @"boundY0" state 1
+              set @"boundX1" state (-1)
+              set @"boundY1" state (-1)
           )
           ( do
               set @"boundX0" state (Math.floor bx0n)
@@ -218,7 +218,11 @@ renderLife ctx img viewport state = do
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
-  renderGridViewport pixels alive species pal w h px cw ch panX panY zoom
+  liveX0 <- state.boundX0
+  liveY0 <- state.boundY0
+  liveX1 <- state.boundX1
+  liveY1 <- state.boundY1
+  renderGridViewport pixels alive species pal w h px cw ch panX panY zoom liveX0 liveY0 liveX1 liveY1
   putImageData ctx img
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)

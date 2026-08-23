@@ -44,6 +44,7 @@ module JShark.Api
   , u8Set
   , u8Fill
   , u8Len
+  , clearRgbaImageData
 
     -- * Variables and lifting
   , var
@@ -355,6 +356,15 @@ seedLiveCells alive species cells =
         <: arg (indexSpeciesPairs cells)
         <: RecNil
     )
+
+-- | Fill an @ImageData.data@ buffer with opaque @#0f172a@.
+clearRgbaImageData :: Expr f 'Uint8Array -> Effect f 'Unit
+clearRgbaImageData pixels =
+  FFI
+    ( FFILambda
+        "(p)=>{for(let i=0;i<p.length;i+=4){p[i]=15;p[i+1]=23;p[i+2]=42;p[i+3]=255}}"
+    )
+    (arg pixels <: RecNil)
 
 -- | Random soup in a rectangular region. Matches 'Patterns.seedCell' LCG (@20%@
 -- live, species untouched — caller should stamp catalog ids afterward).

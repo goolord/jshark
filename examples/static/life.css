@@ -1,11 +1,9 @@
-html {
-  overflow-y: auto;
-}
-
 html,
 body {
   margin: 0;
   min-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #0f172a;
   color: #e2e8f0;
   font-family: Georgia, serif;
@@ -26,16 +24,20 @@ h1 {
 .life-stage {
   position: relative;
   width: 768px;
+  max-width: 100%;
   margin: 1.5rem auto;
+  overflow: visible;
 }
 
-canvas {
+.life-stage canvas {
   background: #0f172a;
   display: block;
   margin: 0;
   cursor: crosshair;
   width: 768px;
-  height: 576px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 768 / 576;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -112,7 +114,7 @@ canvas {
   color: #94a3b8;
 }
 
-canvas:focus {
+.life-stage canvas:focus {
   outline: 1px solid #38bdf8;
   outline-offset: 2px;
 }

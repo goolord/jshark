@@ -143,8 +143,10 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
       r <- hold $ callMethod canvas "getBoundingClientRect" RecNil
       left <- getProp r "left"
       top <- getProp r "top"
+      width <- getProp r "width"
       _ <- setProp rectRef "left" left
       _ <- setProp rectRef "top" top
+      _ <- setProp rectRef "width" width
       done
   win <- hold window
   addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
@@ -242,8 +244,11 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             dragY <- getProp viewport "dragY"
             panX <- getProp viewport "panX"
             panY <- getProp viewport "panY"
-            _ <- setProp viewport "panX" (panX + cx - dragX)
-            _ <- setProp viewport "panY" (panY + cy - dragY)
+            width <- getProp rectRef "width"
+            let
+              bufScale = number canvasW / width
+            _ <- setProp viewport "panX" (panX + (cx - dragX) * bufScale)
+            _ <- setProp viewport "panY" (panY + (cy - dragY) * bufScale)
             _ <- setProp viewport "dragX" cx
             _ <- setProp viewport "dragY" cy
             startX <- getProp viewport "dragStartX"
@@ -474,14 +479,16 @@ gridFromClient ::
 gridFromClient rectRef viewport cx cy = do
   left <- getProp rectRef "left"
   top <- getProp rectRef "top"
+  width <- getProp rectRef "width"
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
   let
     px = number (fromIntegral cellPx)
+    bufScale = number canvasW / width
   pure
-    ( Math.floor ((cx - left - panX) / zoom / px)
-    , Math.floor ((cy - top - panY) / zoom / px)
+    ( Math.floor (((cx - left) * bufScale - panX) / zoom / px)
+    , Math.floor (((cy - top) * bufScale - panY) / zoom / px)
     )
 
 initViewport :: EffectSyntax f (Effect f ('MutableObject ()))
