@@ -56,9 +56,8 @@ import Types
   , seedOx
   , seedOy
   , seedW
-  , zoomFactor
-  , zoomMax
-  , zoomMin
+  , zoomLevelLabels
+  , zoomLevels
   )
 import JShark.Worker (performanceNow)
 import WorkerBridge (engineModeLabel, engineTickMs, setEngineRenderMs)
@@ -182,7 +181,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number zoomFactor)
+                  zoomIn viewport
                   done
             )
           ,
@@ -190,7 +189,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number 1 / number zoomFactor)
+                  zoomOut viewport
                   done
             )
           ,
@@ -198,7 +197,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number zoomFactor)
+                  zoomIn viewport
                   done
             )
           ,
@@ -206,7 +205,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number 1 / number zoomFactor)
+                  zoomOut viewport
                   done
             )
           ]
@@ -513,20 +512,74 @@ initViewport = do
   _ <- setProp viewport "dragStartX" (number 0)
   _ <- setProp viewport "dragStartY" (number 0)
   _ <- setProp viewport "moved" (number 0)
+  levels <- bindExpr zoomLevelsArray
+  labels <- bindExpr zoomLabelsArray
+  indices <- bindExpr zoomIndicesArray
+  _ <- setProp viewport "zoomLevels" levels
+  _ <- setProp viewport "zoomLabels" labels
+  _ <- setProp viewport "zoomIndices" indices
   clampPan viewport
   pure viewport
 
-zoomBy ::
+zoomIndicesArray :: forall f. Effect f ('Array 'Number)
+zoomIndicesArray =
+  Array.fromEffects
+    (map (expr . number . fromIntegral) [0 .. length zoomLevels - 1])
+
+zoomLevelsArray :: forall f. Effect f ('Array 'Number)
+zoomLevelsArray =
+  Array.fromEffects (map (\z -> expr (number z)) zoomLevels)
+
+zoomLabelsArray :: forall f. Effect f ('Array 'String)
+zoomLabelsArray =
+  Array.fromEffects (map (\lbl -> expr (string lbl)) zoomLevelLabels)
+
+nearestZoomIndex ::
+  Expr f ('Array 'Number)
+  -> Expr f ('Array 'Number)
+  -> Expr f 'Number
+  -> Expr f 'Number
+nearestZoomIndex levels indices zoom =
+  Array.reduce
+    indices
+    (number 0)
+    ( \bestIdx i ->
+        let
+          bestDist = abs (Array.index levels bestIdx - zoom)
+          curDist = abs (Array.index levels i - zoom)
+         in
+          if_ (curDist .< bestDist) i bestIdx
+    )
+
+clampZoomIndex ::
+  Expr f ('Array 'Number)
+  -> Expr f 'Number
+  -> Expr f 'Number
+clampZoomIndex indices idx =
+  let len = Array.length indices
+   in Math.max (number 0) (Math.min (len - number 1) idx)
+
+stepZoom ::
   Effect f ('MutableObject ())
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-zoomBy viewport factor = do
+stepZoom viewport delta = do
+  levels <- getProp viewport "zoomLevels"
+  indices <- getProp viewport "zoomIndices"
   z0 <- getProp viewport "zoom"
   let
-    z1 =
-      Math.max
-        (number zoomMin)
-        (Math.min (number zoomMax) (z0 * factor))
+    idx = nearestZoomIndex levels indices z0
+    nextIdx = clampZoomIndex indices (idx + delta)
+    z1 = Array.index levels nextIdx
+  applyZoom viewport z0 z1
+
+applyZoom ::
+  Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+applyZoom viewport z0 z1 = do
+  let
     cx = number (canvasW / 2)
     cy = number (canvasH / 2)
   whenS (z1 .!= z0) $ do
@@ -537,6 +590,16 @@ zoomBy viewport factor = do
     _ <- setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
     clampPan viewport
     invalidateViewportRender viewport
+
+zoomIn ::
+  Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+zoomIn viewport = stepZoom viewport (number 1)
+
+zoomOut ::
+  Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+zoomOut viewport = stepZoom viewport (number (-1))
 
 invalidateViewportRender ::
   Effect f ('MutableObject ())
@@ -663,9 +726,13 @@ paintHud ctx state meter viewport = do
   fpsN <- meter.fps
   tickMs <- engineTickMs
   mode <- engineModeLabel
+  levels <- getProp viewport "zoomLevels"
+  labels <- getProp viewport "zoomLabels"
+  indices <- getProp viewport "zoomIndices"
   zoom <- getProp viewport "zoom"
   let
-    zoomPct = Math.round (zoom * number 100)
+    zoomIdx = nearestZoomIndex levels indices zoom
+    zoomLabel = Array.index labels zoomIdx
   set @"font" ctx (string "15px Georgia")
   _ <- setProp ctx "textBaseline" (string "top")
   fill ctx (string ink)
@@ -678,7 +745,7 @@ paintHud ctx state meter viewport = do
   _ <-
     Canvas.fillText
       ctx
-      (string "Zoom: " <> toString zoomPct <> string "%")
+      (string "Zoom: " <> zoomLabel <> string "%")
       (number (canvasW - 8))
       36
   _ <-

@@ -37,6 +37,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import qualified Data.Text as T
 import WorkerBridge (engineStepGeneration)
+import Types (zoomLevelLabels, zoomLevels)
 
 lifeTests :: TestTree
 lifeTests =
@@ -60,6 +61,21 @@ lifeTests =
           [ lifeCase "block is stable for three generations" testBlockStable
           , lifeCase "beehive is stable for three generations" testBeehiveStable
           , lifeCase "blinker oscillates with period two" testBlinkerPeriod2
+          ]
+      , testGroup
+          "zoom ladder"
+          [ testCase "zoomStep labels match levels" $
+              length zoomLevels @?= length zoomLevelLabels
+          , testCase "zoomLevels ascend from 50% to 600%" $ do
+              case zoomLevels of
+                (lo : _ : _) -> lo @?= 0.5
+                _ -> assertFailure "zoomLevels too short"
+              case reverse zoomLevels of
+                (hi : _) -> hi @?= 6
+                _ -> assertFailure "zoomLevels too short"
+              assertBool
+                "ascending"
+                (and (zipWith (<) zoomLevels (drop 1 zoomLevels)))
           ]
       , testGroup
           "js engine"

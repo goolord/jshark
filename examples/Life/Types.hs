@@ -42,9 +42,9 @@ module Types
   , lifeToolsId
   , toggleToolSid
   , hoverRadius
-  , zoomMin
-  , zoomMax
-  , zoomFactor
+  , zoomSteps
+  , zoomLevels
+  , zoomLevelLabels
   , soupRngSeed
   , lcgMult
   , lcgInc
@@ -161,10 +161,28 @@ toggleToolSid = 0
 hoverRadius :: Int
 hoverRadius = 2
 
-zoomMin, zoomMax, zoomFactor :: Double
-zoomMin = 0.5
-zoomMax = 6
-zoomFactor = 1.25
+-- | Discrete zoom ladder from 50% to 600% (Photoshop-style rational steps).
+zoomSteps :: [(Double, Text)]
+zoomSteps =
+  [ (0.5, "50")
+  , (2 / 3, "66.6")
+  , (0.75, "75")
+  , (1, "100")
+  , (1.25, "125")
+  , (4 / 3, "133.33")
+  , (1.5, "150")
+  , (2, "200")
+  , (3, "300")
+  , (4, "400")
+  , (6, "600")
+  ]
+
+zoomLevels :: [Double]
+zoomLevels = map fst zoomSteps
+
+-- | HUD labels aligned with 'zoomLevels'.
+zoomLevelLabels :: [Text]
+zoomLevelLabels = map snd zoomSteps
 
 -- | Shared with 'JShark.Api.seedSoupRegion' and 'Patterns.seedCell'.
 soupRngSeed :: Int
