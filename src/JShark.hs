@@ -449,11 +449,18 @@ jsShowUint8Array = T.intercalate "," . map (T.pack . show) . uint8Elems
 
 jsUint8ArrayLit :: ByteArray -> Doc
 jsUint8ArrayLit ba =
-  "new Uint8Array"
-    <> P.parens
-      ( P.brackets
-          (P.hcat (P.punctuate ", " (map (P.int . fromIntegral) (uint8Elems ba))))
-      )
+  let
+    elems = uint8Elems ba
+    n = length elems
+   in
+    if all (== 0) elems
+      then "new Uint8Array" <> P.parens (P.int n)
+      else
+        "new Uint8Array"
+          <> P.parens
+            ( P.brackets
+                (P.hcat (P.punctuate ", " (map (P.int . fromIntegral) elems)))
+            )
 
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
 -- 'Embed' / 'EmbedEff' are typed hole fillers for bind inlining.

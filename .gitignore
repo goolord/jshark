@@ -28,3 +28,4 @@ cabal.project.local~
 .HTF/
 .ghc.environment.*
 _site/
+tools/

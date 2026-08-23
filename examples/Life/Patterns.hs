@@ -1,6 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UnboxedTuples #-}
 
 -- | Pattern catalog and species palette for the life demo.
@@ -13,15 +15,19 @@ module Patterns
   , allPatterns
   , disturbPatterns
   , disturbCatalogJson
-  , initialAlive
-  , initialSpecies
+  , initialCatalogCells
   , initialPop
+  , soupSeedPop
+  , initialBoundX0
+  , initialBoundY0
+  , initialBoundX1
+  , initialBoundY1
   , paletteBytes
   , speciesColor
   )
 where
 
-import Control.Monad (replicateM_, when)
+import Control.Monad (forM_, replicateM_, when)
 import Control.Monad.ST (ST, runST)
 import Data.Array.Byte (ByteArray (..))
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
@@ -54,7 +60,16 @@ import Types
   , miscMin
   , oscMax
   , oscMin
+  , lcgInc
+  , lcgModulus
+  , lcgMult
+  , seedH
+  , seedOx
+  , seedOy
+  , seedW
   , shipMax
+  , soupDensity
+  , soupRngSeed
   , shipMin
   , soupSpecies
   , stillMax
@@ -659,89 +674,141 @@ cisBlock = [(0, 0), (1, 0), (0, 1), (2, 1)]
 
 -- Host-built initial grid and flat RGB palette -----------------------------
 
-initialAlive, initialSpecies :: ByteArray
-initialPop :: Int
-(initialAlive, initialSpecies, initialPop) = buildInitialGrid
+initialCatalogCells :: [(Int, Word8)]
+initialPop, soupSeedPop :: Int
+initialBoundX0, initialBoundY0, initialBoundX1, initialBoundY1 :: Int
+(initialCatalogCells, initialPop, soupSeedPop, initialBoundX0, initialBoundY0, initialBoundX1, initialBoundY1) =
+  buildInitialGrid
 
-buildInitialGrid :: (ByteArray, ByteArray, Int)
+buildInitialGrid :: ([(Int, Word8)], Int, Int, Int, Int, Int, Int)
 buildInitialGrid = runST $ do
   alive <- newGrid 0
-  species <- newGrid 0
+  speciesGrid <- newGrid 0
   popRef <- newSTRef (0 :: Int)
-  rngRef <- newSTRef (42 :: Int)
-  mapM_ (seedCell alive species popRef rngRef) [0 .. gridN - 1]
-  mapM_ (stampPatterns alive species popRef rngRef) allPatterns
+  boundsRef <- newSTRef (gridW, gridH, -1, -1)
+  rngRef <- newSTRef soupRngSeed
+  forM_ [seedOy .. seedOy + seedH - 1] $ \y ->
+    forM_ [seedOx .. seedOx + seedW - 1] $ \x ->
+      seedCell alive speciesGrid popRef boundsRef rngRef (y * gridW + x)
+  soupPop <- readSTRef popRef
+  mapM_ (stampPatterns alive speciesGrid popRef boundsRef rngRef) allPatterns
   pop <- readSTRef popRef
-  aliveBA <- freezeGrid alive
-  speciesBA <- freezeGrid species
-  pure (aliveBA, speciesBA, pop)
+  (bx0, by0, bx1, by1) <- readSTRef boundsRef
+  let
+    bounds
+      | bx1 < bx0 = (seedOx, seedOy, seedOx + seedW - 1, seedOy + seedH - 1)
+      | otherwise = (bx0, by0, bx1, by1)
+  catalog <- collectCatalogInBounds alive speciesGrid bounds
+  case bounds of
+    (bx0', by0', bx1', by1') ->
+      pure (catalog, pop, soupPop, bx0', by0', bx1', by1')
+ where
+  collectCatalogInBounds aliveArr speciesGrid (bx0, by0, bx1, by1) =
+    go by0 []
+   where
+    go y acc
+      | y > by1 = pure (reverse acc)
+      | otherwise = goRow bx0 y acc
+    goRow x y acc
+      | x > bx1 = go (y + 1) acc
+      | otherwise = do
+          let
+            i = y * gridW + x
+          a <- readArray aliveArr i
+          if a == 1
+            then do
+              sp <- readArray speciesGrid i
+              goRow (x + 1) y (if sp /= 0 then (i, sp) : acc else acc)
+            else goRow (x + 1) y acc
 
 type Grid s = STUArray s Int Word8
 
 newGrid :: Word8 -> ST s (Grid s)
 newGrid v = newArray (0, gridN - 1) v
 
-freezeGrid :: Grid s -> ST s ByteArray
-freezeGrid arr = packBytes <$> mapM (readArray arr) [0 .. gridN - 1]
-
 seedCell ::
   Grid s
   -> Grid s
   -> STRef s Int
+  -> STRef s (Int, Int, Int, Int)
   -> STRef s Int
   -> Int
   -> ST s ()
-seedCell alive species popRef rngRef i = do
+seedCell alive speciesGrid popRef boundsRef rngRef i = do
+  let
+    x = i `mod` gridW
+    y = i `div` gridW
   rng <- readSTRef rngRef
   let
     (rng', v) = lcg01 rng
   writeSTRef rngRef rng'
-  when (v < 0.20) $ do
+  when (v < soupDensity) $ do
     writeArray alive i 1
-    writeArray species i 0
+    writeArray speciesGrid i 0
     modifySTRef popRef (+ 1)
+    touchBounds boundsRef x y
 
 stampPatterns ::
   Grid s
   -> Grid s
   -> STRef s Int
+  -> STRef s (Int, Int, Int, Int)
   -> STRef s Int
   -> PatternSpec
   -> ST s ()
-stampPatterns alive species popRef rngRef p =
-  replicateM_ (patCount p) (stampOne alive species popRef rngRef p)
+stampPatterns alive speciesGrid popRef boundsRef rngRef p =
+  replicateM_ (patCount p) (stampOne alive speciesGrid popRef boundsRef rngRef p)
 
 stampOne ::
   Grid s
   -> Grid s
   -> STRef s Int
+  -> STRef s (Int, Int, Int, Int)
   -> STRef s Int
   -> PatternSpec
   -> ST s ()
-stampOne alive species popRef rngRef p = do
+stampOne alive speciesGrid popRef boundsRef rngRef p = do
   rng <- readSTRef rngRef
   let
-    (ox, rng1) = lcgRange rng gridW
-    (oy, rng2) = lcgRange rng1 gridH
+    (rng1, ox) = lcgRange rng seedW
+    (rng2, oy) = lcgRange rng1 seedH
+    sid = fromIntegral (patId p) :: Word8
   writeSTRef rngRef rng2
   mapM_
     ( \(dx, dy) ->
-        let
-          x = wrapCoord (ox + dx) gridW
-          y = wrapCoord (oy + dy) gridH
-          i = y * gridW + x
-          sid = fromIntegral (patId p)
-         in
-          stampCell alive species popRef i sid
+        do
+          let
+            x = seedOx + ox + dx
+            y = seedOy + oy + dy
+            i = y * gridW + x
+          when (inGrid x y) $
+            stampCell alive speciesGrid popRef boundsRef i sid x y
     )
     (patCells p)
 
-stampCell :: Grid s -> Grid s -> STRef s Int -> Int -> Word8 -> ST s ()
-stampCell alive species popRef i sid = do
+inGrid :: Int -> Int -> Bool
+inGrid x y = x >= 0 && y >= 0 && x < gridW && y < gridH
+
+stampCell ::
+  Grid s
+  -> Grid s
+  -> STRef s Int
+  -> STRef s (Int, Int, Int, Int)
+  -> Int
+  -> Word8
+  -> Int
+  -> Int
+  -> ST s ()
+stampCell alive speciesGrid popRef boundsRef i sid x y = do
   wasAlive <- readArray alive i
   writeArray alive i 1
-  writeArray species i sid
+  writeArray speciesGrid i sid
   when (wasAlive == 0) (modifySTRef popRef (+ 1))
+  touchBounds boundsRef x y
+
+touchBounds :: STRef s (Int, Int, Int, Int) -> Int -> Int -> ST s ()
+touchBounds ref x y = modifySTRef ref $ \(x0, y0, x1, y1) ->
+  (min x0 x, min y0 y, max x1 x, max y1 y)
 
 bytes :: [Word8] -> ByteArray
 bytes xs = runST go
@@ -758,15 +825,13 @@ bytes xs = runST go
   write i# (W8# w : rest) mba s =
     write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
 
-wrapCoord :: Int -> Int -> Int
-wrapCoord c n = (c `mod` n + n) `mod` n
 
 lcg01 :: Int -> (Int, Double)
 lcg01 s =
   let
-    s' = (1103515245 * s + 12345) `mod` 0x7fffffff
+    s' = (lcgMult * s + lcgInc) `mod` lcgModulus
    in
-    (s', fromIntegral s' / fromIntegral (0x7fffffff :: Int))
+    (s', fromIntegral s' / fromIntegral lcgModulus)
 
 lcgRange :: Int -> Int -> (Int, Int)
 lcgRange s n =

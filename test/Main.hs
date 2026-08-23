@@ -313,7 +313,7 @@ controlFlowTests =
                   )
               )
           )
-          @?= "for (let n0 = 0.0 ; n0 < 3.0 ; n0 ++) {new Uint8Array([0])[n0] = 1.0;}"
+          @?= "for (let n0 = 0.0 ; n0 < 3.0 ; n0 ++) {new Uint8Array(1)[n0] = 1.0;}"
     , testCase "u8Index renders direct Uint8Array indexing" $
         renderJS (pureAST (u8Index (uint8Array (bytes [7, 8, 9])) (number 1)))
           @?= "new Uint8Array([7, 8, 9])[1.0]"
@@ -959,7 +959,7 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = new Uint8Array([0, 0]);\nfill(n0);\nread(n0);"
+          @?= "const n0 = new Uint8Array(2);\nfill(n0);\nread(n0);"
     , testCase "locationHash is window.location.hash, not a bracket key" $ do
         let
           js = T.pack $ renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
@@ -1150,12 +1150,28 @@ goodPartsTests =
     , testCase "uint8Array is new Uint8Array, not a JS Array" $
         renderJS (pureAST (uint8Array sampleArray))
           @?= "new Uint8Array([1, 2, 3])"
-    , testCase "empty uint8Array is new Uint8Array([])" $
+    , testCase "empty uint8Array is new Uint8Array(0)" $
         renderJS (pureAST (uint8Array emptyArray8))
-          @?= "new Uint8Array([])"
+          @?= "new Uint8Array(0)"
+    , testCase "zero-filled uint8Array uses length, not a literal" $
+        renderJS (pureAST (uint8Array (bytes [0, 0, 0])))
+          @?= "new Uint8Array(3)"
     , testCase "newByteArray takes the size, not the bytes" $
         renderJS (effectfulAST (newByteArray (number 4)))
           @?= "(n => new Uint8Array(n))(4.0)"
+    , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      a <- fmap var (toSyntax (newByteArray (number 3)))
+                      s <- fmap var (toSyntax (newByteArray (number 3)))
+                      toSyntax_ (seedLiveCells a s [(0, 1), (2, 5)])
+                      toSyntax noOp
+                  )
+              )
+          )
+          @?= "((a,s,p)=>{for(let k=0;k<p.length;k++){const t=p[k];a[t[0]]=1;s[t[0]]=t[1];}})((n => new Uint8Array(n))(3.0), (n => new Uint8Array(n))(3.0), [[0.0, 1.0], [2.0, 5.0]]);"
     , -- Allocation has identity: folding two occurrences together would
       -- hand the writer and the reader different arrays.
       testCase "multi-use newByteArray stays one allocation (identity)" $

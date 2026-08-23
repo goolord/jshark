@@ -38,6 +38,8 @@ module JShark.Api
 
     -- * Byte arrays
   , newByteArray
+  , seedLiveCells
+  , seedSoupRegion
   , u8Index
   , u8Set
   , u8Fill
@@ -162,6 +164,8 @@ where
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Word (Word8)
 import GHC.TypeLits (KnownSymbol)
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
@@ -293,7 +297,8 @@ false_ = bool False
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
--- | @new Uint8Array([…])@ from a host 'ByteArray'. JS can write the object.
+-- | @new Uint8Array([…])@ from a host 'ByteArray'. All-zero buffers codegen
+-- as @new Uint8Array(n)@; non-zero literals keep the element list.
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
 
@@ -307,6 +312,81 @@ newByteArray ::
   Expr f 'Number -> Effect f 'Uint8Array
 newByteArray n =
   FFI (FFILambda "n => new Uint8Array(n)") (arg n <: RecNil)
+
+-- | Must stay in sync with 'Types' soup seed constants in the Life example.
+soupLcgMult, soupLcgInc, soupLcgModulus :: Int
+soupLcgMult = 1103515245
+soupLcgInc = 12345
+soupLcgModulus = 0x7fffffff
+
+soupDensityLit :: Double
+soupDensityLit = 0.20
+
+soupSeedJs :: Text
+soupSeedJs =
+  T.concat
+    [ "(a,x0,y0,w,h,gw,rng0)=>{let rng=BigInt(rng0|0);for(let y=y0|0;y<y0+h;y++)for(let x=x0|0;x<x0+w;x++){rng=(BigInt("
+    , T.pack (show soupLcgMult)
+    , ")*rng+BigInt("
+    , T.pack (show soupLcgInc)
+    , "))%BigInt("
+    , T.pack (show soupLcgModulus)
+    , ");if(Number(rng)/"
+    , T.pack (show soupLcgModulus)
+    , "<"
+    , T.pack (show soupDensityLit)
+    , ")a[y*gw+x]=1;}}"
+    ]
+
+-- | Stamp live cells into zeroed @alive@ / @species@ buffers. Each pair is
+-- @(linearIndex, speciesId)@; @alive[index]@ is set to @1@.
+seedLiveCells ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> [(Int, Word8)]
+  -> Effect f 'Unit
+seedLiveCells alive species cells =
+  FFI
+    ( FFILambda
+        "(a,s,p)=>{for(let k=0;k<p.length;k++){const t=p[k];a[t[0]]=1;s[t[0]]=t[1];}}"
+    )
+    ( arg alive
+        <: arg species
+        <: arg (indexSpeciesPairs cells)
+        <: RecNil
+    )
+
+-- | Random soup in a rectangular region. Matches 'Patterns.seedCell' LCG (@20%@
+-- live, species untouched — caller should stamp catalog ids afterward).
+seedSoupRegion ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+seedSoupRegion alive seedOx seedOy seedW seedH gridW rng0 =
+  FFI
+    (FFILambda (T.unpack soupSeedJs))
+    ( arg alive
+        <: arg seedOx
+        <: arg seedOy
+        <: arg seedW
+        <: arg seedH
+        <: arg gridW
+        <: arg rng0
+        <: RecNil
+    )
+
+indexSpeciesPairs :: [(Int, Word8)] -> Expr f ('Array ('Array 'Number))
+indexSpeciesPairs pairs =
+  Literal $
+    ValueArray
+      [ ValueArray [ValueNumber (fromIntegral i), ValueNumber (fromIntegral w)]
+      | (i, w) <- pairs
+      ]
 
 u8Index :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number
 u8Index = U8Index

@@ -83,7 +83,7 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
         span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
         span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
       p_ [class_ "help"] $
-        "Space to pause or resume. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle a cell, or drop a spaceship or methuselah. Hover within "
+        "Space to pause or resume. Shift+drag to pan; +/− (or numpad) to zoom. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle a cell, or drop a spaceship or methuselah. Hover within "
           <> toHtml (T.pack (show (hoverRadius * cellPx + cellPx)))
           <> "px of a species for its name. "
           <> "Emergent soup patterns are scanned every 45 generations: "
@@ -91,7 +91,11 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
       p_ $
         "A "
           <> toHtml (T.pack (show (gridW * gridH :: Int)))
-          <> "-cell toroidal universe — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded alongside random soup."
+          <> "-cell universe ("
+          <> toHtml (T.pack (show gridW))
+          <> "×"
+          <> toHtml (T.pack (show gridH))
+          <> ") — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded in the central region alongside random soup. Pan and zoom to explore."
       source
       section_ [class_ "life-index"] $ do
         h2_ "Biomass Index"
@@ -101,8 +105,8 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
 
 shellCss :: T.Text
 shellCss =
-  "html,body.life-shell{margin:0;height:100%;background:#0f172a;overflow:hidden}\
-  \.life-frame{display:block;width:100%;height:100%;border:0;background:#0f172a}"
+  "html,body.life-shell{margin:0;min-height:100%;background:#0f172a;overflow:auto}\
+  \.life-frame{display:block;width:100%;min-height:100vh;height:100vh;border:0;background:#0f172a;overflow:auto}"
 
 bootJs :: T.Text -> T.Text
 bootJs inner =

@@ -9,6 +9,10 @@ module Types
   , gridN
   , canvasW
   , canvasH
+  , seedOx
+  , seedOy
+  , seedW
+  , seedH
   , ink
   , soupSpecies
   , stillMin
@@ -36,6 +40,14 @@ module Types
   , lifeToolsId
   , toggleToolSid
   , hoverRadius
+  , zoomMin
+  , zoomMax
+  , zoomFactor
+  , soupRngSeed
+  , lcgMult
+  , lcgInc
+  , lcgModulus
+  , soupDensity
   , LifeState (..)
   )
 where
@@ -47,17 +59,28 @@ import GHC.Generics (Generic)
 boardId :: Text
 boardId = "life-board"
 
+-- | Simulation grid (world). The canvas is only the viewport.
 gridW, gridH, cellPx :: Int
-gridW = 256
-gridH = 192
+gridW = 1024
+gridH = 768
 cellPx = 3
 
 gridN :: Int
 gridN = gridW * gridH
 
+-- | Viewport size in CSS/bitmap pixels (not the whole world).
 canvasW, canvasH :: Double
-canvasW = fromIntegral (gridW * cellPx)
-canvasH = fromIntegral (gridH * cellPx)
+canvasW = 768
+canvasH = 576
+
+-- | Initial soup and catalog stamps land in this central region.
+seedW, seedH :: Int
+seedW = 512
+seedH = 384
+
+seedOx, seedOy :: Int
+seedOx = (gridW - seedW) `div` 2
+seedOy = (gridH - seedH) `div` 2
 
 ink :: Text
 ink = "#e2e8f0"
@@ -128,6 +151,23 @@ toggleToolSid = 0
 hoverRadius :: Int
 hoverRadius = 2
 
+zoomMin, zoomMax, zoomFactor :: Double
+zoomMin = 0.5
+zoomMax = 6
+zoomFactor = 1.25
+
+-- | Shared with 'JShark.Api.seedSoupRegion' and 'Patterns.seedCell'.
+soupRngSeed :: Int
+soupRngSeed = 42
+
+lcgMult, lcgInc, lcgModulus :: Int
+lcgMult = 1103515245
+lcgInc = 12345
+lcgModulus = 0x7fffffff
+
+soupDensity :: Double
+soupDensity = 0.20
+
 data LifeState = LifeState
   { gen :: Int
   , pop :: Int
@@ -137,6 +177,10 @@ data LifeState = LifeState
   , nextAlive :: ByteArray
   , nextSpecies :: ByteArray
   , palette :: ByteArray
+  , boundX0 :: Int
+  , boundY0 :: Int
+  , boundX1 :: Int
+  , boundY1 :: Int
   , nextDiscover :: Int
   , recentDiscover :: Text
   }

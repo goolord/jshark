@@ -162,7 +162,7 @@ discoverLife alive species palette registry nextId0 = do
   set @"minY" scratch 0
   set @"w" scratch w0
   set @"h" scratch h0
-  set @"minCells" scratch 4
+  set @"minCells" scratch 3
   set @"maxCells" scratch 72
   set @"maxSid" scratch (number (fromIntegral discoverMax))
   regE <- bindExpr registry

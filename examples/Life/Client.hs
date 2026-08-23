@@ -51,6 +51,13 @@ import Types
   , lifeTooltipNameId
   , lifeTooltipSwatchId
   , toggleToolSid
+  , seedH
+  , seedOx
+  , seedOy
+  , seedW
+  , zoomFactor
+  , zoomMax
+  , zoomMin
   )
 
 data Fps = Fps
@@ -84,6 +91,7 @@ boot canvas ctx = do
   nameEl <- Dom.lookupId (string lifeTooltipNameId)
   img <- bindExpr =<< createImageData ctxH (number canvasW) (number canvasH)
   meter <- hold (G.toObject (Fps (-1) 0))
+  viewport <- initViewport
   rectSym <- toSyntax emptyObject
   let
     rectRef = Lift (Var rectSym)
@@ -97,15 +105,15 @@ boot canvas ctx = do
   toolsMap <- initDisturbCatalog
   toolBtns <- Dom.lookupSelector (string ".life-tool")
   toolBtnsE <- bindExpr toolBtns
-  wire canvas state tooltip rectRef tipRef toolRef toolsMap
+  wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport
   wireTools toolRef toolBtnsE
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
     whenS (not_ paused) (stepLife state registry)
     tickIndex state registry indexTracker seenSpecies typesList now
-    renderLife ctxH img state
-    paintHud ctxH state meter
+    renderLife ctxH img viewport state
+    paintHud ctxH state meter viewport
     tickHover tipRef state registry tooltip swatchEl nameEl hits
 
 wire ::
@@ -116,8 +124,9 @@ wire ::
   -> Effect f ('MutableObject ())
   -> Effect f ('MutableObject ())
   -> Effect f ('Map 'Number ('Array ('Array 'Number)))
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-wire canvas state tooltip rectRef tipRef toolRef toolsMap = do
+wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
   _ <- setProp tipRef "over" (number 0)
@@ -141,7 +150,11 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap = do
   addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
   addEventListener "resize" win $ \_ -> stmts refreshRect
   _ <- refreshRect
-  addEventListener "keydown" canvas $ \(e :: Expr f ('MutableObject ())) ->
+  let
+    endDrag = do
+      _ <- setProp viewport "dragging" (number 0)
+      Dom.setStyleProperty canvas "cursor" (string "crosshair")
+  addEventListener "keydown" win $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       code <- getProp' e "code"
       toSyntax $
@@ -155,32 +168,111 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap = do
                   togglePause state
                   done
             )
+          ,
+            ( "Equal"
+            , discard $
+                stmts $ do
+                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+                  zoomBy viewport (number zoomFactor)
+                  done
+            )
+          ,
+            ( "Minus"
+            , discard $
+                stmts $ do
+                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+                  zoomBy viewport (number 1 / number zoomFactor)
+                  done
+            )
+          ,
+            ( "NumpadAdd"
+            , discard $
+                stmts $ do
+                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+                  zoomBy viewport (number zoomFactor)
+                  done
+            )
+          ,
+            ( "NumpadSubtract"
+            , discard $
+                stmts $ do
+                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+                  zoomBy viewport (number 1 / number zoomFactor)
+                  done
+            )
           ]
           noOp
+  addEventListener "mousedown" canvas $ \(e :: Expr f ('MutableObject ())) ->
+    stmts $ do
+      toSyntax_ $ callMethod canvas "focus" RecNil
+      btn <- getProp' e "button"
+      shift <- getProp' e "shiftKey"
+      whenS (shift .&& btn .== 0) $ do
+        toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+        cx <- getProp' e "clientX"
+        cy <- getProp' e "clientY"
+        _ <- setProp viewport "dragging" (number 1)
+        _ <- setProp viewport "dragX" cx
+        _ <- setProp viewport "dragY" cy
+        _ <- setProp viewport "dragStartX" cx
+        _ <- setProp viewport "dragStartY" cy
+        _ <- setProp viewport "moved" (number 0)
+        Dom.setStyleProperty canvas "cursor" (string "grabbing")
+  addEventListener "mouseup" canvas $ \_ -> stmts endDrag
+  addEventListener "mouseup" win $ \_ -> stmts endDrag
   addEventListener "click" canvas $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
-      cx <- getProp' e "clientX"
-      cy <- getProp' e "clientY"
-      (gx, gy) <- gridFromClient rectRef cx cy
-      applyClick state toolRef toolsMap gx gy
+      moved <- getProp viewport "moved"
+      whenS (moved .== 0) $ do
+        cx <- getProp' e "clientX"
+        cy <- getProp' e "clientY"
+        (gx, gy) <- gridFromClient rectRef viewport cx cy
+        applyClick state toolRef toolsMap gx gy
+      _ <- setProp viewport "moved" (number 0)
+      done
   addEventListener "mousemove" canvas $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       cx <- getProp' e "clientX"
       cy <- getProp' e "clientY"
-      (gx, gy) <- gridFromClient rectRef cx cy
-      let
-        w = number (fromIntegral gridW)
-        h = number (fromIntegral gridH)
-      _ <- setProp tipRef "cx" cx
-      _ <- setProp tipRef "cy" cy
-      _ <- setProp tipRef "gx" gx
-      _ <- setProp tipRef "gy" gy
-      setProp
-        tipRef
-        "over"
-        (if_ (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) (number 1) (number 0))
+      dragging <- getProp viewport "dragging"
+      ifS
+        (dragging .== 1)
+        ( do
+            dragX <- getProp viewport "dragX"
+            dragY <- getProp viewport "dragY"
+            panX <- getProp viewport "panX"
+            panY <- getProp viewport "panY"
+            _ <- setProp viewport "panX" (panX + cx - dragX)
+            _ <- setProp viewport "panY" (panY + cy - dragY)
+            _ <- setProp viewport "dragX" cx
+            _ <- setProp viewport "dragY" cy
+            startX <- getProp viewport "dragStartX"
+            startY <- getProp viewport "dragStartY"
+            let
+              dx = cx - startX
+              dy = cy - startY
+            whenS (dx * dx + dy * dy .> 9) $
+              setProp viewport "moved" (number 1)
+        )
+        ( do
+            (gx, gy) <- gridFromClient rectRef viewport cx cy
+            let
+              w = number (fromIntegral gridW)
+              h = number (fromIntegral gridH)
+            _ <- setProp tipRef "cx" cx
+            _ <- setProp tipRef "cy" cy
+            _ <- setProp tipRef "gx" gx
+            _ <- setProp tipRef "gy" gy
+            setProp
+              tipRef
+              "over"
+              (if_ (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) (number 1) (number 0))
+        )
   addEventListener "mouseleave" canvas $ \_ ->
-    stmts $ setProp tipRef "over" (number 0)
+    stmts $ do
+      _ <- setProp tipRef "over" (number 0)
+      endDrag
+  toSyntax_ $ callMethod canvas "focus" RecNil
   done
 
 hideTooltip ::
@@ -375,16 +467,58 @@ collectNearby alive species w h gx gy hits tipRef = do
 
 gridFromClient ::
   Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f 'Number)
-gridFromClient rectRef cx cy = do
+gridFromClient rectRef viewport cx cy = do
   left <- getProp rectRef "left"
   top <- getProp rectRef "top"
+  panX <- getProp viewport "panX"
+  panY <- getProp viewport "panY"
+  zoom <- getProp viewport "zoom"
+  let
+    px = number (fromIntegral cellPx)
   pure
-    ( Math.floor ((cx - left) / number (fromIntegral cellPx))
-    , Math.floor ((cy - top) / number (fromIntegral cellPx))
+    ( Math.floor ((cx - left - panX) / zoom / px)
+    , Math.floor ((cy - top - panY) / zoom / px)
     )
+
+initViewport :: EffectSyntax f (Effect f ('MutableObject ()))
+initViewport = do
+  viewport <- hold newObject
+  let
+    cx = number (fromIntegral (seedOx + seedW `div` 2))
+    cy = number (fromIntegral (seedOy + seedH `div` 2))
+    px = number (fromIntegral cellPx)
+  _ <- setProp viewport "panX" (number (canvasW / 2) - cx * px)
+  _ <- setProp viewport "panY" (number (canvasH / 2) - cy * px)
+  _ <- setProp viewport "zoom" (number 1)
+  _ <- setProp viewport "dragging" (number 0)
+  _ <- setProp viewport "dragX" (number 0)
+  _ <- setProp viewport "dragY" (number 0)
+  _ <- setProp viewport "dragStartX" (number 0)
+  _ <- setProp viewport "dragStartY" (number 0)
+  _ <- setProp viewport "moved" (number 0)
+  pure viewport
+
+zoomBy ::
+  Effect f ('MutableObject ()) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+zoomBy viewport factor = do
+  z0 <- getProp viewport "zoom"
+  let
+    z1 =
+      Math.max
+        (number zoomMin)
+        (Math.min (number zoomMax) (z0 * factor))
+    cx = number (canvasW / 2)
+    cy = number (canvasH / 2)
+  whenS (z1 .!= z0) $ do
+    panX0 <- getProp viewport "panX"
+    panY0 <- getProp viewport "panY"
+    _ <- setProp viewport "zoom" z1
+    _ <- setProp viewport "panX" (cx - (cx - panX0) * z1 / z0)
+    setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
 
 initTool :: EffectSyntax f (Effect f ('MutableObject ()))
 initTool = do
@@ -460,28 +594,36 @@ paintHud ::
   Effect f ('MutableObject Canvas.Context2D)
   -> Effect f (MutableObjectOf LifeState)
   -> Effect f (MutableObjectOf Fps)
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-paintHud ctx state meter = do
+paintHud ctx state meter viewport = do
   gen <- state.gen
   pop <- state.pop
   paused <- state.paused
   fpsN <- meter.fps
+  zoom <- getProp viewport "zoom"
+  let
+    zoomPct = Math.round (zoom * number 100)
   set @"font" ctx (string "15px Georgia")
+  _ <- setProp ctx "textBaseline" (string "top")
   fill ctx (string ink)
-  _ <-
-    Canvas.fillText
-      ctx
-      (string "Gen: " <> toString gen <> string "  Cells: " <> toString pop)
-      8
-      18
+  _ <- Canvas.fillText ctx (string "Gen: " <> toString gen) 8 18
+  _ <- Canvas.fillText ctx (string "Cells: " <> toString pop) 8 36
   set @"textAlign" ctx (string "center")
   _ <-
     Canvas.fillText ctx (string "FPS: " <> toString fpsN) (number (canvasW / 2)) 18
   set @"textAlign" ctx (string "right")
+  _ <-
+    Canvas.fillText
+      ctx
+      (string "Zoom: " <> toString zoomPct <> string "%")
+      (number (canvasW - 8))
+      36
   ifS
     paused
     (Canvas.fillText ctx (string "paused") (number (canvasW - 8)) 18)
     (Canvas.fillText ctx (string "running") (number (canvasW - 8)) 18)
+  set @"textAlign" ctx (string "left")
   done
 
 tickFps ::

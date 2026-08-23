@@ -37,6 +37,7 @@ import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Support
+import Life (initialCatalogCells, initialPop, soupSeedPop)
 import System.Directory (findExecutable)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -163,6 +164,18 @@ bunEvalTests =
                     )
                 )
                 "true"
+            , effectCase
+                "catalog seed stamps non-zero species"
+                catalogSeedSpecies
+                "46"
+            , effectCase
+                "soup seed pop matches Haskell reference"
+                soupSeedPopTest
+                (show soupSeedPop)
+            , effectCase
+                "full init pop matches Haskell reference"
+                fullInitPopTest
+                (show initialPop)
             , bunCase "Uint8Array contents" (uint8Array (bytes [1, 2, 3]))
             , bunCase
                 "Uint8Array Eq"
@@ -480,3 +493,61 @@ encodeJSNumber d
 
 encodeJSString :: String -> String
 encodeJSString s = '"' : escapeJsString s ++ "\""
+
+countAlive :: forall f. Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Number)
+countAlive buf = do
+  popRef <- hold newObject
+  _ <- setProp popRef "n" (number 0)
+  _ <- forRange_ (number 0) (u8Len buf) $ \i -> do
+    whenS (u8Index buf i .== 1) $ do
+      n <- getProp popRef "n"
+      setProp popRef "n" (n + 1)
+  getProp popRef "n"
+
+catalogSeedSpecies :: forall f. Effect f 'Number
+catalogSeedSpecies = fromSyntax $ do
+  a <- fmap var (toSyntax (newByteArray (number 786432)))
+  s <- fmap var (toSyntax (newByteArray (number 786432)))
+  toSyntax_ $
+    seedSoupRegion
+      a
+      (number 256)
+      (number 192)
+      (number 512)
+      (number 384)
+      (number 1024)
+      (number 42)
+  toSyntax_ (seedLiveCells a s initialCatalogCells)
+  yield (u8Index s (number 196928))
+
+soupSeedPopTest :: forall f. Effect f 'Number
+soupSeedPopTest = fromSyntax $ do
+  a <- fmap var (toSyntax (newByteArray (number 786432)))
+  toSyntax_ $
+    seedSoupRegion
+      a
+      (number 256)
+      (number 192)
+      (number 512)
+      (number 384)
+      (number 1024)
+      (number 42)
+  pop <- countAlive a
+  yield pop
+
+fullInitPopTest :: forall f. Effect f 'Number
+fullInitPopTest = fromSyntax $ do
+  a <- fmap var (toSyntax (newByteArray (number 786432)))
+  s <- fmap var (toSyntax (newByteArray (number 786432)))
+  toSyntax_ $
+    seedSoupRegion
+      a
+      (number 256)
+      (number 192)
+      (number 512)
+      (number 384)
+      (number 1024)
+      (number 42)
+  toSyntax_ (seedLiveCells a s initialCatalogCells)
+  pop <- countAlive a
+  yield pop
