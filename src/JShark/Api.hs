@@ -21,6 +21,9 @@ module JShark.Api
   , Arg (..)
   , Field
   , Comparable
+  , KnownScalar
+  , structuralEq
+  , structuralNEq
   , GroupBy
 
     -- * Literals
@@ -583,9 +586,9 @@ infixr 3 .&&
 
 infixr 2 .||
 
-(.==), (.!=) :: Expr f a -> Expr f a -> Expr f 'Bool
-(.==) = Eq
-(.!=) = NEq
+(.==), (.!=) :: KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+(.==) = mkEq
+(.!=) = mkNEq
 
 (.>)
   , (.<)

@@ -37,6 +37,7 @@ import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
+import JShark.Types (jsHelperValueEq)
 import LucidTests (lucidDomTests)
 import Support
 import System.Directory
@@ -94,12 +95,12 @@ evaluatorTests =
           o2 =
             Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 2)] ::
               Expr f ('Object LitRow)
-        case evaluate (o1 .== o2) of
+        case evaluate (structuralEq o1 o2) of
           ValueBool b -> b @?= True
         T.isInfixOf
           "$deepEqual"
           ( T.pack
-              (renderJS (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> a .== b))))
+              (renderJS (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b))))
           )
           @?= True
     , testCase "GetField of FrozenLit evaluates" $
@@ -140,9 +141,9 @@ evaluatorTests =
         case evaluate (Show (ok (number 5) :: Expr f ('Result 'String 'Number))) of
           ValueString s -> s @?= "[object Object]"
     , testCase "Uint8Array literals compare by contents" $ do
-        case evaluate (uint8Array (bytes [1, 2, 3]) .== uint8Array (bytes [1, 2, 3])) of
+        case evaluate (structuralEq (uint8Array (bytes [1, 2, 3])) (uint8Array (bytes [1, 2, 3]))) of
           ValueBool b -> b @?= True
-        case evaluate (uint8Array (bytes [1, 2]) .== uint8Array (bytes [1, 2, 3])) of
+        case evaluate (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2, 3]))) of
           ValueBool b -> b @?= False
     , testCase "Show of Uint8Array is comma-joined bytes" $
         case evaluate (Show (uint8Array sampleArray)) of
@@ -645,7 +646,7 @@ stdlibTests =
             T.pack
               ( renderJS
                   ( pureProgram
-                      (toLambda (\(a :: Expr f u) (b :: Expr f u) -> (a .== b) .|| (b .== a)))
+                      (toLambda (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a)))
                   )
               )
         T.count "const $valueEq" js @?= 1
@@ -1010,14 +1011,35 @@ stdlibTests =
                 )
         T.count "const $valueEq" js @?= 0
         T.isInfixOf "===" js @?= True
+    , testCase "bound Number .== uses === (not $valueEq)" $ do
+        let
+          js =
+            T.pack $
+              renderJS
+                (pureAST (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1)))
+        T.isInfixOf "$valueEq" js @?= False
+        T.isInfixOf "===" js @?= True
+    , testCase "$valueEq helper includes null/object fast-path" $ do
+        let
+          (_, body) = jsHelperValueEq
+        T.isInfixOf "typeof" (T.pack body) @?= True
+        T.isInfixOf "null" (T.pack body) @?= True
+    , testCase "frozen Number literals fold to === in .==" $ do
+        let
+          js =
+            T.pack $
+              renderJS
+                (pureAST (number 1 .== number 1))
+        T.isInfixOf "true" js @?= True
+        T.isInfixOf "$valueEq" js @?= False
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
         let
-          js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.==)))
+          js = T.pack $ renderJS (effectfulAST (with2 fooE barE structuralEq))
         T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf " == " js @?= False
     , testCase ".!= is !$valueEq" $ do
         let
-          js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.!=)))
+          js = T.pack $ renderJS (effectfulAST (with2 fooE barE structuralNEq))
         T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf "!($valueEq(" js @?= True
     , testCase "ffi takes an effectful function via ArgEffect" $
@@ -1314,7 +1336,8 @@ genericTests =
                 )
         T.isInfixOf ".tag" js @?= True
         T.isInfixOf "\"Red\"" js @?= True
-        T.isInfixOf "$valueEq" js @?= True
+        T.isInfixOf "===" js @?= True
+        T.isInfixOf "$valueEq" js @?= False
     , testCase "whenTag unary payload is the value" $
         T.isInfixOf
           ".payload"
@@ -1359,7 +1382,8 @@ genericTests =
                     )
                 )
         T.isInfixOf ".tag" js @?= True
-        T.isInfixOf "$valueEq" js @?= True
+        T.isInfixOf "===" js @?= True
+        T.isInfixOf "$valueEq" js @?= False
         T.isInfixOf "\"Red\"" js @?= True
         T.isInfixOf "\"Green\"" js @?= True
         T.isInfixOf "\"Blue\"" js @?= True
@@ -1523,7 +1547,7 @@ optimizeTests =
         renderJS (pureAST (if_ (bool True) (number 1) (number 99)))
           @?= "1.0"
     , testCase "false && folds the RHS" $
-        renderJS (pureAST (And (bool False) (Eq (number 1) (number 0))))
+        renderJS (pureAST (And (bool False) (number 1 .== number 0)))
           @?= "false"
     , testCase "while false becomes a no-op" $
         renderJS (effectfulAST (while_ (expr (bool False)) (ffi "foo" RecNil)))

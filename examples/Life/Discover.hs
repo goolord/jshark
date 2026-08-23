@@ -9,6 +9,7 @@ module Discover
   , IndexTracker
   , initRegistry
   , initIndexTracker
+  , initIndexContainer
   , initSeenSpecies
   , discoverLife
   , stepIndexTracker
@@ -16,17 +17,12 @@ module Discover
 where
 
 import Catalog (catalogNamesJson, knownCatalogJson)
-import Grid (u8Get)
 import JShark.Api
-import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
-import qualified JShark.Json as Json
-import qualified JShark.Map as Map
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import JShark.Types (Effect (Lift), Expr (Var))
-import Names (nameOfSid)
-import Types (gridN, indexRefreshMs)
+import Types (indexRefreshMs, lifeIndexHostId, lifeTypesListId, manualSpecies, soupSpecies)
 
 data Registry
 
@@ -37,8 +33,111 @@ initIndexTracker ::
 initIndexTracker =
   hold $
     ffi
-      "(() => ({ lastMs: 0, lastFp: '' }))"
+      "(() => ({ lastMs: 0, lastFp: '', pending: false }))"
       RecNil
+
+-- | Closed shadow root keeps index DOM mutations off the document tree so
+--   document-level extension observers (e.g. video scanners) are not invoked.
+--   Index styles are inlined here (duplicated from @life.css@) so the shadow
+--   index can evolve independently of the page stylesheet.
+initIndexContainer ::
+  EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+initIndexContainer =
+  hold $
+    ffi
+      ( "((hostId, listId) => {"
+          <> "const host = document.getElementById(hostId);"
+          <> "if (!host) throw new Error('missing index host: ' + hostId);"
+          <> "let root = host.shadowRoot;"
+          <> "if (!root) {"
+          <> "  root = host.attachShadow({ mode: 'closed' });"
+          <> "  const style = document.createElement('style');"
+          <> "  style.textContent = '"
+          <> ".life-index-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));"
+          <> "gap:0.35rem 2rem;font-size:0.85rem;color:#94a3b8;text-align:left}"
+          <> ".index-row{display:grid;grid-template-columns:auto 1fr auto;gap:0.45rem;align-items:center}"
+          <> ".index-row-dead{opacity:0.45}"
+          <> ".index-row-dead .index-name,.index-row-dead .index-count{color:#64748b}"
+          <> ".index-row-dead .swatch{filter:grayscale(1)}"
+          <> ".index-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cbd5e1}"
+          <> ".index-count{font-variant-numeric:tabular-nums;color:#cbd5e1}"
+          <> ".swatch{width:0.75rem;height:0.75rem;border-radius:1px;display:inline-block;flex-shrink:0}"
+          <> "';"
+          <> "  const grid = document.createElement('div');"
+          <> "  grid.id = listId;"
+          <> "  grid.className = 'life-index-grid';"
+          <> "  root.appendChild(style);"
+          <> "  root.appendChild(grid);"
+          <> "}"
+          <> "const el = root.getElementById(listId);"
+          <> "if (!el) throw new Error('missing index grid: ' + listId);"
+          <> "return el;"
+          <> "})"
+      )
+      (arg (string lifeIndexHostId) <: arg (string lifeTypesListId) <: RecNil)
+
+stepIndexTrackerJs :: String
+stepIndexTrackerJs =
+  "((alive, species, palette, registry, tracker, seen, container, now, refreshMs, soupSid, manualSid) => {"
+    ++ "if (tracker.pending) return;"
+    ++ "const lastMs = tracker.lastMs;"
+    ++ "if (lastMs !== 0 && now - lastMs < refreshMs) return;"
+    ++ "tracker.pending = true;"
+    ++ "const escHtml = (s) => String(s)"
+    ++ "  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')"
+    ++ "  .replace(/\"/g,'&quot;').replace(/'/g,'&#39;');"
+    ++ "const displayName = (sid) => {"
+    ++ "  const cache = registry.displayCache;"
+    ++ "  if (cache.has(sid)) return cache.get(sid);"
+    ++ "  const catalog = registry.catalogNames;"
+    ++ "  if (catalog.has(sid)) return catalog.get(sid);"
+    ++ "  const names = registry.names;"
+    ++ "  if (names.has(sid)) return names.get(sid);"
+    ++ "  if (sid === soupSid) return 'Soup';"
+    ++ "  if (sid === manualSid) return 'Manual';"
+    ++ "  return 'Type ' + sid;"
+    ++ "};"
+    ++ "const run = () => {"
+    ++ "  try {"
+    ++ "    const counts = new Map();"
+    ++ "    for (let i = 0; i < alive.length; i++) {"
+    ++ "      if (alive[i] !== 1) continue;"
+    ++ "      const sid = species[i];"
+    ++ "      seen.add(sid);"
+    ++ "      counts.set(sid, (counts.get(sid) || 0) + 1);"
+    ++ "    }"
+    ++ "    const rows = [];"
+    ++ "    for (const sid of seen) rows.push([sid, counts.get(sid) || 0]);"
+    ++ "    rows.sort((a, b) => b[1] !== a[1] ? b[1] - a[1] : a[0] - b[0]);"
+    ++ "    let fp = '';"
+    ++ "    for (let i = 0; i < rows.length; i++) {"
+    ++ "      const sid = rows[i][0], cnt = rows[i][1];"
+    ++ "      fp += (i ? ',' : '') + sid + ':' + cnt + ':' + displayName(sid);"
+    ++ "    }"
+    ++ "    if (fp !== tracker.lastFp) {"
+    ++ "      tracker.lastFp = fp;"
+    ++ "      let html = '';"
+    ++ "      for (let i = 0; i < rows.length; i++) {"
+    ++ "        const sid = rows[i][0], cnt = rows[i][1];"
+    ++ "        const nm = displayName(sid);"
+    ++ "        const base = sid * 3;"
+    ++ "        const rgb = `rgb(${palette[base]},${palette[base + 1]},${palette[base + 2]})`;"
+    ++ "        const dead = cnt === 0 ? ' index-row-dead' : '';"
+    ++ "        html += `<div class=\"index-row${dead}\">"
+    ++ "<span class=\"swatch\" style=\"background:${rgb}\"></span>"
+    ++ "<span class=\"index-name\">${escHtml(nm)}</span>"
+    ++ "<span class=\"index-count\">${cnt}</span></div>`;"
+    ++ "      }"
+    ++ "      container.innerHTML = html;"
+    ++ "    }"
+    ++ "    tracker.lastMs = now;"
+    ++ "  } finally {"
+    ++ "    tracker.pending = false;"
+    ++ "  }"
+    ++ "};"
+    ++ "if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: refreshMs });"
+    ++ "else run();"
+    ++ "})"
 
 initSeenSpecies :: EffectSyntax f (Effect f ('Set Number))
 initSeenSpecies = do
@@ -49,29 +148,25 @@ initRegistry ::
   EffectSyntax f (Effect f ('MutableObject Registry))
 initRegistry =
   hold $
-    fromSyntax $
-      do
-        knownArr <- bindExpr (Json.unsafeParse (string knownCatalogJson))
-        known <- toSyntax (Map.fromEntries knownArr)
-        namesArr <- bindExpr (Json.unsafeParse (string catalogNamesJson))
-        catalogNames <- toSyntax (Map.fromEntries namesArr)
-        seen <- toSyntax Map.new
-        names <- toSyntax Map.new
-        takenNames <- toSyntax Set.new
-        displayCache <- toSyntax Map.new
-        toSyntax $
-          ffi
-            ( "(({ known, catalogNames, seen, names, takenNames, displayCache }) =>"
-                <> " ({ known, catalogNames, seen, names, takenNames, displayCache }))"
-            )
-            ( ArgEffect (Lift (Var known))
-                <: ArgEffect (Lift (Var catalogNames))
-                <: ArgEffect (Lift (Var seen))
-                <: ArgEffect (Lift (Var names))
-                <: ArgEffect (Lift (Var takenNames))
-                <: ArgEffect (Lift (Var displayCache))
-                <: RecNil
-            )
+    ffi
+      ( "((catalogJson, namesJson) => {"
+          <> "const known = new Map(JSON.parse(catalogJson));"
+          <> "const catalogNames = new Map(JSON.parse(namesJson));"
+          <> "const displayCache = new Map(catalogNames);"
+          <> "displayCache.set("
+          <> show soupSpecies
+          <> ", 'Soup');"
+          <> "displayCache.set("
+          <> show manualSpecies
+          <> ", 'Manual');"
+          <> "return {"
+          <> " known, catalogNames,"
+          <> " seen: new Map(), names: new Map(),"
+          <> " takenNames: new Set(), displayCache"
+          <> "};"
+          <> "})"
+      )
+      (arg (string knownCatalogJson) <: arg (string catalogNamesJson) <: RecNil)
 
 discoverLife ::
   Expr f 'Uint8Array
@@ -191,119 +286,21 @@ stepIndexTracker ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 stepIndexTracker alive species palette registry tracker seen container now = do
-  _ <-
-    forRange_ (number 0) (number (fromIntegral gridN)) $ \i -> do
-      a <- u8Get alive i
-      whenS (a .== 1) $ do
-        sid <- u8Get species i
-        _ <- Set.insert seen sid
-        done
-  lastMs <- getProp tracker "lastMs"
-  let
-    refresh = number (fromIntegral indexRefreshMs)
-  _ <-
-    whenS (lastMs .== 0 .|| (now - lastMs) .>= refresh) $
-      Map.withMap $ \current -> do
-        _ <- setProp tracker "lastMs" now
-        _ <-
-          forRange_ (number 0) (number (fromIntegral gridN)) $ \i -> do
-            a <- u8Get alive i
-            whenS (a .== 1) $ do
-              sid <- u8Get species i
-              prev <- Map.lookup current sid
-              let
-                next = orElse prev (number 0) + 1
-              _ <- Map.insert current sid next
-              done
-        rowsRef <- bindExpr (Array.fromEffects [])
-        namesSym <- toSyntax Map.new
-        let
-          namesBySid = Lift (Var namesSym)
-        _ <-
-          Set.mapM_
-            ( \sid -> do
-                cnt <- Map.lookup current sid
-                let
-                  n = orElse cnt (number 0)
-                nm <- nameOfSid sid registry
-                _ <- Map.insert namesBySid sid nm
-                row <-
-                  bindExpr $
-                    ffi
-                      "((a, b) => [a, b])"
-                      (arg sid <: arg n <: RecNil)
-                Array.push_ rowsRef row
-            )
-            seen
-        _ <-
-          bindExpr $
-            Array.sort rowsRef $ \a b ->
-              let_ (Array.index a (number 1)) $ \cntA ->
-                let_ (Array.index b (number 1)) $ \cntB ->
-                  if_
-                    (cntB .== cntA)
-                    (Array.index a (number 0) - Array.index b (number 0))
-                    (cntB - cntA)
-        parts <-
-          bindExpr $
-            Array.mapE rowsRef $ \row ->
-              fromSyntax $ do
-                sid <- pure (Array.index row (number 0))
-                cnt <- pure (Array.index row (number 1))
-                nm <- Map.lookup namesBySid sid
-                toSyntax $
-                  expr
-                    ( toString sid
-                        <> string ":"
-                        <> toString cnt
-                        <> string ":"
-                        <> orElse nm (string "?")
-                    )
-        fp <- pure (Array.join parts (string ","))
-        lastFp <- getProp tracker "lastFp"
-        _ <-
-          whenS (fp .!= lastFp) $ do
-            _ <- Dom.replaceChildren container
-            _ <-
-              forRange_ (number 0) (Array.length rowsRef) $ \i -> do
-                row <- pure (Array.index rowsRef i)
-                sid <- pure (Array.index row (number 0))
-                cnt <- pure (Array.index row (number 1))
-                nm <- Map.lookup namesBySid sid
-                let
-                  label = orElse nm (string "?")
-                rowEl <- Dom.createElement (string "div")
-                _ <- Dom.classAdd rowEl (string "index-row")
-                -- cnt==0: seen before but extinct on the current board
-                _ <- whenS (cnt .== 0) (Dom.classAdd rowEl (string "index-row-dead"))
-                swatch <- Dom.createElement (string "span")
-                _ <- Dom.classAdd swatch (string "swatch")
-                let
-                  base = sid * number 3
-                r <- u8Get palette base
-                g <- u8Get palette (base + 1)
-                b <- u8Get palette (base + 2)
-                rgb <-
-                  pure
-                    ( string "rgb("
-                        <> toString r
-                        <> string ","
-                        <> toString g
-                        <> string ","
-                        <> toString b
-                        <> string ")"
-                    )
-                _ <- Dom.setStyleProperty swatch "background" rgb
-                nameEl <- Dom.createElement (string "span")
-                _ <- Dom.classAdd nameEl (string "index-name")
-                _ <- Dom.setTextContent nameEl label
-                countEl <- Dom.createElement (string "span")
-                _ <- Dom.classAdd countEl (string "index-count")
-                _ <- Dom.setTextContent countEl (toString cnt)
-                _ <- Dom.appendChild rowEl swatch
-                _ <- Dom.appendChild rowEl nameEl
-                _ <- Dom.appendChild rowEl countEl
-                Dom.appendChild container rowEl
-            setProp tracker "lastFp" fp
-        toSyntax noOp
+  toSyntax_ $
+    discard $
+      ffi
+        stepIndexTrackerJs
+        ( arg alive
+            <: arg species
+            <: arg palette
+            <: ArgEffect registry
+            <: ArgEffect tracker
+            <: ArgEffect seen
+            <: ArgEffect container
+            <: arg now
+            <: arg (number (fromIntegral indexRefreshMs))
+            <: arg (number (fromIntegral soupSpecies))
+            <: arg (number (fromIntegral manualSpecies))
+            <: RecNil
+        )
   done

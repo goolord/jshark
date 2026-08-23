@@ -109,6 +109,8 @@ module JShark
   , renderJS
   , renderJSCompact
   , escapeJsString
+  , structuralEq
+  , structuralNEq
   )
 where
 
@@ -663,8 +665,8 @@ evalKernel rec = \case
   KOr x y -> do
     a <- rec x
     if unBool a then pure (ValueBool True) else rec y
-  KEq x y -> ValueBool <$> (valueEq <$> rec x <*> rec y)
-  KNEq x y -> ValueBool . not <$> (valueEq <$> rec x <*> rec y)
+  KEq _ x y -> ValueBool <$> (valueEq <$> rec x <*> rec y)
+  KNEq _ x y -> ValueBool . not <$> (valueEq <$> rec x <*> rec y)
   KGTh x y -> ValueBool . (== GT) <$> (valueCompare <$> rec x <*> rec y)
   KLTh x y -> ValueBool . (== LT) <$> (valueCompare <$> rec x <*> rec y)
   KGTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> rec x <*> rec y)
@@ -1421,8 +1423,8 @@ mapKernel ge = \case
   KTypeOf x -> KTypeOf (ge x)
   KAnd x y -> KAnd (ge x) (ge y)
   KOr x y -> KOr (ge x) (ge y)
-  KEq x y -> KEq (ge x) (ge y)
-  KNEq x y -> KNEq (ge x) (ge y)
+  KEq structural x y -> KEq structural (ge x) (ge y)
+  KNEq structural x y -> KNEq structural (ge x) (ge y)
   KGTh x y -> KGTh (ge x) (ge y)
   KLTh x y -> KLTh (ge x) (ge y)
   KGTEq x y -> KGTEq (ge x) (ge y)
@@ -1542,8 +1544,8 @@ foldKernel se le = \case
   KTypeOf x -> se x
   KAnd x y -> se x <> le y
   KOr x y -> se x <> le y
-  KEq x y -> se x <> se y
-  KNEq x y -> se x <> se y
+  KEq _ x y -> se x <> se y
+  KNEq _ x y -> se x <> se y
   KGTh x y -> se x <> se y
   KLTh x y -> se x <> se y
   KGTEq x y -> se x <> se y
@@ -1906,10 +1908,10 @@ foldCmp cmp ok k x y = case (x, y) of
   _ -> k x y
 
 foldEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldEq = foldFrozenEq valueEq Eq
+foldEq = foldFrozenEq valueEq structuralEq
 
 foldNEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldNEq = foldFrozenEq (\a b -> not (valueEq a b)) NEq
+foldNEq = foldFrozenEq (\a b -> not (valueEq a b)) structuralNEq
 
 foldFrozenEq ::
   (forall a. Value a -> Value a -> Bool)
@@ -2406,8 +2408,14 @@ optKernel t0 = \case
             (t2, y') = optExpr t1 y
            in
             (t2, foldOr x' y')
-  KEq x y -> optBin t0 foldEq x y
-  KNEq x y -> optBin t0 foldNEq x y
+  KEq structural x y ->
+    optBin t0 (foldFrozenEq valueEq (\a b -> Std (Kernel (KEq structural a b)))) x y
+  KNEq structural x y ->
+    optBin
+      t0
+      (foldFrozenEq (\a b -> not (valueEq a b)) (\a b -> Std (Kernel (KNEq structural a b))))
+      x
+      y
   KGTh x y -> optBin t0 (foldOrd GT GTh) x y
   KLTh x y -> optBin t0 (foldOrd LT LTh) x y
   KGTEq x y -> optBin t0 (foldOrdNeq LT GTEq) x y
@@ -3404,13 +3412,13 @@ renderKernel s0 = \case
       (s1, Code x1Decl $ "-" <> P.parens x1Ref)
   KAnd x y -> renderBin "&&" s0 x y
   KOr x y -> renderBin "||" s0 x y
-  KEq x y
-    | needsStructuralEq x || needsStructuralEq y ->
+  KEq structural x y
+    | structural ->
         renderBinApp jsValueEq (useEqHelpers s0) x y
     | otherwise ->
         renderBin "===" s0 x y
-  KNEq x y
-    | needsStructuralEq x || needsStructuralEq y ->
+  KNEq structural x y
+    | structural ->
         renderBinApp jsValueNEq (useEqHelpers s0) x y
     | otherwise ->
         renderBin "!==" s0 x y

@@ -318,14 +318,14 @@ instance Foldable Array where
   foldl f z xs = A.reduce xs z f
   null xs = A.length xs .== Literal (ValueNumber 0)
   length = A.length
-  elem x = any (x .==)
+  elem x = any (structuralEq x)
 
 instance Foldable Option where
   foldr f z o = optionCase o z (\x -> f x z)
   foldl f z o = optionCase o z (\x -> f z x)
   null o = optionCase o (Literal (ValueBool True)) (\_ -> Literal (ValueBool False))
   length o = optionCase o (Literal (ValueNumber 0)) (\_ -> Literal (ValueNumber 1))
-  elem x o = optionCase o (Literal (ValueBool False)) (x .==)
+  elem x o = optionCase o (Literal (ValueBool False)) (structuralEq x)
 
 instance Foldable (Result e) where
   foldr f z r = resultCase r (const z) (\x -> f x z)
@@ -333,7 +333,7 @@ instance Foldable (Result e) where
   null r =
     resultCase r (\_ -> Literal (ValueBool True)) (\_ -> Literal (ValueBool False))
   length r = resultCase r (\_ -> Literal (ValueNumber 0)) (\_ -> Literal (ValueNumber 1))
-  elem x r = resultCase r (\_ -> Literal (ValueBool False)) (x .==)
+  elem x r = resultCase r (\_ -> Literal (ValueBool False)) (structuralEq x)
 
 fold ::
   (Foldable t, P.Monoid (Expr f m)) => Expr f (t m) -> Expr f m

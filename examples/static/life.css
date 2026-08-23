@@ -114,3 +114,49 @@ a {
   display: inline-block;
   flex-shrink: 0;
 }
+
+.life-tooltip {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  display: block;
+  visibility: hidden;
+  left: 0;
+  top: 0;
+  padding: 0.25rem 0.45rem;
+  border-radius: 3px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  max-width: min(20rem, calc(100vw - 2rem));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.life-tooltip-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.life-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.life-tooltip-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 1px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.life-tooltip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -88,6 +88,11 @@ module JShark.Types
   , ClosedExpr
   , ClosedEffect
   , Comparable
+  , KnownScalar
+  , mkEq
+  , mkNEq
+  , structuralEq
+  , structuralNEq
   , mkGTh
   , mkLTh
   , mkGTEq
@@ -576,8 +581,10 @@ data Kernel :: (Universe -> Type) -> Universe -> Type where
     Expr f 'Bool
     -> Expr f 'Bool
     -> Kernel f 'Bool
-  KEq :: Expr f a -> Expr f a -> Kernel f 'Bool
-  KNEq :: Expr f a -> Expr f a -> Kernel f 'Bool
+  -- | First flag is 'True' when codegen must emit '$valueEq'.
+  -- Scalars ('Number', 'String', 'Bool', …) pass 'False' and become @===@.
+  KEq :: Bool -> Expr f a -> Expr f a -> Kernel f 'Bool
+  KNEq :: Bool -> Expr f a -> Expr f a -> Kernel f 'Bool
   KGTh ::
     Comparable a =>
     Expr f a
@@ -686,14 +693,46 @@ pattern Or x y <- Std (Kernel (KOr x y))
   Or x y = Std (Kernel (KOr x y))
 
 pattern Eq :: Expr f a -> Expr f a -> Expr f 'Bool
-pattern Eq x y <- Std (Kernel (KEq x y))
+pattern Eq x y <- Std (Kernel (KEq _ x y))
  where
-  Eq x y = Std (Kernel (KEq x y))
+  Eq x y = structuralEq x y
 
 pattern NEq :: Expr f a -> Expr f a -> Expr f 'Bool
-pattern NEq x y <- Std (Kernel (KNEq x y))
+pattern NEq x y <- Std (Kernel (KNEq _ x y))
  where
-  NEq x y = Std (Kernel (KNEq x y))
+  NEq x y = structuralNEq x y
+
+structuralEq :: Expr f a -> Expr f a -> Expr f 'Bool
+structuralEq x y = Std (Kernel (KEq True x y))
+
+structuralNEq :: Expr f a -> Expr f a -> Expr f 'Bool
+structuralNEq x y = Std (Kernel (KNEq True x y))
+
+-- | 'True' for universes that JS can compare with @===@ / @!==@.
+-- The incoherent default keeps polymorphic @u@ on '$valueEq'.
+class KnownScalar (u :: Universe) where
+  isScalarTy :: Bool
+
+instance KnownScalar 'Number where
+  isScalarTy = True
+
+instance KnownScalar 'String where
+  isScalarTy = True
+
+instance KnownScalar 'Bool where
+  isScalarTy = True
+
+instance KnownScalar 'Unit where
+  isScalarTy = True
+
+instance KnownScalar 'Regex where
+  isScalarTy = True
+
+mkEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+mkEq x y = Std (Kernel (KEq (not (isScalarTy @a)) x y))
+
+mkNEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+mkNEq x y = Std (Kernel (KNEq (not (isScalarTy @a)) x y))
 
 -- | Compare helpers carry the 'Comparable' constraint GHC cannot attach to
 -- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
@@ -902,7 +941,7 @@ fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
 jsHelperValueEq :: (String, String)
 jsHelperValueEq =
   ( "$valueEq"
-  , "function(a,b){if(a===b)return true;if(Array.isArray(a)&&Array.isArray(b))return $arrayEq(a,b);if(a instanceof Uint8Array&&b instanceof Uint8Array)return $uint8ArrayEq(a,b);if(a&&b&&a.constructor===Object&&b.constructor===Object)return $deepEqual(a,b);return false}"
+  , "function(a,b){if(a===b)return true;if(a===null||b===null||typeof a!==\"object\"||typeof b!==\"object\")return false;if(Array.isArray(a)&&Array.isArray(b))return $arrayEq(a,b);if(a instanceof Uint8Array&&b instanceof Uint8Array)return $uint8ArrayEq(a,b);if(a.constructor===Object&&b.constructor===Object)return $deepEqual(a,b);return false}"
   )
 
 jsHelperArrayEq :: (String, String)

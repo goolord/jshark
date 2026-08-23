@@ -97,8 +97,8 @@ bunEvalTests =
             , bunCase "none is null" (none :: Expr f ('Option 'Number))
             , bunCase "string concat" (Concat (string "a") (string "b"))
             , bunCase "Show number" (Show (number 3))
-            , bunCase "Eq numbers" (Eq (number 1) (number 1))
-            , bunCase "NEq numbers" (NEq (number 1) (number 2))
+            , bunCase "Eq numbers" (number 1 .== number 1)
+            , bunCase "NEq numbers" (number 1 .!= number 2)
             , bunCase "array map" (Array.map numArray (\x -> x + number 1))
             , bunCase
                 "array reduceRight"
@@ -159,14 +159,14 @@ bunEvalTests =
                 ( fromSyntax
                     ( do
                         buf <- toSyntax (newByteArray (number 3))
-                        yield (Eq (var buf) (uint8Array (bytes [0, 0, 0])))
+                        yield (structuralEq (var buf) (uint8Array (bytes [0, 0, 0])))
                     )
                 )
                 "true"
             , bunCase "Uint8Array contents" (uint8Array (bytes [1, 2, 3]))
             , bunCase
                 "Uint8Array Eq"
-                (uint8Array (bytes [1, 2]) .== uint8Array (bytes [1, 2]))
+                (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2])))
             , bunCase
                 "Show Uint8Array"
                 (Show (uint8Array (bytes [1, 2, 3])))

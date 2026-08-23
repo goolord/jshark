@@ -13,6 +13,7 @@ module Client (mainJS) where
 import Discover
   ( IndexTracker
   , Registry
+  , initIndexContainer
   , initIndexTracker
   , initRegistry
   , initSeenSpecies
@@ -22,15 +23,17 @@ import Engine
 import GHC.Generics (Generic)
 import Grid (cellIdx, createImageData, u8Get)
 import JShark.Api
+import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf)
 import qualified JShark.Generic as G
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
+import qualified JShark.Set as Set
 import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift), Expr (Var))
-import Names (cachedNameOfSid)
+import Names (lookupDisplayName)
 import Types
   ( LifeState
   , boardId
@@ -39,8 +42,11 @@ import Types
   , cellPx
   , gridH
   , gridW
+  , hoverRadius
   , ink
-  , lifeTypesListId
+  , lifeTooltipId
+  , lifeTooltipNameId
+  , lifeTooltipSwatchId
   )
 
 data Fps = Fps
@@ -77,10 +83,22 @@ boot canvas ctx = do
   registry <- initRegistry
   indexTracker <- initIndexTracker
   seenSpecies <- initSeenSpecies
-  typesList <- Dom.lookupId (string lifeTypesListId)
+  typesList <- initIndexContainer
+  tooltip <- Dom.lookupId (string lifeTooltipId)
+  swatchEl <- Dom.lookupId (string lifeTooltipSwatchId)
+  nameEl <- Dom.lookupId (string lifeTooltipNameId)
   img <- bindExpr =<< createImageData ctxH (number canvasW) (number canvasH)
   meter <- hold (G.toObject (Fps (-1) 0))
-  wire canvas state registry
+  rectSym <- toSyntax emptyObject
+  let
+    rectRef = Lift (Var rectSym)
+  tipSym <- toSyntax emptyObject
+  let
+    tipRef = Lift (Var tipSym)
+  hitsSym <- toSyntax Set.new
+  let
+    hits = Lift (Var hitsSym)
+  wire canvas state tooltip rectRef tipRef
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
@@ -88,20 +106,27 @@ boot canvas ctx = do
     tickIndex state registry indexTracker seenSpecies typesList now
     renderLife ctxH img state
     paintHud ctxH state meter
+    tickHover tipRef state registry tooltip swatchEl nameEl hits
 
 wire ::
   Effect f ('MutableObject Dom.DomElement)
   -> Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject Registry)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-wire canvas state registry = do
-  rectSym <- toSyntax emptyObject
-  let
-    rectRef = Lift (Var rectSym)
-  tipSym <- toSyntax emptyObject
-  let
-    tipRef = Lift (Var tipSym)
-  _ <- setProp tipRef "sid" (number (-1))
+wire canvas state tooltip rectRef tipRef = do
+  _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
+  _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
+  _ <- setProp tipRef "over" (number 0)
+  _ <- setProp tipRef "gx" (number (-1))
+  _ <- setProp tipRef "gy" (number (-1))
+  _ <- setProp tipRef "cx" (number 0)
+  _ <- setProp tipRef "cy" (number 0)
+  _ <- setProp tipRef "shownGx" (number (-2))
+  _ <- setProp tipRef "shownGy" (number (-2))
+  _ <- setProp tipRef "fp" (string "")
+  _ <- setProp tipRef "swatchSid" (number (-1))
   let
     refreshRect = do
       r <- hold $ callMethod canvas "getBoundingClientRect" RecNil
@@ -144,30 +169,207 @@ wire canvas state registry = do
       let
         w = number (fromIntegral gridW)
         h = number (fromIntegral gridH)
-      whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
-        let
-          i = cellIdx w gx gy
-        alive <- state.alive
-        spArr <- state.species
-        a <- u8Get alive i
-        ifS
-          (a .== 1)
-          ( do
-              sid <- u8Get spArr i
-              prevSid <- getProp tipRef "sid"
-              whenS (sid .!= prevSid) $ do
-                _ <- setProp tipRef "sid" sid
-                nm <- cachedNameOfSid sid registry
-                Dom.setAttribute canvas "title" nm
-          )
-          ( do
-              _ <- setProp tipRef "sid" (number (-1))
-              Dom.setAttribute canvas "title" (string "")
-          )
+      _ <- setProp tipRef "cx" cx
+      _ <- setProp tipRef "cy" cy
+      _ <- setProp tipRef "gx" gx
+      _ <- setProp tipRef "gy" gy
+      setProp
+        tipRef
+        "over"
+        (if_ (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) (number 1) (number 0))
   addEventListener "mouseleave" canvas $ \_ ->
-    stmts $ do
-      _ <- setProp tipRef "sid" (number (-1))
-      Dom.setAttribute canvas "title" (string "")
+    stmts $ setProp tipRef "over" (number 0)
+  done
+
+hideTooltip ::
+  Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+hideTooltip tipRef tooltip = do
+  _ <- setProp tipRef "fp" (string "")
+  _ <- setProp tipRef "shownGx" (number (-2))
+  _ <- setProp tipRef "shownGy" (number (-2))
+  _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
+  Dom.setStyleProperty tooltip "visibility" (string "hidden")
+
+tickHover ::
+  Effect f ('MutableObject ())
+  -> Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Registry)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('Set Number)
+  -> EffectSyntax f (f 'Unit)
+tickHover tipRef state registry tooltip swatchEl nameEl hits = do
+  over <- getProp tipRef "over"
+  ifS
+    (over .== 0)
+    ( do
+        fp <- getProp tipRef "fp"
+        whenS (fp .!= string "") (hideTooltip tipRef tooltip)
+    )
+    ( do
+        gx <- getProp tipRef "gx"
+        gy <- getProp tipRef "gy"
+        lastGx <- getProp tipRef "shownGx"
+        lastGy <- getProp tipRef "shownGy"
+        whenS (gx .!= lastGx .|| gy .!= lastGy) $ do
+          _ <- setProp tipRef "shownGx" gx
+          _ <- setProp tipRef "shownGy" gy
+          cx <- getProp tipRef "cx"
+          cy <- getProp tipRef "cy"
+          let
+            w = number (fromIntegral gridW)
+            h = number (fromIntegral gridH)
+          applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy
+    )
+
+-- | Grid index lookup, not a board-wide collision scan. A live cursor
+--   cell is O(1). Empty cells search the Chebyshev square of
+--   'hoverRadius' (25 cells at r=2). DOM writes only when the species
+--   set changes — the tooltip does not follow the cursor inside a cell.
+applyHover ::
+  Effect f ('MutableObject ())
+  -> Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Registry)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('Set Number)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy = do
+  alive <- state.alive
+  species <- state.species
+  pal <- state.palette
+  _ <- Set.clear hits
+  let
+    i = cellIdx w gx gy
+  a <- u8Get alive i
+  ifS
+    (a .== 1)
+    ( do
+        sid <- u8Get species i
+        _ <- Set.insert hits sid
+        setProp tipRef "swatchSid" sid
+    )
+    (collectNearby alive species w h gx gy hits tipRef)
+  n <- Set.size hits
+  ifS
+    (n .== 0)
+    (hideTooltip tipRef tooltip)
+    ( do
+        sortedSids <-
+          bindExpr $
+            ffi
+              "s => Array.from(s).sort((a, b) => a - b)"
+              (ArgEffect hits <: RecNil)
+        _ <- setProp tipRef "fpBuild" (string "")
+        _ <- setProp tipRef "label" (string "")
+        _ <-
+          forRange_ (number 0) (Array.length sortedSids) $ \idx -> do
+            sid <- pure (Array.index sortedSids idx)
+            curFp <- getProp tipRef "fpBuild"
+            _ <-
+              setProp
+                tipRef
+                "fpBuild"
+                ( if_ (curFp .== string "")
+                    (toString sid)
+                    (curFp <> string "," <> toString sid)
+                )
+            nm <- lookupDisplayName sid registry
+            curLabel <- getProp tipRef "label"
+            ifS
+              (curLabel .== string "")
+              (setProp tipRef "label" nm)
+              (setProp tipRef "label" (curLabel <> string ", " <> nm))
+        fp <- getProp tipRef "fpBuild"
+        prev <- getProp tipRef "fp"
+        whenS (structuralNEq fp prev) $ do
+          _ <- setProp tipRef "fp" fp
+          label <- getProp tipRef "label"
+          swatchSid <- getProp tipRef "swatchSid"
+          let
+            base = swatchSid * number 3
+          r <- u8Get pal base
+          g <- u8Get pal (base + 1)
+          b <- u8Get pal (base + 2)
+          rgb <-
+            pure
+              ( string "rgb("
+                  <> toString r
+                  <> string ","
+                  <> toString g
+                  <> string ","
+                  <> toString b
+                  <> string ")"
+              )
+          _ <- Dom.setStyleProperty swatchEl "background" rgb
+          _ <- Dom.setTextContent nameEl label
+          let
+            off = number 12
+          _ <-
+            Dom.setStyleProperty
+              tooltip
+              "transform"
+              ( string "translate("
+                  <> toString (cx + off)
+                  <> string "px,"
+                  <> toString (cy + off)
+                  <> string "px)"
+              )
+          _ <- Dom.setAttribute tooltip "aria-hidden" (string "false")
+          Dom.setStyleProperty tooltip "visibility" (string "visible")
+    )
+
+collectNearby ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f ('Set Number)
+  -> Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+collectNearby alive species w h gx gy hits tipRef = do
+  let
+    r = number (fromIntegral hoverRadius)
+    side = r + r + number 1
+    cells = side * side
+  _ <- setProp tipRef "best" (number 999999)
+  forRange_ (number 0) cells $ \k -> do
+    let
+      dx = rem_ k side - r
+      dy = Math.floor (k / side) - r
+      x = gx + dx
+      y = gy + dy
+    whenS (x .>= 0 .&& y .>= 0 .&& x .< w .&& y .< h) $ do
+      let
+        j = cellIdx w x y
+      aj <- u8Get alive j
+      whenS (aj .== 1) $ do
+        let
+          dist = dx * dx + dy * dy
+        sid <- u8Get species j
+        best <- getProp tipRef "best"
+        whenS (dist .< best) $ do
+          _ <- setProp tipRef "best" dist
+          _ <- setProp tipRef "swatchSid" sid
+          _ <- Set.clear hits
+          _ <- Set.insert hits sid
+          done
+        whenS (dist .== best) $ Set.insert hits sid
+        done
+      done
+    done
   done
 
 gridFromClient ::

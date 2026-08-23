@@ -8,6 +8,7 @@ module Names
   , catalogNamesJson
   , nameOfSid
   , cachedNameOfSid
+  , lookupDisplayName
   , uniqueNameSid
   , refreshTakenNames
   , recordDiscoveredName
@@ -460,6 +461,16 @@ nameOfSid sid registry =
           (expr (string "Manual"))
           (fromSyntax (nameOfCatalog sid registry))
       )
+
+-- | Cache-only label. Never runs 'makeName'; unknown sids become "Type N".
+lookupDisplayName ::
+  Expr f 'Number
+  -> Effect f ('MutableObject a)
+  -> EffectSyntax f (Expr f 'String)
+lookupDisplayName sid registry = do
+  cache <- getProp registry "displayCache"
+  hit <- Map.lookup (Lift cache) sid
+  pure (orElse hit (string "Type " <> toString sid))
 
 -- | Like 'nameOfSid' but memoizes on @registry.displayCache@.
 cachedNameOfSid ::

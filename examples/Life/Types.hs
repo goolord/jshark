@@ -28,7 +28,12 @@ module Types
   , discoverMax
   , discoverEvery
   , indexRefreshMs
+  , lifeIndexHostId
   , lifeTypesListId
+  , lifeTooltipId
+  , lifeTooltipSwatchId
+  , lifeTooltipNameId
+  , hoverRadius
   , LifeState (..)
   )
 where
@@ -95,8 +100,24 @@ discoverEvery = 45
 indexRefreshMs :: Int
 indexRefreshMs = 2000
 
+lifeIndexHostId :: Text
+lifeIndexHostId = "life-index-host"
+
 lifeTypesListId :: Text
 lifeTypesListId = "life-types"
+
+lifeTooltipId :: Text
+lifeTooltipId = "life-tooltip"
+
+lifeTooltipSwatchId :: Text
+lifeTooltipSwatchId = "life-tooltip-swatch"
+
+lifeTooltipNameId :: Text
+lifeTooltipNameId = "life-tooltip-name"
+
+-- | Chebyshev cells around the cursor that still count as hovering a species.
+hoverRadius :: Int
+hoverRadius = 2
 
 data LifeState = LifeState
   { gen :: Int
