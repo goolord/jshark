@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
             .cpu_arch = .wasm32,
             .os_tag = .freestanding,
             .abi = .none,
+            .cpu_features_add = std.Target.wasm.featureSet(&.{.simd128}),
         }),
         .optimize = optimize,
     });

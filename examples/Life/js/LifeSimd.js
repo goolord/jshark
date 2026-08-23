@@ -47,6 +47,7 @@
     if (!global.WebAssembly) return false;
     try {
       const resp = await fetch(url);
+      if (!resp.ok) return false;
       const bytes = await resp.arrayBuffer();
       const { instance } = await WebAssembly.instantiate(bytes, {});
       const exp = instance.exports;
@@ -74,6 +75,7 @@
 
   function bindGrids(engine) {
     if (!LifeSimd.ready || !engine || !engine.gridA || !engine.gridB) return false;
+    if (engine.mode === 'workers') return false;
     const n = engine.width * engine.height;
     const mem = LifeSimd.memory.buffer;
     if (engine.gridA.buffer === mem && engine.gridB.buffer === mem) return true;

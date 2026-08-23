@@ -12,6 +12,16 @@ fn growToBytes(need: u32) bool {
     return @wasmMemoryGrow(0, pages - cur) != std.math.maxInt(u32);
 }
 
+fn memoryBytes() u32 {
+    return @wasmMemorySize(0) * 65536;
+}
+
+fn rangeInBounds(off: u32, len: u32) bool {
+    if (len == 0) return true;
+    const end = off +% len;
+    return end >= off and end <= memoryBytes();
+}
+
 fn memAt(off: u32) [*]u8 {
     return @ptrFromInt(off);
 }
@@ -43,12 +53,12 @@ export fn growTo(need: u32) i32 {
 
 /// Zero `len` bytes at `offset` in linear memory (SIMD when aligned).
 export fn clearRow(offset: u32, len: u32) void {
-    if (len == 0) return;
+    if (!rangeInBounds(offset, len)) return;
     clearRowSimd(memAt(offset), len);
 }
 
 /// Copy `len` bytes from `src` to `dst` in linear memory (SIMD when aligned).
 export fn copyRow(src: u32, dst: u32, len: u32) void {
-    if (len == 0) return;
+    if (!rangeInBounds(src, len) or !rangeInBounds(dst, len)) return;
     copyRowSimd(@ptrFromInt(src), memAt(dst), len);
 }

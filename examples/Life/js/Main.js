@@ -32,13 +32,24 @@
 
     /** Load WASM SIMD kernels (row clear/copy). Stepping logic stays in LifeLUT. */
     async loadWasm(url) {
+      if (this.mode === 'workers') {
+        this._wasmReady = true;
+        return false;
+      }
       const LifeSimd = global.LifeSimd;
-      if (!LifeSimd) return false;
-      const ok = await LifeSimd.load(url, this.width, this.height);
-      if (!ok) return false;
-      LifeSimd.bindGrids(this);
-      this.wasmSimd = true;
-      return true;
+      if (!LifeSimd) {
+        this._wasmReady = true;
+        return false;
+      }
+      try {
+        const ok = await LifeSimd.load(url, this.width, this.height);
+        if (!ok) return false;
+        if (!LifeSimd.bindGrids(this)) return false;
+        this.wasmSimd = true;
+        return true;
+      } finally {
+        this._wasmReady = true;
+      }
     }
 
     init(opts) {

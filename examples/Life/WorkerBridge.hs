@@ -29,6 +29,7 @@ initWorkerEngine =
       ffi
       ( "((w,h)=>{const E=globalThis.LifeEngine;if(!E)return;"
           <> "E.init({width:w|0,height:h|0,workerCount:0});"
+          <> "E._wasmReady=false;"
           <> "void E.loadWasm('js/life-simd.wasm');"
           <> "})"
       )
@@ -42,7 +43,7 @@ engineCanStep =
   bindExpr $
     ffi
       ( "(()=>{const E=globalThis.LifeEngine;"
-          <> "return!!(E&&E.ready&&E.mode!=='none');"
+          <> "return!!(E&&E.ready&&E.mode!=='none'&&E._wasmReady!==false);"
           <> "})"
       )
       RecNil

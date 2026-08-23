@@ -74,6 +74,7 @@
 
   /** Step rows [y0, y1) with LUT chunking. */
   function stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1) {
+    const simd = global.LifeSimd;
     const yStart = Math.max(1, y0);
     const yStop = Math.min(h - 1, y1);
     for (let y = yStart; y < yStop; y++) {
@@ -82,8 +83,7 @@
       const botOff = (y + 1) * w;
       // Ping-pong reuses gridB as the previous generation. Empty chunks
       // must not leave those stale live bits behind (glider-on-seam ghosts).
-      const simd = global.LifeSimd;
-      if (simd && simd.ready) simd.clearRow(gridB, curOff, w);
+      if (simd) simd.clearRow(gridB, curOff, w);
       else gridB.fill(0, curOff, curOff + w);
       const bytes = ((w + 7) / 8) | 0;
       for (let xb = 0; xb < bytes; xb++) {
@@ -118,14 +118,12 @@
       }
     }
     if (y0 === 0) {
-      const simd = global.LifeSimd;
-      if (simd && simd.ready) simd.copyRow(gridA, 0, gridB, 0, w);
+      if (simd) simd.copyRow(gridA, 0, gridB, 0, w);
       else gridB.set(gridA.subarray(0, w));
     }
     if (y1 >= h) {
       const botOff = (h - 1) * w;
-      const simd = global.LifeSimd;
-      if (simd && simd.ready) simd.copyRow(gridA, botOff, gridB, botOff, w);
+      if (simd) simd.copyRow(gridA, botOff, gridB, botOff, w);
       else gridB.set(gridA.subarray(botOff, h * w), botOff);
     }
   }

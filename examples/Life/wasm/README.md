@@ -12,7 +12,8 @@ zig build -Doptimize=ReleaseFast
 cp zig-out/bin/life-simd.wasm ../js/life-simd.wasm
 ```
 
-Requires [Zig](https://ziglang.org/) 0.16+.
+Requires [Zig](https://ziglang.org/) 0.16+. The build enables wasm `simd128`
+so `@Vector(16, u8)` lowers to real SIMD instructions.
 
 ## Exports
 
