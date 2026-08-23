@@ -6,12 +6,14 @@
 module Catalog
   ( shapeHash
   , knownCatalogJson
+  , catalogNamesJson
   )
 where
 
 import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Names (catalogNamesJson)
 import Patterns (PatternSpec (..), allPatterns)
 
 shapeHash :: [(Int, Int)] -> Text

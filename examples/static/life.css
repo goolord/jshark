@@ -49,20 +49,62 @@ a {
   color: #38bdf8;
 }
 
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1.25rem;
-  justify-content: center;
-  margin: 1rem 0 0;
-  font-size: 0.85rem;
-  color: #94a3b8;
+.life-index {
+  box-sizing: border-box;
+  max-width: 48rem;
+  margin: 1.25rem auto 2rem;
+  padding: 0 1rem;
 }
 
-.legend span {
-  display: inline-flex;
+.life-index h2 {
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: #cbd5e1;
+  text-align: center;
+  margin: 0 0 0.75rem;
+}
+
+.life-index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.35rem 2rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  text-align: left;
+}
+
+.index-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.45rem;
   align-items: center;
-  gap: 0.35rem;
+  margin-bottom: 0;
+}
+
+.index-row-dead {
+  opacity: 0.45;
+}
+
+.index-row-dead .index-name,
+.index-row-dead .index-count {
+  color: #64748b;
+}
+
+.index-row-dead .swatch {
+  filter: grayscale(1);
+}
+
+.index-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cbd5e1;
+}
+
+.index-count {
+  font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
 }
 
 .swatch {
@@ -70,40 +112,5 @@ a {
   height: 0.75rem;
   border-radius: 1px;
   display: inline-block;
-}
-
-.swatch--still {
-  background: hsl(210, 62%, 58%);
-}
-
-.swatch--osc {
-  background: hsl(110, 58%, 52%);
-}
-
-.swatch--ship {
-  background: hsl(20, 72%, 55%);
-}
-
-.swatch--soup {
-  background: #484858;
-}
-
-.swatch--manual {
-  background: hsl(280, 45%, 68%);
-}
-
-.swatch--meth {
-  background: hsl(175, 55%, 50%);
-}
-
-.swatch--eater {
-  background: hsl(35, 60%, 52%);
-}
-
-.swatch--misc {
-  background: hsl(52, 58%, 54%);
-}
-
-.swatch--discover {
-  background: hsl(137, 62%, 56%);
+  flex-shrink: 0;
 }

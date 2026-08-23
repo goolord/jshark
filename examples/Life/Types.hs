@@ -27,6 +27,8 @@ module Types
   , discoverMin
   , discoverMax
   , discoverEvery
+  , indexRefreshMs
+  , lifeTypesListId
   , LifeState (..)
   )
 where
@@ -90,6 +92,12 @@ discoverMax = 255
 discoverEvery :: Int
 discoverEvery = 45
 
+indexRefreshMs :: Int
+indexRefreshMs = 2000
+
+lifeTypesListId :: Text
+lifeTypesListId = "life-types"
+
 data LifeState = LifeState
   { gen :: Int
   , pop :: Int
@@ -98,10 +106,7 @@ data LifeState = LifeState
   , species :: ByteArray
   , nextAlive :: ByteArray
   , nextSpecies :: ByteArray
-  , counts :: ByteArray
   , palette :: ByteArray
-  , rows :: [Double]
-  , cols :: [Double]
   , nextDiscover :: Int
   , recentDiscover :: Text
   }

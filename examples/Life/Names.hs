@@ -1,0 +1,269 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Shared species labels and procedural naming for catalog + discovery.
+module Names
+  ( patternLabel
+  , catalogNamesJson
+  , namingRuntimeJs
+  )
+where
+
+import Data.List (intercalate)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Patterns (PatternSpec (..), allPatterns)
+import Types (discoverMin, manualSpecies, soupSpecies)
+
+patternLabel :: Int -> Text
+patternLabel = \case
+  1 -> "Block"
+  2 -> "Beehive"
+  3 -> "Loaf"
+  4 -> "Boat"
+  5 -> "Tub"
+  6 -> "Pond"
+  7 -> "Ship"
+  8 -> "Long boat"
+  9 -> "Mango"
+  10 -> "Hat"
+  11 -> "Shillelagh"
+  12 -> "Dock"
+  13 -> "Barge"
+  14 -> "Long snake"
+  15 -> "Cis hook"
+  16 -> "Elevator"
+  17 -> "Paperclip"
+  18 -> "Table on table"
+  19 -> "Integral sign"
+  20 -> "Hook"
+  21 -> "Canoe"
+  22 -> "Aircraft carrier"
+  23 -> "Trans barge"
+  24 -> "Cis fuse"
+  25 -> "Blinker"
+  26 -> "Toad"
+  27 -> "Beacon"
+  28 -> "Pulsar"
+  29 -> "Pentadecathlon"
+  30 -> "Queen bee"
+  31 -> "Figure eight"
+  32 -> "Sparkles"
+  33 -> "Unix"
+  34 -> "Tumbler"
+  35 -> "Tripole"
+  36 -> "By flops"
+  37 -> "Mold"
+  38 -> "Clock"
+  39 -> "Quadpole"
+  40 -> "Butterfly"
+  41 -> "Traffic circle"
+  42 -> "Pentant"
+  43 -> "Crossroads"
+  44 -> "Pinwheel"
+  45 -> "Glider"
+  46 -> "LWSS"
+  47 -> "MWSS"
+  48 -> "HWSS"
+  49 -> "Glider alt"
+  50 -> "LWSS alt"
+  51 -> "Glider perp"
+  52 -> "LWSS perp"
+  53 -> "MWSS alt"
+  54 -> "Dart"
+  55 -> "Crab"
+  56 -> "Loafer"
+  57 -> "Glider up"
+  58 -> "Glider down"
+  59 -> "Glider left"
+  60 -> "R-pentomino"
+  61 -> "Acorn"
+  62 -> "Diehard"
+  63 -> "Rabbits"
+  64 -> "S-diehard"
+  65 -> "B-heptomino"
+  66 -> "Pi-heptomino"
+  67 -> "R-acorn"
+  68 -> "Switch engine"
+  69 -> "Block on table"
+  70 -> "Eater"
+  71 -> "Eater 2"
+  72 -> "Eater 3"
+  73 -> "Block on snake"
+  74 -> "Tub with tail"
+  75 -> "Long hook with tail"
+  76 -> "Snake bridge"
+  77 -> "Mirrored eater"
+  78 -> "Pre-block"
+  79 -> "Pre-beehive"
+  80 -> "Traffic light"
+  81 -> "Honey farm"
+  82 -> "Farm"
+  83 -> "Long boat tie"
+  84 -> "Cis long hook"
+  85 -> "Trans long hook"
+  86 -> "Very long boat"
+  87 -> "Cis boat"
+  88 -> "Trans boat"
+  89 -> "Cis block"
+  n -> "Type " <> T.pack (show n)
+
+catalogNamesJson :: Text
+catalogNamesJson =
+  T.concat
+    [ "["
+    , T.intercalate "," [nameEntry p | p <- allPatterns]
+    , "]"
+    ]
+ where
+  nameEntry p =
+    let
+      sid = patId p
+      nm = patternLabel sid
+     in
+      "[" <> T.pack (show sid) <> "," <> jsonString nm <> "]"
+
+jsonString :: Text -> Text
+jsonString t =
+  "\"" <> T.concat (map jsonChar (T.unpack t)) <> "\""
+ where
+  jsonChar '"' = "\\\""
+  jsonChar '\\' = "\\\\"
+  jsonChar c = T.singleton c
+
+jsStrings :: [Text] -> String
+jsStrings xs =
+  "[" <> intercalate "," (map (T.unpack . jsonString) xs) <> "]"
+
+prefixes, suffixes, nouns, adjectives, verbsIng :: [Text]
+prefixes =
+  [ "Nova"
+  , "Mira"
+  , "Axon"
+  , "Zeph"
+  , "Luma"
+  , "Vex"
+  , "Quin"
+  , "Orb"
+  , "Nex"
+  , "Sol"
+  , "Kael"
+  , "Rune"
+  , "Pyro"
+  , "Cyan"
+  , "Dusk"
+  ]
+suffixes =
+  [ "morph"
+  , "form"
+  , "life"
+  , "cell"
+  , "oid"
+  , "ium"
+  , "ula"
+  , "bit"
+  , "zen"
+  , "pod"
+  , "wave"
+  , "spark"
+  , "mote"
+  , "plex"
+  , "drift"
+  ]
+nouns =
+  [ "acuity"
+  , "artifice"
+  , "pallor"
+  , "bloom"
+  , "bifurcation"
+  , "luster"
+  , "vapor"
+  , "wish"
+  , "qualia"
+  , "malady"
+  , "kindred"
+  , "susurrus"
+  , "gossamer"
+  , "subterfuge"
+  , "wretch"
+  , "gibbet"
+  , "murmur"
+  , "flicker"
+  , "shimmer"
+  , "whir"
+  , "pulchritude"
+  ]
+adjectives =
+  [ "pulchritudinous"
+  , "nascent"
+  , "affine"
+  , "hypoxic"
+  , "ephemeral"
+  , "derelict"
+  , "noetic"
+  , "cogent"
+  , "inveterate"
+  ]
+verbsIng =
+  [ "acceding"
+  , "capitulating"
+  , "flickering"
+  , "whirring"
+  , "murmuring"
+  , "exalting"
+  , "shimmering"
+  , "acquiescing"
+  , "languishing"
+  , "blooming"
+  , "wishing"
+  , "vaporing"
+  ]
+
+namingRuntimeJs :: String
+namingRuntimeJs =
+  "const prefixes = "
+    ++ jsStrings prefixes
+    ++ ";"
+    ++ "const suffixes = "
+    ++ jsStrings suffixes
+    ++ ";"
+    ++ "const nouns = "
+    ++ jsStrings nouns
+    ++ ";"
+    ++ "const adjectives = "
+    ++ jsStrings adjectives
+    ++ ";"
+    ++ "const verbsIng = "
+    ++ jsStrings verbsIng
+    ++ ";"
+    ++ "const discoverMin = "
+    ++ show discoverMin
+    ++ ";"
+    ++ "const title = (s) => s.charAt(0).toUpperCase() + s.slice(1);"
+    ++ "const makeName = (n) => {"
+    ++ "  const noun = title(nouns[(n * 11) % nouns.length]);"
+    ++ "  const mode = n % 3;"
+    ++ "  if (mode === 0) {"
+    ++ "    const p = prefixes[n % prefixes.length];"
+    ++ "    const s = title(suffixes[(n * 7) % suffixes.length]);"
+    ++ "    return p + ' ' + s;"
+    ++ "  }"
+    ++ "  if (mode === 1) {"
+    ++ "    const v = title(verbsIng[(n * 5) % verbsIng.length]);"
+    ++ "    return v + ' ' + noun;"
+    ++ "  }"
+    ++ "  const adj = title(adjectives[(n * 13) % adjectives.length]);"
+    ++ "  return adj + ' ' + noun;"
+    ++ "};"
+    ++ "const nameOf = (sid, registry) => {"
+    ++ "  if (sid === "
+    ++ show soupSpecies
+    ++ ") return 'Soup';"
+    ++ "  if (sid === "
+    ++ show manualSpecies
+    ++ ") return 'Manual';"
+    ++ "  if (registry.catalogNames.has(sid)) return registry.catalogNames.get(sid);"
+    ++ "  if (registry.names.has(sid)) return registry.names.get(sid);"
+    ++ "  if (sid >= discoverMin) return makeName(sid);"
+    ++ "  return 'Type ' + sid;"
+    ++ "};"

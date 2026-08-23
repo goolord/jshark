@@ -4,7 +4,7 @@ module Page (page) where
 
 import qualified Data.Text as T
 import Lucid
-import Types (boardId, canvasH, canvasW, gridH, gridW)
+import Types (boardId, canvasH, canvasW, gridH, gridW, lifeTypesListId)
 
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
 page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
@@ -33,33 +33,8 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
         "A "
           <> toHtml (T.pack (show (gridW * gridH :: Int)))
           <> "-cell toroidal universe — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded alongside random soup."
-      div_ [class_ "legend"] $ do
-        span_ $ do
-          span_ [class_ "swatch swatch--still"] ""
-          "Still lifes"
-        span_ $ do
-          span_ [class_ "swatch swatch--osc"] ""
-          "Oscillators"
-        span_ $ do
-          span_ [class_ "swatch swatch--ship"] ""
-          "Spaceships"
-        span_ $ do
-          span_ [class_ "swatch swatch--meth"] ""
-          "Methuselahs"
-        span_ $ do
-          span_ [class_ "swatch swatch--eater"] ""
-          "Eaters"
-        span_ $ do
-          span_ [class_ "swatch swatch--misc"] ""
-          "Misc"
-        span_ $ do
-          span_ [class_ "swatch swatch--soup"] ""
-          "Soup"
-        span_ $ do
-          span_ [class_ "swatch swatch--manual"] ""
-          "Manual"
-        span_ $ do
-          span_ [class_ "swatch swatch--discover"] ""
-          "Discovered"
-    source
+      source
+      section_ [class_ "life-index"] $ do
+        h2_ "Biomass Index"
+        div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
     script_ [src_ scriptSrc] ("" :: Html ())

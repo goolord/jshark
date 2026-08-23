@@ -11,6 +11,7 @@ module Grid
   , createImageData
   , putImageData
   , imageDataBytes
+  , stepGrid
   , renderGrid
   , cellIdx
   , toroidal
@@ -63,6 +64,84 @@ putImageData ctx img = do
 imageDataBytes ::
   Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
 imageDataBytes img = bindExpr $ ffi "((img) => img.data)" (arg img <: RecNil)
+
+stepGrid ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Number
+stepGrid alive species nextAlive nextSpecies w h =
+  ffi
+    stepGridJs
+    ( arg alive
+        <: arg species
+        <: arg nextAlive
+        <: arg nextSpecies
+        <: arg w
+        <: arg h
+        <: RecNil
+    )
+
+stepGridJs :: String
+stepGridJs =
+  "((alive, species, nextAlive, nextSpecies, w, h) => {"
+    ++ "let pop = 0;"
+    ++ "const counts = new Uint8Array(256);"
+    ++ "const touched = [];"
+    ++ "for (let y = 0; y < h; y++) {"
+    ++ "for (let x = 0; x < w; x++) {"
+    ++ "  let n = 0;"
+    ++ "  let bestSp = 0;"
+    ++ "  let bestCount = 0;"
+    ++ "  touched.length = 0;"
+    ++ "  for (let dy = -1; dy <= 1; dy++) {"
+    ++ "    for (let dx = -1; dx <= 1; dx++) {"
+    ++ "      if (dx === 0 && dy === 0) continue;"
+    ++ "      const nx = (x + dx + w) % w;"
+    ++ "      const ny = (y + dy + h) % h;"
+    ++ "      const ni = ny * w + nx;"
+    ++ "      if (alive[ni] !== 1) continue;"
+    ++ "      n++;"
+    ++ "      const sp = species[ni];"
+    ++ "      if (counts[sp] === 0) touched.push(sp);"
+    ++ "      counts[sp]++;"
+    ++ "    }"
+    ++ "  }"
+    ++ "  for (const sp of touched) {"
+    ++ "    const c = counts[sp];"
+    ++ "    if (c > bestCount || (c === bestCount && sp < bestSp)) {"
+    ++ "      bestCount = c;"
+    ++ "      bestSp = sp;"
+    ++ "    }"
+    ++ "    counts[sp] = 0;"
+    ++ "  }"
+    ++ "  const i = y * w + x;"
+    ++ "  const a = alive[i];"
+    ++ "  const sp = species[i];"
+    ++ "  if (a === 1) {"
+    ++ "    if (n === 2 || n === 3) {"
+    ++ "      nextAlive[i] = 1;"
+    ++ "      nextSpecies[i] = sp;"
+    ++ "      pop++;"
+    ++ "    } else {"
+    ++ "      nextAlive[i] = 0;"
+    ++ "      nextSpecies[i] = 0;"
+    ++ "    }"
+    ++ "  } else if (n === 3) {"
+    ++ "    nextAlive[i] = 1;"
+    ++ "    nextSpecies[i] = bestSp;"
+    ++ "    pop++;"
+    ++ "  } else {"
+    ++ "    nextAlive[i] = 0;"
+    ++ "    nextSpecies[i] = 0;"
+    ++ "  }"
+    ++ "}"
+    ++ "}"
+    ++ "return pop;"
+    ++ "})"
 
 renderGrid ::
   Expr f 'Uint8Array

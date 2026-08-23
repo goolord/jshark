@@ -43,6 +43,7 @@ data SitePaths = SitePaths
   { hrefExample :: T.Text -> T.Text
   , srcShot :: T.Text -> T.Text
   , srcScript :: T.Text -> T.Text
+  , indexStatic :: T.Text
   , srcStatic :: T.Text
   }
 
@@ -52,6 +53,7 @@ serverPaths =
     { hrefExample = ("/" <>)
     , srcShot = \n -> "/static/" <> n <> ".png"
     , srcScript = \n -> "/" <> n <> "/app.js"
+    , indexStatic = "/static"
     , srcStatic = "/static"
     }
 
@@ -62,6 +64,7 @@ exportPaths =
     { hrefExample = (<> "/")
     , srcShot = \n -> "static/" <> n <> ".png"
     , srcScript = const "app.js"
+    , indexStatic = "static"
     , srcStatic = "../static"
     }
 
@@ -183,7 +186,7 @@ indexPage paths shots = doctypehtml_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
     title_ "JShark examples"
-    link_ [rel_ "stylesheet", href_ (srcStatic paths <> "/index.css")]
+    link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/index.css")]
   body_ $
     main_ $ do
       h1_ "examples"

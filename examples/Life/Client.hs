@@ -10,7 +10,7 @@
 
 module Client (mainJS) where
 
-import Discover (initRegistry)
+import Discover (IndexTracker, Registry, initIndexTracker, initRegistry, stepIndexTracker)
 import Engine
 import GHC.Generics (Generic)
 import Grid (createImageData)
@@ -22,7 +22,15 @@ import qualified JShark.Generic as G
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
-import Types (LifeState, boardId, canvasH, canvasW, cellPx, ink)
+import Types
+  ( LifeState
+  , boardId
+  , canvasH
+  , canvasW
+  , cellPx
+  , lifeTypesListId
+  , ink
+  )
 
 data Fps = Fps
   { lastMs :: Double
@@ -56,6 +64,8 @@ boot canvas ctx = do
       )
   state <- initLife ctxH
   registry <- initRegistry
+  indexTracker <- initIndexTracker
+  typesList <- Dom.lookupId (string lifeTypesListId)
   img <- bindExpr =<< createImageData ctxH (number canvasW) (number canvasH)
   meter <- hold (G.toObject (Fps (-1) 0))
   wire canvas state
@@ -63,6 +73,7 @@ boot canvas ctx = do
     tickFps meter now
     paused <- state.paused
     whenS (not_ paused) (stepLife state registry)
+    tickIndex state registry indexTracker typesList now
     renderLife ctxH img state
     paintHud ctxH state meter
 
@@ -146,6 +157,19 @@ tickFps meter now = do
   whenS (prev .>= 0 .&& dt .<= 250) $
     set @"fps" meter (Math.round (number 1000 / Math.max 1 dt))
   set @"lastMs" meter now
+
+tickIndex ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Registry)
+  -> Effect f ('MutableObject IndexTracker)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+tickIndex state registry tracker listEl now = do
+  alive <- state.alive
+  species <- state.species
+  pal <- state.palette
+  stepIndexTracker alive species pal registry tracker listEl now
 
 fill ::
   Effect f ('MutableObject Canvas.Context2D)

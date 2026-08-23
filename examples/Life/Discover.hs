@@ -6,28 +6,44 @@
 --    id, golden-angle hue, and procedural name.
 module Discover
   ( Registry
+  , IndexTracker
   , initRegistry
+  , initIndexTracker
   , discoverLife
+  , stepIndexTracker
   )
 where
 
-import Catalog (knownCatalogJson)
+import Catalog (catalogNamesJson, knownCatalogJson)
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
+import Names (namingRuntimeJs)
+import Types (indexRefreshMs)
 
 data Registry
+
+data IndexTracker
+
+initIndexTracker ::
+  EffectSyntax f (Effect f ('MutableObject IndexTracker))
+initIndexTracker =
+  hold $
+    ffi
+      "(() => ({ seen: new Set(), lastMs: 0, lastFp: '' }))"
+      RecNil
 
 initRegistry ::
   EffectSyntax f (Effect f ('MutableObject Registry))
 initRegistry = do
   hold $
     ffi
-      ( "((catalogJson) => {"
+      ( "((catalogJson, namesJson) => {"
           <> "const known = new Map(JSON.parse(catalogJson));"
-          <> "return { known, seen: new Map(), names: new Map() };"
+          <> "const catalogNames = new Map(JSON.parse(namesJson));"
+          <> "return { known, seen: new Map(), names: new Map(), catalogNames };"
           <> "})"
       )
-      (arg (string knownCatalogJson) <: RecNil)
+      (arg (string knownCatalogJson) <: arg (string catalogNamesJson) <: RecNil)
 
 discoverLife ::
   Expr f 'Uint8Array
@@ -61,14 +77,7 @@ discoverJs =
     ++ "const visited = new Uint8Array(w * h);"
     ++ "let id = nextId;"
     ++ "let label = recent;"
-    ++ "const prefixes = ['Nova','Mira','Axon','Zeph','Luma','Vex','Quin','Orb','Nex','Sol','Kael','Rune','Pyro','Cyan','Dusk'];"
-    ++ "const suffixes = ['morph','form','life','cell','oid','ium','ula','bit','zen','pod','wave','spark','mote','plex','drift'];"
-    ++ "const makeName = (n) => {"
-    ++ "  const p = prefixes[n % prefixes.length];"
-    ++ "  const s = suffixes[(n * 7) % suffixes.length];"
-    ++ "  const t = Math.floor(n / prefixes.length);"
-    ++ "  return p + s + (t ? String(t) : '');"
-    ++ "};"
+    ++ namingRuntimeJs
     ++ "const discoverColor = (n) => {"
     ++ "  const hue = (n * 137.508) % 360;"
     ++ "  const s = 0.62, l = 0.56;"
@@ -145,3 +154,81 @@ discoverJs =
   gridW = 256 :: Int
   gridH = 192 :: Int
   discoverMax = 255 :: Int
+
+stepIndexTracker ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Effect f ('MutableObject Registry)
+  -> Effect f ('MutableObject IndexTracker)
+  -> Effect f ('MutableObject a)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+stepIndexTracker alive species palette registry tracker container now =
+  toSyntax $
+    discard $
+      ffi
+        stepIndexJs
+        ( arg alive
+            <: arg species
+            <: arg palette
+            <: ArgEffect registry
+            <: ArgEffect tracker
+            <: ArgEffect container
+            <: arg now
+            <: RecNil
+        )
+
+stepIndexJs :: String
+stepIndexJs =
+  "((alive, species, palette, registry, tracker, container, now) => {"
+    ++ namingRuntimeJs
+    ++ "const refreshMs = "
+    ++ show indexRefreshMs
+    ++ ";"
+    ++ "for (let i = 0; i < alive.length; i++) {"
+    ++ "  if (!alive[i]) continue;"
+    ++ "  tracker.seen.add(species[i]);"
+    ++ "}"
+    ++ "const due = tracker.lastMs === 0 || now - tracker.lastMs >= refreshMs;"
+    ++ "if (!due) return;"
+    ++ "tracker.lastMs = now;"
+    ++ "const current = new Map();"
+    ++ "for (let i = 0; i < alive.length; i++) {"
+    ++ "  if (!alive[i]) continue;"
+    ++ "  const sid = species[i];"
+    ++ "  current.set(sid, (current.get(sid) || 0) + 1);"
+    ++ "}"
+    ++ "const rows = [];"
+    ++ "for (const sid of tracker.seen) {"
+    ++ "  rows.push([sid, current.get(sid) || 0]);"
+    ++ "}"
+    ++ "rows.sort((a, b) => {"
+    ++ "  if (b[1] !== a[1]) return b[1] - a[1];"
+    ++ "  return a[0] - b[0];"
+    ++ "});"
+    ++ "const fp = rows.map(([sid, n]) => sid + ':' + n + ':' + nameOf(sid, registry)).join(',');"
+    ++ "if (fp !== tracker.lastFp) {"
+    ++ "  container.replaceChildren();"
+    ++ "  for (const [sid, n] of rows) {"
+    ++ "    const base = sid * 3;"
+    ++ "    const r = palette[base], g = palette[base + 1], b = palette[base + 2];"
+    ++ "    const row = document.createElement('div');"
+    ++ "    row.className = n > 0 ? 'index-row' : 'index-row index-row-dead';"
+    ++ "    const swatch = document.createElement('span');"
+    ++ "    swatch.className = 'swatch';"
+    ++ "    swatch.style.background = 'rgb(' + r + ',' + g + ',' + b + ')';"
+    ++ "    const name = document.createElement('span');"
+    ++ "    name.className = 'index-name';"
+    ++ "    name.textContent = nameOf(sid, registry);"
+    ++ "    const count = document.createElement('span');"
+    ++ "    count.className = 'index-count';"
+    ++ "    count.textContent = String(n);"
+    ++ "    row.appendChild(swatch);"
+    ++ "    row.appendChild(name);"
+    ++ "    row.appendChild(count);"
+    ++ "    container.appendChild(row);"
+    ++ "  }"
+    ++ "  tracker.lastFp = fp;"
+    ++ "}"
+    ++ "})"
