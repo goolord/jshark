@@ -236,6 +236,7 @@ test-suite jshark-test
     test
   build-depends:
     , base
+    , async
     , breakout
     , jshark
     , jshark-lucid
@@ -252,3 +253,5 @@ test-suite jshark-test
     Haskell2010
   ghc-options:
     -Wno-deprecations
+    -threaded
+    -with-rtsopts=-N

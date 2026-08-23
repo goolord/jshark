@@ -13,6 +13,7 @@
 -- listeners. A syntax error anywhere still fails the parse.
 module ExampleTests (exampleTests) where
 
+import Control.Concurrent.Async (async, wait)
 import qualified Breakout
 import qualified Data.Text as T
 import JShark (effectfulProgram, renderJSCompact)
@@ -25,22 +26,44 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import qualified TodoMvc
 
+data ExampleJs = ExampleJs
+  { breakoutJs :: String
+  , todoMvcJs :: String
+  , synthJs :: String
+  , lifeJs :: String
+  }
+
 exampleTests :: TestTree
 exampleTests =
   after AllSucceed "bun is on PATH" $
-    testGroup
-      "examples emit parseable JS"
-      [ parseCase "breakout" (stmts Breakout.mainJS)
-      , parseCase "todo-mvc" (stmts TodoMvc.mainJS)
-      , parseCase "synth" (stmts Synth.mainJS)
-      , parseCase "life" (stmts Life.mainJS)
-      ]
+    withResource acquireExampleJs (const (pure ())) $ \getExampleJs ->
+      testGroup
+        "examples emit parseable JS"
+        [ parseCachedCase "breakout" (breakoutJs <$> getExampleJs)
+        , parseCachedCase "todo-mvc" (todoMvcJs <$> getExampleJs)
+        , parseCachedCase "synth" (synthJs <$> getExampleJs)
+        , parseCachedCase "life" (lifeJs <$> getExampleJs)
+        ]
 
-parseCase :: String -> ClosedEffect 'Unit -> TestTree
-parseCase name eff = testCase name $ do
-  let
-    js = renderJSCompact (effectfulProgram eff)
-    -- Bound but never applied: parsed in full, executed not at all.
-    probe = "(() => { const unused = () => (" ++ js ++ "); return 1; })()"
+acquireExampleJs :: IO ExampleJs
+acquireExampleJs = do
+  breakoutA <- async (renderExample (stmts Breakout.mainJS))
+  todoA <- async (renderExample (stmts TodoMvc.mainJS))
+  synthA <- async (renderExample (stmts Synth.mainJS))
+  lifeA <- async (renderExample (stmts Life.mainJS))
+  ExampleJs
+    <$> wait breakoutA
+    <*> wait todoA
+    <*> wait synthA
+    <*> wait lifeA
+
+renderExample :: ClosedEffect 'Unit -> IO String
+renderExample eff = pure (renderJSCompact (effectfulProgram eff))
+
+parseCachedCase :: String -> IO String -> TestTree
+parseCachedCase name getJs = testCase name $ do
+  js <- getJs
+  -- Bound but never applied: parsed in full, executed not at all.
+  let probe = "(() => { const unused = () => (" ++ js ++ "); return 1; })()"
   got <- T.unpack <$> runJS probe
   assertEqual (name ++ " should parse") "1" got
