@@ -149,6 +149,13 @@ initLife ctx viewport = do
       (number (fromIntegral initialBoundY1))
       liveList
   _ <- initWorkerEngine
+  panX <- getProp viewport "panX"
+  panY <- getProp viewport "panY"
+  zoom <- getProp viewport "zoom"
+  _ <- setProp viewport "renderPanX" panX
+  _ <- setProp viewport "renderPanY" panY
+  _ <- setProp viewport "renderZoom" zoom
+  setProp viewport "renderPanValid" true_
   pure state
 
 stepLife ::
@@ -367,6 +374,7 @@ renderLife ::
   -> EffectSyntax f (f 'Unit)
 renderLife ctx viewport state = do
   w <- pure (number (fromIntegral gridW))
+  h <- pure (number (fromIntegral gridH))
   px <- pure (number (fromIntegral cellPx))
   cw <- pure (number canvasW)
   ch <- pure (number canvasH)
@@ -381,6 +389,24 @@ renderLife ctx viewport state = do
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
+  renderValid <- getProp viewport "renderPanValid"
+  whenS (not_ renderValid) $ do
+    _ <- setProp viewport "renderPanX" panX
+    _ <- setProp viewport "renderPanY" panY
+    _ <- setProp viewport "renderZoom" zoom
+    setProp viewport "renderPanValid" true_
+  lastPanX <- getProp viewport "renderPanX"
+  lastPanY <- getProp viewport "renderPanY"
+  lastZoom <- getProp viewport "renderZoom"
+  let
+    panSnap v = Math.round (v * number 100)
+    zoomSnap v = Math.round (v * number 1000)
+  viewportDirty <-
+    pure $
+      panSnap panX .!= panSnap lastPanX
+        .|| panSnap panY .!= panSnap lastPanY
+        .|| zoomSnap zoom .!= zoomSnap lastZoom
+  fullRedraw <- pure (sceneDirty .|| viewportDirty)
   dirtyScratch <- hold (toObject (CanvasDirty 0 0 (-1) (-1)))
   drawGridViewport
     ctx
@@ -391,8 +417,9 @@ renderLife ctx viewport state = do
     species
     liveList
     changedList
-    sceneDirty
+    fullRedraw
     w
+    h
     px
     cw
     ch
@@ -401,6 +428,9 @@ renderLife ctx viewport state = do
     zoom
     dirtyScratch
   set @"sceneDirty" state false_
+  _ <- setProp viewport "renderPanX" panX
+  _ <- setProp viewport "renderPanY" panY
+  setProp viewport "renderZoom" zoom
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 togglePause state = do

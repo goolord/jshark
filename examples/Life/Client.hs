@@ -152,6 +152,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
       _ <- setProp rectRef "left" left
       _ <- setProp rectRef "top" top
       _ <- setProp rectRef "width" width
+      clampPan viewport
       done
   win <- hold window
   addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
@@ -180,7 +181,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport state (number zoomFactor)
+                  zoomBy viewport (number zoomFactor)
                   done
             )
           ,
@@ -188,7 +189,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport state (number 1 / number zoomFactor)
+                  zoomBy viewport (number 1 / number zoomFactor)
                   done
             )
           ,
@@ -196,7 +197,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport state (number zoomFactor)
+                  zoomBy viewport (number zoomFactor)
                   done
             )
           ,
@@ -204,7 +205,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport state (number 1 / number zoomFactor)
+                  zoomBy viewport (number 1 / number zoomFactor)
                   done
             )
           ]
@@ -254,7 +255,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
               bufScale = number canvasW / width
             _ <- setProp viewport "panX" (panX + (cx - dragX) * bufScale)
             _ <- setProp viewport "panY" (panY + (cy - dragY) * bufScale)
-            markSceneDirty state
+            clampPan viewport
             _ <- setProp viewport "dragX" cx
             _ <- setProp viewport "dragY" cy
             startX <- getProp viewport "dragStartX"
@@ -500,20 +501,24 @@ initViewport = do
   _ <- setProp viewport "panX" (number (canvasW / 2) - cx * px)
   _ <- setProp viewport "panY" (number (canvasH / 2) - cy * px)
   _ <- setProp viewport "zoom" (number 1)
+  _ <- setProp viewport "renderPanX" (number (canvasW / 2) - cx * px)
+  _ <- setProp viewport "renderPanY" (number (canvasH / 2) - cy * px)
+  _ <- setProp viewport "renderZoom" (number 1)
+  _ <- setProp viewport "renderPanValid" true_
   _ <- setProp viewport "dragging" (number 0)
   _ <- setProp viewport "dragX" (number 0)
   _ <- setProp viewport "dragY" (number 0)
   _ <- setProp viewport "dragStartX" (number 0)
   _ <- setProp viewport "dragStartY" (number 0)
   _ <- setProp viewport "moved" (number 0)
+  clampPan viewport
   pure viewport
 
 zoomBy ::
   Effect f ('MutableObject ())
-  -> Effect f (MutableObjectOf LifeState)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-zoomBy viewport state factor = do
+zoomBy viewport factor = do
   z0 <- getProp viewport "zoom"
   let
     z1 =
@@ -528,7 +533,31 @@ zoomBy viewport state factor = do
     _ <- setProp viewport "zoom" z1
     _ <- setProp viewport "panX" (cx - (cx - panX0) * z1 / z0)
     _ <- setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
-    markSceneDirty state
+    clampPan viewport
+
+clampPan ::
+  Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+clampPan viewport = do
+  zoom <- getProp viewport "zoom"
+  panX <- getProp viewport "panX"
+  panY <- getProp viewport "panY"
+  let
+    px = number (fromIntegral cellPx)
+    scale = px * zoom
+    worldW = number (fromIntegral gridW) * scale
+    worldH = number (fromIntegral gridH) * scale
+    cw = number canvasW
+    ch = number canvasH
+    minPanX = Math.min (number 0) (cw - worldW)
+    maxPanX = Math.max (number 0) (cw - worldW)
+    minPanY = Math.min (number 0) (ch - worldH)
+    maxPanY = Math.max (number 0) (ch - worldH)
+  _ <-
+    setProp viewport "panX" $
+      Math.max minPanX (Math.min maxPanX panX)
+  setProp viewport "panY" $
+    Math.max minPanY (Math.min maxPanY panY)
 
 initTool :: EffectSyntax f (Effect f ('MutableObject ()))
 initTool = do

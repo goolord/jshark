@@ -604,6 +604,7 @@ bumpCanvasDirty scratch x0 y0 x1 y1 = do
 paintGridCell ::
   Expr f 'Uint8Array
   -> Expr f 'Number
+  -> Expr f 'Number
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -616,32 +617,41 @@ paintGridCell ::
   -> Effect f (MutableObjectOf CanvasDirty)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-paintGridCell pixels cw paletteRgba alive species w scale panX panY cellDraw bg dirtyScratch gi = do
+paintGridCell pixels cw ch paletteRgba alive species w scale panX panY cellDraw bg dirtyScratch gi = do
   let
     x = rem_ gi w
     y = Math.floor (gi / w)
     sx = Math.floor (x * scale + panX)
     sy = Math.floor (y * scale + panY)
-  sp <- u8Get species gi
-  let
-    base = sp * number 4
-  r <- u8Get paletteRgba base
-  g <- u8Get paletteRgba (base + number 1)
-  b <- u8Get paletteRgba (base + number 2)
-  a <- u8Get paletteRgba (base + number 3)
-  let
-    liveColor = r + shl g (number 8) + shl b (number 16) + shl a (number 24)
-  ifS
-    (packedIsAlive alive gi)
+  whenS
+    (sx + cellDraw .> 0 .&& sy + cellDraw .> 0 .&& sx .< cw .&& sy .< ch)
     ( do
-        toSyntax_ (rgbaFillRect pixels cw sx sy cellDraw liveColor)
+        sp <- u8Get species gi
+        let
+          base = sp * number 4
+        r <- u8Get paletteRgba base
+        g <- u8Get paletteRgba (base + number 1)
+        b <- u8Get paletteRgba (base + number 2)
+        a <- u8Get paletteRgba (base + number 3)
+        let
+          liveColor = r + shl g (number 8) + shl b (number 16) + shl a (number 24)
+          dx0 = Math.max (number 0) sx
+          dy0 = Math.max (number 0) sy
+          dx1 = Math.min cw (sx + cellDraw)
+          dy1 = Math.min ch (sy + cellDraw)
+        ifS
+          (packedIsAlive alive gi)
+          ( do
+              toSyntax_ (rgbaFillRect pixels cw ch sx sy cellDraw liveColor)
+              done
+          )
+          ( do
+              toSyntax_ (rgbaFillRect pixels cw ch sx sy cellDraw bg)
+              done
+          )
+        bumpCanvasDirty dirtyScratch dx0 dy0 dx1 dy1
         done
-      )
-    ( do
-        toSyntax_ (rgbaFillRect pixels cw sx sy cellDraw bg)
-        done
-      )
-  bumpCanvasDirty dirtyScratch sx sy (sx + cellDraw) (sy + cellDraw)
+    )
 
 -- | RGBA buffer draw: no @fillRect@ loop; dirty @putImageData@ blit only.
 drawGridViewport ::
@@ -661,6 +671,7 @@ drawGridViewport ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
   -> Effect f (MutableObjectOf CanvasDirty)
   -> EffectSyntax f (f 'Unit)
 drawGridViewport
@@ -672,11 +683,12 @@ drawGridViewport
   species
   liveList
   changedList
-  sceneDirty
+  fullRedraw
   w
+  h
   px
   cw
-  _ch
+  ch
   panX
   panY
   zoomLevel
@@ -684,6 +696,10 @@ drawGridViewport
   let
     scale = px * zoomLevel
     cellDraw = Math.max (number 1) (Math.floor scale)
+    visX0 = Math.max (number 0) (Math.floor ((number 0 - panX) / scale) - number 1)
+    visX1 = Math.min w (Math.ceil ((cw - panX) / scale) + number 1)
+    visY0 = Math.max (number 0) (Math.floor ((number 0 - panY) / scale) - number 1)
+    visY1 = Math.min h (Math.ceil ((ch - panY) / scale) + number 1)
     bg =
       number 15
         + shl (number 23) (number 8)
@@ -694,7 +710,7 @@ drawGridViewport
   set @"cx1" dirtyScratch (number (-1))
   set @"cy1" dirtyScratch (number (-1))
   ifS
-    sceneDirty
+    fullRedraw
     ( do
         toSyntax_
           ( fillRgbaImageData
@@ -707,20 +723,26 @@ drawGridViewport
         forRange_ (number 0) (Array.length liveList) $ \k -> do
           let
             gi = Array.index liveList k
-          paintGridCell
-            pixels
-            cw
-            paletteRgba
-            alive
-            species
-            w
-            scale
-            panX
-            panY
-            cellDraw
-            bg
-            dirtyScratch
-            gi
+            x = rem_ gi w
+            y = Math.floor (gi / w)
+          whenS
+            (x .>= visX0 .&& x .< visX1 .&& y .>= visY0 .&& y .< visY1)
+            ( paintGridCell
+                pixels
+                cw
+                ch
+                paletteRgba
+                alive
+                species
+                w
+                scale
+                panX
+                panY
+                cellDraw
+                bg
+                dirtyScratch
+                gi
+            )
     )
     ( forRange_ (number 0) (Array.length changedList) $ \k -> do
         let
@@ -728,6 +750,7 @@ drawGridViewport
         paintGridCell
           pixels
           cw
+          ch
           paletteRgba
           alive
           species
@@ -747,8 +770,12 @@ drawGridViewport
   let
     dw = dirtyCx1 - dirtyCx0
     dh = dirtyCy1 - dirtyCy0
-  whenS (dw .> 0 .&& dh .> 0) $
-    Canvas.putImageDataRegion ctx img (number 0) (number 0) dirtyCx0 dirtyCy0 dw dh
+  ifS
+    fullRedraw
+    (Canvas.putImageDataRegion ctx img (number 0) (number 0) (number 0) (number 0) cw ch)
+    ( whenS (dw .> 0 .&& dh .> 0) $
+        Canvas.putImageDataRegion ctx img (number 0) (number 0) dirtyCx0 dirtyCy0 dw dh
+    )
   done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number
