@@ -27,11 +27,13 @@ import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import qualified JShark.Generic as G
 import qualified JShark.Json as Json
+import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
 import JShark.Params (Param)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Regex as Regex
+import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
@@ -850,6 +852,78 @@ stdlibTests =
               )
           )
           @?= "const n0 = localStorage.getItem(\"k\");\n(n0 === null ? \"missing\" : n0)"
+    , testCase "Map.lookup treats undefined as None" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Map.withMap $ \m ->
+                      do
+                        v <- Map.lookup m (string "k")
+                        toSyntax (expr (optionCase v (string "missing") (\x -> x)))
+                  )
+              )
+          )
+          @?= "const n0 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })((()=>new Map())(), \"k\");\n(n0 === null ? \"missing\" : n0)"
+    , testCase "Map.insert emits set" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Map.withMap $ \m ->
+                      do
+                        _ <- Map.insert m (string "a") (number 1)
+                        toSyntax noOp
+                  )
+              )
+          )
+          @?= "(()=>new Map())().set(\"a\", 1.0);"
+    , testCase "Set.insert emits add" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Set.withSet $ \s ->
+                      do
+                        _ <- Set.insert s (string "x")
+                        toSyntax noOp
+                  )
+              )
+          )
+          @?= "(()=>new Set())().add(\"x\");"
+    , testCase "Map.mapM_ emits forEach with (k,v) callback order" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Map.withMap $ \m ->
+                      Map.mapM_ (\_ _ -> toSyntax noOp) m
+                  )
+              )
+          )
+          @?= "((m, f) => { m.forEach((v, k) => f(k)(v)); })((()=>new Map())(), function (n0) {return (function (n1) {return})})"
+    , testCase "multi-use Map.new stays one allocation (identity)" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Map.withMap $ \m ->
+                      do
+                        _ <- Map.insert m (string "a") (number 1)
+                        _ <- Map.insert m (string "b") (number 2)
+                        toSyntax noOp
+                  )
+              )
+          )
+          @?= "const n0 = (()=>new Map())();\nn0.set(\"a\", 1.0);\nn0.set(\"b\", 2.0);"
+    , testCase "multi-use Set.new stays one allocation (identity)" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Set.withSet $ \s ->
+                      do
+                        _ <- Set.insert s (string "a")
+                        _ <- Set.insert s (string "b")
+                        toSyntax noOp
+                  )
+              )
+          )
+          @?= "const n0 = (()=>new Set())();\nn0.add(\"a\");\nn0.add(\"b\");"
     , testCase "multi-use UnsafeObject stays one const (identity)" $
         renderJS
           ( effectfulAST

@@ -62,8 +62,10 @@ library
     JShark.Classes
     JShark.Console
     JShark.Json
+    JShark.Map
     JShark.Math
     JShark.Promise
+    JShark.Set
     JShark.Storage
     JShark.String
     JShark.Timers

@@ -16,8 +16,12 @@ where
 
 import Catalog (catalogNamesJson, knownCatalogJson)
 import JShark.Api
+import qualified JShark.Json as Json
+import qualified JShark.Map as Map
 import JShark.Rec (Rec (..), (<:))
+import qualified JShark.Set as Set
 import Names (namingRuntimeJs)
+import JShark.Types (Effect (Lift), Expr (Var))
 import Types (indexRefreshMs)
 
 data Registry
@@ -28,22 +32,36 @@ initIndexTracker ::
   EffectSyntax f (Effect f ('MutableObject IndexTracker))
 initIndexTracker =
   hold $
-    ffi
-      "(() => ({ seen: new Set(), lastMs: 0, lastFp: '' }))"
-      RecNil
+    fromSyntax $
+      Set.withSet $ \seen ->
+        toSyntax $
+          ffi
+            "(({ seen }) => ({ seen, lastMs: 0, lastFp: '' }))"
+            (ArgEffect seen <: RecNil)
 
 initRegistry ::
   EffectSyntax f (Effect f ('MutableObject Registry))
-initRegistry = do
+initRegistry =
   hold $
-    ffi
-      ( "((catalogJson, namesJson) => {"
-          <> "const known = new Map(JSON.parse(catalogJson));"
-          <> "const catalogNames = new Map(JSON.parse(namesJson));"
-          <> "return { known, seen: new Map(), names: new Map(), catalogNames };"
-          <> "})"
-      )
-      (arg (string knownCatalogJson) <: arg (string catalogNamesJson) <: RecNil)
+    fromSyntax $
+      do
+        knownArr <- bindExpr (Json.unsafeParse (string knownCatalogJson))
+        known <- toSyntax (Map.fromEntries knownArr)
+        namesArr <- bindExpr (Json.unsafeParse (string catalogNamesJson))
+        catalogNames <- toSyntax (Map.fromEntries namesArr)
+        seen <- toSyntax Map.new
+        names <- toSyntax Map.new
+        toSyntax $
+          ffi
+            ( "(({ known, catalogNames, seen, names }) =>"
+                <> " ({ known, catalogNames, seen, names }))"
+            )
+            ( ArgEffect (Lift (Var known))
+                <: ArgEffect (Lift (Var catalogNames))
+                <: ArgEffect (Lift (Var seen))
+                <: ArgEffect (Lift (Var names))
+                <: RecNil
+            )
 
 discoverLife ::
   Expr f 'Uint8Array

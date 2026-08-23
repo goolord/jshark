@@ -139,6 +139,13 @@ data Universe
     -- allocation has identity). Not a 'MutableObject' row —
     -- 'JShark.Object.set' must not typecheck. JS can write the object.
     Uint8Array
+  | -- | JS @Map@. Phantom key/value universes; native @Map@, not a plain
+    -- object. Not a 'MutableObject' row — 'JShark.Object.set' must not
+    -- typecheck on it. No host 'Value' / 'evaluate' support: live handles
+    -- are allocated on 'Effect' only (same as DOM refs).
+    Map Universe Universe
+  | -- | JS @Set@. Phantom element universe; effect-only handles.
+    Set Universe
   | -- | Frozen record. Row @r@ is a host 'Type', not a 'Universe' constructor.
     Object Type
   | -- | Mutable JS object. Same row @r@ as 'Object'.

@@ -33,6 +33,8 @@ import qualified JShark.Dom as Dom
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
 import JShark.Rec (Rec (..), (<:))
+import qualified JShark.Map as Map
+import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Support
 import System.Directory (findExecutable)
@@ -192,6 +194,10 @@ bunEvalTests =
                 (ffi "Math.max" (arg (number 2) <: arg (number 9) <: RecNil) :: Effect f 'Number)
                 "9"
             , effectCase "object set then get" mutSetGet "21"
+            , effectCase "Map insert then lookup" mapRoundTrip "\"v\""
+            , effectCase "Set insert then member" setMember "true"
+            , effectCase "Map foldM sums values" mapFold "3"
+            , effectCase "Map mapM_ runs" mapForEach "undefined"
             , effectCase
                 "catch_ of throw_"
                 (catch_ (throw_ (string "boom")) (\_ -> expr (number 7)))
@@ -321,6 +327,30 @@ mutSetGet = fromSyntax $ do
   _ <- Object.set @"x" (Lift (Var o)) (number 21)
   x <- (Var o).x
   yield x
+
+mapRoundTrip :: forall f. Effect f 'String
+mapRoundTrip = fromSyntax $ Map.withMap $ \m -> do
+  _ <- Map.insert m (string "k") (string "v")
+  v <- Map.lookup m (string "k")
+  yield (orElse v (string "missing"))
+
+setMember :: forall f. Effect f 'Bool
+setMember = fromSyntax $ Set.withSet $ \s -> do
+  _ <- Set.insert s (string "x")
+  b <- Set.member s (string "x")
+  yield b
+
+mapFold :: forall f. Effect f 'Number
+mapFold = fromSyntax $ Map.withMap $ \m -> do
+  _ <- Map.insert m (string "a") (number 1)
+  _ <- Map.insert m (string "b") (number 2)
+  acc <- bindExpr $ Map.foldM (\a _ v -> a + v) (number 0) m
+  yield acc
+
+mapForEach :: forall f. Effect f 'Unit
+mapForEach = fromSyntax $ Map.withMap $ \m -> do
+  _ <- Map.insert m (string "x") (number 1)
+  Map.mapM_ (\_ _ -> toSyntax noOp) m
 
 logHi :: forall f. Effect f 'Unit
 logHi = fromSyntax (Console.log (string "hi" :: Expr f 'String) *> done)
