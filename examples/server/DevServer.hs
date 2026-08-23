@@ -72,8 +72,10 @@ exportPaths =
 lifeEngineJs :: [(FilePath, FilePath)]
 lifeEngineJs =
   [ ("js/LUTGenerator.js", "examples/Life/js/LUTGenerator.js")
+  , ("js/LifeSimd.js", "examples/Life/js/LifeSimd.js")
   , ("js/Main.js", "examples/Life/js/Main.js")
   , ("js/EngineWorker.js", "examples/Life/js/EngineWorker.js")
+  , ("js/life-simd.wasm", "examples/Life/js/life-simd.wasm")
   ]
 
 lifeIsolationHeaders :: ActionM ()
@@ -117,7 +119,7 @@ serveExamples port banner examples = do
       when isLife $
         forM_ lifeJs $ \(route, path) ->
           get (fromString (base <> "/" <> route)) $ do
-            setHeader "Content-Type" "application/javascript; charset=utf-8"
+            setHeader "Content-Type" (lifeAssetType route)
             lifeIsolationHeaders
             file path
     forM_ assets $ \(name, path) ->
@@ -212,6 +214,11 @@ lifeJsAsset (route, rel) = do
   exists <- doesFileExist path
   unless exists (fail ("serve: missing data-file " <> rel))
   pure (route, path)
+
+lifeAssetType :: FilePath -> TL.Text
+lifeAssetType route
+  | ".wasm" `T.isSuffixOf` T.pack route = "application/wasm"
+  | otherwise = "application/javascript; charset=utf-8"
 
 staticType :: FilePath -> TL.Text
 staticType name

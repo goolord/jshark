@@ -26,9 +26,10 @@ import Types (gridH, gridW)
 initWorkerEngine :: EffectSyntax f (f 'Unit)
 initWorkerEngine =
   toSyntax $
-    ffi
+      ffi
       ( "((w,h)=>{const E=globalThis.LifeEngine;if(!E)return;"
           <> "E.init({width:w|0,height:h|0,workerCount:0});"
+          <> "void E.loadWasm('js/life-simd.wasm');"
           <> "})"
       )
       ( arg (number (fromIntegral gridW))

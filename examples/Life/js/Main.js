@@ -19,7 +19,7 @@
       this.mode = 'none';
       this.lastTickMs = 0;
       this.lastRenderMs = 0;
-      this.wasmStep = null;
+      this.wasmSimd = false;
       this.gridA = null;
       this.gridB = null;
       this.sab = null;
@@ -30,21 +30,15 @@
       this._speciesTouched = new Uint16Array(8);
     }
 
-    /** Optional WASM SIMD hook: pass a module with exports.stepRegion(ptr,w,h,y0,y1). */
+    /** Load WASM SIMD kernels (row clear/copy). Stepping logic stays in LifeLUT. */
     async loadWasm(url) {
-      if (!global.WebAssembly) return false;
-      try {
-        const resp = await fetch(url);
-        const bytes = await resp.arrayBuffer();
-        const { instance } = await WebAssembly.instantiate(bytes, {});
-        if (typeof instance.exports.stepRegion === 'function') {
-          this.wasmStep = instance.exports.stepRegion;
-          return true;
-        }
-      } catch (_) {
-        /* no wasm bundle shipped */
-      }
-      return false;
+      const LifeSimd = global.LifeSimd;
+      if (!LifeSimd) return false;
+      const ok = await LifeSimd.load(url, this.width, this.height);
+      if (!ok) return false;
+      LifeSimd.bindGrids(this);
+      this.wasmSimd = true;
+      return true;
     }
 
     init(opts) {
@@ -153,7 +147,7 @@
         tickMs: this.lastTickMs,
         renderMs: this.lastRenderMs,
         workers: this.workers.length,
-        wasm: !!this.wasmStep,
+        wasm: !!this.wasmSimd,
       };
     }
 

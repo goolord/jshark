@@ -82,7 +82,9 @@
       const botOff = (y + 1) * w;
       // Ping-pong reuses gridB as the previous generation. Empty chunks
       // must not leave those stale live bits behind (glider-on-seam ghosts).
-      gridB.fill(0, curOff, curOff + w);
+      const simd = global.LifeSimd;
+      if (simd && simd.ready) simd.clearRow(gridB, curOff, w);
+      else gridB.fill(0, curOff, curOff + w);
       const bytes = ((w + 7) / 8) | 0;
       for (let xb = 0; xb < bytes; xb++) {
         const x0 = xb * 8;
@@ -115,8 +117,17 @@
         }
       }
     }
-    if (y0 === 0) gridB.set(gridA.subarray(0, w));
-    if (y1 >= h) gridB.set(gridA.subarray((h - 1) * w, h * w), (h - 1) * w);
+    if (y0 === 0) {
+      const simd = global.LifeSimd;
+      if (simd && simd.ready) simd.copyRow(gridA, 0, gridB, 0, w);
+      else gridB.set(gridA.subarray(0, w));
+    }
+    if (y1 >= h) {
+      const botOff = (h - 1) * w;
+      const simd = global.LifeSimd;
+      if (simd && simd.ready) simd.copyRow(gridA, botOff, gridB, botOff, w);
+      else gridB.set(gridA.subarray(botOff, h * w), botOff);
+    }
   }
 
   global.LifeLUT = {

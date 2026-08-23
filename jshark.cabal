@@ -39,8 +39,10 @@ data-files:
   examples/static/*.js
   examples/static/*.css
   examples/Life/js/LUTGenerator.js
+  examples/Life/js/LifeSimd.js
   examples/Life/js/EngineWorker.js
   examples/Life/js/Main.js
+  examples/Life/js/life-simd.wasm
 
 common warnings
   ghc-options:
