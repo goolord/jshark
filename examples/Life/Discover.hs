@@ -47,6 +47,7 @@ import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)
 import Types
   ( discoverMax
+  , discoverMin
   , gridH
   , gridW
   , indexRefreshMs
@@ -557,6 +558,16 @@ paintIndex ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
 paintIndex tracker counts palette registry seen container = do
+  _ <-
+    Set.mapM_
+      ( \sid ->
+          whenS
+            ( countOf counts sid .== 0
+                .&& sid .>= number (fromIntegral discoverMin)
+            )
+            (Set.delete seen sid)
+      )
+      seen
   entries <- bindExpr $ Array.fromEffects []
   _ <-
     Set.mapM_

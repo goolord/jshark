@@ -11,15 +11,13 @@
 --    loops instead of @forEach@ callbacks.
 module Grid
   ( BoundScratch (..)
-  , ImageData
   , u8Get
   , setU8
-  , createImageData
-  , putImageData
-  , imageDataBytes
   , stepGrid
   , expandBoundsForLive
-  , renderGridViewport
+  , drawGridViewport
+  , initPaletteCss
+  , rebuildLiveList
   , cellIdx
   , inBounds
   , clampLiveBounds
@@ -28,13 +26,11 @@ where
 
 import GHC.Generics (Generic)
 import JShark.Api
+import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf, toObject)
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..), (<:))
-import Types (canvasBgA, canvasBgB, canvasBgG, canvasBgR)
-
-data ImageData
+import Types (canvasBg, gridH)
 
 data StepScratch = StepScratch
   { pop :: Double
@@ -64,30 +60,61 @@ setU8 ::
   -> EffectSyntax f (f 'Unit)
 setU8 buf i v = toSyntax (u8Set buf i v)
 
-createImageData ::
+fillCtx ::
   Effect f ('MutableObject Canvas.Context2D)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (Effect f ('MutableObject ImageData))
-createImageData ctx w h =
-  hold $ callMethod ctx "createImageData" (arg w <: arg h <: RecNil)
-
-putImageData ::
-  Effect f ('MutableObject Canvas.Context2D)
-  -> Expr f ('MutableObject ImageData)
+  -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
-putImageData ctx img = do
-  toSyntax_
-    $ discard
-    $ callMethod
-      ctx
-      "putImageData"
-      (arg img <: arg (number 0) <: arg (number 0) <: RecNil)
+fillCtx ctx col = set @"fillStyle" ctx col
+
+rebuildLiveList ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f ('Array 'Number)
+  -> EffectSyntax f (f 'Unit)
+rebuildLiveList alive w h x0 y0 x1 y1 liveList = do
+  Array.clear_ liveList
+  let
+    (xStart, yStart, xStop, yStop) =
+      clampLiveBounds w h x0 y0 x1 y1 (number 0)
+  forRange_ yStart yStop $ \y ->
+    forRange_ xStart xStop $ \x -> do
+      let
+        i = cellIdx w x y
+      a <- u8Get alive i
+      whenS (a .== 1) (Array.push_ liveList i)
   done
 
-imageDataBytes ::
-  Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
-imageDataBytes img = getProp (expr img) "data"
+paletteCssColor ::
+  Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'String)
+paletteCssColor pal sid = do
+  let
+    base = sid * number 3
+  r <- u8Get pal base
+  g <- u8Get pal (base + number 1)
+  b <- u8Get pal (base + number 2)
+  pure
+    ( string "rgb("
+        <> toString r
+        <> string ","
+        <> toString g
+        <> string ","
+        <> toString b
+        <> string ")"
+    )
+
+initPaletteCss ::
+  Expr f 'Uint8Array -> EffectSyntax f (Expr f ('Array 'String))
+initPaletteCss pal = do
+  css <- bindExpr $ Array.fromEffects []
+  forRange_ (number 0) (number 256) $ \sid -> do
+    col <- paletteCssColor pal sid
+    Array.push_ css col
+  pure css
 
 -- | Half-open scan range @\[xStart, xStop) × \[yStart, yStop)@ clamped to the grid.
 -- @margin@ expands live bounds (use @1@ for step/discovery halos).
@@ -124,9 +151,30 @@ stepGrid ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f ('Array 'Number)
+  -> Expr f ('Array 'Number)
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> Effect f (MutableObjectOf BoundScratch)
   -> EffectSyntax f (Expr f 'Number)
-stepGrid alive species nextAlive nextSpecies w h x0 y0 x1 y1 boundScratch = do
+stepGrid
+  alive
+  species
+  nextAlive
+  nextSpecies
+  w
+  h
+  x0
+  y0
+  x1
+  y1
+  prevLiveList
+  nextLiveList
+  stepStamp
+  stepTag
+  prevPop
+  boundScratch = do
   let
     (xStart, yStart, xStop, yStop) =
       clampLiveBounds w h x0 y0 x1 y1 (number 1)
@@ -151,13 +199,14 @@ stepGrid alive species nextAlive nextSpecies w h x0 y0 x1 y1 boundScratch = do
   touchedBuf <- bindExpr (newByteArray (number 8))
   popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
   cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-  forRange_ yStart yStop $ \y ->
-    forRange_ xStart xStop $ \x ->
+  let
+    runCell x y =
       processCell
         alive
         species
         nextAlive
         nextSpecies
+        nextLiveList
         counts
         touchedBuf
         popScratch
@@ -167,6 +216,41 @@ stepGrid alive species nextAlive nextSpecies w h x0 y0 x1 y1 boundScratch = do
         h
         x
         y
+    runIndex i = do
+      s <- u8Get stepStamp i
+      whenS (s .!= stepTag) $ do
+        setU8 stepStamp i stepTag
+        let
+          x = rem_ i w
+          y = Math.floor (i / w)
+        runCell x y
+    runIndexWithNeighbors i = do
+      runIndex i
+      let
+        x = rem_ i w
+        y = Math.floor (i / w)
+      forRange_ (number (-1)) (number 2) $ \dy ->
+        forRange_ (number (-1)) (number 2) $ \dx ->
+          whenS (not_ (dx .== 0 .&& dy .== 0)) $ do
+            let
+              nx = x + dx
+              ny = y + dy
+            whenS (inBounds w h nx ny) $ runIndex (cellIdx w nx ny)
+  -- Sparse when bbox scan would touch >> live cells (~12× pop crossover in practice).
+  ifS
+    ( prevPop .> 0
+        .&& regionCells .> prevPop * number 12
+        .&& Array.length prevLiveList .> 0
+    )
+    ( forRange_ (number 0) (Array.length prevLiveList) $ \k -> do
+        let
+          i = Array.index prevLiveList k
+        runIndexWithNeighbors i
+    )
+    ( forRange_ yStart yStop $ \y ->
+        forRange_ xStart xStop $ \x ->
+          runCell x y
+    )
   popScratch.pop
 
 processCell ::
@@ -174,6 +258,7 @@ processCell ::
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
+  -> Expr f ('Array 'Number)
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Effect f (MutableObjectOf StepScratch)
@@ -184,7 +269,7 @@ processCell ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-processCell alive species nextAlive nextSpecies counts touchedBuf popScratch cellScratch boundScratch w h x y = do
+processCell alive species nextAlive nextSpecies nextLiveList counts touchedBuf popScratch cellScratch boundScratch w h x y = do
   set @"touchedLen" cellScratch 0
   set @"best" cellScratch 0
   set @"bestCount" cellScratch 0
@@ -206,6 +291,7 @@ processCell alive species nextAlive nextSpecies counts touchedBuf popScratch cel
         ( do
             setU8 nextAlive i 1
             setU8 nextSpecies i sp
+            Array.push_ nextLiveList i
             bumpPop popScratch
             bumpBounds boundScratch x y
         )
@@ -219,6 +305,7 @@ processCell alive species nextAlive nextSpecies counts touchedBuf popScratch cel
         ( do
             setU8 nextAlive i 1
             setU8 nextSpecies i bestSp
+            Array.push_ nextLiveList i
             bumpPop popScratch
             bumpBounds boundScratch x y
         )
@@ -330,16 +417,12 @@ expandBoundsForLive alive w h x0 y0 x1 y1 = do
       whenS (a .== 1) (bumpBounds scratch x y)
   pure scratch
 
-renderGridViewport ::
-  Expr f 'Uint8Array
+-- | GPU draw path using a live-cell index list (@O(pop)@), not bbox area.
+drawGridViewport ::
+  Effect f ('MutableObject Canvas.Context2D)
   -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
+  -> Expr f ('Array 'Number)
+  -> Expr f ('Array 'String)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -348,73 +431,48 @@ renderGridViewport ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-renderGridViewport pixels alive species pal w h px cw ch panX panY zoom boundX0 boundY0 boundX1 boundY1 = do
-  toSyntax_
-    ( fillRgbaImageData
-        pixels
-        (number (fromIntegral canvasBgR))
-        (number (fromIntegral canvasBgG))
-        (number (fromIntegral canvasBgB))
-        (number (fromIntegral canvasBgA))
-    )
-  whenS (boundX1 .>= boundX0) $ do
-    let
-      cellDraw = Math.max (number 1) (Math.floor (px * zoom))
-      scale = px * zoom
-      gx0 =
-        Math.max
-          (number 0)
-          (Math.floor ((number 0 - panX) / scale) - number 1)
-      gx1 =
-        Math.min
-          w
-          (Math.ceil ((cw - panX) / scale) + number 1)
-      gy0 =
-        Math.max
-          (number 0)
-          (Math.floor ((number 0 - panY) / scale) - number 1)
-      gy1 =
-        Math.min
-          h
-          (Math.ceil ((ch - panY) / scale) + number 1)
-      ix0 = Math.max gx0 boundX0
-      iy0 = Math.max gy0 boundY0
-      ix1 = Math.min gx1 (boundX1 + number 1)
-      iy1 = Math.min gy1 (boundY1 + number 1)
-    whenS (ix1 .> ix0 .&& iy1 .> iy0) $
-      forRange_ iy0 iy1 $ \y ->
-        forRange_ ix0 ix1 $ \x -> do
-          let
-            gi = cellIdx w x y
-          a <- u8Get alive gi
-          whenS (a .== 1) $ do
+drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom = do
+  fillCtx ctx (string canvasBg)
+  Canvas.fillRect ctx (number 0) (number 0) cw ch
+  let
+    scale = px * zoom
+    gx0 =
+      Math.max
+        (number 0)
+        (Math.floor ((number 0 - panX) / scale) - number 1)
+    gx1 =
+      Math.min
+        w
+        (Math.ceil ((cw - panX) / scale) + number 1)
+    gy0 =
+      Math.max
+        (number 0)
+        (Math.floor ((number 0 - panY) / scale) - number 1)
+    gy1 =
+      Math.min
+        (number (fromIntegral gridH))
+        (Math.ceil ((ch - panY) / scale) + number 1)
+  Canvas.save ctx
+  Canvas.translate ctx panX panY
+  Canvas.scale ctx scale scale
+  forRange_ (number 0) (number 256) $ \sid -> do
+    fillCtx ctx (Array.index paletteCss sid)
+    forRange_ (number 0) (Array.length liveList) $ \k -> do
+      let
+        gi = Array.index liveList k
+        x = rem_ gi w
+        y = Math.floor (gi / w)
+      whenS
+        ( x .>= gx0
+            .&& x .< gx1
+            .&& y .>= gy0
+            .&& y .< gy1
+        )
+        ( do
             sp <- u8Get species gi
-            let
-              palBase = sp * number 3
-            r <- u8Get pal palBase
-            g <- u8Get pal (palBase + 1)
-            b <- u8Get pal (palBase + 2)
-            let
-              sx = Math.floor (x * scale + panX)
-              sy = Math.floor (y * scale + panY)
-              dx0 = Math.max (number 0) (number 0 - sx)
-              dy0 = Math.max (number 0) (number 0 - sy)
-              dx1 = Math.min cellDraw (cw - sx)
-              dy1 = Math.min cellDraw (ch - sy)
-            whenS (dx1 .> dx0 .&& dy1 .> dy0) $
-              forRange_ dy0 dy1 $ \dy ->
-                let
-                  py = sy + dy
-                 in
-                  forRange_ dx0 dx1 $ \dx ->
-                    let
-                      pxX = sx + dx
-                      pix = (py * cw + pxX) * number 4
-                     in
-                      do
-                        setU8 pixels pix r
-                        setU8 pixels (pix + 1) g
-                        setU8 pixels (pix + 2) b
+            whenS (sp .== sid) (Canvas.fillRect ctx x y (number 1) (number 1))
+        )
+  Canvas.restore ctx
   done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number

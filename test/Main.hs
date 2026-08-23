@@ -759,6 +759,12 @@ stdlibTests =
               (fromSyntax (toSyntax (Array.push numArray (number 3)) *> toSyntax noOp))
           )
           @?= "[1.0, 2.0].push(3.0);"
+    , testCase "Array.clear renders as length = 0" $
+        renderJS
+          ( effectfulAST
+              (fromSyntax (toSyntax (Array.clear numArray) *> toSyntax noOp))
+          )
+          @?= "(a=>{a.length=0})([1.0, 2.0]);"
     , testCase "Array.pushMany renders one call with every argument" $
         renderJS
           ( effectfulAST

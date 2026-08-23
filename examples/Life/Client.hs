@@ -21,7 +21,7 @@ import Discover
   )
 import Engine
 import GHC.Generics (Generic)
-import Grid (cellIdx, createImageData, u8Get)
+import Grid (cellIdx, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
@@ -89,7 +89,6 @@ boot canvas ctx = do
   tooltip <- Dom.lookupId (string lifeTooltipId)
   swatchEl <- Dom.lookupId (string lifeTooltipSwatchId)
   nameEl <- Dom.lookupId (string lifeTooltipNameId)
-  img <- bindExpr =<< createImageData ctxH (number canvasW) (number canvasH)
   meter <- hold (G.toObject (Fps (-1) 0))
   viewport <- initViewport
   rectSym <- toSyntax emptyObject
@@ -112,7 +111,7 @@ boot canvas ctx = do
     paused <- state.paused
     whenS (not_ paused) (stepLife state registry)
     tickIndex state registry indexTracker seenSpecies typesList now
-    renderLife ctxH img viewport state
+    renderLife ctxH viewport state
     paintHud ctxH state meter viewport
     tickHover tipRef state registry tooltip swatchEl nameEl hits
 

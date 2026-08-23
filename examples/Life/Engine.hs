@@ -22,12 +22,11 @@ where
 import Discover (Registry, discoverLife)
 import Grid
   ( BoundScratch (..)
-  , ImageData
   , cellIdx
+  , drawGridViewport
   , expandBoundsForLive
-  , imageDataBytes
-  , putImageData
-  , renderGridViewport
+  , initPaletteCss
+  , rebuildLiveList
   , setU8
   , stepGrid
   , u8Get
@@ -104,6 +103,28 @@ initLife _ctx = do
   set @"discoverVisited" state discoverVisited
   set @"discoverStackX" state discoverStackX
   set @"discoverStackY" state discoverStackY
+  liveList <- bindExpr $ Array.fromEffects []
+  nextLiveList <- bindExpr $ Array.fromEffects []
+  stepStamp <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  set @"liveList" state liveList
+  set @"nextLiveList" state nextLiveList
+  set @"stepStamp" state stepStamp
+  pal <- state.palette
+  paletteCss <- initPaletteCss pal
+  set @"paletteCss" state paletteCss
+  let
+    w = number (fromIntegral gridW)
+    h = number (fromIntegral gridH)
+  _ <-
+    rebuildLiveList
+      alive
+      w
+      h
+      (number (fromIntegral initialBoundX0))
+      (number (fromIntegral initialBoundY0))
+      (number (fromIntegral initialBoundX1))
+      (number (fromIntegral initialBoundY1))
+      liveList
   pure state
 
 stepLife ::
@@ -168,6 +189,14 @@ stepGeneration state = do
   species <- state.species
   nextAlive <- state.nextAlive
   nextSpecies <- state.nextSpecies
+  prevLiveList <- state.liveList
+  nextLiveList <- state.nextLiveList
+  stepStamp <- state.stepStamp
+  prevPop <- state.pop
+  gen <- state.gen
+  let
+    stepTagVal = rem_ gen (number 2)
+  Array.clear_ nextLiveList
   expanded <- expandBoundsForLive alive w h x0 y0 x1 y1
   x0e <- expanded.bx0
   y0e <- expanded.by0
@@ -175,7 +204,14 @@ stepGeneration state = do
   y1e <- expanded.by1
   ifS
     (x1 .< x0)
-    (set @"pop" state 0)
+    ( do
+        set @"pop" state 0
+        live <- state.liveList
+        next <- state.nextLiveList
+        Array.clear_ live
+        Array.clear_ next
+        done
+    )
     ( do
         boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
         p <-
@@ -190,6 +226,11 @@ stepGeneration state = do
             y0e
             x1e
             y1e
+            prevLiveList
+            nextLiveList
+            stepStamp
+            stepTagVal
+            prevPop
             boundScratch
         bx0n <- boundScratch.bx0
         by0n <- boundScratch.by0
@@ -211,9 +252,30 @@ stepGeneration state = do
           )
         set @"pop" state (Math.floor p)
     )
+  swapLiveLists state
   swapBuffers state
-  gen <- state.gen
   set @"gen" state (gen + 1)
+
+syncLiveList ::
+  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+syncLiveList state = do
+  alive <- state.alive
+  liveList <- state.liveList
+  x0 <- state.boundX0
+  y0 <- state.boundY0
+  x1 <- state.boundX1
+  y1 <- state.boundY1
+  let
+    w = number (fromIntegral gridW)
+    h = number (fromIntegral gridH)
+  rebuildLiveList alive w h x0 y0 x1 y1 liveList
+
+swapLiveLists :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+swapLiveLists state = do
+  live <- state.liveList
+  next <- state.nextLiveList
+  set @"liveList" state next
+  set @"nextLiveList" state live
 
 swapBuffers :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 swapBuffers state = do
@@ -228,29 +290,21 @@ swapBuffers state = do
 
 renderLife ::
   Effect f ('MutableObject Canvas.Context2D)
-  -> Expr f ('MutableObject ImageData)
   -> Effect f ('MutableObject ())
   -> Effect f (MutableObjectOf LifeState)
   -> EffectSyntax f (f 'Unit)
-renderLife ctx img viewport state = do
-  pixels <- imageDataBytes img
+renderLife ctx viewport state = do
   w <- pure (number (fromIntegral gridW))
-  h <- pure (number (fromIntegral gridH))
   px <- pure (number (fromIntegral cellPx))
   cw <- pure (number canvasW)
   ch <- pure (number canvasH)
-  alive <- state.alive
   species <- state.species
-  pal <- state.palette
+  liveList <- state.liveList
+  paletteCss <- state.paletteCss
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
-  liveX0 <- state.boundX0
-  liveY0 <- state.boundY0
-  liveX1 <- state.boundX1
-  liveY1 <- state.boundY1
-  renderGridViewport pixels alive species pal w h px cw ch panX panY zoom liveX0 liveY0 liveX1 liveY1
-  putImageData ctx img
+  drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 togglePause state = do
@@ -285,6 +339,7 @@ flipCell state gx gy = do
           set @"pop" state (pop0 + 1)
           includeBounds state gx gy
       )
+    syncLiveList state
 
 -- | Stamp @cells@ (local @[x,y]@ pairs) at @(gx, gy)@. Already-live cells
 --   keep the population count and take @sid@.
@@ -317,6 +372,7 @@ placePattern state cells gx gy sid = do
         setU8 species i sid
         whenS (a .== 0) (set @"pop" state (pop0 + 1))
         includeBounds state x y
+  syncLiveList state
 
 includeBounds ::
   Effect f (MutableObjectOf LifeState)

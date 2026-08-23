@@ -9,10 +9,7 @@ module Types
   , gridN
   , canvasW
   , canvasH
-  , canvasBgR
-  , canvasBgG
-  , canvasBgB
-  , canvasBgA
+  , canvasBg
   , seedOx
   , seedOy
   , seedW
@@ -77,12 +74,9 @@ canvasW, canvasH :: Double
 canvasW = 768
 canvasH = 576
 
--- | Canvas clear color (#0f172a).
-canvasBgR, canvasBgG, canvasBgB, canvasBgA :: Int
-canvasBgR = 15
-canvasBgG = 23
-canvasBgB = 42
-canvasBgA = 255
+-- | Canvas background (#0f172a).
+canvasBg :: Text
+canvasBg = "#0f172a"
 
 -- | Initial soup and catalog stamps land in this central region.
 seedW, seedH :: Int
@@ -197,5 +191,12 @@ data LifeState = LifeState
   , discoverVisited :: ByteArray
   , discoverStackX :: ByteArray
   , discoverStackY :: ByteArray
+  -- | Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
+  , liveList :: [Int]
+  -- | Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
+  , nextLiveList :: [Int]
+  , stepStamp :: ByteArray
+  -- | Host schema only; runtime is a JS @Array@ of CSS color strings.
+  , paletteCss :: [Text]
   }
   deriving Generic
