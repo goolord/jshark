@@ -215,3 +215,5 @@ test-suite jshark-test
     , process
   default-language:
     Haskell2010
+  ghc-options:
+    -Wno-deprecations

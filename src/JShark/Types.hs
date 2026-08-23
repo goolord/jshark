@@ -44,6 +44,7 @@ module JShark.Types
   , Field
   , FieldLit (..)
   , fieldKey
+  , FFIForm (..)
   , Expr (..)
   , StdUnary (..)
   , StdBinary (..)
@@ -83,17 +84,23 @@ data Universe
   | Array Universe
   | -- | Unary. Nest for n-ary JS functions.
     Function Universe Universe
+  | -- | JS @function(a, b) { … }@ — not a curried @'Function@ chain.
+    -- Produced by 'JShark.Api.jsUncurry' for binary callbacks (@Array.sort@, …).
+    -- Unlike nested @'Function@, this is one JS @function(a,b){…}@ value.
+    JsFn2 Universe Universe Universe
   | Option Universe
   | -- | Haskell 'Either'; JS @{ok: Bool, value: …}@
     Result Universe Universe
   | Regex
   | Bool
-  | -- | JS @Uint8Array@. Host 'ByteArray'. EDSL-immutable; JS can still write.
+  | -- | JS @Uint8Array@. Host 'ByteArray'. EDSL-immutable on 'Expr' and
+    -- after freeze on 'Effect'; JS can still write the object.
     Uint8Array
-  | -- | @Uint8Array@ under construction. Allocation has identity, so this
-    -- lives on 'Effect' ('NewByteArray'), not as a 'MutableObject' row —
-    -- 'JShark.Object.newObject' / 'JShark.Object.set' must not typecheck.
-    MutableByteArray
+  | -- | Mutable @Uint8Array@ (@new Uint8Array(n)@). Allocation has
+    -- identity, so this lives on 'Effect' (via 'JShark.Api.newByteArray'),
+    -- not as a 'MutableObject' row — 'JShark.Object.newObject' /
+    -- 'JShark.Object.set' must not typecheck.
+    MutableUint8Array
   | -- | Frozen record. Row @r@ is a host 'Type', not a 'Universe' constructor.
     Object Type
   | -- | Mutable JS object. Same row @r@ as 'Object'.
@@ -118,16 +125,23 @@ data Value :: Universe -> Type where
     -> Value ('Object r)
     -- ^ Eval-only; not a surface literal.
 
+-- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen;
+-- 'FFIFreezeByteArray' is the immovable @a.slice()@ snapshot (internal).
+data FFIForm
+  = FFICall String
+  | FFILambda String
+  | FFIFreezeByteArray
+
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift ::
     Expr f u
     -> Effect f u
     -- ^ Lift a pure expression into the effectful tree
   FFI ::
-    String
+    FFIForm
     -> Rec (Arg f) us
     -> Effect f u
-    -- ^ Foreign call: @name(args…)@. Args are 'Arg' so an effect (object handle, effectful function) need not pass through 'Expr'.
+    -- ^ Foreign call. Args are 'Arg' so an effect need not pass through 'Expr'.
   UnsafeObject :: Text -> Effect f ('MutableObject x)
   UnsafeObjectGet :: Effect f object -> String -> Effect f u
   UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
@@ -198,33 +212,10 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
   ArrayLit ::
     [Effect f u]
     -> Effect f ('Array u)
-    -- ^ @[e0, e1, …]@. Elements stay on 'Effect' (no 'UnsafeEffectExpr').
-  ArraySort ::
-    Expr f ('Array u)
-    -> (f u -> f u -> Expr f 'Number)
-    -> Effect f ('Array u)
-    -- ^ @arr.sort(function(a,b){…})@
-  NewByteArray ::
-    Expr f 'Number
-    -> Effect f 'MutableByteArray
-    -- ^ @new Uint8Array(n)@: @n@ zeroed bytes. The length is fixed at
-    -- allocation, so the size is given up front; allocation has identity,
-    -- so this lives on 'Effect' rather than being a literal.
-  FreezeByteArray ::
-    Effect f 'MutableByteArray
-    -> Effect f 'Uint8Array
-    -- ^ @a.slice()@. Copies, so later writes through the mutable handle
-    -- are not visible in the result. The copy is still a JS @Uint8Array@
-    -- — EDSL-immutable only.
-  UnsafeFreezeByteArray ::
-    Effect f 'MutableByteArray
-    -> Effect f 'Uint8Array
-    -- ^ The same object at the immutable type: no copy, nothing emitted.
-    -- Unsafe because a later write through the mutable handle /is/ visible
-    -- through the frozen value.
+    -- ^ @[e0, e1, …]@. Elements stay on 'Effect'.
 
 -- | An FFI argument drawn from either syntax tree. This is the sanctioned
--- seam between 'Expr' and 'Effect'; prefer it over 'UnsafeEffectExpr'.
+-- seam between 'Expr' and 'Effect'.
 data Arg :: (Universe -> Type) -> Universe -> Type where
   ArgExpr :: Expr f u -> Arg f u
   ArgEffect :: Effect f u -> Arg f u
@@ -243,10 +234,18 @@ type instance Field (GroupBy u) "items" = 'Array u
 -- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
 -- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
 data FieldLit (f :: Universe -> Type) (r :: Type) where
-  FieldLit :: forall k f r. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
+  FieldLit ::
+    forall k f r.
+    KnownSymbol k =>
+    Expr f (Field r k) -> FieldLit f r
+  FieldLitEffect ::
+    forall k f r.
+    KnownSymbol k =>
+    Effect f (Field r k) -> FieldLit f r
 
 fieldKey :: FieldLit f r -> String
 fieldKey (FieldLit @k _) = symbolVal (Proxy :: Proxy k)
+fieldKey (FieldLitEffect @k _) = symbolVal (Proxy :: Proxy k)
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   -- Good Parts: values, arithmetic, strict equality, functions, @const@ lets
@@ -483,14 +482,22 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> (f a -> f b -> Expr f c)
     -> Expr f ('Array c)
     -- ^ @zipWith@; length is @Math.min@.
+  Uncurry2 ::
+    (f a -> f b -> Expr f c)
+    -> Expr f ('JsFn2 a b c)
+    -- ^ @function(a, b) { return … }@ from a binary 'Expr' callback. Not
+    -- @lambda2@ (curried unary nest); use for JS APIs that take one binary
+    -- function (@Array.sort@, …).
   UnsafeNullable ::
     Expr f u
     -> Expr f ('Option u)
     -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
-  UnsafeEffectExpr ::
+  SplicedEffect ::
     Effect f u
     -> Expr f u
-    -- ^ Optimizer splice only; not part of the surface API. Pass effects to FFI via 'ArgEffect'.
+    -- ^ Optimizer-only: splices a bound 'Effect' into a 'Lift' body. Not part
+    -- of the surface API — use 'ArgEffect' at FFI seams and 'FieldLitEffect'
+    -- in object literals.
   FrozenLit ::
     [FieldLit f r]
     -> Expr f ('Object r)

@@ -19,6 +19,7 @@ module JShark.Object
   , obj
   , frozen
   , field
+  , fieldEffect
   , create
   , delete
   , hasOwn
@@ -82,6 +83,9 @@ newObject = UnsafeObject "{}"
 field :: forall k r f. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
 field = FieldLit @k
 
+fieldEffect :: forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
+fieldEffect = FieldLitEffect @k
+
 -- | Typed mutable object literal @{k: v, …}@. Identity-sensitive; not cheap to inline.
 obj :: [FieldLit f r] -> Effect f ('MutableObject r)
 obj = ObjectLit
@@ -93,7 +97,7 @@ frozen = FrozenLit
 -- | @Object.create(proto)@. Prototypal inheritance without @new@.
 -- The child's row is independent of the prototype's.
 create :: Effect f ('MutableObject proto) -> Effect f ('MutableObject child)
-create proto = FFI "Object.create" (ArgEffect proto <: RecNil)
+create proto = FFI (FFICall "Object.create") (ArgEffect proto <: RecNil)
 
 -- | @delete o[k]@
 delete :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
@@ -102,7 +106,7 @@ delete = DeleteProp
 -- | @Object.prototype.hasOwnProperty.call(o, k)@ — the book's enumeration guard.
 hasOwn :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
 hasOwn o k =
-  FFI "Object.prototype.hasOwnProperty.call" (ArgEffect o <: ArgExpr k <: RecNil)
+  FFI (FFICall "Object.prototype.hasOwnProperty.call") (ArgEffect o <: ArgExpr k <: RecNil)
 
 unsafeObject :: Text -> Effect f ('MutableObject a)
 unsafeObject = UnsafeObject

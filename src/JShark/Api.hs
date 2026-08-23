@@ -49,6 +49,7 @@ module JShark.Api
   , lambda
   , lambda2
   , lambda3
+  , jsUncurry
   , lambdaE
   , apply
   , apply2
@@ -155,6 +156,7 @@ import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
+import Unsafe.Coerce (unsafeCoerce)
 
 data Window
 
@@ -183,7 +185,19 @@ onClick_ ::
 onClick_ el body = onClick el $ \_ -> stmts body
 
 ffi :: String -> Rec (Arg f) us -> Effect f v
-ffi = FFI
+ffi s = FFI (classifyFFI s)
+
+classifyFFI :: String -> FFIForm
+classifyFFI s@('(':_) = FFICall s
+classifyFFI s
+  | isUnparenthesizedArrow s = FFILambda s
+  | otherwise = FFICall s
+
+isUnparenthesizedArrow :: String -> Bool
+isUnparenthesizedArrow s =
+  case break (== '=') s of
+    (_, '=':'>' : _) -> True
+    _ -> False
 
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
 callMethod = CallMethod
@@ -234,6 +248,16 @@ lambda3 ::
   -> Expr f ('Function a ('Function b ('Function c d)))
 lambda3 f = lambda (\x -> lambda2 (\y z -> f x y z))
 
+{- | Binary JS @function(a, b) { return … }@.
+
+Complement to 'lambda2' (curried unary nest). Typed as 'JsFn2' — not a
+nested @'Function@ chain. Use when passing a compare or other binary
+callback to JS (@Array.sort@ via 'JShark.Array.sort', …).
+-}
+jsUncurry ::
+  (Expr f a -> Expr f b -> Expr f c) -> Expr f ('JsFn2 a b c)
+jsUncurry f = Uncurry2 (\x y -> f (var x) (var y))
+
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
@@ -274,7 +298,8 @@ string = Literal . ValueString
 
 -- | @new Uint8Array([…])@ from a host 'ByteArray'.
 --
--- EDSL-immutable: JS can still write the object.
+-- EDSL-immutable (on 'Expr' and after freeze on 'Effect'); JS can still
+-- write the object.
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
 
@@ -282,20 +307,24 @@ uint8Array = Literal . ValueUint8Array
 
 'uint8Array' is for bytes the host already has; this is for a buffer whose
 size is known but whose contents are not, which is what a JS API filling a
-buffer wants. Bind it: two occurrences would be two arrays.
+buffer wants. Typed as 'MutableUint8Array' — the mutable Effect API for
+the same JS @Uint8Array@ constructor. Bind it: two occurrences would be
+two arrays.
 -}
 newByteArray ::
-  Expr f 'Number -> Effect f 'MutableByteArray
-newByteArray = NewByteArray
+  Expr f 'Number -> Effect f 'MutableUint8Array
+newByteArray n =
+  FFI (FFILambda "n => new Uint8Array(n)") (arg n <: RecNil)
 
 {- | @a.slice()@ — the bytes so far, as an @''Uint8Array'@.
 
 Copies, so later writes through @a@ do not show up in the result.
-Immutability is EDSL-only: JS can still write the copy.
+'Uint8Array' is EDSL-immutable on 'Expr' and as the result of freeze here;
+JS can still write the copy.
 -}
 freezeByteArray ::
-  Effect f 'MutableByteArray -> Effect f 'Uint8Array
-freezeByteArray = FreezeByteArray
+  Effect f 'MutableUint8Array -> Effect f 'Uint8Array
+freezeByteArray a = FFI FFIFreezeByteArray (ArgEffect a <: RecNil)
 
 {- | 'freezeByteArray' without the copy: the same object, retyped, so
 nothing is emitted.
@@ -304,9 +333,13 @@ Unsafe in the 'Data.Primitive.ByteArray.unsafeFreezeByteArray' sense — a
 later write through the mutable handle is visible through the frozen
 value. Sound when the mutable handle is dead afterwards.
 -}
+{-# WARNING
+  unsafeFreezeByteArray
+  "Zero-emission retype; a live mutable handle aliases the frozen view."
+  #-}
 unsafeFreezeByteArray ::
-  Effect f 'MutableByteArray -> Effect f 'Uint8Array
-unsafeFreezeByteArray = UnsafeFreezeByteArray
+  Effect f 'MutableUint8Array -> Effect f 'Uint8Array
+unsafeFreezeByteArray = unsafeCoerce
 
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])

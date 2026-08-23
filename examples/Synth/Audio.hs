@@ -258,13 +258,13 @@ stopAt n t = toSyntax_ (callMethod (node n) "stop" (arg t <: RecNil))
 
 'JShark.Api.newByteArray' asks for the size and nothing else, which is
 what an output buffer wants: the analyser supplies the contents. Mutable,
-hence @''MutableByteArray'@ — 'JShark.Api.uint8Array' is the
+hence @''MutableUint8Array'@ — 'JShark.Api.uint8Array' is the
 EDSL-immutable literal, for bytes the host already holds.
 
 Bound, so the analyser and the meter share one array.
 -}
 analysisBuffer ::
-  Int -> EffectSyntax f (Expr f 'MutableByteArray)
+  Int -> EffectSyntax f (Expr f 'MutableUint8Array)
 analysisBuffer n =
   fmap var (toSyntax (newByteArray (number (fromIntegral n))))
 
@@ -282,7 +282,7 @@ why it takes the mutable handle.
 byteFrequencyData ::
   IsNode f a
   => a
-  -> Expr f 'MutableByteArray
+  -> Expr f 'MutableUint8Array
   -> EffectSyntax f ()
 byteFrequencyData a buf =
   toSyntax_ (callMethod (node a) "getByteFrequencyData" (arg buf <: RecNil))
@@ -295,7 +295,7 @@ crossing. Reads the mutable handle directly: freezing every frame would
 copy the buffer for nothing.
 -}
 meanByte ::
-  Expr f 'MutableByteArray -> EffectSyntax f (Expr f 'Number)
+  Expr f 'MutableUint8Array -> EffectSyntax f (Expr f 'Number)
 meanByte buf =
   fmap
     var

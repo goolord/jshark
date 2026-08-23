@@ -879,7 +879,7 @@ stdlibTests =
           js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.!=)))
         T.isInfixOf "$eq" js @?= True
         T.isInfixOf "!($eq(" js @?= True
-    , testCase "ffi takes an effectful function via ArgEffect, not UnsafeEffectExpr" $
+    , testCase "ffi takes an effectful function via ArgEffect" $
         renderJS
           ( effectfulAST
               ( ffi
@@ -978,10 +978,10 @@ goodPartsTests =
           @?= "new Uint8Array([])"
     , testCase "newByteArray takes the size, not the bytes" $
         renderJS (effectfulAST (newByteArray (number 4)))
-          @?= "new Uint8Array(4.0)"
+          @?= "(n => new Uint8Array(n))(4.0)"
     , testCase "freezeByteArray copies with slice" $
         renderJS (effectfulAST (freezeByteArray (newByteArray (number 4))))
-          @?= "new Uint8Array(4.0).slice()"
+          @?= "(a => a.slice())((n => new Uint8Array(n))(4.0))"
     , -- A snapshot must stay where it was taken. Splicing `.slice()`
       -- to the read would see the write. Guarded by `movableEffect`.
       testCase "freezeByteArray stays bound across a later write" $
@@ -996,10 +996,10 @@ goodPartsTests =
                   )
               )
           )
-          @?= "const n0 = new Uint8Array(2.0);\nconst n1 = n0.slice();\nwrite(n0);\nn1"
+          @?= "const n0 = (n => new Uint8Array(n))(2.0);\nconst n1 = (a => a.slice())(n0);\nwrite(n0);\nn1"
     , testCase "unsafeFreezeByteArray emits nothing of its own" $
         renderJS (effectfulAST (unsafeFreezeByteArray (newByteArray (number 4))))
-          @?= "new Uint8Array(4.0)"
+          @?= "(n => new Uint8Array(n))(4.0)"
     , -- Allocation has identity: folding two occurrences together would
       -- hand the writer and the reader different arrays.
       testCase "multi-use newByteArray stays one allocation (identity)" $
@@ -1014,7 +1014,7 @@ goodPartsTests =
                   )
               )
           )
-          @?= "const n0 = new Uint8Array(2.0);\nfill(n0);\nread(n0);"
+          @?= "const n0 = (n => new Uint8Array(n))(2.0);\nfill(n0);\nread(n0);"
     , testCase "hasOwn uses Object.prototype.hasOwnProperty.call" $
         T.isInfixOf
           "Object.prototype.hasOwnProperty.call"
@@ -1045,6 +1045,13 @@ goodPartsTests =
     , testCase "sort emits a binary compare callback" $
         renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
           @?= "[1.0, 2.0].sort(function (n0, n1) {return n0 - n1})"
+    , testCase "jsUncurry emits a binary function value" $
+        renderJS
+          ( effectfulAST
+              ( ffi "f" (arg (jsUncurry (\a b -> a + b)) <: RecNil)
+              )
+          )
+          @?= "f(function (n0, n1) {return n0 + n1})"
     , testCase "ifE of throw vs number keeps the result bind" $
         renderJS (effectfulAST (ifE condE (throw_ "boom") (expr (number 1))))
           @?= "let n0;\nif (cond()) {throw \"boom\";}\nelse {n0 = 1.0;}\nn0"
@@ -1072,6 +1079,9 @@ genericTests =
     , testCase "toObject renders list and Maybe fields" $
         renderJS (effectfulAST (G.toObject (Tagged "x" ["a", "b"] Nothing)))
           @?= "{\"label\": \"x\", \"tags\": [\"a\", \"b\"], \"nickname\": null}"
+    , testCase "toObject Maybe record field is nullable object not Some wrapper" $
+        renderJS (effectfulAST (G.toObject (Team (Just (Person "Ada" 36)))))
+          @?= "{\"lead\": {\"fullName\": \"Ada\", \"years\": 36.0}}"
     , testCase "get on a Generic object uses derived Field" $
         renderJS
           ( effectfulAST

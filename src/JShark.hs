@@ -65,6 +65,7 @@ module JShark
       , ExprReduceRight
       , ExprGroupBy
       , ExprZipWith
+      , Uncurry2
       , UnsafeNullable
       , FrozenLit
       , GetField
@@ -95,10 +96,6 @@ module JShark
     , ObjectLit
     , DeleteProp
     , ArrayLit
-    , ArraySort
-    , NewByteArray
-    , FreezeByteArray
-    , UnsafeFreezeByteArray
     )
   -- Evaluation
   , evaluate
@@ -219,6 +216,9 @@ evalFieldLit ::
   -> FieldLit Value r
   -> m (FieldLit Value r)
 evalFieldLit rec (FieldLit @k e) = FieldLit @k . Literal <$> rec e
+evalFieldLit rec (FieldLitEffect @k (Lift e)) = FieldLit @k . Literal <$> rec e
+evalFieldLit _ (FieldLitEffect _) =
+  error "evaluate: effectful object field (FieldLitEffect); not a pure Lift"
 
 fieldLitEq :: FieldLit Value r -> FieldLit Value r -> Bool
 fieldLitEq (FieldLit @k a) (FieldLit @k' b) =
@@ -227,6 +227,13 @@ fieldLitEq (FieldLit @k a) (FieldLit @k' b) =
     Just Refl -> case (a, b) of
       (Literal x, Literal y) -> valueEq x y
       _ -> error "evaluate: frozen field was not forced"
+fieldLitEq (FieldLitEffect @k (Lift a)) (FieldLitEffect @k' (Lift b)) =
+  case sameSymbol (Proxy @k) (Proxy @k') of
+    Nothing -> False
+    Just Refl -> case (a, b) of
+      (Literal x, Literal y) -> valueEq x y
+      _ -> error "evaluate: frozen field was not forced"
+fieldLitEq _ _ = False
 
 -- | Only numbers, strings, and booleans support ordering comparisons.
 valueCompare :: Value u -> Value u -> Ordering
@@ -604,7 +611,8 @@ evalAlg rec apply = \case
     case rv of
       ValueResult (Left e) -> rec (errF e)
       ValueResult (Right a) -> rec (okF a)
-  UnsafeEffectExpr _ -> cannotEval "an embedded Effect (UnsafeEffectExpr)"
+  SplicedEffect _ -> cannotEval "a spliced Effect (SplicedEffect)"
+  Uncurry2 {} -> cannotEval "JsFn2 (jsUncurry)"
   ExprUnary n x -> case n of
     StdArrLen -> do
       arr <- rec x
@@ -1020,14 +1028,14 @@ liveBinder _ = Nothing
 liveBinderExpr :: Expr Stamp u -> Maybe Int
 liveBinderExpr (Var (Stamp n)) | n >= 0 = Just n
 liveBinderExpr (UnsafeNullable e) = liveBinderExpr e
-liveBinderExpr (UnsafeEffectExpr e) = liveBinder e
+liveBinderExpr (SplicedEffect e) = liveBinder e
 liveBinderExpr _ = Nothing
 
 -- | @const n = x; k n@ aliases. Dropping them leaks the body stamp.
 isAliasBind :: Effect Stamp u -> Bool
 isAliasBind (Lift (Var _)) = True
 isAliasBind (Lift (UnsafeNullable (Var _))) = True
-isAliasBind (Lift (UnsafeEffectExpr e)) = isAliasBind e
+isAliasBind (Lift (SplicedEffect e)) = isAliasBind e
 isAliasBind _ = False
 
 jsCall :: Doc -> Doc -> Doc
@@ -1048,14 +1056,14 @@ isSimple = \case
   ExprFilter {} -> True
   ExprGroupBy {} -> True
   ExprZipWith {} -> True
+  Uncurry2 {} -> True
   ExprIndex {} -> True
   MathUnary {} -> True
   MathBinary {} -> True
   UnsafeNullable x -> isSimple x
   FrozenLit {} -> True
   GetField {} -> True
-  -- Single-use Effect spliced into an Expr hole (e.g. inlined 'ffi').
-  UnsafeEffectExpr e -> isSimpleEffect e
+  SplicedEffect e -> isSimpleEffect e
   _ -> False
 
 isSimpleEffect :: Effect Stamp u -> Bool
@@ -1066,9 +1074,6 @@ isSimpleEffect = \case
   UnsafeObject {} -> True
   UnsafeObjectGet {} -> True
   ArrayLit es -> all isSimpleEffect es
-  NewByteArray {} -> True
-  FreezeByteArray a -> isSimpleEffect a
-  UnsafeFreezeByteArray a -> isSimpleEffect a
   _ -> False
 
 wrapOperand :: Expr Stamp u -> Doc -> Doc
@@ -1102,7 +1107,6 @@ countEffect t =
     . foldEff
       nestedDummy
       (Sum . countExpr t)
-      (Sum . countLazyExpr t)
       (Sum . countEffect t)
       (Sum . countLazyEffect t)
 
@@ -1120,7 +1124,7 @@ sizeExpr e = case e of
   sf = Sum . sizeEffect
 
 sizeEffect :: Effect Stamp u -> Int
-sizeEffect e = 1 + getSum (foldEff nestedDummy s s sf sf e)
+sizeEffect e = 1 + getSum (foldEff nestedDummy s sf sf e)
  where
   s = Sum . sizeExpr
   sf = Sum . sizeEffect
@@ -1159,8 +1163,13 @@ keepEffCont t tag body f
   | sizeEffect body <= optSmall = reoptEff t f
   | otherwise = rebindEff tag body
 
-mapFieldLit :: (forall u. Expr f u -> Expr f u) -> FieldLit f r -> FieldLit f r
-mapFieldLit g (FieldLit @k e) = FieldLit @k (g e)
+mapFieldLit ::
+  (forall u. Expr f u -> Expr f u)
+  -> (forall u. Effect f u -> Effect f u)
+  -> FieldLit f r
+  -> FieldLit f r
+mapFieldLit ge _ (FieldLit @k e) = FieldLit @k (ge e)
+mapFieldLit _ gf (FieldLitEffect @k e) = FieldLitEffect @k (gf e)
 
 mapArg ::
   (forall v. Expr f v -> Expr f v)
@@ -1211,7 +1220,7 @@ mapExpr ge gf = \case
   ResultOk x -> ResultOk (ge x)
   ResultErr x -> ResultErr (ge x)
   ResultCase o e s -> ResultCase (ge o) (ge . e) (ge . s)
-  UnsafeEffectExpr e -> UnsafeEffectExpr (gf e)
+  SplicedEffect e -> SplicedEffect (gf e)
   ExprUnary n x -> ExprUnary n (ge x)
   ExprBinary n x y -> ExprBinary n (ge x) (ge y)
   ExprTernary n x y z -> ExprTernary n (ge x) (ge y) (ge z)
@@ -1219,13 +1228,14 @@ mapExpr ge gf = \case
   ExprFilter x f -> ExprFilter (ge x) (ge . f)
   ExprGroupBy x f -> ExprGroupBy (ge x) (ge . f)
   ExprZipWith x y f -> ExprZipWith (ge x) (ge y) (\a b -> ge (f a b))
+  Uncurry2 f -> Uncurry2 (\a b -> ge (f a b))
   ExprReduce x z f -> ExprReduce (ge x) (ge z) (\a b -> ge (f a b))
   ExprReduceRight x z f -> ExprReduceRight (ge x) (ge z) (\a b -> ge (f a b))
   ExprIndex x i -> ExprIndex (ge x) (ge i)
   MathUnary n x -> MathUnary n (ge x)
   MathBinary n x y -> MathBinary n (ge x) (ge y)
   UnsafeNullable x -> UnsafeNullable (ge x)
-  FrozenLit fs -> FrozenLit (map (mapFieldLit ge) fs)
+  FrozenLit fs -> FrozenLit (map (mapFieldLit ge gf) fs)
   GetField @k o -> GetField @k (ge o)
 
 mapEff ::
@@ -1252,13 +1262,9 @@ mapEff ge gf = \case
     StringCaseE (ge o) (map (fmap gf) arms) (gf d)
   Throw x -> Throw (ge x)
   Try a k -> Try (gf a) (gf . k)
-  ObjectLit fs -> ObjectLit (map (mapFieldLit ge) fs)
+  ObjectLit fs -> ObjectLit (map (mapFieldLit ge gf) fs)
   DeleteProp o k -> DeleteProp (gf o) (ge k)
   ArrayLit es -> ArrayLit (map gf es)
-  ArraySort xs f -> ArraySort (ge xs) (\a b -> ge (f a b))
-  NewByteArray n -> NewByteArray (ge n)
-  FreezeByteArray a -> FreezeByteArray (gf a)
-  UnsafeFreezeByteArray a -> UnsafeFreezeByteArray (gf a)
 
 -- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
 -- use @le@. Binders are applied to @dummy@.
@@ -1307,7 +1313,7 @@ foldExpr dummy se le sf = \case
   ResultOk x -> se x
   ResultErr x -> se x
   ResultCase o e s -> se o <> le (e dummy) <> le (s dummy)
-  UnsafeEffectExpr e -> sf e
+  SplicedEffect e -> sf e
   ExprUnary _ x -> se x
   ExprBinary _ x y -> se x <> se y
   ExprTernary _ x y z -> se x <> se y <> se z
@@ -1315,26 +1321,34 @@ foldExpr dummy se le sf = \case
   ExprFilter x f -> se x <> le (f dummy)
   ExprGroupBy x f -> se x <> le (f dummy)
   ExprZipWith x y f -> se x <> se y <> le (f dummy dummy)
+  Uncurry2 f -> le (f dummy dummy)
   ExprReduce x z f -> se x <> se z <> le (f dummy dummy)
   ExprReduceRight x z f -> se x <> se z <> le (f dummy dummy)
   ExprIndex x i -> se x <> se i
   MathUnary _ x -> se x
   MathBinary _ x y -> se x <> se y
   UnsafeNullable x -> se x
-  FrozenLit fs -> foldMap (\(FieldLit e) -> se e) fs
+  FrozenLit fs -> foldMap (foldFieldLit se sf) fs
   GetField o -> se o
+
+foldFieldLit ::
+  (forall v. Expr f v -> m)
+  -> (forall v. Effect f v -> m)
+  -> FieldLit f r
+  -> m
+foldFieldLit se _ (FieldLit e) = se e
+foldFieldLit _ sf (FieldLitEffect e) = sf e
 
 foldEff ::
   forall f m u.
   Monoid m =>
   (forall v. f v)
   -> (forall v. Expr f v -> m)
-  -> (forall v. Expr f v -> m)
   -> (forall v. Effect f v -> m)
   -> (forall v. Effect f v -> m)
   -> Effect f u
   -> m
-foldEff dummy se le sf lf = \case
+foldEff dummy se sf lf = \case
   Lift x -> se x
   FFI _ args -> recFold (\n a -> n <> foldArg a) mempty args
   UnsafeObject {} -> mempty
@@ -1352,13 +1366,9 @@ foldEff dummy se le sf lf = \case
   StringCaseE o arms d -> se o <> foldMap (lf . snd) arms <> lf d
   Throw x -> se x
   Try a k -> sf a <> lf (k dummy)
-  ObjectLit fs -> foldMap (\(FieldLit e) -> se e) fs
+  ObjectLit fs -> foldMap (foldFieldLit se sf) fs
   DeleteProp o k -> sf o <> se k
   ArrayLit es -> foldMap sf es
-  ArraySort xs f -> se xs <> le (f dummy dummy)
-  NewByteArray n -> se n
-  FreezeByteArray a -> sf a
-  UnsafeFreezeByteArray a -> sf a
  where
   foldArg :: forall x. Arg f x -> m
   foldArg (ArgExpr e) = se e
@@ -1373,9 +1383,12 @@ lookupField = findLit . reverse
     case sameSymbol (Proxy @k) (Proxy @k') of
       Just Refl -> Just e
       Nothing -> findLit rest
+  findLit (_ : rest) = findLit rest
 
 fieldsPure :: PhoasDummy f => [FieldLit f r] -> Bool
-fieldsPure = all (\(FieldLit e) -> isPureExpr e)
+fieldsPure = all $ \case
+  FieldLit e -> isPureExpr e
+  FieldLitEffect {} -> False
 
 -- | Last-wins, and only when every sibling is observationally pure
 -- (so projecting @.b@ cannot DCE @JSON.stringify@ in @.a@).
@@ -1517,9 +1530,15 @@ isCheap :: Expr Stamp u -> Bool
 isCheap = \case
   Literal v -> isCheapValue v
   UnsafeNullable x -> isCheap x
-  FrozenLit fs -> all (\(FieldLit e) -> isCheap e) fs
+  FrozenLit fs -> all isCheapFieldLit fs
   GetField o -> isCheap o
+  SplicedEffect _ -> False
+  Uncurry2 _ -> False
   _ -> False
+
+isCheapFieldLit :: FieldLit Stamp r -> Bool
+isCheapFieldLit (FieldLit e) = isCheap e
+isCheapFieldLit (FieldLitEffect _) = False
 
 isCheapEffect :: Effect Stamp u -> Bool
 isCheapEffect = \case
@@ -1539,7 +1558,7 @@ instance PhoasDummy Value where
 
 isPureExpr :: PhoasDummy f => Expr f u -> Bool
 isPureExpr e = case e of
-  UnsafeEffectExpr _ -> False
+  SplicedEffect _ -> False
   ExprUnary n x -> isPureStdUnary n && isPureExpr x
   _ -> getAll (foldExpr phoasDummy p p pe e)
  where
@@ -1557,13 +1576,10 @@ isPureEffectStamp e = case e of
   Throw {} -> False
   Try {} -> False
   DeleteProp {} -> False
-  ArraySort {} -> False
-  FreezeByteArray {} -> False
   _ ->
     getAll
       ( foldEff
           phoasDummy
-          (All . isPureExpr)
           (All . isPureExpr)
           (All . isPureEffectStamp)
           (All . isPureEffectStamp)
@@ -1660,9 +1676,11 @@ foldFrozenEq cmp k x y = case (x, y) of
   _ -> k x y
 
 peelFrozen :: [FieldLit Stamp r] -> Maybe [FieldLit Value r]
-peelFrozen = traverse $ \(FieldLit @k e) -> case e of
-  Literal v -> Just (FieldLit @k (Literal v))
-  _ -> Nothing
+peelFrozen = traverse $ \case
+  FieldLit @k e -> case e of
+    Literal v -> Just (FieldLit @k (Literal v))
+    _ -> Nothing
+  FieldLitEffect {} -> Nothing
 
 foldOrd ::
   Ordering
@@ -1786,7 +1804,7 @@ elimLetFrom t x f tag body =
 
 boundAsExpr :: Effect Stamp u -> Expr Stamp u
 boundAsExpr (Lift e) = e
-boundAsExpr e = UnsafeEffectExpr e
+boundAsExpr e = SplicedEffect e
 
 optBind ::
   Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (Int, Effect Stamp v)
@@ -1823,15 +1841,14 @@ elimBindFrom t x f tag body =
 
 {- | Whether a single use of this effect may be spliced into the body.
 
-Only 'FreezeByteArray' says no. It copies mutable bytes, so it means
-"their value here"; splicing would slide the copy past any write between
-the binding and the read, and the snapshot would see the write. Reads
-like 'UnsafeObjectGet' are movable as they always were — narrowing that
-would stop the single-use inlining the readable output depends on.
+'JShark.Api.freezeByteArray' uses 'FFIFreezeByteArray' (@a.slice()@).
+It copies mutable bytes, so splicing would slide the copy past any write
+between the binding and the read. Reads like 'UnsafeObjectGet' stay
+movable as they always were.
 -}
 movableEffect :: Effect Stamp u -> Bool
 movableEffect = \case
-  FreezeByteArray {} -> False
+  FFI FFIFreezeByteArray _ -> False
   _ -> True
 
 optBin ::
@@ -1985,13 +2002,13 @@ optExpr t0 = \case
             (t3, tS, s') = optUnder t2 s
            in
             (t3, ResultCase o' (keepExprCont t3 tE e' e) (keepExprCont t3 tS s' s))
-  UnsafeEffectExpr e ->
+  SplicedEffect e ->
     let
       (t1, e') = optEffect t0 e
      in
       case e' of
         Lift x -> (t1, x)
-        _ -> (t1, UnsafeEffectExpr e')
+        _ -> (t1, SplicedEffect e')
   ExprUnary n x ->
     let
       (t1, x') = optExpr t0 x
@@ -2058,6 +2075,14 @@ optExpr t0 = \case
         | otherwise = rebindExpr2 tA tB body a b
      in
       (t3, ExprReduceRight x' z' wrap)
+  Uncurry2 f ->
+    let
+      (t1, tA, tB, body) = optUnder2 t0 f
+      wrap a b
+        | sizeExpr body <= optSmall = reoptExpr2 t1 f a b
+        | otherwise = rebindExpr2 tA tB body a b
+     in
+      (t1, Uncurry2 wrap)
   ExprIndex arr idx ->
     let
       (t1, arr') = optExpr t0 arr
@@ -2108,7 +2133,7 @@ optEffect t0 = \case
       (t1, x') = optExpr t0 x
      in
       case x' of
-        UnsafeEffectExpr e -> (t1, e)
+        SplicedEffect e -> (t1, e)
         _ -> (t1, Lift x')
   FFI n args -> fmap (FFI n) (optArgs t0 args)
   UnsafeObject o -> (t0, UnsafeObject o)
@@ -2251,30 +2276,6 @@ optEffect t0 = \case
       (t1, es') = mapAccumEffs t0 es
      in
       (t1, ArrayLit es')
-  NewByteArray n ->
-    let
-      (t1, n') = optExpr t0 n
-     in
-      (t1, NewByteArray n')
-  FreezeByteArray a ->
-    let
-      (t1, a') = optEffect t0 a
-     in
-      (t1, FreezeByteArray a')
-  UnsafeFreezeByteArray a ->
-    let
-      (t1, a') = optEffect t0 a
-     in
-      (t1, UnsafeFreezeByteArray a')
-  ArraySort xs f ->
-    let
-      (t1, xs') = optExpr t0 xs
-      (t2, tA, tB, body) = optUnder2 t1 f
-      wrap a b
-        | sizeExpr body <= optSmall = reoptExpr2 t2 f a b
-        | otherwise = rebindExpr2 tA tB body a b
-     in
-      (t2, ArraySort xs' wrap)
 
 mapAccumAST :: (s -> a -> (s, b)) -> s -> [a] -> (s, [b])
 mapAccumAST _ t [] = (t, [])
@@ -2286,11 +2287,17 @@ mapAccumAST f t (x : xs) =
     (t2, x' : xs')
 
 mapAccumField :: Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r])
-mapAccumField = mapAccumAST $ \t (FieldLit @k e) ->
-  let
-    (t1, e') = optExpr t e
-   in
-    (t1, FieldLit @k e')
+mapAccumField = mapAccumAST $ \t -> \case
+  FieldLit @k e ->
+    let
+      (t1, e') = optExpr t e
+     in
+      (t1, FieldLit @k e')
+  FieldLitEffect @k e ->
+    let
+      (t1, e') = optEffect t e
+     in
+      (t1, FieldLitEffect @k e')
 
 mapAccumEffs :: Int -> [Effect Stamp u] -> (Int, [Effect Stamp u])
 mapAccumEffs = mapAccumAST optEffect
@@ -2358,7 +2365,7 @@ effectfulAST e =
 isUnitWitness :: Effect Stamp u -> Bool
 isUnitWitness = \case
   Lift (Literal ValueUnit) -> True
-  Lift (UnsafeEffectExpr e) -> isUnitWitness e
+  Lift (SplicedEffect e) -> isUnitWitness e
   Lift _ -> False
   While {} -> True
   Bind _ f -> isUnitWitness (f nestedDummy)
@@ -2471,6 +2478,12 @@ renderFunction nParam decl ref =
     | P.isEmpty ref = "return"
     | otherwise = "return" <+> P.parens ref
 
+renderFFIForm :: FFIForm -> Doc
+renderFFIForm = \case
+  FFICall s -> P.text s
+  FFILambda s -> P.parens (P.text s)
+  FFIFreezeByteArray -> P.parens "a => a.slice()"
+
 effectfulAST' :: forall v. CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !s0 = \case
   Lift x -> pureAST' s0 x
@@ -2478,7 +2491,7 @@ effectfulAST' !s0 = \case
     let
       (s1, argDecl, argRefs) = renderArgList argAST s0 args
      in
-      (s1, fxCode argDecl (P.text fn <> P.parens argRefs))
+      (s1, fxCode argDecl (renderFFIForm fn <> P.parens argRefs))
   IfE c t e ->
     -- Value-producing @if@: a shared result var is assigned in both
     -- arms. Do not use emptiness to pick a ternary — a Unit leftover
@@ -2561,27 +2574,6 @@ effectfulAST' !s0 = \case
       (s2, Code kDecl kRef) = pureAST' s1 k
      in
       (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
-  ArraySort xs f ->
-    let
-      (s1, Code xDecl xRef) = pureAST' s0 xs
-      (s2, cb) = renderBinaryFn s1 f
-      call = xRef <> ".sort" <> P.parens cb
-     in
-      (s2, fxCode xDecl call)
-  NewByteArray n ->
-    let
-      (s1, Code nDecl nRef) = pureAST' s0 n
-     in
-      -- Effectful ref: two allocations are two arrays, so this must not
-      -- be folded together with another occurrence.
-      (s1, fxCode nDecl ("new Uint8Array" <> P.parens nRef))
-  FreezeByteArray a ->
-    let
-      (s1, MkCode aDecl aRef _) = effectfulAST' s0 a
-     in
-      (s1, fxCode aDecl (aRef <> ".slice()"))
-  -- No copy and nothing to emit: the same object at the immutable type.
-  UnsafeFreezeByteArray a -> effectfulAST' s0 a
   ResultCaseE res errF okF -> renderResultCaseE s0 res errF okF
   StringCaseE scrut arms def -> renderStringCaseE s0 scrut arms def
   UnsafeObject obj -> (s0, Code mempty $ P.text $ T.unpack obj)
@@ -2784,7 +2776,7 @@ pureAST' !s0 = \case
      in
       (s1, Code d (resultObject False r))
   ResultCase res errF okF -> renderResultCase s0 res errF okF
-  UnsafeEffectExpr eff -> effectfulAST' s0 eff
+  SplicedEffect eff -> effectfulAST' s0 eff
   ExprUnary n recv ->
     let
       (s1, Code rDecl rRef) = pureAST' s0 recv
@@ -2823,6 +2815,11 @@ pureAST' !s0 = \case
       call = rRef <> ".reduceRight" <> P.parens (cb <> ", " <> zRef)
      in
       (s3, Code (rDecl $$ zDecl) call)
+  Uncurry2 f ->
+    let
+      (s1, cb) = renderBinaryFn s0 f
+     in
+      (s1, Code mempty cb)
   ExprIndex arr idx ->
     let
       (s1, Code aDecl aRef) = pureAST' s0 arr
@@ -2918,11 +2915,18 @@ renderObjectLit s0 fs =
   let
     (s1, parts) =
       mapAccumAST
-        ( \s fl@(FieldLit e) ->
-            let
-              (s', Code d r) = pureAST' s e
-             in
-              (s', (d, (P.doubleQuotes (P.text (fieldKey fl)) <> ":") <+> r))
+        ( \s fl ->
+            case fl of
+              FieldLit e ->
+                let
+                  (s', Code d r) = pureAST' s e
+                 in
+                  (s', (d, (P.doubleQuotes (P.text (fieldKey fl)) <> ":") <+> r))
+              FieldLitEffect e ->
+                let
+                  (s', MkCode d r _) = effectfulAST' s e
+                 in
+                  (s', (d, (P.doubleQuotes (P.text (fieldKey fl)) <> ":") <+> r))
         )
         s0
         fs

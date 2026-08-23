@@ -65,13 +65,14 @@ import JShark.Api
   , ifE
   , none
   , number
-  , some
   , string
   , throw_
+  , unsafeNullable
+  , var
   , (.==)
   )
 import JShark.Array (fromEffects)
-import JShark.Object (field, get, newObject, obj, unsafeObjectGet)
+import JShark.Object (field, fieldEffect, get, newObject, obj, unsafeObjectGet)
 import JShark.Types
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -278,14 +279,18 @@ newRecord = newObject
   -- Mention 'toObject' so 'GToObject' is used; never applied.
   _recordRow = toObject :: a -> Effect f ('MutableObject (As a))
 
--- | Splice an object/sum 'Effect' into a 'FieldLit' 'Expr' hole.
-embedObject :: Effect f u -> Expr f u
-embedObject = UnsafeEffectExpr
-
 impossible :: a
 impossible = error "JShark.Generic: unreachable (TypeError instance)"
 
 data FieldKind = Prim | Rec | Sum | List FieldKind | Opt FieldKind
+
+data FieldDispatch f u where
+  FDExpr :: Expr f u -> FieldDispatch f u
+  FDEffect :: Effect f u -> FieldDispatch f u
+
+toFieldLit :: forall k r f u. (KnownSymbol k, Field r k ~ u) => FieldDispatch f u -> FieldLit f r
+toFieldLit (FDExpr e) = FieldLit @k e
+toFieldLit (FDEffect e) = FieldLitEffect @k e
 
 type family KindOf (a :: Type) :: FieldKind where
   KindOf Double = 'Prim
@@ -306,25 +311,25 @@ type family KindOfRep (r :: Type -> Type) :: FieldKind where
   KindOfRep _ = 'Rec
 
 class DispatchField (k :: FieldKind) a where
-  dispatchField :: a -> Expr f (FieldU a)
+  dispatchField :: a -> FieldDispatch f (FieldU a)
 
 instance (ToValue a, FieldU a ~ UniverseOf a) => DispatchField 'Prim a where
-  dispatchField = toJS
+  dispatchField x = FDExpr (toJS x)
 
 instance
   (Generic a, GToObject (Rep a) (As a), FieldU a ~ 'MutableObject (As a)) =>
   DispatchField 'Rec a
   where
-  dispatchField = embedObject . toObject
+  dispatchField x = FDEffect (toObject x)
 
 instance
   (Generic a, GToSum a (Rep a), FieldU a ~ 'MutableObject (Tagged a)) =>
   DispatchField 'Sum a
   where
-  dispatchField = embedObject . toSum
+  dispatchField x = FDEffect (toSum x)
 
 instance (ToValue a, FieldU [a] ~ UniverseOf [a]) => DispatchField ('List 'Prim) [a] where
-  dispatchField = toJS
+  dispatchField x = FDExpr (toJS x)
 
 instance
   ( Generic a
@@ -333,19 +338,19 @@ instance
   ) =>
   DispatchField ('List 'Rec) [a]
   where
-  dispatchField = embedObject . toObjectArray
+  dispatchField x = FDEffect (toObjectArray x)
 
 instance
   (Generic a, GToSum a (Rep a), FieldU [a] ~ 'Array ('MutableObject (Tagged a))) =>
   DispatchField ('List 'Sum) [a]
   where
-  dispatchField = embedObject . toSumArray
+  dispatchField x = FDEffect (toSumArray x)
 
 instance
   (ToValue a, FieldU (Maybe a) ~ UniverseOf (Maybe a)) =>
   DispatchField ('Opt 'Prim) (Maybe a)
   where
-  dispatchField = toJS
+  dispatchField x = FDExpr (toJS x)
 
 instance
   ( Generic a
@@ -354,8 +359,11 @@ instance
   ) =>
   DispatchField ('Opt 'Rec) (Maybe a)
   where
-  dispatchField Nothing = none
-  dispatchField (Just x) = some (embedObject (toObject x))
+  -- | @Just@ allocates the nested record on 'Effect', then 'unsafeNullable'
+  -- for JS @null@ / object — not 'some' (no Option wrapper in object fields).
+  dispatchField Nothing = FDExpr none
+  dispatchField (Just x) =
+    FDEffect (Bind (toObject x) (\o -> Lift (unsafeNullable (var o))))
 
 instance
   ( Generic a
@@ -364,8 +372,10 @@ instance
   ) =>
   DispatchField ('Opt 'Sum) (Maybe a)
   where
-  dispatchField Nothing = none
-  dispatchField (Just x) = some (embedObject (toSum x))
+  -- | Same nullable-object encoding as 'Opt' 'Rec' (see above).
+  dispatchField Nothing = FDExpr none
+  dispatchField (Just x) =
+    FDEffect (Bind (toSum x) (\o -> Lift (unsafeNullable (var o))))
 
 class GToObject (r :: Type -> Type) (row :: Type) where
   gtoFields :: r x -> [FieldLit f row]
@@ -386,7 +396,7 @@ instance
   (KnownSymbol k, DispatchField (KindOf t) t, Field row k ~ FieldU t) =>
   GToObject (S1 ('MetaSel ('Just k) su ss ds) (Rec0 t)) row
   where
-  gtoFields (M1 (K1 x)) = [FieldLit @k (dispatchField @(KindOf t) x)]
+  gtoFields (M1 (K1 x)) = [toFieldLit @k (dispatchField @(KindOf t) x)]
 
 instance
   TypeError
@@ -628,7 +638,7 @@ emitCase ::
 emitCase t o (CaseCons @name hit rest) =
   ifE
     (expr (t .== string (T.pack (symbolVal (Proxy @name)))))
-    (hit (unpayload @(IsUnit (CtorU a name)) @(CtorU a name) o))
+    (runHit @(IsUnit (CtorU a name)) @(CtorU a name) hit o)
     (emitCase t o rest)
 emitCase t _ (CaseAny k) = k t
 emitCase t _ CaseEnd =
@@ -653,13 +663,13 @@ type family IsUnit (u :: Universe) :: Bool where
   IsUnit _ = 'False
 
 class Unpayload (b :: Bool) (u :: Universe) where
-  unpayload :: Effect f ('MutableObject r) -> Expr f u
+  runHit :: (Expr f u -> Effect f v) -> Effect f ('MutableObject r) -> Effect f v
 
 instance Unpayload 'True 'Unit where
-  unpayload _ = Literal ValueUnit
+  runHit hit _ = hit (Literal ValueUnit)
 
 instance Unpayload 'False u where
-  unpayload o = embedObject (unsafeObjectGet o "payload")
+  runHit hit o = Bind (unsafeObjectGet o "payload") (\p -> hit (var p))
 
 class GToSum a (r :: Type -> Type) where
   gtoSum :: r x -> Effect f (SumOf a)
@@ -679,16 +689,16 @@ instance
   GToSum a (C1 ('MetaCons name fx rec) (S1 m (Rec0 t)))
   where
   gtoSum (M1 (M1 (K1 x))) =
-    emitTaggedPayload @a (symbolVal (Proxy @name)) (dispatchField @(KindOf t) x)
+    emitTaggedPayloadDispatch @a (symbolVal (Proxy @name)) (dispatchField @(KindOf t) x)
 
 instance
   (KnownSymbol name, GToPayloadN 0 (l :*: r) (Payload a name)) =>
   GToSum a (C1 ('MetaCons name fx rec) (l :*: r))
   where
   gtoSum (M1 p) =
-    emitTaggedPayload @a
+    emitTaggedPayloadObject @a
       (symbolVal (Proxy @name))
-      (embedObject (obj (gPayloadFieldsN @0 @(l :*: r) @(Payload a name) p)))
+      (gPayloadFieldsN @0 @(l :*: r) @(Payload a name) p)
 
 -- | Internal row so @{tag, payload}@ can be one 'ObjectLit' without a
 -- public 'Field' on 'Tagged'.
@@ -701,14 +711,28 @@ type instance Field (PayloadRow u) "payload" = u
 emitTagged :: forall a f. String -> Effect f (SumOf a)
 emitTagged name = obj [field @"tag" (string (T.pack name))]
 
-emitTaggedPayload :: forall a f u. String -> Expr f u -> Effect f (SumOf a)
-emitTaggedPayload name p =
+emitTaggedPayloadDispatch ::
+  forall a f u.
+  String -> FieldDispatch f u -> Effect f (SumOf a)
+emitTaggedPayloadDispatch name p =
   unsafeCoerce
     ( obj
         [ field @"tag" (string (T.pack name))
-        , field @"payload" p
+        , toFieldLit @"payload" p
         ] ::
         Effect f ('MutableObject (PayloadRow u))
+    )
+
+emitTaggedPayloadObject ::
+  forall a f row.
+  String -> [FieldLit f row] -> Effect f (SumOf a)
+emitTaggedPayloadObject name innerFields =
+  unsafeCoerce
+    ( obj
+        [ field @"tag" (string (T.pack name))
+        , fieldEffect @"payload" (obj innerFields)
+        ] ::
+        Effect f ('MutableObject (PayloadRow ('MutableObject row)))
     )
 
 class GToPayloadN (n :: Nat) (p :: Type -> Type) (row :: Type) where
@@ -721,7 +745,7 @@ instance
   (KnownSymbol k, DispatchField (KindOf t) t, Field row k ~ FieldU t) =>
   GToPayloadN n (S1 ('MetaSel ('Just k) su ss ds) (Rec0 t)) row
   where
-  gPayloadFieldsN (M1 (K1 x)) = [FieldLit @k (dispatchField @(KindOf t) x)]
+  gPayloadFieldsN (M1 (K1 x)) = [toFieldLit @k (dispatchField @(KindOf t) x)]
 
 instance
   ( KnownSymbol (NatSym n)
@@ -730,7 +754,7 @@ instance
   ) =>
   GToPayloadN n (S1 ('MetaSel 'Nothing su ss ds) (Rec0 t)) row
   where
-  gPayloadFieldsN (M1 (K1 x)) = [FieldLit @(NatSym n) (dispatchField @(KindOf t) x)]
+  gPayloadFieldsN (M1 (K1 x)) = [toFieldLit @(NatSym n) (dispatchField @(KindOf t) x)]
 
 instance
   (GToPayloadN n l row, GToPayloadN (n + FieldCount l) r row) =>

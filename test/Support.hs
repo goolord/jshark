@@ -13,6 +13,7 @@ module Support
   , Packet (..)
   , Tagged (..)
   , Group (..)
+  , Team (..)
   , Color (..)
   , Shape (..)
   , Badge (..)
@@ -76,6 +77,11 @@ data Tagged = Tagged
 
 data Group = Group
   { members :: [Person]
+  }
+  deriving Generic
+
+data Team = Team
+  { lead :: Maybe Person
   }
   deriving Generic
 

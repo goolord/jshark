@@ -2,16 +2,20 @@
 
 ## Unreleased
 
-* `'Uint8Array` primitive. Host `ByteArray` (base) via `ToJS` / `ToValue` /
-  `uint8Array`. Literals emit `new Uint8Array([…])`. `$eq` and `evaluate`
-  compare contents. `String` is the comma-joined bytes (`"1,2,3"`).
-  `base >= 4.17`. A runtime-sized buffer is `newByteArray n`
-  (`new Uint8Array(n)`), an `Effect` of `'MutableByteArray` — its own
-  universe, not a `'MutableObject` row, so `newObject` / `Object.set`
-  do not typecheck. `freezeByteArray` is `.slice()` onto `'Uint8Array`
-  (EDSL-immutable; JS can still write the copy);
-  `unsafeFreezeByteArray` is the same object retyped. Size is given
-  up front: JS typed arrays cannot grow.
+* `'Uint8Array` / `'MutableUint8Array`. Host `ByteArray` (base) via
+  `ToJS` / `ToValue` / `uint8Array`. Literals emit `new Uint8Array([…])`.
+  `'Uint8Array` is EDSL-immutable on `Expr` and after freeze on `Effect`;
+  JS can still write the object. A runtime-sized buffer is `newByteArray n`
+  (`ffi` → `new Uint8Array(n)`), typed `'MutableUint8Array` — not a
+  `'MutableObject` row. `freezeByteArray` is `ffi` → `.slice()`;
+  `unsafeFreezeByteArray` is a zero-emission retype (`unsafeCoerce`).
+  `FieldLitEffect` carries effectful object fields in `ObjectLit` (replaces
+  `UnsafeEffectExpr` in `Generic`). Optimizer bind inlining uses internal
+  `SplicedEffect` on `Expr` (not surface API). Removed byte-array `Effect`
+  constructors. `jsUncurry` / `'JsFn2` for binary JS callbacks (replaces
+  `ArraySort`); `Array.sort` uses `callMethod` + `jsUncurry`. `FFIForm`
+  tags lambda vs call vs immovable freeze (not string matching).
+  `base >= 4.17`.
 
 
 * Fixed: codegen and the optimizer numbered PHOAS tags from the same

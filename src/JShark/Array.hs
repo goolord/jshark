@@ -157,11 +157,10 @@ arraySlice ::
   Expr f ('Array u) -> Expr f 'Number -> Expr f 'Number -> Expr f ('Array u)
 arraySlice = ExprTernary StdArrSlice
 
--- | @arr.sort(function(a,b){…})@. Mutates in place. The compare callback
--- is a binary JS function (not curried 'lambda2'); it should return a
--- 'Number' (negative / zero / positive).
+-- | @arr.sort(function(a,b){…})@. Mutates in place.
 sort ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f u -> Expr f 'Number)
   -> Effect f ('Array u)
-sort arr cmp = ArraySort arr (\a b -> cmp (var a) (var b))
+sort arr cmp =
+  callMethod (expr arr) "sort" (arg (jsUncurry cmp) <: RecNil)

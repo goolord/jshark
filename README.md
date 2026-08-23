@@ -130,15 +130,20 @@ evaluateEffectJSONWith
 `Result` (below) — eliminate them with `optionCase` / `resultCase`,
 not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
 is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
-Host `ByteArray` is `'Uint8Array` (`new Uint8Array([…])`); `.==` is
-content equality. Immutability is EDSL-only: JS can still write the
-object. A buffer whose length is known but whose bytes are not is
-`newByteArray n` (`new Uint8Array(n)`), `'MutableByteArray`; freeze
-it with `freezeByteArray` (`.slice()`) to get `'Uint8Array`.
+Host `ByteArray` maps to `'Uint8Array` (`uint8Array`, `new Uint8Array([…])`).
+That type is EDSL-immutable whether it appears on `Expr` or as the result
+of freezing on `Effect`; JS can still write the object. A runtime-sized
+buffer whose bytes are not yet known is `newByteArray n` on `Effect`,
+typed `'MutableUint8Array` (JS `new Uint8Array(n)` — the mutable Effect
+API for the same constructor). Pass that handle to APIs that fill in place,
+then `freezeByteArray` (`.slice()`, copy) or `unsafeFreezeByteArray`
+(same object, retyped, nothing emitted) to get `'Uint8Array`.
 
 No `==`, `with`, `eval`, `this`, or implicit `new`. No `/src/`
-literals (`new RegExp`). Functions are unary (`Array.sort`'s compare
-is the binary exception). Array index is `Math.trunc` and throws on
+literals (`new RegExp`). Unary JS functions nest as `'Function` chains
+(`lambda`, `lambda2`, …). Binary JS callbacks use `'JsFn2` via
+`jsUncurry` (`Array.sort`, etc.) — one `function(a,b){…}`, not nested
+unary functions. Array index is `Math.trunc` and throws on
 OOB. `parseInt_` takes a radix. `.==` is `$eq` (`===`, then
 structural arrays, `Uint8Array` contents, and plain objects). Frozen
 `'Object` is `Expr`; `'MutableObject` is `Effect`.
