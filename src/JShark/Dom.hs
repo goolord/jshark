@@ -20,6 +20,7 @@ module JShark.Dom
   , appendChild
   , removeChild
   , replaceChildren
+  , replaceChildrenFrom
   , setTextContent
   , setStyleProperty
   , innerHTML
@@ -112,6 +113,17 @@ removeChild parent child = toSyntax $ callMethod parent "removeChild" (ArgEffect
 replaceChildren ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (f 'Unit)
 replaceChildren el = toSyntax $ callMethod el "replaceChildren" RecNil
+
+-- | @parent.replaceChildren(...source.childNodes)@ — one live-DOM update.
+replaceChildrenFrom ::
+  Effect f ('MutableObject DomElement)
+  -> Effect f ('MutableObject DomElement)
+  -> EffectSyntax f (f 'Unit)
+replaceChildrenFrom parent source =
+  toSyntax $
+    ffi
+      "((p, s) => { p.replaceChildren(...s.childNodes); })"
+      (ArgEffect parent <: ArgEffect source <: RecNil)
 
 setTextContent ::
   Effect f ('MutableObject DomElement)

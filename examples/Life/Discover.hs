@@ -36,7 +36,14 @@ import qualified JShark.Math as Math
 import JShark.Object (field, frozen)
 import qualified JShark.Set as Set
 import qualified JShark.Timers as Timers
+import JShark.Lucid
+  ( JsHtml
+  , renderFragment
+  , text_
+  )
+import JShark.Rec (Rec (..), (<:))
 import JShark.Types (Effect (Lift))
+import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)
 import Types
   ( discoverMax
@@ -83,6 +90,10 @@ initIndexTracker ::
 initIndexTracker = do
   t <- hold newObject
   _ <- setProp t "lastMs" (number 0)
+  _ <- setProp t "pending" false_
+  frag <- renderFragment indexRowTemplate
+  templateE <- getProp frag "firstChild"
+  _ <- setProp t "rowTemplate" templateE
   pure t
 
 initIndexContainer ::
@@ -418,25 +429,30 @@ stepIndexTracker ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 stepIndexTracker alive species palette registry tracker seen container now = do
+  pending <- getProp tracker "pending"
   lastMs <- getProp tracker "lastMs"
   let
     refresh = number (fromIntegral indexRefreshMs)
-  whenS (lastMs .== 0 .|| now - lastMs .>= refresh) $ do
-    _ <- setProp tracker "lastMs" now
-    counts <- bindExpr (newByteArray (number 512))
-    forRange_ (number 0) (u8Len alive) $ \i -> do
-      a <- u8Get alive i
-      whenS (a .== 1) $ do
-        sid <- u8Get species i
-        incCount counts sid
-        Set.insert seen sid
-    _ <-
-      Timers.setTimeout
-        ( \_ ->
-            stmts $ paintIndex counts palette registry seen container
-        )
-        0
-    done
+  whenS
+    (not_ pending .&& (lastMs .== 0 .|| now - lastMs .>= refresh))
+    ( do
+        _ <- setProp tracker "lastMs" now
+        _ <- setProp tracker "pending" true_
+        counts <- bindExpr (newByteArray (number 512))
+        forRange_ (number 0) (u8Len alive) $ \i -> do
+          a <- u8Get alive i
+          whenS (a .== 1) $ do
+            sid <- u8Get species i
+            incCount counts sid
+            Set.insert seen sid
+        _ <-
+          Timers.setTimeout
+            ( \_ ->
+                stmts $ paintIndex tracker counts palette registry seen container
+            )
+            0
+        done
+    )
 
 -- | 16-bit count in a 512-byte buffer: @lo@ at @sid*2@, @hi@ at @sid*2+1@.
 --   Grid is 49152 cells, so one species fits in 16 bits.
@@ -461,14 +477,59 @@ countOf counts sid =
    in
     u8Index counts (base + 1) * number 256 + u8Index counts base
 
+-- | Offline Lucid template; live rows are 'cloneNode' copies patched via
+-- 'setStyleProperty' / 'setTextContent'.
+indexRowTemplate :: JsHtml f ()
+indexRowTemplate =
+  div_ [class_ "index-row"] $ do
+    span_ [class_ "swatch"] mempty
+    span_ [class_ "index-name"] (text_ "")
+    span_ [class_ "index-count"] (text_ "0")
+
+cloneIndexRow ::
+  Effect f u
+  -> Expr f 'Uint8Array
+  -> Effect f ('MutableObject Registry)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+cloneIndexRow template palette registry sid cnt = do
+  row <- hold $ callMethod template "cloneNode" (arg true_ <: RecNil)
+  swatch <- hold $ callMethod row "querySelector" (arg (string ".swatch") <: RecNil)
+  nameEl <- hold $ callMethod row "querySelector" (arg (string ".index-name") <: RecNil)
+  countEl <- hold $ callMethod row "querySelector" (arg (string ".index-count") <: RecNil)
+  let
+    base = sid * number 3
+  r <- u8Get palette base
+  g <- u8Get palette (base + 1)
+  b <- u8Get palette (base + 2)
+  let
+    rgb =
+      string "rgb("
+        <> toString r
+        <> string ","
+        <> toString g
+        <> string ","
+        <> toString b
+        <> string ")"
+    dead = cnt .== 0
+  nm <- lookupDisplayName sid registry
+  _ <- Dom.setStyleProperty swatch "background" rgb
+  _ <- Dom.setTextContent nameEl nm
+  _ <- Dom.setTextContent countEl (toString cnt)
+  toSyntax_ $
+    callMethod row "classList.toggle" (arg (string "index-row-dead") <: arg dead <: RecNil)
+  pure row
+
 paintIndex ::
-  Expr f 'Uint8Array
+  Effect f ('MutableObject IndexTracker)
+  -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Effect f ('MutableObject Registry)
   -> Effect f ('Set Number)
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-paintIndex counts palette registry seen container = do
+paintIndex tracker counts palette registry seen container = do
   entries <- bindExpr $ Array.fromEffects []
   _ <-
     Set.mapM_
@@ -483,57 +544,12 @@ paintIndex counts palette registry seen container = do
           d = b.cnt - a.cnt
          in
           if_ (d .!= 0) d (a.sid - b.sid)
-  _ <- Dom.replaceChildren container
+  templateE <- getProp tracker "rowTemplate"
+  fragH <- hold $ ffi "document.createDocumentFragment" RecNil
   forRange_ (number 0) (Array.length sorted) $ \idx -> do
     let
       e = Array.index sorted idx
-    appendIndexRow container palette registry e.sid e.cnt
-
-appendIndexRow ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Expr f 'Uint8Array
-  -> Effect f ('MutableObject Registry)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-appendIndexRow container palette registry sid cnt = do
-  row <- Dom.createElement (string "div")
-  _ <-
-    Dom.setAttribute
-      row
-      "class"
-      ( if_
-          (cnt .== 0)
-          (string "index-row index-row-dead")
-          (string "index-row")
-      )
-  swatch <- Dom.createElement (string "span")
-  _ <- Dom.setAttribute swatch "class" (string "swatch")
-  let
-    base = sid * number 3
-  r <- u8Get palette base
-  g <- u8Get palette (base + 1)
-  b <- u8Get palette (base + 2)
-  _ <-
-    Dom.setStyleProperty
-      swatch
-      "background"
-      ( string "rgb("
-          <> toString r
-          <> string ","
-          <> toString g
-          <> string ","
-          <> toString b
-          <> string ")"
-      )
-  nameEl <- Dom.createElement (string "span")
-  _ <- Dom.setAttribute nameEl "class" (string "index-name")
-  nm <- lookupDisplayName sid registry
-  _ <- Dom.setTextContent nameEl nm
-  countEl <- Dom.createElement (string "span")
-  _ <- Dom.setAttribute countEl "class" (string "index-count")
-  _ <- Dom.setTextContent countEl (toString cnt)
-  _ <- Dom.appendChild row swatch
-  _ <- Dom.appendChild row nameEl
-  _ <- Dom.appendChild row countEl
-  Dom.appendChild container row
+    row <- cloneIndexRow (expr templateE) palette registry e.sid e.cnt
+    Dom.appendChild fragH row
+  Dom.replaceChildrenFrom container fragH
+  setProp tracker "pending" false_

@@ -85,6 +85,15 @@ lucidDomTests =
           )
           "\"dynamic\""
       , domCase "on wires an event listener" clickTemplate "\"yes\""
+      , domCase
+          "renderFragment inserts in one replaceChildrenFrom"
+          ( fromSyntax $ do
+              frag <- renderFragment (li_ (text_ "batched"))
+              root <- Dom.lookupId (string "root")
+              _ <- Dom.replaceChildrenFrom root frag
+              Dom.innerHTML root >>= yield
+          )
+          "\"<li>batched</li>\""
       ]
 
 -- | A template with no holes, so it is polymorphic over 'Term' and can be

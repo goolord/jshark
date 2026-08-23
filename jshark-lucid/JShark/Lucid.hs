@@ -58,6 +58,7 @@ module JShark.Lucid
 
     -- * Rendering
   , renderInto
+  , renderFragment
 
     -- * Text
   , text_
@@ -207,6 +208,15 @@ renderInto ::
 renderInto parent (JsHtml (ns, _)) = do
   mapM_ (renderNode parent) ns
   done
+
+-- | Build the fragment offline, then append it once for a single live-DOM
+-- insertion (see @DocumentFragment@ in the DOM performance guides).
+renderFragment ::
+  JsHtml f () -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+renderFragment (JsHtml (ns, _)) = do
+  frag <- hold $ ffi "document.createDocumentFragment" RecNil
+  mapM_ (renderNode frag) ns
+  pure frag
 
 renderNode ::
   Effect f ('MutableObject Dom.DomElement) -> Node f -> EffectSyntax f ()

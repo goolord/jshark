@@ -168,6 +168,7 @@ library life
   import: example-lib
   build-depends:
     , array
+    , jshark-lucid
   exposed-modules:
     Life
   other-modules:
