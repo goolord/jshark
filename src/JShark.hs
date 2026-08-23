@@ -56,11 +56,12 @@ module JShark
       , Index
       , Error
       , Std
-      , Uncurry2
+      , FnLit
       , UnsafeNullable
       , FrozenLit
       , GetField
       )
+  , FnBody (..)
   , Value (..)
   , GroupBy
   , Arg (..)
@@ -134,6 +135,7 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
 import Data.Word (Word32)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
+import Unsafe.Coerce (unsafeCoerce)
 import GHC.Word (Word8 (..))
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import JShark.Rec
@@ -631,7 +633,7 @@ evalAlg rec apply = \case
     case rv of
       ValueResult (Left e) -> rec (errF e)
       ValueResult (Right a) -> rec (okF a)
-  Uncurry2 {} -> cannotEval "JsFn2 (jsUncurry)"
+  FnLit {} -> cannotEval "Fn (fn)"
   Index xs i -> do
     iv <- rec i
     evalAsArray rec xs $ \vs ->
@@ -667,6 +669,27 @@ evalAsArray rec xs k = do
   arr <- rec xs
   case arr of
     ValueArray vs -> k vs
+
+sortByM :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
+sortByM cmp xs = mergeSort cmp xs
+
+mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
+mergeSort _ [] = pure []
+mergeSort _ [x] = pure [x]
+mergeSort cmp xs = do
+  let (l, r) = splitAt (Prelude.length xs `div` 2) xs
+  ls <- mergeSort cmp l
+  rs <- mergeSort cmp r
+  mergeByM cmp ls rs
+
+mergeByM :: Monad m => (a -> a -> m Ordering) -> [a] -> [a] -> m [a]
+mergeByM _ [] ys = pure ys
+mergeByM _ xs [] = pure xs
+mergeByM cmp (x : xs) (y : ys) = do
+  o <- cmp x y
+  case o of
+    GT -> (y :) <$> mergeByM cmp (x : xs) ys
+    _ -> (x :) <$> mergeByM cmp xs (y : ys)
 
 evalStd ::
   Monad m =>
@@ -709,6 +732,9 @@ evalStd rec = \case
   ReduceRight xs z f -> do
     z0 <- rec z
     evalAsArray rec xs $ foldr (\v next -> next >>= \acc -> rec (f acc v)) (pure z0)
+  ToSorted xs f ->
+    evalAsArray rec xs $ \vs ->
+      ValueArray <$> sortByM (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
   From n f -> do
     nv <- rec n
     let
@@ -899,6 +925,7 @@ stdNeedsStructuralEq = \case
   Filter {} -> True
   Reduce {} -> True
   ReduceRight {} -> True
+  ToSorted {} -> True
   From {} -> True
 
 needsStructuralEq :: Expr Stamp u -> Bool
@@ -1085,7 +1112,7 @@ isSimple = \case
   TypeOf {} -> True
   Negate {} -> True
   Std {} -> True
-  Uncurry2 {} -> True
+  FnLit {} -> True
   Index {} -> True
   Error {} -> False
   UnsafeNullable x -> isSimple x
@@ -1205,6 +1232,94 @@ keepExprCont2 t tA tB body f a b
   | sizeExpr body <= optSmall = reoptExpr2 t f a b
   | otherwise = rebindExpr2 tA tB body a b
 
+mapFnBody ::
+  forall f.
+  (forall v. Expr f v -> Expr f v)
+  -> forall us r. FnBody f us r
+  -> FnBody f us r
+mapFnBody ge = \case
+  JfNil e -> JfNil (ge e)
+  JfCons k -> JfCons (\x -> mapFnBody ge (k x))
+
+foldFnBody ::
+  forall f us r m.
+  (forall v. f v)
+  -> (forall v. Expr f v -> m)
+  -> FnBody f us r
+  -> m
+foldFnBody dummy le body =
+  le (evalFnBodyWith dummy body)
+
+evalFnBodyWith :: forall f us r. (forall v. f v) -> FnBody f us r -> Expr f r
+evalFnBodyWith dummy = \case
+  JfNil e -> e
+  JfCons k -> evalFnBodyWith dummy (k dummy)
+
+evalFnBody :: forall us r. FnBody Stamp us r -> [Int] -> Expr Stamp r
+evalFnBody body tags =
+  unsafeCoerce (evalAny (unsafeCoerce body) tags :: Expr Stamp r)
+ where
+  evalAny (JfNil e) [] = e
+  evalAny (JfCons k) (t : ts) = evalAny (unsafeCoerce (k (Name t))) ts
+  evalAny _ _ = error "JShark.evalFnBody: arity mismatch"
+
+rebindFn :: [Int] -> Expr Stamp v -> FnBody Stamp us v
+rebindFn tags expr = unsafeCoerce (rebindGo tags expr)
+ where
+  rebindGo [] e = JfNil e
+  rebindGo (t : ts) e = unsafeCoerce (JfCons $ \s -> rebindGo ts (renameExpr t (stampId s) e))
+
+fnDepthStamp :: FnBody Stamp us r -> Int
+fnDepthStamp = \case
+  JfNil _ -> 0
+  JfCons k -> 1 + fnDepthStamp (k (Stamp minBound))
+
+allocFnTags :: Int -> FnBody Stamp us r -> ([Int], Int)
+allocFnTags t0 body =
+  let
+    n = fnDepthStamp body
+    tags = take n [t0, t0 - optStep ..]
+    tEnd = t0 - n * optStep
+   in
+    (tags, tEnd)
+
+optUnderFn ::
+  Int -> FnBody Stamp us v -> (Int, [Int], Expr Stamp v, FnBody Stamp us v)
+optUnderFn t0 body =
+  let
+    (tags, tEnd) = allocFnTags t0 body
+    expr = evalFnBody body tags
+    (t1, expr') = optExpr tEnd expr
+   in
+    (t1, tags, expr', body)
+
+keepFnCont ::
+  [Int] -> Expr Stamp v -> FnBody Stamp us v -> FnBody Stamp us v
+-- Rebuild the 'FnBody' spine from optimized @expr'@ only; the pre-opt @body@
+-- tag layout must not be re-run through 'optExpr' (that left negative tags).
+keepFnCont tags expr' _body = rebindFn tags expr'
+
+allocNIdents :: CG -> Int -> ([Int], CG)
+allocNIdents s 0 = ([], s)
+allocNIdents s n =
+  let
+    (i, s1) = allocIdent s
+    (is, s2) = allocNIdents s1 (n - 1)
+   in
+    (i : is, s2)
+
+fnArity :: FnBody Stamp us r -> Int
+fnArity = fnDepthStamp
+
+renderFn :: forall us r. CG -> FnBody Stamp us r -> (CG, Code)
+renderFn s0 body =
+  let
+    n = fnArity body
+    (ids, s1) = allocNIdents s0 n
+    (s2, Code d r) = pureAST' s1 (evalFnBody body ids)
+   in
+    (s2, Code mempty (jsCallback (map nDoc ids) d r))
+
 mapFieldLit ::
   (forall u. Expr f u -> Expr f u)
   -> (forall u. Effect f u -> Effect f u)
@@ -1267,7 +1382,7 @@ mapExpr ge gf = \case
   Index x i -> Index (ge x) (ge i)
   Error x -> Error (ge x)
   Std s -> Std (mapStd ge s)
-  Uncurry2 f -> Uncurry2 (\a b -> ge (f a b))
+  FnLit body -> FnLit (mapFnBody ge body)
   UnsafeNullable x -> UnsafeNullable (ge x)
   FrozenLit fs -> FrozenLit (map (mapFieldLit ge gf) fs)
   GetField @k o -> GetField @k (ge o)
@@ -1286,6 +1401,7 @@ mapStd ge = \case
   Filter x f -> Filter (ge x) (ge . f)
   Reduce x z f -> Reduce (ge x) (ge z) (\a b -> ge (f a b))
   ReduceRight x z f -> ReduceRight (ge x) (ge z) (\a b -> ge (f a b))
+  ToSorted x f -> ToSorted (ge x) (\a b -> ge (f a b))
   From n f -> From (ge n) (ge . f)
 
 mapEff ::
@@ -1366,7 +1482,7 @@ foldExpr dummy se le sf = \case
   Index x i -> se x <> se i
   Error x -> se x
   Std s -> foldStd dummy se le s
-  Uncurry2 f -> le (f dummy dummy)
+  FnLit body -> foldFnBody dummy le body
   UnsafeNullable x -> se x
   FrozenLit fs -> foldMap (foldFieldLit se sf) fs
   GetField o -> se o
@@ -1389,6 +1505,7 @@ foldStd dummy se le = \case
   Filter x f -> se x <> le (f dummy)
   Reduce x z f -> se x <> se z <> le (f dummy dummy)
   ReduceRight x z f -> se x <> se z <> le (f dummy dummy)
+  ToSorted x f -> se x <> le (f dummy dummy)
   From n f -> se n <> le (f dummy)
 
 foldFieldLit ::
@@ -1605,7 +1722,7 @@ isCheap = \case
   Var (EmbedEff _) -> False
   FrozenLit fs -> all isCheapFieldLit fs
   GetField o -> isCheap o
-  Uncurry2 _ -> False
+  FnLit _ -> False
   _ -> False
 
 isCheapFieldLit :: FieldLit Stamp r -> Bool
@@ -2079,11 +2196,11 @@ optExpr t0 = \case
       (t2, foldIndex arr' idx')
   Error x -> fmap Error (optExpr t0 x)
   Std s -> optStd t0 s
-  Uncurry2 f ->
+  FnLit body ->
     let
-      (t1, tA, tB, body) = optUnder2 t0 f
+      (t1, tags, expr', body0) = optUnderFn t0 body
      in
-      (t1, Uncurry2 (keepExprCont2 t1 tA tB body f))
+      (t1, FnLit (keepFnCont tags expr' body0))
   UnsafeNullable x -> fmap UnsafeNullable (optExpr t0 x)
   FrozenLit fs ->
     let
@@ -2145,6 +2262,22 @@ optReduced k t0 x z f =
    in
     (t3, k x' z' (keepExprCont2 t3 tA tB body f))
 
+optToSorted ::
+  ( Expr Stamp ('Array u)
+    -> (Stamp u -> Stamp u -> Expr Stamp 'Number)
+    -> Expr Stamp ('Array u)
+  )
+  -> Int
+  -> Expr Stamp ('Array u)
+  -> (Stamp u -> Stamp u -> Expr Stamp 'Number)
+  -> (Int, Expr Stamp ('Array u))
+optToSorted k t0 x f =
+  let
+    (t1, x') = optExpr t0 x
+    (t2, tA, tB, body) = optUnder2 t1 f
+   in
+    (t2, k x' (keepExprCont2 t2 tA tB body f))
+
 optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u)
 optStd t0 = \case
   Math1 n x ->
@@ -2180,6 +2313,7 @@ optStd t0 = \case
   Filter x f -> optMapped (\a g -> Std (Filter a g)) t0 x f
   Reduce x z f -> optReduced (\a b g -> Std (Reduce a b g)) t0 x z f
   ReduceRight x z f -> optReduced (\a b g -> Std (ReduceRight a b g)) t0 x z f
+  ToSorted x f -> optToSorted (\a g -> Std (ToSorted a g)) t0 x f
   From n f ->
     let
       (t1, n') = optExpr t0 n
@@ -2865,11 +2999,7 @@ pureAST' !s0 = \case
      in
       (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
   Std s -> renderStd s0 s
-  Uncurry2 f ->
-    let
-      (s1, cb) = renderBinaryFn s0 f
-     in
-      (s1, Code mempty cb)
+  FnLit body -> renderFn s0 body
   UnsafeNullable x -> pureAST' s0 x
   FrozenLit fs -> renderObjectLit s0 fs
   GetField @k o ->
@@ -3086,11 +3216,9 @@ renderBinaryFn ::
   -> (CG, Doc)
 renderBinaryFn s0 f =
   let
-    (nA, s1) = allocIdent s0
-    (nB, s2) = allocIdent s1
-    (s3, Code bDecl bRef) = pureAST' s2 (f (Name nA) (Name nB))
+    (s1, Code _ cb) = renderFn s0 (JfCons $ \a -> JfCons $ \b -> JfNil (f a b))
    in
-    (s3, jsCallback [nDoc nA, nDoc nB] bDecl bRef)
+    (s1, cb)
 
 renderStd :: CG -> Std Stamp u -> (CG, Code)
 renderStd s0 = \case
@@ -3134,6 +3262,13 @@ renderStd s0 = \case
   Filter recv f -> renderCallbackMethod "filter" s0 recv f
   Reduce recv z f -> renderFold ".reduce" s0 recv z f
   ReduceRight recv z f -> renderFold ".reduceRight" s0 recv z f
+  ToSorted recv f ->
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
+      (s2, cb) = renderBinaryFn s1 f
+      call = wrapOperand recv rRef <> ".toSorted" <> P.parens cb
+     in
+      (s2, Code rDecl call)
   From n f ->
     let
       (s1, Code nDecl nRef) = pureAST' s0 n

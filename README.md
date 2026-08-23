@@ -140,10 +140,14 @@ Allocation has identity — bind it; two occurrences are two arrays.
 Pass that handle to APIs that fill in place.
 
 No `==`, `with`, `eval`, `this`, or implicit `new`. No `/src/`
-literals (`new RegExp`). Unary JS functions nest as `'Function` chains
-(`lambda`, `lambda2`, …). Binary JS callbacks use `'JsFn2` via
-`jsUncurry` (`Array.sort`, etc.) — one `function(a,b){…}`, not nested
-unary functions. Array index is `Math.trunc` and throws on
+literals (`new RegExp`). Unary JS functions use `lambda`. N-ary curried
+`'Function` nests use `toLambda` or `lambdaRow` with explicit
+`JShark.Params` rows (`'Param "x" 'Number`, …). N-ary positional
+callbacks use `'Fn` via `toFn` or `fnLit` (`Array.sort`,
+`Array.toSorted`, …) — one `function(a,b,…){…}`, not nested unary
+functions. `'Fn` is positional JS; `'Function` is the curried PHOAS
+nest (`apply` / `apply2`). `Array.toSorted` requires ES2023
+`.toSorted()`. Array index is `Math.trunc` and throws on
 OOB. `parseInt_` takes a radix. `.==` hoists `$valueEq` (`===`, then
 `$arrayEq` / `$deepEqual` / `$uint8ArrayEq` as needed). Frozen
 `'Object` is `Expr`; `'MutableObject` is `Effect`.

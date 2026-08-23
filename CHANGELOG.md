@@ -11,8 +11,13 @@
   `FieldLitEffect` carries effectful object fields in `ObjectLit` (replaces
   `UnsafeEffectExpr` in `Generic`). Optimizer bind inlining uses `EmbedEff`
   on `Stamp` (not surface API). Removed byte-array `Effect`
-  constructors. `jsUncurry` / `'JsFn2` for binary JS callbacks (replaces
-  `ArraySort`); `Array.sort` uses `callMethod` + `jsUncurry`. `FFIForm`
+  constructors. `'Fn` / `fnLit` / `toFn` with `JShark.Params` rows for
+  n-ary positional callbacks (replaces `jsUncurry` / `'JsFn2` /
+  `Uncurry2`); `Array.sort` uses `toFn`. `lambdaRow` / `toLambda` for
+  n-ary curried `'Function` nests via the same rows (replaces `lambda2` /
+  `lambda3`). `Array.toSorted` — pure copy via ES2023
+  `Array.prototype.toSorted` (`Std ToSorted`).
+  `FFIForm`
   tags lambda vs call (not string matching).
   `Expr` is a Good Parts kernel plus one `Std` constructor for pure JS
   stdlib (`Math.*`, `Array.prototype.map` / `filter` / `reduce`, …).

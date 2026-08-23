@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -45,9 +46,10 @@ module JShark.Api
 
     -- * Functions and binding
   , lambda
-  , lambda2
-  , lambda3
-  , jsUncurry
+  , lambdaRow
+  , fnLit
+  , ToFn (..)
+  , ToLambda (..)
   , lambdaE
   , apply
   , apply2
@@ -154,6 +156,7 @@ import Data.Text (Text)
 import GHC.TypeLits (KnownSymbol)
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
+import JShark.Params (ToFn (..), ToLambda (..), fnLit, lambdaRow, toFn, toLambda)
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
@@ -236,27 +239,6 @@ var = Var
 lambda :: (Expr f u -> Expr f v) -> Expr f ('Function u v)
 lambda f = Lambda (\x -> f (var x))
 
--- | Nested unary functions. Not a binary JS @function(a, b)@.
-lambda2 ::
-  (Expr f a -> Expr f b -> Expr f c) -> Expr f ('Function a ('Function b c))
-lambda2 f = lambda (\x -> lambda (\y -> f x y))
-
--- | Nested unary functions. Not a ternary JS @function(a, b, c)@.
-lambda3 ::
-  (Expr f a -> Expr f b -> Expr f c -> Expr f d)
-  -> Expr f ('Function a ('Function b ('Function c d)))
-lambda3 f = lambda (\x -> lambda2 (\y z -> f x y z))
-
-{- | Binary JS @function(a, b) { return … }@.
-
-Complement to 'lambda2' (curried unary nest). Typed as 'JsFn2' — not a
-nested @'Function@ chain. Use when passing a compare or other binary
-callback to JS (@Array.sort@ via 'JShark.Array.sort', …).
--}
-jsUncurry ::
-  (Expr f a -> Expr f b -> Expr f c) -> Expr f ('JsFn2 a b c)
-jsUncurry f = Uncurry2 (\x y -> f (var x) (var y))
-
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
@@ -279,8 +261,8 @@ loop0 ::
 loop0 rec body =
   toSyntax $
     bindRec
-      (\fn -> lambdaE (\_ -> stmts (rec fn)))
-      (\fn -> stmts (body fn))
+      (\f -> lambdaE (\_ -> stmts (rec f)))
+      (\f -> stmts (body f))
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
@@ -551,7 +533,7 @@ whenSomeE opt k = do
 call0 ::
   forall a f.
   ToEffect f ('Function 'Unit 'Unit) a => a -> EffectSyntax f (f 'Unit)
-call0 fn = toSyntax (ApplyE (toEffect fn) noOp :: Effect f 'Unit)
+call0 f = toSyntax (ApplyE (toEffect f) noOp :: Effect f 'Unit)
 
 infix 4 .==, .!=, .>, .<, .>=, .<=
 

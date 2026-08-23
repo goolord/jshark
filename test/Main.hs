@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Main (main) where
 
@@ -18,6 +19,7 @@ import qualified Data.Text as T
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
+import JShark.Params (Param)
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Classes as C
@@ -94,7 +96,7 @@ evaluatorTests =
           ValueBool b -> b @?= True
         T.isInfixOf
           "$deepEqual"
-          (T.pack (renderJS (pureAST (lambda2 (\a b -> a .== b)))))
+          (T.pack (renderJS (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> a .== b)))))
           @?= True
     , testCase "GetField of FrozenLit evaluates" $
         evaluateNumber
@@ -619,7 +621,7 @@ stdlibTests =
           ValueString s -> s @?= ",1"
     , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
-          js = T.pack (renderJS (pureProgram (lambda2 (\a b -> (a .== b) .|| (b .== a)))))
+          js = T.pack (renderJS (pureProgram (toLambda (\(a :: Expr f u) (b :: Expr f u) -> (a .== b) .|| (b .== a)))))
         T.count "const $valueEq" js @?= 1
         T.count "const $arrayEq" js @?= 1
         T.count "const $deepEqual" js @?= 1
@@ -901,7 +903,7 @@ stdlibTests =
         let
           js =
             T.pack $
-              renderJS (pureAST (lambda2 (\a b -> (a + b) .== (a + b))))
+              renderJS (pureAST (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b))))
         T.count "const $valueEq" js @?= 0
         T.isInfixOf "===" js @?= True
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
@@ -992,7 +994,7 @@ goodPartsTests =
           (Array.index (Array.arraySlice numArray (number (-1)) (number 2)) (number 0))
           @?= 2
     , testCase "apply2 is curried Apply" $
-        evaluateNumber (apply2 (lambda2 (\x y -> x + y)) (number 1) (number 2)) @?= 3
+        evaluateNumber (apply2 (toLambda (\(x :: Expr f 'Number) (y :: Expr f 'Number) -> x + y)) (number 1) (number 2)) @?= 3
     , testCase "try_ of two Unit arms still skips the result bind" $
         renderJS (effectfulAST (try_ noOp noOp))
           @?= "try {}\ncatch (n0) {}"
@@ -1059,13 +1061,35 @@ goodPartsTests =
     , testCase "sort emits a binary compare callback" $
         renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
           @?= "[1.0, 2.0].sort(function (n0, n1) {return n0 - n1})"
-    , testCase "jsUncurry emits a binary function value" $
+    , testCase "toSorted emits a binary compare callback" $
+        renderJS (pureAST (Array.toSorted numArray (\a b -> a - b)))
+          @?= "[1.0, 2.0].toSorted(function (n0, n1) {return n0 - n1})"
+    , testCase "toSorted evaluates" $
+        evaluateNumber
+          (Array.index (Array.toSorted numArray (\a b -> a - b)) (number 1))
+          @?= 2
+    , testCase "toFn emits a binary function value" $
         renderJS
           ( effectfulAST
-              ( ffi "f" (arg (jsUncurry (\a b -> a + b)) <: RecNil)
+              ( ffi "f" (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b)) <: RecNil)
               )
           )
           @?= "f(function (n0, n1) {return n0 + n1})"
+    , testCase "toFn emits a ternary function value" $
+        renderJS
+          ( effectfulAST
+              ( ffi "f" (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) (c :: Expr f 'Number) -> a + b + c)) <: RecNil)
+              )
+          )
+          @?= "f(function (n0, n1, n2) {return (n0 + n1) + n2})"
+    , testCase "lambdaRow emits a nested unary function value" $
+        renderJS
+          ( pureAST
+              ( lambdaRow @('[Param "x" 'Number, Param "y" 'Number]) $
+                  \p -> p.x + p.y
+              )
+          )
+          @?= "function (n0) {return (function (n1) {return (n0 + n1)})}"
     , testCase "ifE of throw vs number keeps the result bind" $
         renderJS (effectfulAST (ifE condE (throw_ "boom") (expr (number 1))))
           @?= "let n0;\nif (cond()) {throw \"boom\";}\nelse {n0 = 1.0;}\nn0"

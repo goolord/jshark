@@ -31,6 +31,7 @@ module JShark.Array
   , zipWith
   , arraySlice
   , sort
+  , toSorted
   )
 where
 
@@ -190,4 +191,11 @@ sort ::
   -> (Expr f u -> Expr f u -> Expr f 'Number)
   -> Effect f ('Array u)
 sort arr cmp =
-  callMethod (expr arr) "sort" (arg (jsUncurry cmp) <: RecNil)
+  callMethod (expr arr) "sort" (arg (toFn cmp) <: RecNil)
+
+-- | @arr.toSorted(function(a,b){…})@. Copy; does not mutate.
+toSorted ::
+  Expr f ('Array u)
+  -> (Expr f u -> Expr f u -> Expr f 'Number)
+  -> Expr f ('Array u)
+toSorted arr cmp = Std (ToSorted arr (\a b -> cmp (var a) (var b)))

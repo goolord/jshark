@@ -45,6 +45,7 @@ module JShark.Types
   , fieldKey
   , FFIForm (..)
   , Expr (..)
+  , FnBody (..)
   , Std (..)
   , StdUnary (..)
   , StdBinary (..)
@@ -91,10 +92,9 @@ data Universe
   | Array Universe
   | -- | Unary. Nest for n-ary JS functions.
     Function Universe Universe
-  | -- | JS @function(a, b) { … }@ — not a curried @'Function@ chain.
-    -- Produced by 'JShark.Api.jsUncurry' for binary callbacks (@Array.sort@, …).
-    -- Unlike nested @'Function@, this is one JS @function(a,b){…}@ value.
-    JsFn2 Universe Universe Universe
+  | -- | JS @function(a, b, …) { … }@ — not a curried @'Function@ chain.
+    -- Parameter universes match 'JShark.Params.RowUs' order ('fnLit' / 'toFn').
+    Fn [Universe] Universe
   | Option Universe
   | -- | Haskell 'Either'; JS @{ok: Bool, value: …}@
     Result Universe Universe
@@ -260,6 +260,11 @@ fieldKey (FieldLit @k _) = symbolVal (Proxy :: Proxy k)
 fieldKey (FieldLitEffect @k _) = symbolVal (Proxy :: Proxy k)
 fieldKey (FieldLitExtra @k _) = symbolVal (Proxy :: Proxy k)
 fieldKey (FieldLitExtraEffect @k _) = symbolVal (Proxy :: Proxy k)
+
+-- | PHOAS spine for @'Fn'@: @JfCons@ binders, @JfNil@ body.
+data FnBody (f :: Universe -> Type) (us :: [Universe]) (r :: Universe) where
+  JfNil :: Expr f r -> FnBody f '[] r
+  JfCons :: (f u -> FnBody f us r) -> FnBody f (u ': us) r
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   -- Good Parts: values, arithmetic, strict equality, functions, @const@ lets
@@ -441,12 +446,12 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f u
     -- ^ Pure JS standard library. Combinators (@zipWith@, @groupBy@) are
     --         Haskell functions over this tree, not extra constructors.
-  Uncurry2 ::
-    (f a -> f b -> Expr f c)
-    -> Expr f ('JsFn2 a b c)
-    -- ^ @function(a, b) { return … }@ from a binary 'Expr' callback. Not
-    -- @lambda2@ (curried unary nest); use for JS APIs that take one binary
-    -- function (@Array.sort@, …).
+  FnLit ::
+    forall f (us :: [Universe]) r.
+    FnBody f us r ->
+    Expr f ('Fn us r)
+    -- ^ @function(a,b,…){ return … }@ from a row-typed callback ('fnLit' / 'toFn').
+    -- Not a nested @'Function@ chain ('toLambda' / 'lambdaRow').
   UnsafeNullable ::
     Expr f u
     -> Expr f ('Option u)
@@ -534,6 +539,10 @@ data Std :: (Universe -> Type) -> Universe -> Type where
     -> Expr f b
     -> (f b -> f a -> Expr f b)
     -> Std f b
+  ToSorted ::
+    Expr f ('Array a)
+    -> (f a -> f a -> Expr f 'Number)
+    -> Std f ('Array a)
   -- | @Array.from({length: n}, function(_, i) { return f(i); })@
   From ::
     Expr f 'Number
