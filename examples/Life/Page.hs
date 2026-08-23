@@ -18,10 +18,10 @@ import Types
   , hoverRadius
   , ink
   , lifeIndexHostId
+  , lifeToolsId
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
-  , lifeToolsId
   , lifeTypesListId
   , toggleToolSid
   )
@@ -151,7 +151,8 @@ disturbButton :: PatternSpec -> Html ()
 disturbButton p =
   toolButton (patId p) (patternLabel (patId p)) (patCells p) Nothing False
 
-toolButton :: Int -> T.Text -> [(Int, Int)] -> Maybe (Int, Int) -> Bool -> Html ()
+toolButton ::
+  Int -> T.Text -> [(Int, Int)] -> Maybe (Int, Int) -> Bool -> Html ()
 toolButton sid label cells size selected =
   button_
     [ class_ (if selected then "life-tool is-selected" else "life-tool")
@@ -169,9 +170,12 @@ toolPreview :: Int -> [(Int, Int)] -> Maybe (Int, Int) -> Html ()
 toolPreview sid cells size =
   span_
     [ class_ "life-tool-preview"
-    , style_ ("--tw:" <> T.pack (show w) <> ";--th:" <> T.pack (show h) <> ";--on:" <> onColor)
+    , style_
+        ("--tw:" <> T.pack (show w) <> ";--th:" <> T.pack (show h) <> ";--on:" <> onColor)
     ]
-    $ mapM_ cellSpan [(x, y) | y <- [minY .. minY + h - 1], x <- [minX .. minX + w - 1]]
+    $ mapM_
+      cellSpan
+      [(x, y) | y <- [minY .. minY + h - 1], x <- [minX .. minX + w - 1]]
  where
   (minX, minY, w, h) = previewBox cells size
   onColor

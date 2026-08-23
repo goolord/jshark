@@ -2413,7 +2413,10 @@ optKernel t0 = \case
   KNEq structural x y ->
     optBin
       t0
-      (foldFrozenEq (\a b -> not (valueEq a b)) (\a b -> Std (Kernel (KNEq structural a b))))
+      ( foldFrozenEq
+          (\a b -> not (valueEq a b))
+          (\a b -> Std (Kernel (KNEq structural a b)))
+      )
       x
       y
   KGTh x y -> optBin t0 (foldOrd GT GTh) x y

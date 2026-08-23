@@ -31,17 +31,17 @@ import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Json as Json
-import qualified JShark.Map as Map
-import qualified JShark.Math as Math
-import JShark.Object (field, frozen)
-import qualified JShark.Set as Set
-import qualified JShark.Timers as Timers
 import JShark.Lucid
   ( JsHtml
   , renderFragment
   , text_
   )
+import qualified JShark.Map as Map
+import qualified JShark.Math as Math
+import JShark.Object (field, frozen)
 import JShark.Rec (Rec (..), (<:))
+import qualified JShark.Set as Set
+import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift))
 import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)
@@ -119,7 +119,8 @@ initRegistry = do
   catalogNames <- hold $ Map.fromEntries namePairs
   displayCache <- hold $ Map.fromEntries namePairs
   _ <- Map.insert displayCache (number (fromIntegral soupSpecies)) (string "Soup")
-  _ <- Map.insert displayCache (number (fromIntegral manualSpecies)) (string "Manual")
+  _ <-
+    Map.insert displayCache (number (fromIntegral manualSpecies)) (string "Manual")
   seen <- hold Map.new
   names <- hold Map.new
   taken <- hold Set.new
@@ -495,9 +496,12 @@ cloneIndexRow ::
   -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 cloneIndexRow template palette registry sid cnt = do
   row <- hold $ callMethod template "cloneNode" (arg true_ <: RecNil)
-  swatch <- hold $ callMethod row "querySelector" (arg (string ".swatch") <: RecNil)
-  nameEl <- hold $ callMethod row "querySelector" (arg (string ".index-name") <: RecNil)
-  countEl <- hold $ callMethod row "querySelector" (arg (string ".index-count") <: RecNil)
+  swatch <-
+    hold $ callMethod row "querySelector" (arg (string ".swatch") <: RecNil)
+  nameEl <-
+    hold $ callMethod row "querySelector" (arg (string ".index-name") <: RecNil)
+  countEl <-
+    hold $ callMethod row "querySelector" (arg (string ".index-count") <: RecNil)
   let
     base = sid * number 3
   r <- u8Get palette base
@@ -518,7 +522,10 @@ cloneIndexRow template palette registry sid cnt = do
   _ <- Dom.setTextContent nameEl nm
   _ <- Dom.setTextContent countEl (toString cnt)
   toSyntax_ $
-    callMethod row "classList.toggle" (arg (string "index-row-dead") <: arg dead <: RecNil)
+    callMethod
+      row
+      "classList.toggle"
+      (arg (string "index-row-dead") <: arg dead <: RecNil)
   pure row
 
 paintIndex ::

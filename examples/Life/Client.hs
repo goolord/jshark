@@ -280,7 +280,8 @@ applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy = 
               setProp
                 tipRef
                 "fpBuild"
-                ( if_ (curFp .== string "")
+                ( if_
+                    (curFp .== string "")
                     (toString sid)
                     (curFp <> string "," <> toString sid)
                 )
@@ -464,7 +465,6 @@ paintHud ctx state meter = do
   gen <- state.gen
   pop <- state.pop
   paused <- state.paused
-  recent <- state.recentDiscover
   fpsN <- meter.fps
   set @"font" ctx (string "15px Georgia")
   fill ctx (string ink)
@@ -482,14 +482,6 @@ paintHud ctx state meter = do
     paused
     (Canvas.fillText ctx (string "paused") (number (canvasW - 8)) 18)
     (Canvas.fillText ctx (string "running") (number (canvasW - 8)) 18)
-  set @"textAlign" ctx (string "left")
-  set @"font" ctx (string "13px Georgia")
-  _ <-
-    Canvas.fillText
-      ctx
-      (string "Discovered: " <> recent)
-      8
-      (number canvasH - 6)
   done
 
 tickFps ::

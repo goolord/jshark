@@ -100,7 +100,9 @@ evaluatorTests =
         T.isInfixOf
           "$deepEqual"
           ( T.pack
-              (renderJS (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b))))
+              ( renderJS
+                  (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
+              )
           )
           @?= True
     , testCase "GetField of FrozenLit evaluates" $
@@ -141,9 +143,11 @@ evaluatorTests =
         case evaluate (Show (ok (number 5) :: Expr f ('Result 'String 'Number))) of
           ValueString s -> s @?= "[object Object]"
     , testCase "Uint8Array literals compare by contents" $ do
-        case evaluate (structuralEq (uint8Array (bytes [1, 2, 3])) (uint8Array (bytes [1, 2, 3]))) of
+        case evaluate
+          (structuralEq (uint8Array (bytes [1, 2, 3])) (uint8Array (bytes [1, 2, 3]))) of
           ValueBool b -> b @?= True
-        case evaluate (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2, 3]))) of
+        case evaluate
+          (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2, 3]))) of
           ValueBool b -> b @?= False
     , testCase "Show of Uint8Array is comma-joined bytes" $
         case evaluate (Show (uint8Array sampleArray)) of
@@ -646,7 +650,9 @@ stdlibTests =
             T.pack
               ( renderJS
                   ( pureProgram
-                      (toLambda (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a)))
+                      ( toLambda
+                          (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a))
+                      )
                   )
               )
         T.count "const $valueEq" js @?= 1
@@ -1016,7 +1022,9 @@ stdlibTests =
           js =
             T.pack $
               renderJS
-                (pureAST (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1)))
+                ( pureAST
+                    (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1))
+                )
         T.isInfixOf "$valueEq" js @?= False
         T.isInfixOf "===" js @?= True
     , testCase "$valueEq helper includes null/object fast-path" $ do
