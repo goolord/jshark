@@ -1,0 +1,35 @@
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: Georgia, serif;
+}
+
+main {
+  max-width: 32rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  text-align: center;
+}
+
+h1 {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+canvas {
+  background: #e2e8f0;
+  display: block;
+  margin: 1.5rem auto;
+  border-radius: 2px;
+}
+
+p {
+  color: #94a3b8;
+}
+
+a {
+  color: #38bdf8;
+}

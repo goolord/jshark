@@ -1,0 +1,10 @@
+body {
+  max-width: none;
+}
+
+.todoapp,
+.info {
+  max-width: 550px;
+  margin-left: auto;
+  margin-right: auto;
+}
