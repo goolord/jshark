@@ -602,7 +602,7 @@ stdlibTests =
           js = T.pack (renderJS (pureProgram (lambda2 (\a b -> (a .== b) .|| (b .== a)))))
         -- Two call sites on binders; the other `$eq(` are the recursive ones
         -- inside the single definition.
-        T.count "function $eq" js @?= 1
+        T.count "const $eq" js @?= 1
         T.count "$eq(n" js @?= 2
     , testCase "Array.length renders as .length" $
         renderJS (pureAST (Array.length numArray)) @?= "[1.0, 2.0].length"
@@ -979,27 +979,6 @@ goodPartsTests =
     , testCase "newByteArray takes the size, not the bytes" $
         renderJS (effectfulAST (newByteArray (number 4)))
           @?= "(n => new Uint8Array(n))(4.0)"
-    , testCase "freezeByteArray copies with slice" $
-        renderJS (effectfulAST (freezeByteArray (newByteArray (number 4))))
-          @?= "(a => a.slice())((n => new Uint8Array(n))(4.0))"
-    , -- A snapshot must stay where it was taken. Splicing `.slice()`
-      -- to the read would see the write. Guarded by `movableEffect`.
-      testCase "freezeByteArray stays bound across a later write" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      buf <- fmap var (toSyntax (newByteArray (number 2)))
-                      frozen <- toSyntax (freezeByteArray (expr buf))
-                      toSyntax_ (ffi "write" (arg buf <: RecNil))
-                      yield (var frozen)
-                  )
-              )
-          )
-          @?= "const n0 = (n => new Uint8Array(n))(2.0);\nconst n1 = (a => a.slice())(n0);\nwrite(n0);\nn1"
-    , testCase "unsafeFreezeByteArray emits nothing of its own" $
-        renderJS (effectfulAST (unsafeFreezeByteArray (newByteArray (number 4))))
-          @?= "(n => new Uint8Array(n))(4.0)"
     , -- Allocation has identity: folding two occurrences together would
       -- hand the writer and the reader different arrays.
       testCase "multi-use newByteArray stays one allocation (identity)" $
@@ -1134,13 +1113,11 @@ genericTests =
         renderJS (effectfulAST (G.toSum Red))
           @?= "{\"tag\": \"Red\"}"
     , testCase "toSum unary payload is the value" $
-        T.isInfixOf
-          "\"Circle\""
-          (T.pack $ renderJS (effectfulAST (G.toSum (Circle 1.5))))
-          @?= True
+        renderJS (effectfulAST (G.toSum (Circle 1.5)))
+          @?= "{\"tag\": \"Circle\", \"payload\": 1.5}"
     , testCase "toSum n-ary payload is a quoted object" $
-        T.isInfixOf "\"0\":" (T.pack $ renderJS (effectfulAST (G.toSum (Rect 2 3))))
-          @?= True
+        renderJS (effectfulAST (G.toSum (Rect 2 3)))
+          @?= "{\"tag\": \"Rect\", \"payload\": {\"0\": 2.0, \"1\": 3.0}}"
     , testCase "toSumArray is an array of sums" $
         renderJS (effectfulAST (G.toSumArray [Red, Blue]))
           @?= "[{\"tag\": \"Red\"}, {\"tag\": \"Blue\"}]"

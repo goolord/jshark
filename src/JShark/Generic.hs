@@ -48,6 +48,7 @@ import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Typeable (Typeable)
 import GHC.Generics
 import GHC.TypeLits
   ( ErrorMessage (..)
@@ -72,9 +73,8 @@ import JShark.Api
   , (.==)
   )
 import JShark.Array (fromEffects)
-import JShark.Object (field, fieldEffect, get, newObject, obj, unsafeObjectGet)
+import JShark.Object (field, get, newObject, obj, unsafeObjectGet)
 import JShark.Types
-import Unsafe.Coerce (unsafeCoerce)
 
 -- | Row phantom for a 'Generic' record @a@. Existing rows ('Window')
 -- stay manual; they do not become 'As'.
@@ -685,14 +685,17 @@ instance KnownSymbol name => GToSum a (C1 ('MetaCons name fx rec) U1) where
   gtoSum _ = emitTagged @a (symbolVal (Proxy @name))
 
 instance
-  (KnownSymbol name, DispatchField (KindOf t) t) =>
+  (KnownSymbol name, DispatchField (KindOf t) t, Typeable (FieldU t)) =>
   GToSum a (C1 ('MetaCons name fx rec) (S1 m (Rec0 t)))
   where
   gtoSum (M1 (M1 (K1 x))) =
     emitTaggedPayloadDispatch @a (symbolVal (Proxy @name)) (dispatchField @(KindOf t) x)
 
 instance
-  (KnownSymbol name, GToPayloadN 0 (l :*: r) (Payload a name)) =>
+  ( KnownSymbol name
+  , GToPayloadN 0 (l :*: r) (Payload a name)
+  , Typeable (Payload a name)
+  ) =>
   GToSum a (C1 ('MetaCons name fx rec) (l :*: r))
   where
   gtoSum (M1 p) =
@@ -700,40 +703,29 @@ instance
       (symbolVal (Proxy @name))
       (gPayloadFieldsN @0 @(l :*: r) @(Payload a name) p)
 
--- | Internal row so @{tag, payload}@ can be one 'ObjectLit' without a
--- public 'Field' on 'Tagged'.
-data PayloadRow (u :: Universe)
-
-type instance Field (PayloadRow u) "tag" = 'String
-
-type instance Field (PayloadRow u) "payload" = u
-
 emitTagged :: forall a f. String -> Effect f (SumOf a)
 emitTagged name = obj [field @"tag" (string (T.pack name))]
 
+extraPayload :: Typeable u => FieldDispatch f u -> FieldLit f r
+extraPayload (FDExpr e) = FieldLitExtra @"payload" e
+extraPayload (FDEffect e) = FieldLitExtraEffect @"payload" e
+
 emitTaggedPayloadDispatch ::
   forall a f u.
+  Typeable u =>
   String -> FieldDispatch f u -> Effect f (SumOf a)
 emitTaggedPayloadDispatch name p =
-  unsafeCoerce
-    ( obj
-        [ field @"tag" (string (T.pack name))
-        , toFieldLit @"payload" p
-        ] ::
-        Effect f ('MutableObject (PayloadRow u))
-    )
+  obj [field @"tag" (string (T.pack name)), extraPayload p]
 
 emitTaggedPayloadObject ::
   forall a f row.
+  Typeable row =>
   String -> [FieldLit f row] -> Effect f (SumOf a)
 emitTaggedPayloadObject name innerFields =
-  unsafeCoerce
-    ( obj
-        [ field @"tag" (string (T.pack name))
-        , fieldEffect @"payload" (obj innerFields)
-        ] ::
-        Effect f ('MutableObject (PayloadRow ('MutableObject row)))
-    )
+  obj
+    [ field @"tag" (string (T.pack name))
+    , FieldLitExtraEffect @"payload" (obj innerFields)
+    ]
 
 class GToPayloadN (n :: Nat) (p :: Type -> Type) (row :: Type) where
   gPayloadFieldsN :: p x -> [FieldLit f row]

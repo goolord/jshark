@@ -12,33 +12,36 @@ module JShark.Timers
   )
 where
 
+import Control.Monad (void)
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
+
+timerCall ::
+  String
+  -> (Expr f 'Unit -> Effect f a)
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f 'Number)
+timerCall name handler ms =
+  fmap Var
+    $ toSyntax
+    $ ffi
+      name
+      (ArgEffect (LambdaE (\x -> handler (var x))) <: arg ms <: RecNil)
 
 -- | @setTimeout(function(){...}, ms)@. Returns the timer id.
 setTimeout ::
   (Expr f 'Unit -> Effect f a)
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number)
-setTimeout handler ms =
-  fmap Var
-    $ toSyntax
-    $ ffi
-      "setTimeout"
-      (ArgEffect (LambdaE (\x -> handler (var x))) <: arg ms <: RecNil)
+setTimeout = timerCall "setTimeout"
 
 -- | @setInterval(function(){...}, ms)@. Returns the timer id.
 setInterval ::
   (Expr f 'Unit -> Effect f a)
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number)
-setInterval handler ms =
-  fmap Var
-    $ toSyntax
-    $ ffi
-      "setInterval"
-      (ArgEffect (LambdaE (\x -> handler (var x))) <: arg ms <: RecNil)
+setInterval = timerCall "setInterval"
 
 -- | @clearTimeout(timerId)@
 clearTimeout :: Expr f 'Number -> EffectSyntax f ()
@@ -66,12 +69,12 @@ foreverFrame tick =
     bindRec
       ( \frame ->
           LambdaE $ \t -> stmts $ do
-            _ <- tick (var t)
-            _ <- requestAnimationFrame $ \t1 -> stmts (toSyntax (ApplyE frame (Lift t1)))
+            void (tick (var t))
+            void (requestAnimationFrame $ \t1 -> stmts (toSyntax (ApplyE frame (Lift t1))))
             done
       )
       ( \frame ->
           stmts $ do
-            _ <- requestAnimationFrame $ \t0 -> stmts (toSyntax (ApplyE frame (Lift t0)))
+            void (requestAnimationFrame $ \t0 -> stmts (toSyntax (ApplyE frame (Lift t0))))
             done
       )

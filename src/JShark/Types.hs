@@ -42,7 +42,7 @@ module JShark.Types
   , Effect (..)
   , Arg (..)
   , Field
-  , FieldLit (..)
+  , FieldLit (FieldLit, FieldLitEffect, FieldLitExtra, FieldLitExtraEffect)
   , fieldKey
   , FFIForm (..)
   , Expr (..)
@@ -68,6 +68,7 @@ import Control.Monad (ap, void)
 import Data.Array.Byte (ByteArray)
 import Data.Kind
 import Data.Proxy (Proxy (..))
+import Data.Typeable (Typeable)
 import Data.Text (Text)
 import qualified GHC.Exts as Exts
 import GHC.TypeLits
@@ -93,14 +94,11 @@ data Universe
     Result Universe Universe
   | Regex
   | Bool
-  | -- | JS @Uint8Array@. Host 'ByteArray'. EDSL-immutable on 'Expr' and
-    -- after freeze on 'Effect'; JS can still write the object.
+  | -- | JS @Uint8Array@. Host 'ByteArray' literals and
+    -- 'JShark.Api.newByteArray' (the latter on 'Effect', because
+    -- allocation has identity). Not a 'MutableObject' row —
+    -- 'JShark.Object.set' must not typecheck. JS can write the object.
     Uint8Array
-  | -- | Mutable @Uint8Array@ (@new Uint8Array(n)@). Allocation has
-    -- identity, so this lives on 'Effect' (via 'JShark.Api.newByteArray'),
-    -- not as a 'MutableObject' row — 'JShark.Object.newObject' /
-    -- 'JShark.Object.set' must not typecheck.
-    MutableUint8Array
   | -- | Frozen record. Row @r@ is a host 'Type', not a 'Universe' constructor.
     Object Type
   | -- | Mutable JS object. Same row @r@ as 'Object'.
@@ -125,12 +123,10 @@ data Value :: Universe -> Type where
     -> Value ('Object r)
     -- ^ Eval-only; not a surface literal.
 
--- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen;
--- 'FFIFreezeByteArray' is the immovable @a.slice()@ snapshot (internal).
+-- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen.
 data FFIForm
   = FFICall String
   | FFILambda String
-  | FFIFreezeByteArray
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift ::
@@ -231,8 +227,10 @@ type instance Field (GroupBy u) "key" = 'String
 
 type instance Field (GroupBy u) "items" = 'Array u
 
--- | One field of an object literal. @k@ is the JS name ('fieldKey'); the
--- value's universe is 'Field' @r@ @k@, so a list cannot mix rows.
+-- | One field of an object literal. @k@ is the JS name ('fieldKey').
+-- Typed constructors require the value's universe to be 'Field' @r@ @k@.
+-- Extra constructors carry a key that is not in the row (Generic sum
+-- @payload@ on 'Tagged').
 data FieldLit (f :: Universe -> Type) (r :: Type) where
   FieldLit ::
     forall k f r.
@@ -242,10 +240,20 @@ data FieldLit (f :: Universe -> Type) (r :: Type) where
     forall k f r.
     KnownSymbol k =>
     Effect f (Field r k) -> FieldLit f r
+  FieldLitExtra ::
+    forall k f r u.
+    (KnownSymbol k, Typeable u) =>
+    Expr f u -> FieldLit f r
+  FieldLitExtraEffect ::
+    forall k f r u.
+    (KnownSymbol k, Typeable u) =>
+    Effect f u -> FieldLit f r
 
 fieldKey :: FieldLit f r -> String
 fieldKey (FieldLit @k _) = symbolVal (Proxy :: Proxy k)
 fieldKey (FieldLitEffect @k _) = symbolVal (Proxy :: Proxy k)
+fieldKey (FieldLitExtra @k _) = symbolVal (Proxy :: Proxy k)
+fieldKey (FieldLitExtraEffect @k _) = symbolVal (Proxy :: Proxy k)
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   -- Good Parts: values, arithmetic, strict equality, functions, @const@ lets

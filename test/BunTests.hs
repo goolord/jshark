@@ -146,33 +146,11 @@ bunEvalTests =
                 "result ok unit"
                 (ok (Literal ValueUnit) :: Expr f ('Result 'String 'Unit))
             , effectCase
-                "a frozen newByteArray is zeroed and the right length"
+                "newByteArray is zeroed and the right length"
                 ( fromSyntax
                     ( do
-                        frozen <- toSyntax (freezeByteArray (newByteArray (number 3)))
-                        yield (Eq (var frozen) (uint8Array (bytes [0, 0, 0])))
-                    )
-                )
-                "true"
-            , effectCase
-                "writing through the handle does not show in a safe freeze"
-                ( fromSyntax
-                    ( do
-                        buf <- fmap var (toSyntax (newByteArray (number 2)))
-                        frozen <- toSyntax (freezeByteArray (expr buf))
-                        toSyntax_ (ffi "((b) => { b[0] = 7; })" (arg buf <: RecNil))
-                        yield (Eq (var frozen) (uint8Array (bytes [0, 0])))
-                    )
-                )
-                "true"
-            , effectCase
-                "writing through the handle shows in an unsafe freeze"
-                ( fromSyntax
-                    ( do
-                        buf <- fmap var (toSyntax (newByteArray (number 2)))
-                        frozen <- toSyntax (unsafeFreezeByteArray (expr buf))
-                        toSyntax_ (ffi "((b) => { b[0] = 7; })" (arg buf <: RecNil))
-                        yield (Eq (var frozen) (uint8Array (bytes [7, 0])))
+                        buf <- toSyntax (newByteArray (number 3))
+                        yield (Eq (var buf) (uint8Array (bytes [0, 0, 0])))
                     )
                 )
                 "true"

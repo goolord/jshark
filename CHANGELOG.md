@@ -2,19 +2,18 @@
 
 ## Unreleased
 
-* `'Uint8Array` / `'MutableUint8Array`. Host `ByteArray` (base) via
-  `ToJS` / `ToValue` / `uint8Array`. Literals emit `new Uint8Array([…])`.
-  `'Uint8Array` is EDSL-immutable on `Expr` and after freeze on `Effect`;
-  JS can still write the object. A runtime-sized buffer is `newByteArray n`
-  (`ffi` → `new Uint8Array(n)`), typed `'MutableUint8Array` — not a
-  `'MutableObject` row. `freezeByteArray` is `ffi` → `.slice()`;
-  `unsafeFreezeByteArray` is a zero-emission retype (`unsafeCoerce`).
+* `'Uint8Array`. Host `ByteArray` (base) via `ToJS` / `ToValue` /
+  `uint8Array`. Literals emit `new Uint8Array([…])`. A runtime-sized
+  buffer is `newByteArray n` (`ffi` → `new Uint8Array(n)`), not a
+  `'MutableObject` row. Allocation has identity; JS can write the object.
+  No freeze API. Tagged-sum payloads are `ObjectLit` with an untyped
+  extra `payload` key on `FieldLit` (`Tagged` only types `tag`).
   `FieldLitEffect` carries effectful object fields in `ObjectLit` (replaces
   `UnsafeEffectExpr` in `Generic`). Optimizer bind inlining uses internal
   `SplicedEffect` on `Expr` (not surface API). Removed byte-array `Effect`
   constructors. `jsUncurry` / `'JsFn2` for binary JS callbacks (replaces
   `ArraySort`); `Array.sort` uses `callMethod` + `jsUncurry`. `FFIForm`
-  tags lambda vs call vs immovable freeze (not string matching).
+  tags lambda vs call (not string matching).
   `base >= 4.17`.
 
 

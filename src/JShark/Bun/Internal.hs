@@ -16,6 +16,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, bracket, catch, throwIO)
+import Control.Monad (void)
 import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -194,7 +195,7 @@ spawnBun bun flags scriptPath outPath errPath limit =
           Nothing -> do
             terminateProcess ph
             -- Reap the kill so the handles are released before cleanup.
-            _ <- waitBounded (1 * 1000 * 1000) ph
+            void (waitBounded (1 * 1000 * 1000) ph)
             pure Nothing
 
 -- | Poll for exit until @limit@ microseconds of wall clock have passed.

@@ -53,15 +53,22 @@ lookupSelector ::
   Expr f 'String -> EffectSyntax f (Effect f ('Array ('MutableObject DomElement)))
 lookupSelector x = hold $ ffi "document.querySelectorAll" (arg x <: RecNil)
 
+classOp ::
+  String
+  -> Effect f ('MutableObject DomElement)
+  -> Expr f 'String
+  -> EffectSyntax f (f 'Unit)
+classOp name el x = toSyntax $ callMethod el name (arg x <: RecNil)
+
 classAdd
   , classRemove
   , classToggle ::
     Effect f ('MutableObject DomElement)
     -> Expr f 'String
     -> EffectSyntax f (f 'Unit)
-classAdd el x = toSyntax $ callMethod el "classList.add" (arg x <: RecNil)
-classRemove el x = toSyntax $ callMethod el "classList.remove" (arg x <: RecNil)
-classToggle el x = toSyntax $ callMethod el "classList.toggle" (arg x <: RecNil)
+classAdd = classOp "classList.add"
+classRemove = classOp "classList.remove"
+classToggle = classOp "classList.toggle"
 
 -- | @document.createElement(tag)@. Bound via 'hold'; otherwise reusing
 -- the handle would re-run @createElement@ and create a new element each time.

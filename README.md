@@ -131,13 +131,10 @@ evaluateEffectJSONWith
 not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
 is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
 Host `ByteArray` maps to `'Uint8Array` (`uint8Array`, `new Uint8Array([…])`).
-That type is EDSL-immutable whether it appears on `Expr` or as the result
-of freezing on `Effect`; JS can still write the object. A runtime-sized
-buffer whose bytes are not yet known is `newByteArray n` on `Effect`,
-typed `'MutableUint8Array` (JS `new Uint8Array(n)` — the mutable Effect
-API for the same constructor). Pass that handle to APIs that fill in place,
-then `freezeByteArray` (`.slice()`, copy) or `unsafeFreezeByteArray`
-(same object, retyped, nothing emitted) to get `'Uint8Array`.
+JS can write the object. A runtime-sized buffer whose bytes are not
+yet known is `newByteArray n` on `Effect` (`new Uint8Array(n)`).
+Allocation has identity — bind it; two occurrences are two arrays.
+Pass that handle to APIs that fill in place.
 
 No `==`, `with`, `eval`, `this`, or implicit `new`. No `/src/`
 literals (`new RegExp`). Unary JS functions nest as `'Function` chains

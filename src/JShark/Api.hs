@@ -34,8 +34,6 @@ module JShark.Api
 
     -- * Byte arrays
   , newByteArray
-  , freezeByteArray
-  , unsafeFreezeByteArray
 
     -- * Variables and lifting
   , var
@@ -156,7 +154,6 @@ import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
-import Unsafe.Coerce (unsafeCoerce)
 
 data Window
 
@@ -196,7 +193,7 @@ classifyFFI s
 isUnparenthesizedArrow :: String -> Bool
 isUnparenthesizedArrow s =
   case break (== '=') s of
-    (_, '=':'>' : _) -> True
+    (_, '=' : '>' : _) -> True
     _ -> False
 
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
@@ -296,50 +293,21 @@ false_ = bool False
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 
--- | @new Uint8Array([…])@ from a host 'ByteArray'.
---
--- EDSL-immutable (on 'Expr' and after freeze on 'Effect'); JS can still
--- write the object.
+-- | @new Uint8Array([…])@ from a host 'ByteArray'. JS can write the object.
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
 
-{- | @new Uint8Array(n)@ — @n@ zeroed bytes, mutable.
+{- | @new Uint8Array(n)@ — @n@ zeroed bytes.
 
 'uint8Array' is for bytes the host already has; this is for a buffer whose
 size is known but whose contents are not, which is what a JS API filling a
-buffer wants. Typed as 'MutableUint8Array' — the mutable Effect API for
-the same JS @Uint8Array@ constructor. Bind it: two occurrences would be
-two arrays.
+buffer wants. Allocation has identity: bind it; two occurrences would be
+two arrays. JS can write the object.
 -}
 newByteArray ::
-  Expr f 'Number -> Effect f 'MutableUint8Array
+  Expr f 'Number -> Effect f 'Uint8Array
 newByteArray n =
   FFI (FFILambda "n => new Uint8Array(n)") (arg n <: RecNil)
-
-{- | @a.slice()@ — the bytes so far, as an @''Uint8Array'@.
-
-Copies, so later writes through @a@ do not show up in the result.
-'Uint8Array' is EDSL-immutable on 'Expr' and as the result of freeze here;
-JS can still write the copy.
--}
-freezeByteArray ::
-  Effect f 'MutableUint8Array -> Effect f 'Uint8Array
-freezeByteArray a = FFI FFIFreezeByteArray (ArgEffect a <: RecNil)
-
-{- | 'freezeByteArray' without the copy: the same object, retyped, so
-nothing is emitted.
-
-Unsafe in the 'Data.Primitive.ByteArray.unsafeFreezeByteArray' sense — a
-later write through the mutable handle is visible through the frozen
-value. Sound when the mutable handle is dead afterwards.
--}
-{-# WARNING
-  unsafeFreezeByteArray
-  "Zero-emission retype; a live mutable handle aliases the frozen view."
-  #-}
-unsafeFreezeByteArray ::
-  Effect f 'MutableUint8Array -> Effect f 'Uint8Array
-unsafeFreezeByteArray = unsafeCoerce
 
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])

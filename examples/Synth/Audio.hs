@@ -257,14 +257,14 @@ stopAt n t = toSyntax_ (callMethod (node n) "stop" (arg t <: RecNil))
 {- | A zeroed analysis buffer of @n@ bytes.
 
 'JShark.Api.newByteArray' asks for the size and nothing else, which is
-what an output buffer wants: the analyser supplies the contents. Mutable,
-hence @''MutableUint8Array'@ — 'JShark.Api.uint8Array' is the
-EDSL-immutable literal, for bytes the host already holds.
+what an output buffer wants: the analyser supplies the contents.
+'JShark.Api.uint8Array' is the host 'ByteArray' literal.
 
-Bound, so the analyser and the meter share one array.
+Bound, so the analyser and the meter share one array. JS can write the
+object.
 -}
 analysisBuffer ::
-  Int -> EffectSyntax f (Expr f 'MutableUint8Array)
+  Int -> EffectSyntax f (Expr f 'Uint8Array)
 analysisBuffer n =
   fmap var (toSyntax (newByteArray (number (fromIntegral n))))
 
@@ -276,13 +276,12 @@ that only ever sees the low end of the spectrum.
 fftSizeFor :: Int -> Expr f 'Number
 fftSizeFor bins = number (fromIntegral (bins * 2))
 
-{- | @analyser.getByteFrequencyData(buf)@. Fills @buf@ in place, which is
-why it takes the mutable handle.
+{- | @analyser.getByteFrequencyData(buf)@. Fills @buf@ in place.
 -}
 byteFrequencyData ::
   IsNode f a
   => a
-  -> Expr f 'MutableUint8Array
+  -> Expr f 'Uint8Array
   -> EffectSyntax f ()
 byteFrequencyData a buf =
   toSyntax_ (callMethod (node a) "getByteFrequencyData" (arg buf <: RecNil))
@@ -291,11 +290,10 @@ byteFrequencyData a buf =
 
 Byte arrays carry no fold in the object language, so the reduction is an
 'ffi'. Doing it in one call also keeps the per-frame work to a single
-crossing. Reads the mutable handle directly: freezing every frame would
-copy the buffer for nothing.
+crossing. Reads the handle directly.
 -}
 meanByte ::
-  Expr f 'MutableUint8Array -> EffectSyntax f (Expr f 'Number)
+  Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Number)
 meanByte buf =
   fmap
     var
