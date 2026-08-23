@@ -31,11 +31,9 @@ import Grid
   , initPaletteRgba
   , rebuildLiveList
   , rebuildPackedCounts
-  , refreshPackedAt
   , refreshPackedRegion
   , setU8
   , setPackedAlive
-  , bumpPackedNeighbors
   , stepGrid
   , u8Get
   )
@@ -251,11 +249,7 @@ stepGeneration state = do
           regionH = y1e - y0e + number 1
           regionCells = regionW * regionH
         denseEnough <-
-          pure $
-            regionCells .> (w * h) / number 2
-              .|| ( prevPop .> 0
-                      .&& regionCells .> prevPop * number 12
-                  )
+          pure $ regionCells .> (w * h) * number 9 / number 10
         useEngine <- pure (canEngine .&& denseEnough)
         ifS
           useEngine
@@ -432,18 +426,18 @@ flipCell state gx gy = do
       (bitAnd a (number 1) .== 1)
       ( do
           setPackedAlive alive i (number 0)
-          bumpPackedNeighbors alive w h gx gy (number (-2))
-          refreshPackedAt alive w h gx gy
           setU8 species i 0
           set @"pop" state (pop0 - 1)
+          toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
+          done
       )
       ( do
           setPackedAlive alive i (number 1)
-          bumpPackedNeighbors alive w h gx gy (number 2)
-          refreshPackedAt alive w h gx gy
           setU8 species i (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
           includeBounds state gx gy
+          toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
+          done
       )
     syncLiveList state
     done

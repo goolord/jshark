@@ -28,7 +28,7 @@ initWorkerEngine =
   toSyntax $
     ffi
       ( "((w,h)=>{const E=globalThis.LifeEngine;if(!E)return;"
-          <> "E.init({width:w|0,height:h|0,workerCount:navigator.hardwareConcurrency||4});"
+          <> "E.init({width:w|0,height:h|0,workerCount:0});"
           <> "})"
       )
       ( arg (number (fromIntegral gridW))

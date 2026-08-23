@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Life engine orchestrator: worker pool, SharedArrayBuffer sync, LUT fallback,
- * and optional WASM hook. Exposes globalThis.LifeEngine.
+ * Life engine orchestrator: LUT stepping for sync main-thread finishStep,
+ * optional worker pool (asyncStep only), and optional WASM hook.
+ * Exposes globalThis.LifeEngine.
  */
 (function (global) {
   const LifeLUT = global.LifeLUT;
@@ -26,6 +27,7 @@
       this.ready = false;
       this.workerUrl = 'js/EngineWorker.js';
       this._speciesCounts = new Uint16Array(256);
+      this._speciesTouched = new Uint16Array(8);
     }
 
     /** Optional WASM SIMD hook: pass a module with exports.stepRegion(ptr,w,h,y0,y1). */
@@ -61,8 +63,10 @@
       const canShare =
         typeof SharedArrayBuffer !== 'undefined' &&
         global.crossOriginIsolated === true;
+      const wantWorkers =
+        !!opts.asyncStep && opts.workerCount !== 0 && canShare;
 
-      if (canShare && opts.workerCount !== 0) {
+      if (wantWorkers) {
         const gridBytes = n;
         const sabSize = SYNC_BYTES + gridBytes * 2;
         this.sab = new SharedArrayBuffer(sabSize);
@@ -76,6 +80,9 @@
         this.spawnWorkers(pool);
         this.mode = 'workers';
       } else {
+        this.sab = null;
+        this.sync = null;
+        this.workers = [];
         this.gridA = new Uint8Array(n);
         this.gridB = new Uint8Array(n);
         this.mode = 'main-lut';
@@ -104,27 +111,17 @@
       }
     }
 
-    uploadFrom(packedGrid) {
-      const n = this.width * this.height;
-      for (let i = 0; i < n; i++) this.gridA[i] = packedGrid[i] & 1;
-    }
-
-    downloadTo(nextPacked) {
-      const n = this.width * this.height;
-      for (let i = 0; i < n; i++) nextPacked[i] = this.gridA[i] & 1;
-    }
-
     stepWorkers() {
       Atomics.store(this.sync, 2, 0);
       Atomics.store(this.sync, 1, 1);
       Atomics.add(this.sync, 0, 1);
       Atomics.notify(this.sync, 0, this.workers.length);
-      // Atomics.wait is worker-only; spin until the last tile sets sync[1]=2.
       while (Atomics.load(this.sync, 1) === 1) {
-        /* busy-wait */
+        /* worker-only path; asyncStep callers may use Atomics.waitAsync */
       }
-      // Workers read gridA and write gridB; copy result back for the next step.
-      this.gridA.set(this.gridB);
+      const tmp = this.gridA;
+      this.gridA = this.gridB;
+      this.gridB = tmp;
     }
 
     stepMainLUT() {
@@ -145,7 +142,7 @@
     step() {
       const t0 = global.performance.now();
       if (this.mode === 'workers') this.stepWorkers();
-      else if (this.mode === 'main-lut') this.stepMainLUT();
+      else this.stepMainLUT();
       this.lastTickMs = global.performance.now() - t0;
       return this.lastTickMs;
     }
@@ -186,6 +183,31 @@
     }
   }
 
+  function pickBirthSpecies(alive, species, w, h, x, y, counts, touched) {
+    let best = 0;
+    let bestSid = 0;
+    let touchedLen = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const ni = ny * w + nx;
+        if (!(alive[ni] & 1)) continue;
+        const sid = species[ni];
+        const c = ++counts[sid];
+        if (c === 1) touched[touchedLen++] = sid;
+        if (c > best) {
+          best = c;
+          bestSid = sid;
+        }
+      }
+    }
+    for (let k = 0; k < touchedLen; k++) counts[touched[k]] = 0;
+    return bestSid;
+  }
+
   /**
    * Binary step + species + pop/bounds/lists in one pass.
    * Returns null when LifeEngine is unavailable (caller keeps Haskell path).
@@ -193,11 +215,12 @@
   function finishStep(alive, species, nextAlive, nextSpecies, w, h, nextLiveList, nextChangedList) {
     const E = global.LifeEngine;
     if (!E || !E.ready || E.mode === 'none') return null;
-    E.uploadFrom(alive);
-    E.step();
-    E.downloadTo(nextAlive);
     const n = w * h | 0;
+    const grid = E.gridA;
     const counts = E._speciesCounts;
+    const touched = E._speciesTouched;
+    for (let i = 0; i < n; i++) grid[i] = alive[i] & 1;
+    E.stepMainLUT();
     let pop = 0;
     let bx0 = 1e9;
     let by0 = 1e9;
@@ -205,8 +228,9 @@
     let by1 = -1;
     for (let i = 0; i < n; i++) {
       const was = alive[i] & 1;
-      const now = nextAlive[i] & 1;
+      const now = grid[i] & 1;
       if (now && was) {
+        nextAlive[i] = 1;
         nextSpecies[i] = species[i];
       } else if (!now) {
         nextAlive[i] = 0;
@@ -214,27 +238,8 @@
       } else {
         const x = i % w;
         const y = (i / w) | 0;
-        counts.fill(0);
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (!dx && !dy) continue;
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            const ni = ny * w + nx;
-            if (alive[ni] & 1) counts[species[ni]]++;
-          }
-        }
-        let best = 0;
-        let bestSid = 0;
-        for (let sid = 0; sid < 256; sid++) {
-          if (counts[sid] > best) {
-            best = counts[sid];
-            bestSid = sid;
-          }
-        }
         nextAlive[i] = 1;
-        nextSpecies[i] = bestSid;
+        nextSpecies[i] = pickBirthSpecies(alive, species, w, h, x, y, counts, touched);
       }
       if (now) {
         pop++;
