@@ -236,9 +236,16 @@ build parent name attrs ns = do
   el <- Dom.createElement (string name)
   mapM_ (applyAttribute el) attrs
   -- Attributes first, then modifiers: a dynAttr overrides a static one.
-  mapM_ (applyModifier el) [m | Modifier m <- ns]
-  mapM_ (renderNode el) (Prelude.filter (not . isModifier) ns)
+  let (mods, children) = partitionNodes ns
+  mapM_ (applyModifier el) mods
+  mapM_ (renderNode el) children
   void (Dom.appendChild parent el)
+
+partitionNodes :: [Node f] -> ([Modifier f], [Node f])
+partitionNodes = foldr step ([], [])
+ where
+  step (Modifier m) (ms, cs) = (m : ms, cs)
+  step n (ms, cs) = (ms, n : cs)
 
 isModifier :: Node f -> Bool
 isModifier = \case

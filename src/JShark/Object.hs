@@ -46,7 +46,7 @@ get ::
   forall k r f.
   KnownSymbol k =>
   Effect f ('MutableObject r) -> EffectSyntax f (Expr f (Field r k))
-get x = fmap Var $ toSyntax $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
+get x = bindExpr $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
 
 instance
   (KnownSymbol k, u ~ Field r k) =>

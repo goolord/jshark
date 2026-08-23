@@ -14,9 +14,9 @@ import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
 -- | @JSON.stringify(x)@. Observationally pure (no mutation; the result
--- is determined by @x@). Closed-name 'ExprUnary', not a general FFI.
+-- is determined by @x@). Closed-name 'Std' 'Un', not a general FFI.
 stringify :: Expr f u -> Expr f 'String
-stringify = ExprUnary StdStringify
+stringify = Std . Un StdStringify
 
 -- | @JSON.parse(x)@. Throws on bad JSON, so this is an 'Effect'. The
 -- result type is asserted by the caller and not checked.

@@ -209,7 +209,7 @@ rotate ::
   Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-rotate ctx a = toSyntax $ callMethod ctx "rotate" (arg a <: RecNil)
+rotate ctx a = ctxCall ctx "rotate" (arg a <: RecNil)
 
 scale ::
   Effect f ('MutableObject Context2D)

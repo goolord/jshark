@@ -1,13 +1,12 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
--- | JS @Array.prototype@ wrappers.
--- Read wrappers are closed-name 'Expr' nodes; 'evaluate' handles
--- 'index', 'map', 'filter', 'reduce', 'reduceRight', 'groupBy', 'zipWith',
--- and 'singleton'.
--- 'push' is a 'CallMethod' on 'Effect'. Import qualified; names clash
--- with 'Prelude'.
+-- | JS @Array.prototype@ wrappers. Read wrappers are 'Std' / kernel
+-- 'Index'; 'zipWith' and 'groupBy' are Haskell functions over that
+-- tree. 'push' is a 'CallMethod' on 'Effect'. Import qualified; names
+-- clash with 'Prelude'.
 module JShark.Array
   ( index
   , length
@@ -36,65 +35,66 @@ module JShark.Array
 where
 
 import JShark.Api
+import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 import Prelude hiding (concat, filter, length, map, zipWith)
 
--- | @arr[i]@
+-- | @arr[i]@ after 'Math.trunc'. Out of range is 'Error'.
 index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
-index = ExprIndex
+index arr i =
+  let_ (Math.trunc i) $ \n ->
+    if_
+      (And (GTEq n 0) (LTh n (length arr)))
+      (Index arr n)
+      (Error (Literal (ValueString "array index out of bounds")))
 
 -- | @arr.length@
 length :: Expr f ('Array u) -> Expr f 'Number
-length = ExprUnary StdArrLen
+length = Std . Un StdArrLen
 
 -- | @arr.map(function(x){...})@. The callback stays on 'Expr'.
 map :: Expr f ('Array u) -> (Expr f u -> Expr f v) -> Expr f ('Array v)
-map arr f = ExprMap arr (\x -> f (var x))
+map arr f = Std (Map arr (\x -> f (var x)))
 
 -- | @arr.filter(function(x){...})@. The callback stays on 'Expr'.
 filter :: Expr f ('Array u) -> (Expr f u -> Expr f 'Bool) -> Expr f ('Array u)
-filter arr f = ExprFilter arr (\x -> f (var x))
-
-arrayMethod ::
-  String -> Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f w
-arrayMethod name arr f =
-  callMethod (expr arr) name (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
+filter arr f = Std (Filter arr (\x -> f (var x)))
 
 -- | @arr.map@ with an 'Effect' callback (e.g. 'getProp'' inside).
 mapE :: Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f ('Array v)
-mapE = arrayMethod "map"
+mapE = arrayCallback "map"
 
 -- | 'mapE' in 'EffectSyntax'.
 mapE_ ::
   Expr f ('Array u)
   -> (Expr f u -> EffectSyntax f (f v))
   -> EffectSyntax f (Expr f ('Array v))
-mapE_ arr f = fmap Var $ toSyntax $ mapE arr (\x -> fromSyntax (f x))
+mapE_ arr f = bindExpr $ mapE arr (\x -> fromSyntax (f x))
 
 -- | @arr.filter@ with an 'Effect' callback (e.g. 'getProp'' inside).
 filterE ::
   Expr f ('Array u) -> (Expr f u -> Effect f 'Bool) -> Effect f ('Array u)
-filterE = arrayMethod "filter"
+filterE = arrayCallback "filter"
 
 -- | 'filterE' in 'EffectSyntax'.
 filterE_ ::
   Expr f ('Array u)
   -> (Expr f u -> EffectSyntax f (f 'Bool))
   -> EffectSyntax f (Expr f ('Array u))
-filterE_ arr f = fmap Var $ toSyntax $ filterE arr (\x -> fromSyntax (f x))
+filterE_ arr f = bindExpr $ filterE arr (\x -> fromSyntax (f x))
 
 -- | @arr.includes(x)@
 includes :: Expr f ('Array u) -> Expr f u -> Expr f 'Bool
-includes = ExprBinary StdIncludes
+includes xs x = Std (Bin StdIncludes xs x)
 
 -- | @xs.concat(ys)@
 concat :: Expr f ('Array u) -> Expr f ('Array u) -> Expr f ('Array u)
-concat = ExprBinary StdConcat
+concat xs ys = Std (Bin StdConcat xs ys)
 
 -- | @arr.join(sep)@
 join :: Expr f ('Array u) -> Expr f 'String -> Expr f 'String
-join = ExprBinary StdJoin
+join xs sep = Std (Bin StdJoin xs sep)
 
 -- | @arr.push(x)@. Mutates in place; a 'CallMethod' on 'Effect'.
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
@@ -125,37 +125,64 @@ fromEffects = ArrayLit
 -- | @arr.reduce(function(acc,x){…}, z)@
 reduce ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
-reduce arr z f = ExprReduce arr z (\a x -> f (var a) (var x))
+reduce arr z f = Std (Reduce arr z (\a x -> f (var a) (var x)))
 
 -- | @arr.reduceRight(function(acc,x){…}, z)@. JS callback is still @(acc, x)@.
 reduceRight ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
-reduceRight arr z f = ExprReduceRight arr z (\a x -> f (var a) (var x))
+reduceRight arr z f = Std (ReduceRight arr z (\a x -> f (var a) (var x)))
 
 -- | @[x]@. One-element array; used by 'JShark.Classes.pure'.
 singleton :: Expr f u -> Expr f ('Array u)
-singleton x = ExprMap (Literal (ValueArray [ValueUnit])) (\_ -> x)
+singleton x = map (Literal (ValueArray [ValueUnit])) (\_ -> x)
 
--- | @Object.groupBy@ as @[{key, items}]@. The key callback is unary
--- ('String'); first-seen key order. Not a null-prototype object.
+-- | @[{key, items}]@ in first-seen key order. One 'reduce' pass; 'keyFn'
+-- runs once per element.
 groupBy ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f 'String)
   -> Expr f ('Array ('Object (GroupBy u)))
-groupBy arr f = ExprGroupBy arr (\x -> f (var x))
+groupBy arr keyFn =
+  reduce arr (Literal (ValueArray [])) $ \groups x ->
+    let k = keyFn x
+     in
+      let_ (reduce groups (Literal (ValueBool False)) $ \found g ->
+             Or found (GetField @"key" g .== k)
+           ) $ \found ->
+        if_ found
+          ( map groups $ \g ->
+              if_ (GetField @"key" g .== k)
+                ( FrozenLit
+                    [ FieldLit @"key" k
+                    , FieldLit @"items" (concat (GetField @"items" g) (singleton x))
+                    ]
+                )
+                g
+          )
+          ( concat groups
+              ( singleton
+                  ( FrozenLit
+                      [ FieldLit @"key" k
+                      , FieldLit @"items" (singleton x)
+                      ]
+                  )
+              )
+          )
 
--- | @zipWith@; result length is @Math.min@.
+-- | @zipWith@; result length is 'Math.min'. @Array.from@ over the indices.
 zipWith ::
   (Expr f a -> Expr f b -> Expr f c)
   -> Expr f ('Array a)
   -> Expr f ('Array b)
   -> Expr f ('Array c)
-zipWith f xs ys = ExprZipWith xs ys (\a b -> f (var a) (var b))
+zipWith f xs ys =
+  let_ (Math.min (length xs) (length ys)) $ \n ->
+    Std (From n $ \i -> f (index xs (var i)) (index ys (var i)))
 
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::
   Expr f ('Array u) -> Expr f 'Number -> Expr f 'Number -> Expr f ('Array u)
-arraySlice = ExprTernary StdArrSlice
+arraySlice xs a b = Std (Tern StdArrSlice xs a b)
 
 -- | @arr.sort(function(a,b){…})@. Mutates in place.
 sort ::

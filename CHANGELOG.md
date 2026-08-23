@@ -9,12 +9,18 @@
   No freeze API. Tagged-sum payloads are `ObjectLit` with an untyped
   extra `payload` key on `FieldLit` (`Tagged` only types `tag`).
   `FieldLitEffect` carries effectful object fields in `ObjectLit` (replaces
-  `UnsafeEffectExpr` in `Generic`). Optimizer bind inlining uses internal
-  `SplicedEffect` on `Expr` (not surface API). Removed byte-array `Effect`
+  `UnsafeEffectExpr` in `Generic`). Optimizer bind inlining uses `EmbedEff`
+  on `Stamp` (not surface API). Removed byte-array `Effect`
   constructors. `jsUncurry` / `'JsFn2` for binary JS callbacks (replaces
   `ArraySort`); `Array.sort` uses `callMethod` + `jsUncurry`. `FFIForm`
   tags lambda vs call (not string matching).
-  `base >= 4.17`.
+  `Expr` is a Good Parts kernel plus one `Std` constructor for pure JS
+  stdlib (`Math.*`, `Array.prototype.map` / `filter` / `reduce`, …).
+  `zipWith` and `groupBy` are Haskell functions over that tree
+  (`Array.from` / `reduce`+`filter`). `Array.index` is `Math.trunc`, a
+  bounds check, kernel `a[i]`, and `Error` (throw). Codegen hoists
+  `$valueEq` for kernel `Eq` (`===`, then `$arrayEq`, `$deepEqual`,
+  `$uint8ArrayEq`; not general JS equality). `base >= 4.17`.
 
 
 * Fixed: codegen and the optimizer numbered PHOAS tags from the same

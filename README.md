@@ -8,9 +8,12 @@ ordinary Haskell function application, so you get capture avoidance
 without a name supply. The same tree can be evaluated, optimized, and
 compiled without renaming anything by hand.
 
-There are two trees. `Expr` is pure: literals, arithmetic, `.==` / `.!=`,
-functions, `const` lets, and a fixed set of string, array, Math, and
-JSON methods. `Effect` is impure: statements, FFI, mutation, DOM, I/O,
+There are two trees. `Expr` is pure: a Good Parts kernel (literals,
+arithmetic, `===` / `!==`, functions, `const` lets, objects, `a[i]`)
+and one `Std` constructor for the pure JS standard library (`Math.sin`,
+`Array.prototype.map`, `JSON.stringify`, …). Combinators such as
+`zipWith` and `groupBy` are Haskell functions that build that tree.
+`Effect` is impure: statements, FFI, mutation, DOM, I/O,
 and free-text names. They join at FFI through `Arg`, so you can hand an effect
 to FFI without first lifting it into `Expr`. The optimizer can fold `Expr` without
 pretending FFI is pure, and codegen can print expressions and statements
@@ -141,8 +144,8 @@ literals (`new RegExp`). Unary JS functions nest as `'Function` chains
 (`lambda`, `lambda2`, …). Binary JS callbacks use `'JsFn2` via
 `jsUncurry` (`Array.sort`, etc.) — one `function(a,b){…}`, not nested
 unary functions. Array index is `Math.trunc` and throws on
-OOB. `parseInt_` takes a radix. `.==` is `$eq` (`===`, then
-structural arrays, `Uint8Array` contents, and plain objects). Frozen
+OOB. `parseInt_` takes a radix. `.==` hoists `$valueEq` (`===`, then
+`$arrayEq` / `$deepEqual` / `$uint8ArrayEq` as needed). Frozen
 `'Object` is `Expr`; `'MutableObject` is `Effect`.
 
 `JShark.Classes` copies `Functor` / `Monad` / `Foldable` / … at kind

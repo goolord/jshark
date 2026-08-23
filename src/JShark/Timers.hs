@@ -17,17 +17,21 @@ import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
+callbackFFI ::
+  String
+  -> Rec (Arg f) us
+  -> (Expr f u -> Effect f a)
+  -> EffectSyntax f (Expr f v)
+callbackFFI name extra handler =
+  bindExpr $
+    ffi name (ArgEffect (LambdaE (\x -> handler (var x))) <: extra)
+
 timerCall ::
   String
   -> (Expr f 'Unit -> Effect f a)
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number)
-timerCall name handler ms =
-  fmap Var
-    $ toSyntax
-    $ ffi
-      name
-      (ArgEffect (LambdaE (\x -> handler (var x))) <: arg ms <: RecNil)
+timerCall name handler ms = callbackFFI name (arg ms <: RecNil) handler
 
 -- | @setTimeout(function(){...}, ms)@. Returns the timer id.
 setTimeout ::
@@ -54,12 +58,7 @@ clearInterval timerId = toSyntax_ $ ffi "clearInterval" (arg timerId <: RecNil)
 -- | @requestAnimationFrame(function(t){...})@. Returns the frame id.
 requestAnimationFrame ::
   (Expr f 'Number -> Effect f a) -> EffectSyntax f (Expr f 'Number)
-requestAnimationFrame handler =
-  fmap Var
-    $ toSyntax
-    $ ffi
-      "requestAnimationFrame"
-      (ArgEffect (LambdaE (\t -> handler (var t))) <: RecNil)
+requestAnimationFrame handler = callbackFFI "requestAnimationFrame" RecNil handler
 
 -- | Recurring rAF loop. The callback receives the frame timestamp.
 foreverFrame ::

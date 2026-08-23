@@ -60,6 +60,7 @@ import Data.Char (isAlphaNum, isSpace)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -282,14 +283,11 @@ tryCompileWith cfg0 source =
         hit <- Map.lookup key <$> readIORef globalMemoryCache
         case hit of
           Just cached -> pure (Right cached)
-          Nothing -> do
-            compiled <- tryRunCompile cfg source
-            case compiled of
-              Right out ->
-                atomicModifyIORef'
-                  globalMemoryCache
-                  (\m -> (insertBounded key out m, Right out))
-              left -> pure left
+          Nothing ->
+            compileAndStore (tryRunCompile cfg source) $ \out ->
+              atomicModifyIORef'
+                globalMemoryCache
+                (\m -> (insertBounded key out m, Right out))
       DiskCache dir -> do
         createDirectoryIfMissing True dir
         let
@@ -298,13 +296,20 @@ tryCompileWith cfg0 source =
         loaded <- loadDiskCache cacheFile key
         case loaded of
           Just cached -> pure (Right cached)
-          Nothing -> do
-            compiled <- tryRunCompile cfg source
-            case compiled of
-              Right out -> do
-                atomicWriteFile cacheFile (encodeDiskCache key out)
-                pure (Right out)
-              left -> pure left
+          Nothing ->
+            compileAndStore (tryRunCompile cfg source) $ \out -> do
+              atomicWriteFile cacheFile (encodeDiskCache key out)
+              pure (Right out)
+
+compileAndStore ::
+  IO (Either String Text)
+  -> (Text -> IO (Either String Text))
+  -> IO (Either String Text)
+compileAndStore compile persist = do
+  compiled <- compile
+  case compiled of
+    Right out -> persist out
+    left -> pure left
 
 encodeDiskCache :: Text -> Text -> BS.ByteString
 encodeDiskCache key compiled =
@@ -522,9 +527,7 @@ runAuto source = go probes
     if ok then run else go rest
 
 hasExecutable :: String -> IO Bool
-hasExecutable name = do
-  mExe <- findExecutable name
-  pure (maybe False (const True) mExe)
+hasExecutable name = isJust <$> findExecutable name
 
 runEsbuild :: CompilerEsbuildConfig -> Text -> IO (Either String Text)
 runEsbuild cfg source = do

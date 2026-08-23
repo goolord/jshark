@@ -67,6 +67,7 @@ module JShark.Api
   , ifS
   , forEach
   , forEach_
+  , arrayCallback
   , try_
   , catch_
   , throw_
@@ -117,6 +118,7 @@ module JShark.Api
   , noOp
   , discard
   , hold
+  , bindExpr
   , stmts
   , done
   , toSyntax
@@ -467,7 +469,7 @@ instance ToExpr f u (f u) where
   toExpr = Var
 
 hold :: Effect f u -> EffectSyntax f (Effect f u)
-hold e = fmap (Lift . Var) (toSyntax e)
+hold = fmap Lift . bindExpr
 
 -- | Recover the record phantom from an object handle. Closed so
 -- 'Effect'/'Expr' win over a bare PHOAS binder @f ('MutableObject r)@.
@@ -498,7 +500,7 @@ set o v =
 
 -- | Untyped @o.k@. Prefer 'get' / 'set' (or record-dot) when the key is a 'Field'.
 getProp :: Effect f ('MutableObject a) -> String -> EffectSyntax f (Expr f u)
-getProp o name = fmap Var $ toSyntax $ unsafeObjectGet o name
+getProp o name = bindExpr $ unsafeObjectGet o name
 
 setProp ::
   Effect f ('MutableObject a) -> String -> Expr f u -> EffectSyntax f (f 'Unit)
@@ -543,8 +545,8 @@ whenSomeE ::
   -> (Expr f u -> EffectSyntax f (f 'Unit))
   -> EffectSyntax f (f 'Unit)
 whenSomeE opt k = do
-  o <- toSyntax opt
-  whenSomeS (var o) k
+  o <- bindExpr opt
+  whenSomeS o k
 
 call0 ::
   forall a f.
@@ -594,4 +596,4 @@ ushr = UShr
 
 -- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
 parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number
-parseInt_ = ExprBinary StdParseInt
+parseInt_ s r = Std (Bin StdParseInt s r)

@@ -138,19 +138,13 @@ type family ScalarU (a :: Type) :: Universe where
   ScalarU () = 'Unit
   ScalarU ByteArray = 'Uint8Array
 
--- | Host type → JShark universe for 'ToJS' / 'ToValue' only. No
--- catch-all: records are 'toObject', not 'Expr'.
+-- | Host type → JShark universe for 'ToJS' / 'ToValue' only. The
+-- catch-all is 'ScalarU' (stuck on records); records use 'toObject'.
 type family UniverseOf (a :: Type) :: Universe where
-  UniverseOf Double = ScalarU Double
-  UniverseOf Float = ScalarU Float
-  UniverseOf Int = ScalarU Int
-  UniverseOf Text = ScalarU Text
-  UniverseOf Bool = ScalarU Bool
-  UniverseOf () = ScalarU ()
-  UniverseOf ByteArray = ScalarU ByteArray
   UniverseOf [a] = 'Array (UniverseOf a)
   UniverseOf (Maybe a) = 'Option (UniverseOf a)
   UniverseOf (Either e a) = 'Result (UniverseOf e) (UniverseOf a)
+  UniverseOf a = ScalarU a
 
 -- | Field-position universe. Nested products use 'As'; nested sums use
 -- 'Tagged'.
@@ -352,6 +346,16 @@ instance
   where
   dispatchField x = FDExpr (toJS x)
 
+-- | @Just@ allocates the nested object on 'Effect', then 'unsafeNullable'
+-- for JS @null@ / object — not 'some' (no Option wrapper in object fields).
+nullableObject ::
+  (a -> Effect f ('MutableObject r))
+  -> Maybe a
+  -> FieldDispatch f ('Option ('MutableObject r))
+nullableObject _ Nothing = FDExpr none
+nullableObject toObj (Just x) =
+  FDEffect (Bind (toObj x) (\o -> Lift (unsafeNullable (var o))))
+
 instance
   ( Generic a
   , GToObject (Rep a) (As a)
@@ -359,11 +363,7 @@ instance
   ) =>
   DispatchField ('Opt 'Rec) (Maybe a)
   where
-  -- | @Just@ allocates the nested record on 'Effect', then 'unsafeNullable'
-  -- for JS @null@ / object — not 'some' (no Option wrapper in object fields).
-  dispatchField Nothing = FDExpr none
-  dispatchField (Just x) =
-    FDEffect (Bind (toObject x) (\o -> Lift (unsafeNullable (var o))))
+  dispatchField = nullableObject toObject
 
 instance
   ( Generic a
@@ -372,10 +372,7 @@ instance
   ) =>
   DispatchField ('Opt 'Sum) (Maybe a)
   where
-  -- | Same nullable-object encoding as 'Opt' 'Rec' (see above).
-  dispatchField Nothing = FDExpr none
-  dispatchField (Just x) =
-    FDEffect (Bind (toSum x) (\o -> Lift (unsafeNullable (var o))))
+  dispatchField = nullableObject toSum
 
 class GToObject (r :: Type -> Type) (row :: Type) where
   gtoFields :: r x -> [FieldLit f row]

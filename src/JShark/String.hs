@@ -2,8 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
--- Built on closed-name 'ExprUnary' / 'ExprBinary' / 'ExprTernary' nodes.
--- Import qualified; names clash with 'Prelude'.
+-- Built on 'Std' 'Un' / 'Bin' / 'Tern'. Import qualified; names clash
+-- with 'Prelude'.
 module JShark.String
   ( length
   , indexOf
@@ -21,32 +21,32 @@ import Prelude hiding (length)
 
 -- | @s.length@
 length :: Expr f 'String -> Expr f 'Number
-length = ExprUnary StdStrLen
+length = Std . Un StdStrLen
 
 -- | @s.indexOf(sub)@
 indexOf :: Expr f 'String -> Expr f 'String -> Expr f 'Number
-indexOf = ExprBinary StdIndexOf
+indexOf s sub = Std (Bin StdIndexOf s sub)
 
 -- | @s.slice(start, end)@
 slice :: Expr f 'String -> Expr f 'Number -> Expr f 'Number -> Expr f 'String
-slice = ExprTernary StdSlice
+slice s a b = Std (Tern StdSlice s a b)
 
 -- | @s.toUpperCase()@
 toUpper :: Expr f 'String -> Expr f 'String
-toUpper = ExprUnary StdToUpper
+toUpper = Std . Un StdToUpper
 
 -- | @s.toLowerCase()@
 toLower :: Expr f 'String -> Expr f 'String
-toLower = ExprUnary StdToLower
+toLower = Std . Un StdToLower
 
 -- | @s.trim()@
 trim :: Expr f 'String -> Expr f 'String
-trim = ExprUnary StdTrim
+trim = Std . Un StdTrim
 
 -- | @s.split(sep)@
 split :: Expr f 'String -> Expr f 'String -> Expr f ('Array 'String)
-split = ExprBinary StdSplit
+split s sep = Std (Bin StdSplit s sep)
 
 -- | @s.replace(pat, rep)@
 replace :: Expr f 'String -> Expr f 'String -> Expr f 'String -> Expr f 'String
-replace = ExprTernary StdReplace
+replace s pat rep = Std (Tern StdReplace s pat rep)

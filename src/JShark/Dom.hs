@@ -90,7 +90,7 @@ setAttribute el name value =
 getAttribute ::
   Effect f ('MutableObject DomElement) -> Text -> EffectSyntax f (Expr f 'String)
 getAttribute el name =
-  fmap Var $ toSyntax $ callMethod el "getAttribute" (arg (string name) <: RecNil)
+  bindExpr $ callMethod el "getAttribute" (arg (string name) <: RecNil)
 
 -- | @parent.appendChild(child)@
 appendChild ::

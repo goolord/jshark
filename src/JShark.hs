@@ -53,18 +53,9 @@ module JShark
       , ResultOk
       , ResultErr
       , ResultCase
-      , ExprIndex
-      , MathUnary
-      , MathBinary
-      , ExprUnary
-      , ExprBinary
-      , ExprTernary
-      , ExprMap
-      , ExprFilter
-      , ExprReduce
-      , ExprReduceRight
-      , ExprGroupBy
-      , ExprZipWith
+      , Index
+      , Error
+      , Std
       , Uncurry2
       , UnsafeNullable
       , FrozenLit
@@ -123,7 +114,7 @@ where
 -- 'Expr' is the pure tree; 'Effect' is the impure tree. They join at FFI
 -- through 'Arg', not by treating effects as expressions.
 
-import Control.Monad (foldM, zipWithM)
+import Control.Monad (foldM)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
@@ -136,10 +127,8 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
-import Data.Monoid (All (..), Sum (..))
+import Data.Monoid (All (..), Any (..), Sum (..))
 import Data.Proxy (Proxy (..))
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
@@ -319,7 +308,15 @@ jsShowNumber d
 isFiniteDouble :: Double -> Bool
 isFiniteDouble d = not (isNaN d) && not (isInfinite d)
 
--- | Implements the unary @Math@ functions supported by 'MathUnary'.
+-- | JS @Math.floor@ / @ceil@ / @round@ / @trunc@: non-finite inputs are
+-- the identity. Haskell's 'Integral' conversion is undefined on NaN /
+-- infinity, and would throw from 'evaluate' of @Array.index@ on NaN.
+jsToIntegral :: (Double -> Integer) -> Double -> Double
+jsToIntegral f d
+  | isFiniteDouble d = fromIntegral (f d)
+  | otherwise = d
+
+-- | Implements the unary @Math@ functions supported by 'Math1'.
 mathUnaryFn :: MathFn1 -> Double -> Double
 mathUnaryFn = \case
   MathAbs -> abs
@@ -342,16 +339,16 @@ mathUnaryFn = \case
   MathLog -> log
   MathLog2 -> logBase 2
   MathLog10 -> logBase 10
-  MathFloor -> fromIntegral . (floor :: Double -> Integer)
-  MathCeil -> fromIntegral . (ceiling :: Double -> Integer)
+  MathFloor -> jsToIntegral floor
+  MathCeil -> jsToIntegral ceiling
   -- JS's Math.round rounds half-way values toward +Infinity (e.g.
   -- Math.round(2.5) === 3, Math.round(-2.5) === -2), unlike Haskell's
   -- 'round' (banker's rounding to even: round 2.5 == 2). floor(x + 0.5)
-  -- matches JS's semantics.
-  MathRound -> fromIntegral . (floor :: Double -> Integer) . (+ 0.5)
-  MathTrunc -> fromIntegral . (truncate :: Double -> Integer)
+  -- matches JS's semantics. Non-finite inputs are the identity.
+  MathRound -> jsToIntegral (floor . (+ 0.5))
+  MathTrunc -> jsToIntegral truncate
 
--- | Implements the binary @Math@ functions supported by 'MathBinary'.
+-- | Implements the binary @Math@ functions supported by 'Math2'.
 mathBinaryFn :: MathFn2 -> Double -> Double -> Double
 mathBinaryFn = \case
   MathPow -> (**)
@@ -513,23 +510,23 @@ jsUint8ArrayLit ba =
       (P.brackets (P.hcat (P.punctuate ", " (map (P.int . fromIntegral) (uint8Elems ba)))))
 
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
--- 'Embed' is a typed hole filler: applying a PHOAS continuation to
--- 'Embed' @x@ inlines @x@ at the binder's own universe, so substitution
--- never needs 'unsafeCoerce' or 'eqT'.
+-- 'Embed' / 'EmbedEff' are typed hole fillers for bind inlining.
 data Stamp (u :: Universe) where
   Stamp :: Int -> Stamp u
   Embed :: Expr Stamp u -> Stamp u
+  EmbedEff :: Effect Stamp u -> Stamp u
 
 -- | Codegen / dummy binder. Same as 'Stamp'; kept so call sites that
 -- only need a name stay readable.
 pattern Name :: Int -> Stamp u
 pattern Name i = Stamp i
 
-{-# COMPLETE Stamp, Embed #-}
+{-# COMPLETE Stamp, Embed, EmbedEff #-}
 
 stampId :: Stamp u -> Int
 stampId (Stamp i) = i
 stampId (Embed _) = error "JShark.stampId: Embed (flatten first)"
+stampId (EmbedEff _) = error "JShark.stampId: EmbedEff (flatten first)"
 
 peelResult ::
   Expr Stamp ('Result e a) -> Maybe (Either (Expr Stamp e) (Expr Stamp a))
@@ -634,62 +631,10 @@ evalAlg rec apply = \case
     case rv of
       ValueResult (Left e) -> rec (errF e)
       ValueResult (Right a) -> rec (okF a)
-  SplicedEffect _ -> cannotEval "a spliced Effect (SplicedEffect)"
   Uncurry2 {} -> cannotEval "JsFn2 (jsUncurry)"
-  ExprUnary n x -> case n of
-    StdArrLen ->
-      evalAsArray rec x $ \vs ->
-        pure (ValueNumber (fromIntegral (Prelude.length vs)))
-    _ -> cannotEval "a stdlib ExprUnary"
-  ExprBinary n x y -> evalStdBinary n <$> rec x <*> rec y
-  ExprTernary n xs a b -> case n of
-    StdArrSlice -> do
-      i <- rec a
-      j <- rec b
-      evalAsArray rec xs $ \vs ->
-        pure (ValueArray (jsArraySlice vs (unNumber i) (unNumber j)))
-    _ -> cannotEval "a stdlib ExprTernary"
-  ExprMap xs f ->
-    evalAsArray rec xs $ \vs -> ValueArray <$> traverse (rec . f) vs
-  ExprFilter xs f ->
-    evalAsArray rec xs $ \vs -> do
-      keep <-
-        traverse
-          ( \v -> do
-              b <- rec (f v)
-              pure (unBool b, v)
-          )
-          vs
-      pure (ValueArray [v | (True, v) <- keep])
-  ExprGroupBy xs kf ->
-    evalAsArray rec xs $ \vs -> do
-      keyed <-
-        traverse
-          ( \v -> do
-              k <- rec (kf v)
-              pure (unString k, v)
-          )
-          vs
-      pure (ValueArray (map groupRow (groupByFirst keyed)))
-  ExprZipWith xs ys f -> do
-    a <- rec xs
-    b <- rec ys
-    case (a, b) of
-      (ValueArray as, ValueArray bs) ->
-        ValueArray <$> zipWithM (\x y -> rec (f x y)) as bs
-  ExprReduce xs z f -> do
-    z0 <- rec z
-    evalAsArray rec xs $ foldM (\acc v -> rec (f acc v)) z0
-  ExprReduceRight xs z f -> do
-    z0 <- rec z
-    evalAsArray rec xs $ foldr (\v next -> next >>= \acc -> rec (f acc v)) (pure z0)
-  ExprIndex xs i -> do
+  Index xs i -> do
     iv <- rec i
     evalAsArray rec xs $ \vs ->
-      -- Ordinary JS @a[1.9]@ is the string key @\"1.9\"@ (@undefined@).
-      -- We treat the index as an integer (trunc toward 0) and throw
-      -- out of bounds: no holes, no @undefined@ at an arbitrary @u@.
-      -- Codegen matches this; it does not emit raw @a[i]@.
       let
         d = unNumber iv
         idx = truncate d :: Int
@@ -697,10 +642,10 @@ evalAlg rec apply = \case
         if isFiniteDouble d && idx >= 0 && idx < length vs
           then pure (vs !! idx)
           else error "evaluate: array index out of bounds"
-  MathUnary name x -> ValueNumber . mathUnaryFn name . unNumber <$> rec x
-  MathBinary name x y ->
-    ValueNumber
-      <$> (mathBinaryFn name <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
+  Error msg -> do
+    m <- rec msg
+    error ("evaluate: " ++ T.unpack (unString m))
+  Std s -> evalStd rec s
   UnsafeNullable x -> ValueOption . Just <$> rec x
   FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit rec) fs
   GetField @k o -> do
@@ -722,6 +667,59 @@ evalAsArray rec xs k = do
   arr <- rec xs
   case arr of
     ValueArray vs -> k vs
+
+evalStd ::
+  Monad m =>
+  (forall w. Expr Value w -> m (Value w))
+  -> Std Value u
+  -> m (Value u)
+evalStd rec = \case
+  Math1 name x -> ValueNumber . mathUnaryFn name . unNumber <$> rec x
+  Math2 name x y ->
+    ValueNumber
+      <$> (mathBinaryFn name <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
+  Un n x -> case n of
+    StdArrLen ->
+      evalAsArray rec x $ \vs ->
+        pure (ValueNumber (fromIntegral (Prelude.length vs)))
+    _ -> cannotEval "a stdlib Un"
+  Bin n x y -> evalStdBinary n <$> rec x <*> rec y
+  Tern n xs a b -> case n of
+    StdArrSlice -> do
+      i <- rec a
+      j <- rec b
+      evalAsArray rec xs $ \vs ->
+        pure (ValueArray (jsArraySlice vs (unNumber i) (unNumber j)))
+    _ -> cannotEval "a stdlib Tern"
+  Map xs f ->
+    evalAsArray rec xs $ \vs -> ValueArray <$> traverse (rec . f) vs
+  Filter xs f ->
+    evalAsArray rec xs $ \vs -> do
+      keep <-
+        traverse
+          ( \v -> do
+              b <- rec (f v)
+              pure (unBool b, v)
+          )
+          vs
+      pure (ValueArray [v | (True, v) <- keep])
+  Reduce xs z f -> do
+    z0 <- rec z
+    evalAsArray rec xs $ foldM (\acc v -> rec (f acc v)) z0
+  ReduceRight xs z f -> do
+    z0 <- rec z
+    evalAsArray rec xs $ foldr (\v next -> next >>= \acc -> rec (f acc v)) (pure z0)
+  From n f -> do
+    nv <- rec n
+    let
+      d = unNumber nv
+      len
+        | isFiniteDouble d && d > 0 = truncate d :: Int
+        | otherwise = 0
+    ValueArray
+      <$> traverse
+        (\i -> rec (f (ValueNumber (fromIntegral i))))
+        [0 .. len - 1]
 
 -- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
 -- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
@@ -807,9 +805,9 @@ goOpen cache e = case e of
   LTh {} -> go cache e
   GTEq {} -> go cache e
   LTEq {} -> go cache e
-  MathUnary {} -> go cache e
-  MathBinary {} -> go cache e
-  ExprBinary StdParseInt _ _ -> go cache e
+  Std (Math1 {}) -> go cache e
+  Std (Math2 {}) -> go cache e
+  Std (Bin StdParseInt _ _) -> go cache e
   Literal ValueNumber {} -> go cache e
   Literal ValueString {} -> go cache e
   Literal ValueBool {} -> go cache e
@@ -855,6 +853,26 @@ renderJS = P.renderStyle P.style
 renderJSCompact :: Doc -> String
 renderJSCompact = P.renderStyle P.style {P.mode = P.LeftMode}
 
+-- | Runtime helpers emitted once per program as @const name = source@.
+-- Recording the use in 'CG' keeps a second call site from repeating the
+-- definition. A named @function@ declaration would become a global in a
+-- classic script.
+helperDecls :: CG -> Doc
+helperDecls s =
+  P.vcat
+    [ ("const" <+> P.text name <+> "=" <+> P.text src) <> P.semi
+    | (name, src) <- M.toAscList (cgHelpers s)
+    ]
+
+jsValueEq :: Doc -> Doc -> Doc
+jsValueEq a b = "$valueEq" <> P.parens (a <> ("," <+> b))
+
+jsValueNEq :: Doc -> Doc -> Doc
+jsValueNEq a b = "!" <> P.parens (jsValueEq a b)
+
+useEqHelpers :: CG -> CG
+useEqHelpers s0 = foldr (uncurry useHelperSrc) s0 jsEqHelpers
+
 -- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
 -- (@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
 jsCheckedIndex :: Doc -> Doc -> Doc
@@ -863,57 +881,50 @@ jsCheckedIndex arr idx =
     "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
     <> P.parens (arr <> ("," <+> idx))
 
--- | A runtime function emitted once per program, ahead of the code that
--- calls it. Recording the use in 'CG' keeps a second call site from
--- repeating the whole definition. Emitted as @const@ so a named
--- @function@ declaration does not become a global in a classic script.
-data Helper = HelperEq | HelperGroupBy | HelperZipWith
-  deriving (Eq, Ord)
+valueNeedsStructuralEq :: Value u -> Bool
+valueNeedsStructuralEq = \case
+  ValueArray _ -> True
+  ValueFrozen _ -> True
+  ValueUint8Array _ -> True
+  _ -> False
 
-helperSource :: Helper -> Doc
-helperSource = \case
-  -- @===@ then structural arrays / Uint8Array contents / plain objects
-  -- (frozen records, 'Result'). Identity-only @===@ would make two equal
-  -- @[1]@ / @{x:1}@ / @Uint8Array@ bindings disagree with 'evaluate'.
-  HelperEq ->
-    "const $eq = function(a,b){if(a===b)return true;if(Array.isArray(a)&&Array.isArray(b)){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$eq(a[i],b[i]))return false;return true}if(a instanceof Uint8Array&&b instanceof Uint8Array){if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true}if(a&&b&&a.constructor===Object&&b.constructor===Object){var ka=Object.keys(a);if(ka.length!==Object.keys(b).length)return false;for(var j=0;j<ka.length;j++){var k=ka[j];if(!Object.prototype.hasOwnProperty.call(b,k)||!$eq(a[k],b[k]))return false}return true}return false};"
-  -- First-seen keys, arrays of items. Not a null-prototype @Object.groupBy@.
-  HelperGroupBy ->
-    "const $groupBy = function(a,f){var g=Object.create(null),ks=[],i,k;for(i=0;i<a.length;i++){k=f(a[i]);if(!Object.prototype.hasOwnProperty.call(g,k)){ks.push(k);g[k]=[]}g[k].push(a[i])}return ks.map(function(k){return {key:k,items:g[k]}})};"
-  HelperZipWith ->
-    "const $zipWith = function(a,b,f){var n=Math.min(a.length,b.length),o=[],i;for(i=0;i<n;i++)o.push(f(a[i],b[i]));return o};"
+stdNeedsStructuralEq :: Std Stamp u -> Bool
+stdNeedsStructuralEq = \case
+  Math1 {} -> False
+  Math2 {} -> False
+  Un {} -> False
+  Bin {} -> False
+  Tern {} -> False
+  Map {} -> True
+  Filter {} -> True
+  Reduce {} -> True
+  ReduceRight {} -> True
+  From {} -> True
 
-helperDecls :: CG -> Doc
-helperDecls = P.vcat . map helperSource . Set.toAscList . cgHelpers
-
-jsValueEq :: Doc -> Doc -> Doc
-jsValueEq a b = "$eq" <> P.parens (a <> ("," <+> b))
-
-jsValueNEq :: Doc -> Doc -> Doc
-jsValueNEq a b = "!" <> P.parens (jsValueEq a b)
-
-jsGroupBy :: Doc -> Doc -> Doc
-jsGroupBy arr kf = "$groupBy" <> P.parens (arr <> ("," <+> kf))
-
-jsZipWith :: Doc -> Doc -> Doc -> Doc
-jsZipWith xs ys f =
-  "$zipWith" <> P.parens (xs <> ("," <+> (ys <> ("," <+> f))))
-
-groupByFirst :: [(Text, Value u)] -> [(Text, [Value u])]
-groupByFirst kvs =
-  [(k, reverse (M.findWithDefault [] k grouped)) | k <- reverse revOrder]
+needsStructuralEq :: Expr Stamp u -> Bool
+needsStructuralEq e = case e of
+  Var (Embed e') -> needsStructuralEq (flattenExpr e')
+  Var _ -> True
+  _ ->
+    getAny
+      ( foldExpr
+          nestedDummy
+          p
+          (const mempty)
+          (const mempty)
+          e
+      )
  where
-  (grouped, revOrder) = foldl' step (M.empty, []) kvs
-  step (acc, ks) (k, v)
-    | M.member k acc = (M.adjust (v :) k acc, ks)
-    | otherwise = (M.insert k [v] acc, k : ks)
-
-groupRow :: (Text, [Value u]) -> Value ('Object (GroupBy u))
-groupRow (k, vs) =
-  ValueFrozen
-    [ FieldLit @"key" (Literal (ValueString k))
-    , FieldLit @"items" (Literal (ValueArray vs))
-    ]
+  p x =
+    Any
+      ( case x of
+          Literal v -> valueNeedsStructuralEq v
+          Std s -> stdNeedsStructuralEq s
+          Index {} -> True
+          FrozenLit {} -> True
+          GetField {} -> True
+          _ -> False
+      )
 
 -- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
 -- path ('location.hash'); @o["0"]@ otherwise. A single key that is
@@ -1011,11 +1022,11 @@ arrayElemRef r = if P.isEmpty r then "undefined" else r
 data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
-  , cgHelpers :: !(Set Helper)
+  , cgHelpers :: !(M.Map String String)
   }
 
 startCG :: CG
-startCG = CG 0 (-3) Set.empty
+startCG = CG 0 (-3) M.empty
 
 allocTag :: CG -> (Int, CG)
 allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
@@ -1023,8 +1034,8 @@ allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 allocIdent :: CG -> (Int, CG)
 allocIdent s = (cgIdent s, s {cgIdent = cgIdent s + 1})
 
-useHelper :: Helper -> CG -> CG
-useHelper h s = s {cgHelpers = Set.insert h (cgHelpers s)}
+useHelperSrc :: String -> String -> CG -> CG
+useHelperSrc name src s = s {cgHelpers = M.insert name src (cgHelpers s)}
 
 nestedDummyId :: Int
 nestedDummyId = minBound
@@ -1049,16 +1060,16 @@ liveBinder (Lift e) = liveBinderExpr e
 liveBinder _ = Nothing
 
 liveBinderExpr :: Expr Stamp u -> Maybe Int
+liveBinderExpr (Var (EmbedEff e)) = liveBinder e
 liveBinderExpr (Var (Stamp n)) | n >= 0 = Just n
 liveBinderExpr (UnsafeNullable e) = liveBinderExpr e
-liveBinderExpr (SplicedEffect e) = liveBinder e
 liveBinderExpr _ = Nothing
 
 -- | @const n = x; k n@ aliases. Dropping them leaks the body stamp.
 isAliasBind :: Effect Stamp u -> Bool
+isAliasBind (Lift (Var (EmbedEff e))) = isAliasBind e
 isAliasBind (Lift (Var _)) = True
 isAliasBind (Lift (UnsafeNullable (Var _))) = True
-isAliasBind (Lift (SplicedEffect e)) = isAliasBind e
 isAliasBind _ = False
 
 jsCall :: Doc -> Doc -> Doc
@@ -1068,25 +1079,18 @@ jsCall f a = P.parens f <> P.parens a
 isSimple :: Expr Stamp u -> Bool
 isSimple = \case
   Literal {} -> True
+  Var (EmbedEff e) -> isSimpleEffect e
   Var {} -> True
   Show {} -> True
   TypeOf {} -> True
   Negate {} -> True
-  ExprUnary {} -> True
-  ExprBinary {} -> True
-  ExprTernary {} -> True
-  ExprMap {} -> True
-  ExprFilter {} -> True
-  ExprGroupBy {} -> True
-  ExprZipWith {} -> True
+  Std {} -> True
   Uncurry2 {} -> True
-  ExprIndex {} -> True
-  MathUnary {} -> True
-  MathBinary {} -> True
+  Index {} -> True
+  Error {} -> False
   UnsafeNullable x -> isSimple x
   FrozenLit {} -> True
   GetField {} -> True
-  SplicedEffect e -> isSimpleEffect e
   _ -> False
 
 isSimpleEffect :: Effect Stamp u -> Bool
@@ -1114,6 +1118,7 @@ countExpr :: Int -> Expr Stamp u -> Int
 countExpr t e = case e of
   Var (Stamp i) -> if i == t then 1 else 0
   Var (Embed e') -> countExpr t e'
+  Var (EmbedEff e') -> countEffect t e'
   _ ->
     getSum
       ( foldExpr
@@ -1141,6 +1146,7 @@ optSmall = 16
 sizeExpr :: Expr Stamp u -> Int
 sizeExpr e = case e of
   Var (Embed e') -> sizeExpr e'
+  Var (EmbedEff e') -> sizeEffect e'
   _ -> 1 + getSum (foldExpr nestedDummy s s sf e)
  where
   s = Sum . sizeExpr
@@ -1258,23 +1264,29 @@ mapExpr ge gf = \case
   ResultOk x -> ResultOk (ge x)
   ResultErr x -> ResultErr (ge x)
   ResultCase o e s -> ResultCase (ge o) (ge . e) (ge . s)
-  SplicedEffect e -> SplicedEffect (gf e)
-  ExprUnary n x -> ExprUnary n (ge x)
-  ExprBinary n x y -> ExprBinary n (ge x) (ge y)
-  ExprTernary n x y z -> ExprTernary n (ge x) (ge y) (ge z)
-  ExprMap x f -> ExprMap (ge x) (ge . f)
-  ExprFilter x f -> ExprFilter (ge x) (ge . f)
-  ExprGroupBy x f -> ExprGroupBy (ge x) (ge . f)
-  ExprZipWith x y f -> ExprZipWith (ge x) (ge y) (\a b -> ge (f a b))
+  Index x i -> Index (ge x) (ge i)
+  Error x -> Error (ge x)
+  Std s -> Std (mapStd ge s)
   Uncurry2 f -> Uncurry2 (\a b -> ge (f a b))
-  ExprReduce x z f -> ExprReduce (ge x) (ge z) (\a b -> ge (f a b))
-  ExprReduceRight x z f -> ExprReduceRight (ge x) (ge z) (\a b -> ge (f a b))
-  ExprIndex x i -> ExprIndex (ge x) (ge i)
-  MathUnary n x -> MathUnary n (ge x)
-  MathBinary n x y -> MathBinary n (ge x) (ge y)
   UnsafeNullable x -> UnsafeNullable (ge x)
   FrozenLit fs -> FrozenLit (map (mapFieldLit ge gf) fs)
   GetField @k o -> GetField @k (ge o)
+
+mapStd ::
+  (forall v. Expr f v -> Expr f v)
+  -> Std f u
+  -> Std f u
+mapStd ge = \case
+  Math1 n x -> Math1 n (ge x)
+  Math2 n x y -> Math2 n (ge x) (ge y)
+  Un n x -> Un n (ge x)
+  Bin n x y -> Bin n (ge x) (ge y)
+  Tern n x y z -> Tern n (ge x) (ge y) (ge z)
+  Map x f -> Map (ge x) (ge . f)
+  Filter x f -> Filter (ge x) (ge . f)
+  Reduce x z f -> Reduce (ge x) (ge z) (\a b -> ge (f a b))
+  ReduceRight x z f -> ReduceRight (ge x) (ge z) (\a b -> ge (f a b))
+  From n f -> From (ge n) (ge . f)
 
 mapEff ::
   (forall v. Expr f v -> Expr f v)
@@ -1351,23 +1363,33 @@ foldExpr dummy se le sf = \case
   ResultOk x -> se x
   ResultErr x -> se x
   ResultCase o e s -> se o <> le (e dummy) <> le (s dummy)
-  SplicedEffect e -> sf e
-  ExprUnary _ x -> se x
-  ExprBinary _ x y -> se x <> se y
-  ExprTernary _ x y z -> se x <> se y <> se z
-  ExprMap x f -> se x <> le (f dummy)
-  ExprFilter x f -> se x <> le (f dummy)
-  ExprGroupBy x f -> se x <> le (f dummy)
-  ExprZipWith x y f -> se x <> se y <> le (f dummy dummy)
+  Index x i -> se x <> se i
+  Error x -> se x
+  Std s -> foldStd dummy se le s
   Uncurry2 f -> le (f dummy dummy)
-  ExprReduce x z f -> se x <> se z <> le (f dummy dummy)
-  ExprReduceRight x z f -> se x <> se z <> le (f dummy dummy)
-  ExprIndex x i -> se x <> se i
-  MathUnary _ x -> se x
-  MathBinary _ x y -> se x <> se y
   UnsafeNullable x -> se x
   FrozenLit fs -> foldMap (foldFieldLit se sf) fs
   GetField o -> se o
+
+foldStd ::
+  forall f m u.
+  Monoid m =>
+  (forall v. f v)
+  -> (forall v. Expr f v -> m)
+  -> (forall v. Expr f v -> m)
+  -> Std f u
+  -> m
+foldStd dummy se le = \case
+  Math1 _ x -> se x
+  Math2 _ x y -> se x <> se y
+  Un _ x -> se x
+  Bin _ x y -> se x <> se y
+  Tern _ x y z -> se x <> se y <> se z
+  Map x f -> se x <> le (f dummy)
+  Filter x f -> se x <> le (f dummy)
+  Reduce x z f -> se x <> se z <> le (f dummy dummy)
+  ReduceRight x z f -> se x <> se z <> le (f dummy dummy)
+  From n f -> se n <> le (f dummy)
 
 foldFieldLit ::
   (forall v. Expr f v -> m)
@@ -1467,28 +1489,36 @@ foldGetField = \case
 flattenExpr :: Expr Stamp u -> Expr Stamp u
 flattenExpr = \case
   Var (Embed e) -> flattenExpr e
+  Var (EmbedEff (Lift e)) -> flattenExpr e
+  Var (EmbedEff e) -> Var (EmbedEff (flattenEff e))
   e -> mapExpr flattenExpr flattenEff e
 
 flattenEff :: Effect Stamp u -> Effect Stamp u
-flattenEff = mapEff flattenExpr flattenEff
+flattenEff = \case
+  Lift (Var (EmbedEff e)) -> flattenEff e
+  e -> mapEff flattenExpr flattenEff e
 
 -- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
 -- does not need a cast. Used after the one 'optUnder' apply of @f@.
 renameExpr :: Int -> Int -> Expr Stamp u -> Expr Stamp u
 renameExpr old new = \case
   Var (Embed e) -> renameExpr old new (flattenExpr e)
+  Var (EmbedEff (Lift e)) -> renameExpr old new (flattenExpr e)
+  Var (EmbedEff e) -> Var (EmbedEff (renameEff old new e))
   Var (Stamp t) | t == old -> Var (Stamp new)
   Var s -> Var s
   e -> mapExpr (renameExpr old new) (renameEff old new) e
 
 renameEff :: Int -> Int -> Effect Stamp u -> Effect Stamp u
-renameEff old new = mapEff (renameExpr old new) (renameEff old new)
+renameEff old new = \case
+  Lift (Var (EmbedEff e)) -> renameEff old new (flattenEff e)
+  e -> mapEff (renameExpr old new) (renameEff old new) e
 
 inlineExpr :: (Stamp u -> Expr Stamp v) -> Expr Stamp u -> Expr Stamp v
 inlineExpr f x = flattenExpr (f (Embed x))
 
-inlineEff :: (Stamp u -> Effect Stamp v) -> Expr Stamp u -> Effect Stamp v
-inlineEff f x = flattenEff (f (Embed x))
+inlineEff :: (Stamp u -> Effect Stamp v) -> Effect Stamp u -> Effect Stamp v
+inlineEff f x = flattenEff (f (EmbedEff x))
 
 -- | Re-apply a PHOAS continuation and optimize at the next free tag @t@
 -- (never a reset @-2@ — that collides with 'Stamp's already in the tree).
@@ -1572,9 +1602,9 @@ isCheap :: Expr Stamp u -> Bool
 isCheap = \case
   Literal v -> isCheapValue v
   UnsafeNullable x -> isCheap x
+  Var (EmbedEff _) -> False
   FrozenLit fs -> all isCheapFieldLit fs
   GetField o -> isCheap o
-  SplicedEffect _ -> False
   Uncurry2 _ -> False
   _ -> False
 
@@ -1602,8 +1632,7 @@ instance PhoasDummy Value where
 
 isPureExpr :: PhoasDummy f => Expr f u -> Bool
 isPureExpr e = case e of
-  SplicedEffect _ -> False
-  ExprUnary n x -> isPureStdUnary n && isPureExpr x
+  Std (Un n x) -> isPureStdUnary n && isPureExpr x
   _ -> getAll (foldExpr phoasDummy p p pe e)
  where
   p = All . isPureExpr
@@ -1765,20 +1794,28 @@ foldIndex arr idx = case (arr, idx) of
         i = truncate d :: Int
     , i >= 0 && i < length vs ->
         Literal (vs !! i)
-  _ -> ExprIndex arr idx
+  _ -> Index arr idx
 
 foldMathUnary :: MathFn1 -> Expr Stamp 'Number -> Expr Stamp 'Number
 foldMathUnary n x = case x of
   Literal (ValueNumber a)
     | Just r <- exactMathUnary n a -> Literal (ValueNumber r)
-  _ -> MathUnary n x
+  _ -> Std (Math1 n x)
 
 foldMathBinary ::
   MathFn2 -> Expr Stamp 'Number -> Expr Stamp 'Number -> Expr Stamp 'Number
 foldMathBinary n x y = case (x, y) of
   (Literal (ValueNumber a), Literal (ValueNumber b))
     | Just r <- exactMathBinary n a b -> Literal (ValueNumber r)
-  _ -> MathBinary n x y
+  _ -> Std (Math2 n x y)
+
+foldStdUn :: StdUnary a b -> Expr Stamp a -> Expr Stamp b
+foldStdUn n x = case n of
+  StdArrLen -> case x of
+    Literal (ValueArray vs) ->
+      Literal (ValueNumber (fromIntegral (Prelude.length vs)))
+    _ -> Std (Un n x)
+  _ -> Std (Un n x)
 
 optLet ::
   Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (Int, Expr Stamp v)
@@ -1843,10 +1880,6 @@ elimLetFrom t x f tag body =
     tag
     body
 
-boundAsExpr :: Effect Stamp u -> Expr Stamp u
-boundAsExpr (Lift e) = e
-boundAsExpr e = SplicedEffect e
-
 optBind ::
   Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (Int, Effect Stamp v)
 optBind t0 x f =
@@ -1871,7 +1904,7 @@ elimBindFrom t x f tag body =
       , elimCheap = isCheapEffect
       , elimSize = sizeEffect
       , elimRebuild = Bind x . rebindEff tag
-      , elimSplice = \t' -> optEffect t' (inlineEff f (boundAsExpr x))
+      , elimSplice = \t' -> optEffect t' (inlineEff f x)
       , elimDropUnused = not . isAliasBind
       }
     t
@@ -1896,6 +1929,14 @@ optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u)
 optExpr t0 = \case
   Literal v -> (t0, Literal v)
   Var (Embed e) -> optExpr t0 (flattenExpr e)
+  Var (EmbedEff (Lift e)) -> optExpr t0 (flattenExpr e)
+  Var (EmbedEff e) ->
+    let
+      (t1, e') = optEffect t0 e
+     in
+      case e' of
+        Lift x -> (t1, x)
+        _ -> (t1, Var (EmbedEff e'))
   Var v -> (t0, Var v)
   Concat x y ->
     let
@@ -2030,65 +2071,19 @@ optExpr t0 = \case
             (t3, tS, s') = optUnder t2 s
            in
             (t3, ResultCase o' (keepExprCont t3 tE e' e) (keepExprCont t3 tS s' s))
-  SplicedEffect e ->
-    let
-      (t1, e') = optEffect t0 e
-     in
-      case e' of
-        Lift x -> (t1, x)
-        _ -> (t1, SplicedEffect e')
-  ExprUnary n x ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      (t1, ExprUnary n x')
-  ExprBinary n x y ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-     in
-      (t2, ExprBinary n x' y')
-  ExprTernary n x y z ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-      (t3, z') = optExpr t2 z
-     in
-      (t3, ExprTernary n x' y' z')
-  ExprMap x f -> optMapped ExprMap x f
-  ExprFilter x f -> optMapped ExprFilter x f
-  ExprGroupBy x f -> optMapped ExprGroupBy x f
-  ExprZipWith x y f ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-      (t3, tA, tB, body) = optUnder2 t2 f
-     in
-      (t3, ExprZipWith x' y' (keepExprCont2 t3 tA tB body f))
-  ExprReduce x z f -> optReduced ExprReduce x z f
-  ExprReduceRight x z f -> optReduced ExprReduceRight x z f
-  Uncurry2 f ->
-    let
-      (t1, tA, tB, body) = optUnder2 t0 f
-     in
-      (t1, Uncurry2 (keepExprCont2 t1 tA tB body f))
-  ExprIndex arr idx ->
+  Index arr idx ->
     let
       (t1, arr') = optExpr t0 arr
       (t2, idx') = optExpr t1 idx
      in
       (t2, foldIndex arr' idx')
-  MathUnary n x ->
+  Error x -> fmap Error (optExpr t0 x)
+  Std s -> optStd t0 s
+  Uncurry2 f ->
     let
-      (t1, x') = optExpr t0 x
+      (t1, tA, tB, body) = optUnder2 t0 f
      in
-      (t1, foldMathUnary n x')
-  MathBinary n x y ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-     in
-      (t2, foldMathBinary n x' y')
+      (t1, Uncurry2 (keepExprCont2 t1 tA tB body f))
   UnsafeNullable x -> fmap UnsafeNullable (optExpr t0 x)
   FrozenLit fs ->
     let
@@ -2114,37 +2109,83 @@ optExpr t0 = \case
       (t1, x') = optExpr t0 x
      in
       (t1, foldNum1 f k x')
-  optMapped ::
-    ( Expr Stamp ('Array u)
-      -> (Stamp u -> Expr Stamp b)
-      -> Expr Stamp c
-    )
-    -> Expr Stamp ('Array u)
+
+optMapped ::
+  ( Expr Stamp ('Array u)
     -> (Stamp u -> Expr Stamp b)
-    -> (Int, Expr Stamp c)
-  optMapped k x f =
-    let
-      (t1, x') = optExpr t0 x
-      (t2, tag, body) = optUnder t1 f
-     in
-      (t2, k x' (keepExprCont t2 tag body f))
-  optReduced ::
-    ( Expr Stamp ('Array u)
-      -> Expr Stamp v
-      -> (Stamp v -> Stamp u -> Expr Stamp v)
-      -> Expr Stamp v
-    )
-    -> Expr Stamp ('Array u)
+    -> Expr Stamp c
+  )
+  -> Int
+  -> Expr Stamp ('Array u)
+  -> (Stamp u -> Expr Stamp b)
+  -> (Int, Expr Stamp c)
+optMapped k t0 x f =
+  let
+    (t1, x') = optExpr t0 x
+    (t2, tag, body) = optUnder t1 f
+   in
+    (t2, k x' (keepExprCont t2 tag body f))
+
+optReduced ::
+  ( Expr Stamp ('Array u)
     -> Expr Stamp v
     -> (Stamp v -> Stamp u -> Expr Stamp v)
-    -> (Int, Expr Stamp v)
-  optReduced k x z f =
+    -> Expr Stamp v
+  )
+  -> Int
+  -> Expr Stamp ('Array u)
+  -> Expr Stamp v
+  -> (Stamp v -> Stamp u -> Expr Stamp v)
+  -> (Int, Expr Stamp v)
+optReduced k t0 x z f =
+  let
+    (t1, x') = optExpr t0 x
+    (t2, z') = optExpr t1 z
+    (t3, tA, tB, body) = optUnder2 t2 f
+   in
+    (t3, k x' z' (keepExprCont2 t3 tA tB body f))
+
+optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u)
+optStd t0 = \case
+  Math1 n x ->
     let
       (t1, x') = optExpr t0 x
-      (t2, z') = optExpr t1 z
-      (t3, tA, tB, body) = optUnder2 t2 f
      in
-      (t3, k x' z' (keepExprCont2 t3 tA tB body f))
+      (t1, foldMathUnary n x')
+  Math2 n x y ->
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+     in
+      (t2, foldMathBinary n x' y')
+  Un n x ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldStdUn n x')
+  Bin n x y ->
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+     in
+      (t2, Std (Bin n x' y'))
+  Tern n x y z ->
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+      (t3, z') = optExpr t2 z
+     in
+      (t3, Std (Tern n x' y' z'))
+  Map x f -> optMapped (\a g -> Std (Map a g)) t0 x f
+  Filter x f -> optMapped (\a g -> Std (Filter a g)) t0 x f
+  Reduce x z f -> optReduced (\a b g -> Std (Reduce a b g)) t0 x z f
+  ReduceRight x z f -> optReduced (\a b g -> Std (ReduceRight a b g)) t0 x z f
+  From n f ->
+    let
+      (t1, n') = optExpr t0 n
+      (t2, tag, body) = optUnder t1 f
+     in
+      (t2, Std (From n' (keepExprCont t2 tag body f)))
 
 optEffect :: Int -> Effect Stamp u -> (Int, Effect Stamp u)
 optEffect t0 = \case
@@ -2153,7 +2194,7 @@ optEffect t0 = \case
       (t1, x') = optExpr t0 x
      in
       case x' of
-        SplicedEffect e -> (t1, e)
+        Var (EmbedEff e) -> optEffect t1 e
         _ -> (t1, Lift x')
   FFI n args -> fmap (FFI n) (optArgs t0 args)
   UnsafeObject o -> (t0, UnsafeObject o)
@@ -2386,7 +2427,7 @@ effectfulAST e =
 isUnitWitness :: Effect Stamp u -> Bool
 isUnitWitness = \case
   Lift (Literal ValueUnit) -> True
-  Lift (SplicedEffect e) -> isUnitWitness e
+  Lift (Var (EmbedEff e)) -> isUnitWitness e
   Lift _ -> False
   While {} -> True
   Bind _ f -> isUnitWitness (f nestedDummy)
@@ -2721,8 +2762,16 @@ pureAST' !s0 = \case
   Lambda f -> emitExprLambda s0 f
   And x y -> renderBin "&&" s0 x y
   Or x y -> renderBin "||" s0 x y
-  Eq x y -> renderBinApp jsValueEq (useHelper HelperEq s0) x y
-  NEq x y -> renderBinApp jsValueNEq (useHelper HelperEq s0) x y
+  Eq x y
+    | needsStructuralEq x || needsStructuralEq y ->
+        renderBinApp jsValueEq (useEqHelpers s0) x y
+    | otherwise ->
+        renderBin "===" s0 x y
+  NEq x y
+    | needsStructuralEq x || needsStructuralEq y ->
+        renderBinApp jsValueNEq (useEqHelpers s0) x y
+    | otherwise ->
+        renderBin "!==" s0 x y
   GTh x y -> renderBin ">" s0 x y
   LTh x y -> renderBin "<" s0 x y
   GTEq x y -> renderBin ">=" s0 x y
@@ -2745,6 +2794,7 @@ pureAST' !s0 = \case
      in
       (s2, Code (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
   Var (Embed e) -> pureAST' s0 (flattenExpr e)
+  Var (EmbedEff e) -> effectfulAST' s0 e
   Var s
     -- Tags and the unused-binder dummy are negative; never emit them as JS.
     | stampId s < 0 -> (s0, Code mempty mempty)
@@ -2803,76 +2853,23 @@ pureAST' !s0 = \case
      in
       (s1, Code d (resultObject False r))
   ResultCase res errF okF -> renderResultCase s0 res errF okF
-  SplicedEffect eff -> effectfulAST' s0 eff
-  ExprUnary n recv ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-     in
-      (s1, Code rDecl (stdUnaryJS n rRef))
-  ExprBinary n recv arg ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-      (s2, Code aDecl aRef) = pureAST' s1 arg
-     in
-      (s2, Code (rDecl $$ aDecl) (stdBinaryJS n rRef aRef))
-  ExprTernary n recv a b ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-      (s2, Code aDecl aRef) = pureAST' s1 a
-      (s3, Code bDecl bRef) = pureAST' s2 b
-     in
-      (s3, Code (rDecl $$ aDecl $$ bDecl) (stdTernaryJS n rRef aRef bRef))
-  ExprMap recv f -> renderCallbackMethod "map" s0 recv f
-  ExprFilter recv f -> renderCallbackMethod "filter" s0 recv f
-  ExprGroupBy recv f -> renderGroupBy s0 recv f
-  ExprZipWith xs ys f -> renderZipWith s0 xs ys f
-  ExprReduce recv z f ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-      (s2, Code zDecl zRef) = pureAST' s1 z
-      (s3, cb) = renderBinaryFn s2 f
-      call = rRef <> ".reduce" <> P.parens (cb <> ", " <> zRef)
-     in
-      (s3, Code (rDecl $$ zDecl) call)
-  ExprReduceRight recv z f ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-      (s2, Code zDecl zRef) = pureAST' s1 z
-      (s3, cb) = renderBinaryFn s2 f
-      call = rRef <> ".reduceRight" <> P.parens (cb <> ", " <> zRef)
-     in
-      (s3, Code (rDecl $$ zDecl) call)
-  Uncurry2 f ->
-    let
-      (s1, cb) = renderBinaryFn s0 f
-     in
-      (s1, Code mempty cb)
-  ExprIndex arr idx ->
+  Index arr idx ->
     let
       (s1, Code aDecl aRef) = pureAST' s0 arr
       (s2, Code iDecl iRef) = pureAST' s1 idx
      in
       (s2, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
-  MathUnary name x ->
+  Error msg ->
     let
-      (s1, Code xDecl xRef) = pureAST' s0 x
+      (s1, Code d r) = pureAST' s0 msg
      in
-      ( s1
-      , Code xDecl ("Math." <> P.text (T.unpack (mathFn1Name name)) <> P.parens xRef)
-      )
-  MathBinary name x y ->
+      (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
+  Std s -> renderStd s0 s
+  Uncurry2 f ->
     let
-      (s1, Code xDecl xRef) = pureAST' s0 x
-      (s2, Code yDecl yRef) = pureAST' s1 y
+      (s1, cb) = renderBinaryFn s0 f
      in
-      ( s2
-      , Code
-          (xDecl $$ yDecl)
-          ( "Math."
-              <> P.text (T.unpack (mathFn2Name name))
-              <> P.parens (xRef <> ", " <> yRef)
-          )
-      )
+      (s1, Code mempty cb)
   UnsafeNullable x -> pureAST' s0 x
   FrozenLit fs -> renderObjectLit s0 fs
   GetField @k o ->
@@ -3095,36 +3092,73 @@ renderBinaryFn s0 f =
    in
     (s3, jsCallback [nDoc nA, nDoc nB] bDecl bRef)
 
-renderGroupBy ::
-  CG
-  -> Expr Stamp ('Array u)
-  -> (Stamp u -> Expr Stamp 'String)
-  -> (CG, Code)
-renderGroupBy s00 recv f =
-  let
-    s0 = useHelper HelperGroupBy s00
-    (s1, Code rDecl rRef) = pureAST' s0 recv
-    (nParam, s2) = allocIdent s1
-    (s3, Code exDecl exRef) = pureAST' s2 (f (Name nParam))
-   in
-    (s3, Code rDecl (jsGroupBy rRef (jsCallback [nDoc nParam] exDecl exRef)))
+renderStd :: CG -> Std Stamp u -> (CG, Code)
+renderStd s0 = \case
+  Math1 name x ->
+    let
+      (s1, Code xDecl xRef) = pureAST' s0 x
+     in
+      (s1, Code xDecl ("Math." <> P.text (T.unpack (mathFn1Name name)) <> P.parens xRef))
+  Math2 name x y ->
+    let
+      (s1, Code xDecl xRef) = pureAST' s0 x
+      (s2, Code yDecl yRef) = pureAST' s1 y
+     in
+      ( s2
+      , Code
+          (xDecl $$ yDecl)
+          ( "Math."
+              <> P.text (T.unpack (mathFn2Name name))
+              <> P.parens (xRef <> ", " <> yRef)
+          )
+      )
+  Un n recv ->
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
+     in
+      (s1, Code rDecl (stdUnaryJS n (wrapOperand recv rRef)))
+  Bin n recv arg ->
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
+      (s2, Code aDecl aRef) = pureAST' s1 arg
+     in
+      (s2, Code (rDecl $$ aDecl) (stdBinaryJS n (wrapOperand recv rRef) aRef))
+  Tern n recv a b ->
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
+      (s2, Code aDecl aRef) = pureAST' s1 a
+      (s3, Code bDecl bRef) = pureAST' s2 b
+     in
+      (s3, Code (rDecl $$ aDecl $$ bDecl) (stdTernaryJS n (wrapOperand recv rRef) aRef bRef))
+  Map recv f -> renderCallbackMethod "map" s0 recv f
+  Filter recv f -> renderCallbackMethod "filter" s0 recv f
+  Reduce recv z f -> renderFold ".reduce" s0 recv z f
+  ReduceRight recv z f -> renderFold ".reduceRight" s0 recv z f
+  From n f ->
+    let
+      (s1, Code nDecl nRef) = pureAST' s0 n
+      (nHole, s2) = allocIdent s1
+      (nI, s3) = allocIdent s2
+      (s4, Code exDecl exRef) = pureAST' s3 (f (Name nI))
+      cb = jsCallback [nDoc nHole, nDoc nI] exDecl exRef
+     in
+      (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
 
-renderZipWith ::
-  CG
-  -> Expr Stamp ('Array a)
-  -> Expr Stamp ('Array b)
-  -> (Stamp a -> Stamp b -> Expr Stamp c)
+renderFold ::
+  String
+  -> CG
+  -> Expr Stamp ('Array u)
+  -> Expr Stamp v
+  -> (Stamp v -> Stamp u -> Expr Stamp v)
   -> (CG, Code)
-renderZipWith s00 xs ys f =
+renderFold method s0 recv z f =
   let
-    s0 = useHelper HelperZipWith s00
-    (s1, Code xDecl xRef) = pureAST' s0 xs
-    (s2, Code yDecl yRef) = pureAST' s1 ys
-    (nA, s3) = allocIdent s2
-    (nB, s4) = allocIdent s3
-    (s5, Code exDecl exRef) = pureAST' s4 (f (Name nA) (Name nB))
+    (s1, Code rDecl rRef) = pureAST' s0 recv
+    (s2, Code zDecl zRef) = pureAST' s1 z
+    (s3, cb) = renderBinaryFn s2 f
+    call = wrapOperand recv rRef <> P.text method <> P.parens (cb <> ", " <> zRef)
    in
-    (s5, Code (xDecl $$ yDecl) (jsZipWith xRef yRef (jsCallback [nDoc nA, nDoc nB] exDecl exRef)))
+    (s3, Code (rDecl $$ zDecl) call)
 
 renderCallbackMethod ::
   String
@@ -3137,7 +3171,7 @@ renderCallbackMethod name s0 recv f =
     (s1, Code rDecl rRef) = pureAST' s0 recv
     (nParam, s2) = allocIdent s1
     (s3, Code exDecl exRef) = pureAST' s2 (f (Name nParam))
-    call = rRef <> "." <> P.text name <> P.parens (jsCallback [nDoc nParam] exDecl exRef)
+    call = wrapOperand recv rRef <> "." <> P.text name <> P.parens (jsCallback [nDoc nParam] exDecl exRef)
    in
     (s3, Code rDecl call)
 

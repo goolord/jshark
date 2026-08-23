@@ -246,7 +246,7 @@ join :: Monad t => Expr f (t (t a)) -> Expr f (t a)
 join m = m >>= P.id
 
 when :: Monad t => Expr f 'Bool -> Expr f (t 'Unit) -> Expr f (t 'Unit)
-when c m = if_ c m (return (Literal ValueUnit))
+when c m = if_ c m (pure (Literal ValueUnit))
 
 unless :: Monad t => Expr f 'Bool -> Expr f (t 'Unit) -> Expr f (t 'Unit)
 unless c = when (not_ c)
@@ -272,7 +272,7 @@ instance MonadFail Option where
 
 mfilter ::
   MonadPlus t => (Expr f a -> Expr f 'Bool) -> Expr f (t a) -> Expr f (t a)
-mfilter p m = m >>= \x -> if_ (p x) (return x) mzero
+mfilter p m = m >>= \x -> if_ (p x) (pure x) mzero
 
 class Monad t => MonadZip t where
   mzipWith ::

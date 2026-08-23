@@ -18,24 +18,23 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | Two PHOAS syntax trees for a typed subset of JavaScript.
+-- | Two PHOAS syntax trees for a typed subset of JavaScript
+-- (Crockford's Good Parts kernel; binders as in Kmett's PHOAS).
 --
--- Three layers live on the same GADTs:
---
--- * Good Parts kernel on 'Expr': literals, @===@, @?:@, @&&@/@||@,
---   unary functions, @const@ lets, arrays. No @==@, @with@, @eval@,
---   @new@, or @this@. Functions are unary; nest them (see 'JShark.Api.lambda2').
+-- * 'Expr' is pure. The kernel is the language: literals, operators,
+--   @===@ / @!==@ (never @==@), @?:@, @typeof@, unary functions,
+--   @const@ lets, object literals, @a[i]@. No @with@, @eval@, @new@,
+--   or @this@. Combinators such as @zipWith@ are Haskell functions
+--   that build this tree, not extra constructors.
+-- * One 'Std' constructor holds every pure JS standard-library name
+--   we expose ('Math.sin', @Array.prototype.map@, @JSON.stringify@, …).
 -- * Haskell sums encoded as JS: 'Option' is @null@ / the value;
---   'Result' is @{ok: Bool, value: …}@, not a JS built-in.
--- * Closed stdlib names ('ExprUnary' / 'MathUnary' / …) plus 'Effect'
---   for statements, FFI, mutation, and I/O.
+--   'Result' is @{ok: Bool, value: …}@.
+-- * 'Effect' is impure: statements, FFI, mutation, I/O, free-text names.
 --
--- Binders are parametric (@f :: Universe -> Type@), i.e. weak PHOAS.
--- A closed term is an end over that parameter: 'ClosedExpr' / 'ClosedEffect'
--- (@forall f. …@), the same quantification as Kmett's
+-- Binders are parametric (@f :: Universe -> Type@). A closed term is
+-- an end @forall f. …@, the same quantification as Kmett's
 -- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
--- Named stdlib on 'Expr' is a closed set of constructors; free-text
--- escapes live on 'Effect'.
 module JShark.Types
   ( Universe (..)
   , Value (..)
@@ -46,6 +45,7 @@ module JShark.Types
   , fieldKey
   , FFIForm (..)
   , Expr (..)
+  , Std (..)
   , StdUnary (..)
   , StdBinary (..)
   , StdTernary (..)
@@ -60,8 +60,14 @@ module JShark.Types
   , EffectSyntax (..)
   , toSyntax
   , toSyntax_
+  , bindExpr
   , fromSyntax
-  )
+  , jsHelperValueEq
+  , jsHelperArrayEq
+  , jsHelperDeepEqual
+  , jsHelperUint8ArrayEq
+  , jsEqHelpers
+)
 where
 
 import Control.Monad (ap, void)
@@ -220,7 +226,7 @@ data Arg :: (Universe -> Type) -> Universe -> Type where
 -- instances. The index on 'Object' / 'MutableObject' is this host 'Type', not a 'Universe'.
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
--- | @Object.groupBy@ reified as @[{key, items}]@. Not a null-prototype dict.
+-- | @groupBy@ result row: @[{key, items}]@. Not a null-prototype dict.
 data GroupBy (u :: Universe)
 
 type instance Field (GroupBy u) "key" = 'String
@@ -403,16 +409,16 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f u
     -> Expr f u
     -- ^ Ternary: @c ? t : e@
-    --         Option is JS @null@ / the value itself. Intro via 'UnsafeNullable' or
-    --         @Literal (ValueOption …)@. 'OptionCase' stays a primitive: 'evaluate'
-    --         uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
-    --         @if_ (opt .== none)@ plus a type-changing coerce.
   OptionCase ::
     Expr f ('Option u)
     -> Expr f v
     -> (f u -> Expr f v)
     -> Expr f v
-    -- ^ Eliminate an 'Option', analogous to 'maybe'.
+    -- ^ Eliminate an 'Option', analogous to 'maybe'. Option is JS @null@ /
+    -- the value itself. Intro via 'UnsafeNullable' or
+    -- @Literal (ValueOption …)@. This stays a primitive: 'JShark.evaluate'
+    -- uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
+    -- @if_ (opt .== none)@ plus a type-changing coerce.
   ResultOk :: Expr f a -> Expr f ('Result e a)
   ResultErr :: Expr f e -> Expr f ('Result e a)
   ResultCase ::
@@ -421,75 +427,20 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> (f a -> Expr f v)
     -> Expr f v
     -- ^ Eliminate a 'Result', analogous to 'either'.
-    --         Constrained JS surface (fixed names / universes; not a general FFI).
-    --         True escapes ('alert', raw @foo()@, free-text methods) live on 'Effect'.
-  ExprIndex ::
+  Index ::
     Expr f ('Array u)
     -> Expr f 'Number
     -> Expr f u
-    -- ^ Array indexing: @arr[i]@.
-  MathUnary ::
-    MathFn1
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Unary @Math.fn(x)@. Closed names; observationally pure.
-  MathBinary ::
-    MathFn2
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Binary @Math.fn(x, y)@. Closed names; observationally pure.
-  ExprUnary ::
-    StdUnary a b
-    -> Expr f a
-    -> Expr f b
-    -- ^ Closed-name unary (@toUpperCase@, @.length@, @JSON.stringify@).
-  ExprBinary ::
-    StdBinary a b c
-    -> Expr f a
-    -> Expr f b
-    -> Expr f c
-    -- ^ Closed-name binary (@indexOf@, @join@, …).
-  ExprTernary ::
-    StdTernary a b c d
-    -> Expr f a
-    -> Expr f b
-    -> Expr f c
-    -> Expr f d
-    -- ^ Closed-name ternary (@slice@, @replace@).
-  ExprMap ::
-    Expr f ('Array u)
-    -> (f u -> Expr f v)
-    -> Expr f ('Array v)
-    -- ^ @arr.map(function(x){…})@. Callback stays on 'Expr'.
-  ExprFilter ::
-    Expr f ('Array u)
-    -> (f u -> Expr f 'Bool)
-    -> Expr f ('Array u)
-    -- ^ @arr.filter(function(x){…})@. Callback stays on 'Expr'.
-  ExprReduce ::
-    Expr f ('Array u)
-    -> Expr f v
-    -> (f v -> f u -> Expr f v)
-    -> Expr f v
-    -- ^ @arr.reduce(function(acc,x){…}, z)@.
-  ExprReduceRight ::
-    Expr f ('Array u)
-    -> Expr f v
-    -> (f v -> f u -> Expr f v)
-    -> Expr f v
-    -- ^ @arr.reduceRight(function(acc,x){…}, z)@.
-  ExprGroupBy ::
-    Expr f ('Array u)
-    -> (f u -> Expr f 'String)
-    -> Expr f ('Array ('Object (GroupBy u)))
-    -- ^ @Object.groupBy@ then @[{key, items}]@. Key callback stays on 'Expr'.
-  ExprZipWith ::
-    Expr f ('Array a)
-    -> Expr f ('Array b)
-    -> (f a -> f b -> Expr f c)
-    -> Expr f ('Array c)
-    -- ^ @zipWith@; length is @Math.min@.
+    -- ^ JS @a[i]@. 'JShark.Array.index' wraps this with trunc / bounds / 'Error'.
+  Error ::
+    Expr f 'String
+    -> Expr f u
+    -- ^ @throw new Error(msg)@. Partial, like Haskell 'error'.
+  Std ::
+    Std f u
+    -> Expr f u
+    -- ^ Pure JS standard library. Combinators (@zipWith@, @groupBy@) are
+    --         Haskell functions over this tree, not extra constructors.
   Uncurry2 ::
     (f a -> f b -> Expr f c)
     -> Expr f ('JsFn2 a b c)
@@ -500,12 +451,6 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     Expr f u
     -> Expr f ('Option u)
     -- ^ Reinterpret a nullable JS value (e.g. from an FFI call) as an 'Option'.
-  SplicedEffect ::
-    Effect f u
-    -> Expr f u
-    -- ^ Optimizer-only: splices a bound 'Effect' into a 'Lift' body. Not part
-    -- of the surface API — use 'ArgEffect' at FFI seams and 'FieldLitEffect'
-    -- in object literals.
   FrozenLit ::
     [FieldLit f r]
     -> Expr f ('Object r)
@@ -543,6 +488,57 @@ data StdTernary :: Universe -> Universe -> Universe -> Universe -> Type where
   StdSlice :: StdTernary 'String 'Number 'Number 'String
   StdArrSlice :: StdTernary ('Array u) 'Number 'Number ('Array u)
   StdReplace :: StdTernary 'String 'String 'String 'String
+
+-- | Pure JS standard library, applied. One 'Expr' constructor ('Std')
+-- holds this sum — not a constructor per method.
+data Std :: (Universe -> Type) -> Universe -> Type where
+  Math1 ::
+    MathFn1
+    -> Expr f 'Number
+    -> Std f 'Number
+  Math2 ::
+    MathFn2
+    -> Expr f 'Number
+    -> Expr f 'Number
+    -> Std f 'Number
+  Un ::
+    StdUnary a b
+    -> Expr f a
+    -> Std f b
+  Bin ::
+    StdBinary a b c
+    -> Expr f a
+    -> Expr f b
+    -> Std f c
+  Tern ::
+    StdTernary a b c d
+    -> Expr f a
+    -> Expr f b
+    -> Expr f c
+    -> Std f d
+  Map ::
+    Expr f ('Array a)
+    -> (f a -> Expr f b)
+    -> Std f ('Array b)
+  Filter ::
+    Expr f ('Array a)
+    -> (f a -> Expr f 'Bool)
+    -> Std f ('Array a)
+  Reduce ::
+    Expr f ('Array a)
+    -> Expr f b
+    -> (f b -> f a -> Expr f b)
+    -> Std f b
+  ReduceRight ::
+    Expr f ('Array a)
+    -> Expr f b
+    -> (f b -> f a -> Expr f b)
+    -> Std f b
+  -- | @Array.from({length: n}, function(_, i) { return f(i); })@
+  From ::
+    Expr f 'Number
+    -> (f 'Number -> Expr f a)
+    -> Std f ('Array a)
 
 -- | Closed unary @Math.*@ names. JS identifier is 'mathFn1Name'.
 data MathFn1
@@ -650,7 +646,7 @@ instance Monoid (Expr f 'String) where
   mempty = Literal (ValueString mempty)
 
 instance Semigroup (Expr f ('Array u)) where
-  (<>) = ExprBinary StdConcat
+  (<>) xs ys = Std (Bin StdConcat xs ys)
 
 instance Monoid (Expr f ('Array u)) where
   mempty = Literal (ValueArray [])
@@ -681,7 +677,7 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
 -- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
---   ('Plus'/'Times'/'MathUnary'/…) and fold later in codegen.
+--   ('Plus'/'Times'/'Std' 'Math1'/…) and fold later in codegen.
 --   @(**)@ is @Math.pow@, not @exp (log x * y)@.
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
@@ -710,8 +706,8 @@ instance forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus
-  abs = MathUnary MathAbs
-  signum = MathUnary MathSign
+  abs = Std . Math1 MathAbs
+  signum = Std . Math1 MathSign
   fromInteger n = Literal (fromInteger n)
   negate = Negate
 
@@ -724,22 +720,22 @@ jsPi = pi
 
 instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) where
   pi = Literal (ValueNumber jsPi)
-  exp = MathUnary MathExp
-  log = MathUnary MathLog
-  sqrt = MathUnary MathSqrt
-  (**) = MathBinary MathPow
-  sin = MathUnary MathSin
-  cos = MathUnary MathCos
-  tan = MathUnary MathTan
-  asin = MathUnary MathAsin
-  acos = MathUnary MathAcos
-  atan = MathUnary MathAtan
-  sinh = MathUnary MathSinh
-  cosh = MathUnary MathCosh
-  tanh = MathUnary MathTanh
-  asinh = MathUnary MathAsinh
-  acosh = MathUnary MathAcosh
-  atanh = MathUnary MathAtanh
+  exp = Std . Math1 MathExp
+  log = Std . Math1 MathLog
+  sqrt = Std . Math1 MathSqrt
+  (**) x y = Std (Math2 MathPow x y)
+  sin = Std . Math1 MathSin
+  cos = Std . Math1 MathCos
+  tan = Std . Math1 MathTan
+  asin = Std . Math1 MathAsin
+  acos = Std . Math1 MathAcos
+  atan = Std . Math1 MathAtan
+  sinh = Std . Math1 MathSinh
+  cosh = Std . Math1 MathCosh
+  tanh = Std . Math1 MathTanh
+  asinh = Std . Math1 MathAsinh
+  acosh = Std . Math1 MathAcosh
+  atanh = Std . Math1 MathAtanh
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).
@@ -769,6 +765,45 @@ toSyntax m = EffectSyntaxUnpure m EffectSyntaxPure
 toSyntax_ :: Effect f v -> EffectSyntax f ()
 toSyntax_ = void . toSyntax
 
+-- | Bind an effect and reify the result as an 'Expr'.
+bindExpr :: Effect f u -> EffectSyntax f (Expr f u)
+bindExpr = fmap Var . toSyntax
+
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
+
+-- | Codegen helpers for the kernel 'Eq' operator. '$valueEq' dispatches;
+-- '$arrayEq', '$deepEqual', and '$uint8ArrayEq' are the structural walks.
+-- Not stdlib names on 'Expr'.
+jsHelperValueEq :: (String, String)
+jsHelperValueEq =
+  ( "$valueEq"
+  , "function(a,b){if(a===b)return true;if(Array.isArray(a)&&Array.isArray(b))return $arrayEq(a,b);if(a instanceof Uint8Array&&b instanceof Uint8Array)return $uint8ArrayEq(a,b);if(a&&b&&a.constructor===Object&&b.constructor===Object)return $deepEqual(a,b);return false}"
+  )
+
+jsHelperArrayEq :: (String, String)
+jsHelperArrayEq =
+  ( "$arrayEq"
+  , "function(a,b){if(a===b)return true;if(!Array.isArray(b))return false;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$valueEq(a[i],b[i]))return false;return true}"
+  )
+
+jsHelperDeepEqual :: (String, String)
+jsHelperDeepEqual =
+  ( "$deepEqual"
+  , "function(a,b){if(a===b)return true;if(a instanceof Date&&b instanceof Date)return a.getTime()===b.getTime();if(a instanceof RegExp&&b instanceof RegExp)return a.toString()===b.toString();var ka=Object.keys(a),kb=Object.keys(b);if(ka.length!==kb.length)return false;for(var i=0;i<ka.length;i++){var k=ka[i];if(!Object.prototype.hasOwnProperty.call(b,k))return false;var v1=a[k],v2=b[k],o=v1&&v2&&typeof v1==='object'&&typeof v2==='object';if(o){if(Array.isArray(v1)){if(!$arrayEq(v1,v2))return false}else if(v1 instanceof Uint8Array){if(!$uint8ArrayEq(v1,v2))return false}else if(!$deepEqual(v1,v2))return false}else if(v1!==v2&&!(Number.isNaN(v1)&&Number.isNaN(v2)))return false}return true}"
+  )
+
+jsHelperUint8ArrayEq :: (String, String)
+jsHelperUint8ArrayEq =
+  ( "$uint8ArrayEq"
+  , "function(a,b){if(a===b)return true;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true}"
+  )
+
+jsEqHelpers :: [(String, String)]
+jsEqHelpers =
+  [ jsHelperValueEq
+  , jsHelperArrayEq
+  , jsHelperDeepEqual
+  , jsHelperUint8ArrayEq
+  ]

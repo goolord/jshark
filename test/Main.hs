@@ -82,6 +82,20 @@ evaluatorTests =
         evaluateNumber (let_ (number 21) (\x -> x + x)) @?= 42
     , testCase "lambda application" $
         evaluateNumber (apply (lambda (\x -> x * 2)) (number 21)) @?= 42
+    , testCase "frozen records use $deepEqual in codegen" $ do
+        let
+          o1 =
+            Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 2)] ::
+              Expr f ('Object LitRow)
+          o2 =
+            Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 2)] ::
+              Expr f ('Object LitRow)
+        case evaluate (o1 .== o2) of
+          ValueBool b -> b @?= True
+        T.isInfixOf
+          "$deepEqual"
+          (T.pack (renderJS (pureAST (lambda2 (\a b -> a .== b)))))
+          @?= True
     , testCase "GetField of FrozenLit evaluates" $
         evaluateNumber
           ((Object.frozen [Object.field @"x" (number 21)] :: Expr f ('Object LitRow)).x)
@@ -466,11 +480,17 @@ stdlibTests =
         case evaluate (Eq keys (Literal (ValueArray [ValueString "one", ValueString "two"]))) of
           ValueBool b -> b @?= True
         evaluateNumber (Array.length firstItems) @?= 2
-    , testCase "Array.groupBy emits $groupBy" $
-        T.isInfixOf
-          "$groupBy"
-          (T.pack (renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))))
-          @?= True
+    , testCase "Array.groupBy is map/filter/reduce, not a helper" $ do
+        let
+          js = T.pack (renderJS (pureAST (Array.groupBy numArray (\_ -> string "k"))))
+        T.isInfixOf "$groupBy" js @?= False
+        T.isInfixOf ".reduce" js @?= True
+        T.isInfixOf "\"key\"" js @?= True
+    , testCase "Array.zipWith is Array.from, not a helper" $ do
+        let
+          js = T.pack (renderJS (pureAST (Array.zipWith (+) numArray numArray)))
+        T.isInfixOf "$zipWith" js @?= False
+        T.isInfixOf "Array.from" js @?= True
     , testCase "Classes.fmap Array" $
         case evaluate
           ( Eq
@@ -576,7 +596,7 @@ stdlibTests =
         case evaluate ((none :: Expr f ('Option 'String)) C.<> some (string "x")) of
           ValueOption (Just (ValueString s)) -> s @?= "x"
           _ -> assertFailure "expected Some \"x\""
-    , testCase "Classes.elem Array uses $eq" $
+    , testCase "Classes.elem Array uses $valueEq" $
         case evaluate (C.elem (number 2) numArray) of
           ValueBool b -> b @?= True
     , testCase "Array.singleton is a one-element array" $ do
@@ -597,15 +617,19 @@ stdlibTests =
           ValueString s -> s @?= "-1"
         case evaluate (Show opts) of
           ValueString s -> s @?= ",1"
-    , testCase "$eq is defined once for two comparisons" $ do
+    , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
           js = T.pack (renderJS (pureProgram (lambda2 (\a b -> (a .== b) .|| (b .== a)))))
-        -- Two call sites on binders; the other `$eq(` are the recursive ones
-        -- inside the single definition.
-        T.count "const $eq" js @?= 1
-        T.count "$eq(n" js @?= 2
-    , testCase "Array.length renders as .length" $
-        renderJS (pureAST (Array.length numArray)) @?= "[1.0, 2.0].length"
+        T.count "const $valueEq" js @?= 1
+        T.count "const $arrayEq" js @?= 1
+        T.count "const $deepEqual" js @?= 1
+        T.count "const $uint8ArrayEq" js @?= 1
+        T.count "$valueEq(n" js @?= 2
+    , testCase "Array.length of a literal folds" $
+        renderJS (pureAST (Array.length numArray)) @?= "2.0"
+    , testCase "Array.length of a binder renders as .length" $
+        renderJS (pureAST (lambda (\xs -> Array.length xs)))
+          @?= "function (n0) {return (n0.length)}"
     , testCase "Array.map renders as .map with a callback" $
         renderJS (pureAST (Array.map numArray (\x -> x + number 1)))
           @?= "[1.0, 2.0].map(function (n0) {return n0 + 1.0})"
@@ -869,16 +893,27 @@ stdlibTests =
                 )
           )
           @?= True
-    , testCase ".== is $eq (=== then structural; never ==)" $ do
+    , testCase "NaN .== NaN is false" $ do
+        case evaluate (number (0 / 0) .== number (0 / 0)) of
+          ValueBool b -> b @?= False
+        renderJS (pureAST (number (0 / 0) .== number (0 / 0))) @?= "false"
+    , testCase ".== on number exprs uses === without eq helpers" $ do
+        let
+          js =
+            T.pack $
+              renderJS (pureAST (lambda2 (\a b -> (a + b) .== (a + b))))
+        T.count "const $valueEq" js @?= 0
+        T.isInfixOf "===" js @?= True
+    , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
         let
           js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.==)))
-        T.isInfixOf "$eq" js @?= True
+        T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf " == " js @?= False
-    , testCase ".!= is !$eq" $ do
+    , testCase ".!= is !$valueEq" $ do
         let
           js = T.pack $ renderJS (effectfulAST (with2 fooE barE (.!=)))
-        T.isInfixOf "$eq" js @?= True
-        T.isInfixOf "!($eq(" js @?= True
+        T.isInfixOf "$valueEq" js @?= True
+        T.isInfixOf "!($valueEq(" js @?= True
     , testCase "ffi takes an effectful function via ArgEffect" $
         renderJS
           ( effectfulAST
@@ -1136,7 +1171,7 @@ genericTests =
                 )
         T.isInfixOf ".tag" js @?= True
         T.isInfixOf "\"Red\"" js @?= True
-        T.isInfixOf "$eq" js @?= True
+        T.isInfixOf "$valueEq" js @?= True
     , testCase "whenTag unary payload is the value" $
         T.isInfixOf
           ".payload"
@@ -1181,7 +1216,7 @@ genericTests =
                     )
                 )
         T.isInfixOf ".tag" js @?= True
-        T.isInfixOf "$eq" js @?= True
+        T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf "\"Red\"" js @?= True
         T.isInfixOf "\"Green\"" js @?= True
         T.isInfixOf "\"Blue\"" js @?= True

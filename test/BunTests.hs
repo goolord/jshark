@@ -114,7 +114,7 @@ bunEvalTests =
                     (string "-")
                 )
             , bunCase
-                "two comparisons share one $eq"
+                "two comparisons share one $valueEq"
                 (And (number 1 .== number 1) (number 2 .== number 2))
             , bunCase
                 "letRec value rhs"
@@ -134,6 +134,13 @@ bunEvalTests =
             , bunCase
                 "array index 1.9 is the integer slot"
                 (Array.index numArray (number 1.9))
+            , bunCase
+                "array zipWith"
+                ( Array.zipWith
+                    (+)
+                    numArray
+                    (Literal (ValueArray [ValueNumber 10, ValueNumber 20, ValueNumber 30]))
+                )
             , bunCase "Math.sqrt" (sqrt (number 9))
             , bunCase "Math.round half toward +Infinity" (Math.round (number 2.5))
             , bunCase "Math.round negative half" (Math.round (number (-2.5)))

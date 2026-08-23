@@ -18,16 +18,24 @@ import JShark.Types
 -- universe @u@.
 data Promise (u :: Universe)
 
+promiseMethod ::
+  String
+  -> Effect f ('MutableObject (Promise u))
+  -> (f u -> Effect f v)
+  -> EffectSyntax f (f v)
+promiseMethod name p handler =
+  toSyntax $ callMethod p name (ArgEffect (LambdaE handler) <: RecNil)
+
 -- | @promise.then(function(x){...})@
 promiseThen ::
   Effect f ('MutableObject (Promise u))
   -> (f u -> Effect f v)
   -> EffectSyntax f (f v)
-promiseThen p handler = toSyntax $ callMethod p "then" (ArgEffect (LambdaE handler) <: RecNil)
+promiseThen = promiseMethod "then"
 
 -- | @promise.catch(function(err){...})@
 promiseCatch ::
   Effect f ('MutableObject (Promise u))
   -> (f u -> Effect f v)
   -> EffectSyntax f (f v)
-promiseCatch p handler = toSyntax $ callMethod p "catch" (ArgEffect (LambdaE handler) <: RecNil)
+promiseCatch = promiseMethod "catch"
