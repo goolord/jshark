@@ -80,6 +80,7 @@ lifeIsolationHeaders :: ActionM ()
 lifeIsolationHeaders = do
   setHeader "Cross-Origin-Opener-Policy" "same-origin"
   setHeader "Cross-Origin-Embedder-Policy" "require-corp"
+  setHeader "Cross-Origin-Resource-Policy" "cross-origin"
 
 -- | Serve every example and a screenshot directory at @/@.
 serveExamples :: Int -> String -> [Example] -> IO ()

@@ -115,7 +115,7 @@ bootJs inner =
   T.concat
     [ "(function(){"
     , "const frame=document.getElementById('life-frame');"
-    , "const base=new URL('.',document.baseURI).href;"
+    , "const base=new URL('./',document.baseURI).href;"
     , "const html="
     , jsString inner
     , ".split('%%LIFE_BASE%%').join(base);"

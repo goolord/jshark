@@ -16,6 +16,7 @@ import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 import ExampleTests (exampleTests)
+import LifeTests (lifeTests)
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
@@ -70,6 +71,7 @@ tests =
     , bunEvalTests
     , lucidDomTests
     , exampleTests
+    , lifeTests
     ]
 
 bigIntTests :: TestTree

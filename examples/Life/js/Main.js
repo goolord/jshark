@@ -119,8 +119,9 @@
       Atomics.store(this.sync, 1, 1);
       Atomics.add(this.sync, 0, 1);
       Atomics.notify(this.sync, 0, this.workers.length);
+      // Atomics.wait is worker-only; spin until the last tile sets sync[1]=2.
       while (Atomics.load(this.sync, 1) === 1) {
-        Atomics.wait(this.sync, 1, 1);
+        /* busy-wait */
       }
       // Workers read gridA and write gridB; copy result back for the next step.
       this.gridA.set(this.gridB);

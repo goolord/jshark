@@ -16,6 +16,7 @@ module Grid
   , u8Get
   , setU8
   , stepGrid
+  , processCell
   , expandBoundsForLive
   , drawGridViewport
   , initPaletteRgba
@@ -86,7 +87,7 @@ rebuildPackedCounts ::
   Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> Effect f 'Unit
 rebuildPackedCounts grid w h =
   ffi
-    "(g,w,h)=>{const n=w*h|0;for(let i=0;i<n;i++)g[i]&=1;for(let y=0;y<h;y++){for(let x=0;x<w;x++){const i=y*w+x;if(g[i]&1){for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=w||ny>=h)continue;g[ny*w+nx]+=2;}}}}}"
+    "((g,w,h)=>{const n=w*h|0;for(let i=0;i<n;i++)g[i]&=1;for(let y=0;y<h;y++){for(let x=0;x<w;x++){const i=y*w+x;if(g[i]&1){for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=w||ny>=h)continue;g[ny*w+nx]+=2;}}}}}})"
     (arg grid <: arg w <: arg h <: RecNil)
 
 bumpPackedNeighbors ::
@@ -127,7 +128,7 @@ refreshPackedAt ::
 refreshPackedAt grid w h x y = do
   toSyntax_ $
     ffi
-      ( "(g,w,h,x,y)=>{"
+      ( "((g,w,h,x,y)=>{"
           <> "let n=0;"
           <> "for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){"
           <> "if(!dx&&!dy)continue;"
@@ -137,7 +138,7 @@ refreshPackedAt grid w h x y = do
           <> "}}"
           <> "const i=y*w+x;"
           <> "g[i]=(g[i]&1)+n*2;"
-          <> "}"
+          <> "})"
       )
       (arg grid <: arg w <: arg h <: arg x <: arg y <: RecNil)
   done
@@ -154,7 +155,7 @@ refreshPackedRegion ::
   -> Effect f 'Unit
 refreshPackedRegion grid w h x0 y0 x1 y1 =
   ffi
-    ( "(g,w,h,x0,y0,x1,y1)=>{"
+    ( "((g,w,h,x0,y0,x1,y1)=>{"
         <> "const xs=Math.max(0,Math.floor(x0)-1);"
         <> "const ys=Math.max(0,Math.floor(y0)-1);"
         <> "const xe=Math.min(w-1,Math.floor(x1)+1);"
@@ -169,7 +170,7 @@ refreshPackedRegion grid w h x0 y0 x1 y1 =
         <> "}}"
         <> "const i=y*w+x;"
         <> "g[i]=(g[i]&1)+n*2;"
-        <> "}}}"
+        <> "}}})"
     )
     ( arg grid
         <: arg w

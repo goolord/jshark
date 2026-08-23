@@ -175,17 +175,18 @@ library life
     , jshark-lucid
   exposed-modules:
     Life
+    Grid
+    LifeTestSupport
+    Engine
+    Patterns
+    Types
+    WorkerBridge
   other-modules:
     Catalog
     Client
     Discover
-    Engine
-    Grid
     Names
     Page
-    Patterns
-    Types
-    WorkerBridge
   hs-source-dirs:
     examples/Life
 
@@ -228,6 +229,7 @@ test-suite jshark-test
     BunTests
     LucidTests
     ExampleTests
+    LifeTests
   hs-source-dirs:
     test
   build-depends:
