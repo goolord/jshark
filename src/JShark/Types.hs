@@ -1,4 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
+-- Suppresses missing sigs on compare pattern synonyms only; GHC 9.14 cannot
+-- attach @Comparable@ to bidirectional @GTh@/@LTh@/@GTEq@/@LTEq@ (see 'mkGTh').
 {-# OPTIONS_GHC -Wno-missing-pattern-synonym-signatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
@@ -86,6 +88,10 @@ module JShark.Types
   , ClosedExpr
   , ClosedEffect
   , Comparable
+  , mkGTh
+  , mkLTh
+  , mkGTEq
+  , mkLTEq
   , EffectSyntax (..)
   , toSyntax
   , toSyntax_
@@ -542,10 +548,26 @@ data Kernel :: (Universe -> Type) -> Universe -> Type where
     -> Kernel f 'Bool
   KEq :: Expr f a -> Expr f a -> Kernel f 'Bool
   KNEq :: Expr f a -> Expr f a -> Kernel f 'Bool
-  KGTh :: Expr f a -> Expr f a -> Kernel f 'Bool
-  KLTh :: Expr f a -> Expr f a -> Kernel f 'Bool
-  KGTEq :: Expr f a -> Expr f a -> Kernel f 'Bool
-  KLTEq :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KGTh ::
+    Comparable a =>
+    Expr f a
+    -> Expr f a
+    -> Kernel f 'Bool
+  KLTh ::
+    Comparable a =>
+    Expr f a
+    -> Expr f a
+    -> Kernel f 'Bool
+  KGTEq ::
+    Comparable a =>
+    Expr f a
+    -> Expr f a
+    -> Kernel f 'Bool
+  KLTEq ::
+    Comparable a =>
+    Expr f a
+    -> Expr f a
+    -> Kernel f 'Bool
   KShow :: Expr f a -> Kernel f 'String
   KTypeOf :: Expr f a -> Kernel f 'String
 
@@ -642,6 +664,21 @@ pattern NEq :: Expr f a -> Expr f a -> Expr f 'Bool
 pattern NEq x y <- Std (Kernel (KNEq x y))
   where
     NEq x y = Std (Kernel (KNEq x y))
+
+-- | Compare helpers carry the 'Comparable' constraint GHC cannot attach to
+-- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
+-- separate type variables in GHC 9.14).
+mkGTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkGTh x y = Std (Kernel (KGTh x y))
+
+mkLTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkLTh x y = Std (Kernel (KLTh x y))
+
+mkGTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkGTEq x y = Std (Kernel (KGTEq x y))
+
+mkLTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkLTEq x y = Std (Kernel (KLTEq x y))
 
 pattern GTh x y = Std (Kernel (KGTh x y))
 

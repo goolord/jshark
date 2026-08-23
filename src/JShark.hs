@@ -802,34 +802,40 @@ applyCached :: EvalCache -> (Value u -> Expr Value v) -> Value u -> Value v
 applyCached cache g v = unsafePerformIO (goOpen cache (g v))
 {-# NOINLINE applyCached #-}
 
+-- | Memoize a kernel node. Each 'Kernel' constructor fixes the result
+-- universe, giving 'Typeable' evidence for 'go'.
+goKernel :: EvalCache -> Expr Value v -> Kernel Value v -> IO (Value v)
+goKernel cache e = \case
+  KPlus {} -> go cache e
+  KTimes {} -> go cache e
+  KMinus {} -> go cache e
+  KNegate {} -> go cache e
+  KFracDiv {} -> go cache e
+  KRem {} -> go cache e
+  KBitAnd {} -> go cache e
+  KBitOr {} -> go cache e
+  KBitXor {} -> go cache e
+  KShl {} -> go cache e
+  KShr {} -> go cache e
+  KUShr {} -> go cache e
+  KConcat {} -> go cache e
+  KShow {} -> go cache e
+  KTypeOf {} -> go cache e
+  KAnd {} -> go cache e
+  KOr {} -> go cache e
+  KEq {} -> go cache e
+  KNEq {} -> go cache e
+  KGTh {} -> go cache e
+  KLTh {} -> go cache e
+  KGTEq {} -> go cache e
+  KLTEq {} -> go cache e
+
 -- | Memoize constructors whose result universe is a concrete 'Typeable'
 -- type. Polymorphic-result nodes cannot call 'go' (no 'Typeable'
 -- evidence); they fall through to 'evalValue'.
 goOpen :: EvalCache -> Expr Value v -> IO (Value v)
 goOpen cache e = case e of
-  Std (Kernel (KPlus {})) -> go cache e
-  Std (Kernel (KTimes {})) -> go cache e
-  Std (Kernel (KMinus {})) -> go cache e
-  Std (Kernel (KNegate {})) -> go cache e
-  Std (Kernel (KFracDiv {})) -> go cache e
-  Std (Kernel (KRem {})) -> go cache e
-  Std (Kernel (KBitAnd {})) -> go cache e
-  Std (Kernel (KBitOr {})) -> go cache e
-  Std (Kernel (KBitXor {})) -> go cache e
-  Std (Kernel (KShl {})) -> go cache e
-  Std (Kernel (KShr {})) -> go cache e
-  Std (Kernel (KUShr {})) -> go cache e
-  Std (Kernel (KConcat {})) -> go cache e
-  Std (Kernel (KShow {})) -> go cache e
-  Std (Kernel (KTypeOf {})) -> go cache e
-  Std (Kernel (KAnd {})) -> go cache e
-  Std (Kernel (KOr {})) -> go cache e
-  Std (Kernel (KEq {})) -> go cache e
-  Std (Kernel (KNEq {})) -> go cache e
-  Std (Kernel (KGTh {})) -> go cache e
-  Std (Kernel (KLTh {})) -> go cache e
-  Std (Kernel (KGTEq {})) -> go cache e
-  Std (Kernel (KLTEq {})) -> go cache e
+  Std (Kernel k) -> goKernel cache e k
   -- Memoize @Math@ / @parseInt@ only ('Typeable' @Number@ — see 'matchMathUnary').
   Std (Fixed FixParseInt _) -> go cache e
   Std (Fixed op _) ->
@@ -905,6 +911,8 @@ stdNeedsStructuralEq :: Std Stamp u -> Bool
 stdNeedsStructuralEq = \case
   Fixed {} -> False
   Method {} -> True
+  -- 'Kernel' itself never forces structural @===@; 'renderKernel' checks
+  -- 'needsStructuralEq' on 'KEq'/'KNEq' operands via 'foldKernel'.
   Kernel {} -> False
 
 needsStructuralEq :: Expr Stamp u -> Bool
@@ -1087,6 +1095,9 @@ isSimple = \case
   Literal {} -> True
   Var (EmbedEff e) -> isSimpleEffect e
   Var {} -> True
+  Std (Kernel (KShow {})) -> True
+  Std (Kernel (KTypeOf {})) -> True
+  Std (Kernel (KNegate {})) -> True
   Std (Kernel _) -> False
   Std {} -> True
   FnLit {} -> True
