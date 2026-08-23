@@ -171,9 +171,6 @@ flipCell state gx gy = do
           setU8 alive i 1
           setU8 species i (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
-          -- A lone birth dies on the next tick; pause so empty-cell
-          -- toggles stay visible until Space.
-          set @"paused" state true_
       )
 
 -- | Stamp @cells@ (local @[x,y]@ pairs) at @(gx, gy)@, wrapping the torus.
