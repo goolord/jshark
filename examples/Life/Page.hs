@@ -19,6 +19,13 @@ import Types
   , ink
   , lifeIndexHostId
   , lifeToolsId
+  , lifeStatCellsId
+  , lifeStatEngineId
+  , lifeStatFpsId
+  , lifeStatGenId
+  , lifeStatStatusId
+  , lifeStatTickId
+  , lifeStatZoomId
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
@@ -78,6 +85,7 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
           , autofocus_
           ]
           mempty
+        statsHud
         toolsHud
       div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
         span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
@@ -140,6 +148,22 @@ jsString t =
     '\x2028' -> "\\u2028"
     '\x2029' -> "\\u2029"
     _ -> T.singleton c
+
+statsHud :: Html ()
+statsHud =
+  div_
+    [ class_ "life-stats"
+    , role_ "status"
+    , makeAttribute "aria-live" "polite"
+    ]
+    $ do
+      span_ [id_ lifeStatGenId, class_ "life-stat life-stat-gen"] mempty
+      span_ [id_ lifeStatCellsId, class_ "life-stat life-stat-cells"] mempty
+      span_ [id_ lifeStatFpsId, class_ "life-stat life-stat-fps"] mempty
+      span_ [id_ lifeStatStatusId, class_ "life-stat life-stat-status"] mempty
+      span_ [id_ lifeStatZoomId, class_ "life-stat life-stat-zoom"] mempty
+      span_ [id_ lifeStatTickId, class_ "life-stat life-stat-tick"] mempty
+      span_ [id_ lifeStatEngineId, class_ "life-stat life-stat-engine"] mempty
 
 toolsHud :: Html ()
 toolsHud =
@@ -228,6 +252,18 @@ toolsCss =
   ".life-stage{position:relative;width:768px;max-width:100%;margin:1.5rem auto;overflow:visible}\
   \.life-stage canvas{display:block;margin:0;width:768px;max-width:100%;height:auto;aspect-ratio:768/576;\
   \image-rendering:pixelated;image-rendering:crisp-edges;cursor:crosshair}\
+  \.life-stats{position:absolute;inset:0 0 auto 0;height:90px;pointer-events:none;z-index:4;\
+  \font:15px Georgia,serif;color:"
+    <> ink
+    <> ";}\
+  \.life-stat{position:absolute;top:0;line-height:1.2;white-space:nowrap}\
+  \.life-stat-gen{left:8px;top:18px}\
+  \.life-stat-cells{left:8px;top:36px}\
+  \.life-stat-fps{left:50%;transform:translateX(-50%);top:18px}\
+  \.life-stat-status{right:8px;top:18px;text-align:right}\
+  \.life-stat-zoom{right:8px;top:36px;text-align:right}\
+  \.life-stat-tick{left:50%;transform:translateX(-50%);top:54px}\
+  \.life-stat-engine{left:50%;transform:translateX(-50%);top:72px}\
   \.life-tools{position:absolute;right:8px;bottom:8px;z-index:5;display:flex;\
   \flex-wrap:wrap;justify-content:flex-end;gap:0.28rem;max-width:22rem;\
   \padding:0.35rem;border-radius:6px;background:rgba(15,23,42,0.88);\

@@ -42,6 +42,63 @@ h1 {
   image-rendering: crisp-edges;
 }
 
+.life-stats {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 90px;
+  pointer-events: none;
+  z-index: 4;
+  font: 15px Georgia, serif;
+  color: #e2e8f0;
+}
+
+.life-stat {
+  position: absolute;
+  top: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.life-stat-gen {
+  left: 8px;
+  top: 18px;
+}
+
+.life-stat-cells {
+  left: 8px;
+  top: 36px;
+}
+
+.life-stat-fps {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 18px;
+}
+
+.life-stat-status {
+  right: 8px;
+  top: 18px;
+  text-align: right;
+}
+
+.life-stat-zoom {
+  right: 8px;
+  top: 36px;
+  text-align: right;
+}
+
+.life-stat-tick {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 54px;
+}
+
+.life-stat-engine {
+  left: 50%;
+  transform: translateX(-50%);
+  top: 72px;
+}
+
 .life-tools {
   position: absolute;
   right: 8px;

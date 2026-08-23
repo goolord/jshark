@@ -40,6 +40,13 @@ module Types
   , lifeTooltipSwatchId
   , lifeTooltipNameId
   , lifeToolsId
+  , lifeStatGenId
+  , lifeStatCellsId
+  , lifeStatFpsId
+  , lifeStatStatusId
+  , lifeStatZoomId
+  , lifeStatTickId
+  , lifeStatEngineId
   , toggleToolSid
   , hoverRadius
   , zoomSteps
@@ -152,6 +159,27 @@ lifeTooltipNameId = "life-tooltip-name"
 
 lifeToolsId :: Text
 lifeToolsId = "life-tools"
+
+lifeStatGenId :: Text
+lifeStatGenId = "life-stat-gen"
+
+lifeStatCellsId :: Text
+lifeStatCellsId = "life-stat-cells"
+
+lifeStatFpsId :: Text
+lifeStatFpsId = "life-stat-fps"
+
+lifeStatStatusId :: Text
+lifeStatStatusId = "life-stat-status"
+
+lifeStatZoomId :: Text
+lifeStatZoomId = "life-stat-zoom"
+
+lifeStatTickId :: Text
+lifeStatTickId = "life-stat-tick"
+
+lifeStatEngineId :: Text
+lifeStatEngineId = "life-stat-engine"
 
 -- | HUD default: left-click flips a single cell (species 'manualSpecies').
 toggleToolSid :: Int

@@ -47,7 +47,13 @@ import Types
   , gridW
   , hoverRadius
   , indexRefreshMs
-  , ink
+  , lifeStatCellsId
+  , lifeStatEngineId
+  , lifeStatFpsId
+  , lifeStatGenId
+  , lifeStatStatusId
+  , lifeStatTickId
+  , lifeStatZoomId
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
@@ -92,6 +98,13 @@ boot canvas ctx = do
   tooltip <- Dom.lookupId (string lifeTooltipId)
   swatchEl <- Dom.lookupId (string lifeTooltipSwatchId)
   nameEl <- Dom.lookupId (string lifeTooltipNameId)
+  statGen <- Dom.lookupId (string lifeStatGenId)
+  statCells <- Dom.lookupId (string lifeStatCellsId)
+  statFps <- Dom.lookupId (string lifeStatFpsId)
+  statStatus <- Dom.lookupId (string lifeStatStatusId)
+  statZoom <- Dom.lookupId (string lifeStatZoomId)
+  statTick <- Dom.lookupId (string lifeStatTickId)
+  statEngine <- Dom.lookupId (string lifeStatEngineId)
   meter <- hold (G.toObject (Fps (-1) 0))
   rectSym <- toSyntax emptyObject
   let
@@ -117,7 +130,7 @@ boot canvas ctx = do
     renderLife ctxH viewport state
     renderEnd <- performanceNow
     setEngineRenderMs (renderEnd - renderStart)
-    paintHud ctxH state meter viewport
+    updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine
     tickHover tipRef state registry tooltip swatchEl nameEl hits
 
 wire ::
@@ -151,8 +164,6 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
       _ <- setProp rectRef "left" left
       _ <- setProp rectRef "top" top
       _ <- setProp rectRef "width" width
-      clampPan viewport
-      invalidateViewportRender viewport
       done
   win <- hold window
   addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
@@ -701,25 +712,19 @@ selectTool toolRef btns sid = do
         (if_ on (string "true") (string "false"))
     done
 
-paintHud ::
-  Effect f ('MutableObject Canvas.Context2D)
-  -> Effect f (MutableObjectOf LifeState)
+updateHud ::
+  Effect f (MutableObjectOf LifeState)
   -> Effect f (MutableObjectOf Fps)
   -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-paintHud ctx state meter viewport = do
-  img <- getProp viewport "img"
-  -- Restore the sim pixels under the HUD band so text sits over the grid.
-  _ <-
-    Canvas.putImageDataRegion
-      ctx
-      img
-      (number 0)
-      (number 0)
-      (number 0)
-      (number 0)
-      (number canvasW)
-      (number 90)
+updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine = do
   gen <- state.gen
   pop <- state.pop
   paused <- state.paused
@@ -733,35 +738,22 @@ paintHud ctx state meter viewport = do
   let
     zoomIdx = nearestZoomIndex levels indices zoom
     zoomLabel = Array.index labels zoomIdx
-  set @"font" ctx (string "15px Georgia")
-  _ <- setProp ctx "textBaseline" (string "top")
-  fill ctx (string ink)
-  _ <- Canvas.fillText ctx (string "Gen: " <> toString gen) 8 18
-  _ <- Canvas.fillText ctx (string "Cells: " <> toString pop) 8 36
-  set @"textAlign" ctx (string "center")
+  _ <- Dom.setTextContent statGen (string "Gen: " <> toString gen)
+  _ <- Dom.setTextContent statCells (string "Cells: " <> toString pop)
+  _ <- Dom.setTextContent statFps (string "FPS: " <> toString fpsN)
   _ <-
-    Canvas.fillText ctx (string "FPS: " <> toString fpsN) (number (canvasW / 2)) 18
-  set @"textAlign" ctx (string "right")
-  _ <-
-    Canvas.fillText
-      ctx
+    Dom.setTextContent
+      statZoom
       (string "Zoom: " <> zoomLabel <> string "%")
-      (number (canvasW - 8))
-      36
   _ <-
-    Canvas.fillText
-      ctx
+    Dom.setTextContent
+      statTick
       (string "Tick: " <> toString (Math.round tickMs) <> string "ms")
-      (number (canvasW / 2))
-      54
-  _ <-
-    Canvas.fillText ctx (string "Engine: " <> mode) (number (canvasW / 2)) 72
+  _ <- Dom.setTextContent statEngine (string "Engine: " <> mode)
   ifS
     paused
-    (Canvas.fillText ctx (string "paused") (number (canvasW - 8)) 18)
-    (Canvas.fillText ctx (string "running") (number (canvasW - 8)) 18)
-  set @"textAlign" ctx (string "left")
-  done
+    (Dom.setTextContent statStatus (string "paused"))
+    (Dom.setTextContent statStatus (string "running"))
 
 tickFps ::
   Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
@@ -795,9 +787,3 @@ tickIndex state registry tracker seen listEl now = do
     liveX1 <- state.boundX1
     liveY1 <- state.boundY1
     stepIndexTracker alive species pal registry tracker seen listEl now liveX0 liveY0 liveX1 liveY1
-
-fill ::
-  Effect f ('MutableObject Canvas.Context2D)
-  -> Expr f 'String
-  -> EffectSyntax f (f 'Unit)
-fill ctx col = set @"fillStyle" ctx col
