@@ -621,9 +621,9 @@ paintGridCell pixels cw ch paletteRgba alive species w scale panX panY bg dirtyS
     x = rem_ gi w
     y = Math.floor (gi / w)
     sx0 = Math.floor (x * scale + panX)
-    sx1 = Math.floor ((x + number 1) * scale + panX)
+    sx1 = Math.ceil ((x + number 1) * scale + panX)
     sy0 = Math.floor (y * scale + panY)
-    sy1 = Math.floor ((y + number 1) * scale + panY)
+    sy1 = Math.ceil ((y + number 1) * scale + panY)
     cellW = sx1 - sx0
     cellH = sy1 - sy0
   whenS
@@ -750,42 +750,45 @@ drawGridViewport
                 dirtyScratch
                 gi
             )
+        Canvas.putImageData ctx img (number 0) (number 0)
     )
-    ( forRange_ (number 0) (Array.length changedList) $ \k -> do
-        let
-          gi = Array.index changedList k
-          x = rem_ gi w
-          y = Math.floor (gi / w)
-        whenS
-          (x .>= visX0 .&& x .< visX1 .&& y .>= visY0 .&& y .< visY1)
-          ( paintGridCell
-              pixels
-              cw
-              ch
-              paletteRgba
-              alive
-              species
-              w
-              scale
-              panX
-              panY
-              bg
-              dirtyScratch
-              gi
-          )
-    )
-  dirtyCx0 <- dirtyScratch.cx0
-  dirtyCy0 <- dirtyScratch.cy0
-  dirtyCx1 <- dirtyScratch.cx1
-  dirtyCy1 <- dirtyScratch.cy1
-  let
-    dw = dirtyCx1 - dirtyCx0
-    dh = dirtyCy1 - dirtyCy0
-  ifS
-    fullRedraw
-    (Canvas.putImageData ctx img (number 0) (number 0))
-    ( whenS (dw .> 0 .&& dh .> 0) $
-        Canvas.putImageDataRegion ctx img (number 0) (number 0) dirtyCx0 dirtyCy0 dw dh
+    ( whenS (Array.length changedList .> 0) $
+        do
+          forRange_ (number 0) (Array.length changedList) $ \k -> do
+            let
+              gi = Array.index changedList k
+              x = rem_ gi w
+              y = Math.floor (gi / w)
+            whenS
+              (x .>= visX0 .&& x .< visX1 .&& y .>= visY0 .&& y .< visY1)
+              ( paintGridCell
+                  pixels
+                  cw
+                  ch
+                  paletteRgba
+                  alive
+                  species
+                  w
+                  scale
+                  panX
+                  panY
+                  bg
+                  dirtyScratch
+                  gi
+              )
+          dirtyCx0 <- dirtyScratch.cx0
+          dirtyCy0 <- dirtyScratch.cy0
+          dirtyCx1 <- dirtyScratch.cx1
+          dirtyCy1 <- dirtyScratch.cy1
+          let
+            ix0 = Math.floor dirtyCx0
+            iy0 = Math.floor dirtyCy0
+            ix1 = Math.ceil dirtyCx1
+            iy1 = Math.ceil dirtyCy1
+            dw = ix1 - ix0
+            dh = iy1 - iy0
+          whenS (dw .> 0 .&& dh .> 0) $
+            Canvas.putImageDataRegion ctx img (number 0) (number 0) ix0 iy0 dw dh
     )
   done
 

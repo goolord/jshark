@@ -153,6 +153,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
       _ <- setProp rectRef "top" top
       _ <- setProp rectRef "width" width
       clampPan viewport
+      invalidateViewportRender viewport
       done
   win <- hold window
   addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
@@ -256,6 +257,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             _ <- setProp viewport "panX" (panX + (cx - dragX) * bufScale)
             _ <- setProp viewport "panY" (panY + (cy - dragY) * bufScale)
             clampPan viewport
+            invalidateViewportRender viewport
             _ <- setProp viewport "dragX" cx
             _ <- setProp viewport "dragY" cy
             startX <- getProp viewport "dragStartX"
@@ -534,6 +536,13 @@ zoomBy viewport factor = do
     _ <- setProp viewport "panX" (cx - (cx - panX0) * z1 / z0)
     _ <- setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
     clampPan viewport
+    invalidateViewportRender viewport
+
+invalidateViewportRender ::
+  Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+invalidateViewportRender viewport =
+  setProp viewport "renderPanValid" false_
 
 clampPan ::
   Effect f ('MutableObject ())
@@ -636,7 +645,18 @@ paintHud ::
   -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
 paintHud ctx state meter viewport = do
-  _ <- Canvas.clearRect ctx (number 0) (number 0) (number canvasW) (number 96)
+  img <- getProp viewport "img"
+  -- Restore the sim pixels under the HUD band so text sits over the grid.
+  _ <-
+    Canvas.putImageDataRegion
+      ctx
+      img
+      (number 0)
+      (number 0)
+      (number 0)
+      (number 0)
+      (number canvasW)
+      (number 90)
   gen <- state.gen
   pop <- state.pop
   paused <- state.paused

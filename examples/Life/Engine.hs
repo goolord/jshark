@@ -390,15 +390,7 @@ renderLife ctx viewport state = do
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
   renderValid <- getProp viewport "renderPanValid"
-  lastPanX <- getProp viewport "renderPanX"
-  lastPanY <- getProp viewport "renderPanY"
-  lastZoom <- getProp viewport "renderZoom"
-  viewportDirty <-
-    pure $
-      not_ renderValid
-        .|| panX .!= lastPanX
-        .|| panY .!= lastPanY
-        .|| zoom .!= lastZoom
+  viewportDirty <- pure (not_ renderValid)
   fullRedraw <- pure (sceneDirty .|| viewportDirty)
   dirtyScratch <- hold (toObject (CanvasDirty 0 0 (-1) (-1)))
   drawGridViewport
@@ -420,6 +412,7 @@ renderLife ctx viewport state = do
     panY
     zoom
     dirtyScratch
+  Array.clear_ changedList
   set @"sceneDirty" state false_
   _ <- setProp viewport "renderPanX" panX
   _ <- setProp viewport "renderPanY" panY
