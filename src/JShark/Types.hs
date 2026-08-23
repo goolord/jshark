@@ -49,6 +49,7 @@ module JShark.Types
   , Std (..)
   , FixedOp (..)
   , FixedArgs (..)
+  , Method (..)
   , fixed1
   , fixed2
   , fixed3
@@ -541,6 +542,35 @@ expr2 op x y = Std (fixed2 op x y)
 expr3 :: FixedOp a b c u -> Expr f a -> Expr f b -> Expr f c -> Expr f u
 expr3 op x y z = Std (fixed3 op x y z)
 
+-- | Higher-order array stdlib (@.map@, @.reduce@, @Array.from@, …).
+data Method :: (Universe -> Type) -> Universe -> Type where
+  MethMap ::
+    Expr f ('Array a)
+    -> (f a -> Expr f b)
+    -> Method f ('Array b)
+  MethFilter ::
+    Expr f ('Array a)
+    -> (f a -> Expr f 'Bool)
+    -> Method f ('Array a)
+  MethReduce ::
+    Expr f ('Array a)
+    -> Expr f b
+    -> (f b -> f a -> Expr f b)
+    -> Method f b
+  MethReduceRight ::
+    Expr f ('Array a)
+    -> Expr f b
+    -> (f b -> f a -> Expr f b)
+    -> Method f b
+  MethToSorted ::
+    Expr f ('Array a)
+    -> (f a -> f a -> Expr f 'Number)
+    -> Method f ('Array a)
+  MethFrom ::
+    Expr f 'Number
+    -> (f 'Number -> Expr f a)
+    -> Method f ('Array a)
+
 -- | Pure JS standard library, applied. One 'Expr' constructor ('Std')
 -- holds this sum — not a constructor per method.
 data Std :: (Universe -> Type) -> Universe -> Type where
@@ -548,33 +578,9 @@ data Std :: (Universe -> Type) -> Universe -> Type where
     FixedOp a b c u
     -> FixedArgs f a b c
     -> Std f u
-  Map ::
-    Expr f ('Array a)
-    -> (f a -> Expr f b)
-    -> Std f ('Array b)
-  Filter ::
-    Expr f ('Array a)
-    -> (f a -> Expr f 'Bool)
-    -> Std f ('Array a)
-  Reduce ::
-    Expr f ('Array a)
-    -> Expr f b
-    -> (f b -> f a -> Expr f b)
-    -> Std f b
-  ReduceRight ::
-    Expr f ('Array a)
-    -> Expr f b
-    -> (f b -> f a -> Expr f b)
-    -> Std f b
-  ToSorted ::
-    Expr f ('Array a)
-    -> (f a -> f a -> Expr f 'Number)
-    -> Std f ('Array a)
-  -- | @Array.from({length: n}, function(_, i) { return f(i); })@
-  From ::
-    Expr f 'Number
-    -> (f 'Number -> Expr f a)
-    -> Std f ('Array a)
+  Method ::
+    Method f u
+    -> Std f u
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u

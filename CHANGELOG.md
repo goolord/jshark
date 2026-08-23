@@ -23,6 +23,9 @@
   `Math1` / `Math2` / `Un` / `Bin` / `Tern`). Higher-order stdlib
   (`Map`, `Filter`, `Reduce`, …) stays on separate `Std` constructors.
   `expr1` / `expr2` / `expr3` wrap `Fixed` as `Expr` for call sites.
+  HO array stdlib (`Map`, `Filter`, `Reduce`, `ToSorted`, `From`) unified
+  under `Std (Method …)` with shared `evalMethod` / `optMethod` /
+  `renderMethod` dispatch.
   `FFIForm`
   tags lambda vs call (not string matching).
   `Expr` is a Good Parts kernel plus one `Std` constructor for pure JS

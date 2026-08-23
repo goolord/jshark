@@ -634,9 +634,17 @@ evalStd ::
   -> m (Value u)
 evalStd rec = \case
   Fixed op args -> evalFixed rec op args
-  Map xs f ->
+  Method m -> evalMethod rec m
+
+evalMethod ::
+  Monad m =>
+  (forall w. Expr Value w -> m (Value w))
+  -> Method Value u
+  -> m (Value u)
+evalMethod rec = \case
+  MethMap xs f ->
     evalAsArray rec xs $ \vs -> ValueArray <$> traverse (rec . f) vs
-  Filter xs f ->
+  MethFilter xs f ->
     evalAsArray rec xs $ \vs -> do
       keep <-
         traverse
@@ -646,16 +654,16 @@ evalStd rec = \case
           )
           vs
       pure (ValueArray [v | (True, v) <- keep])
-  Reduce xs z f -> do
+  MethReduce xs z f -> do
     z0 <- rec z
     evalAsArray rec xs $ foldM (\acc v -> rec (f acc v)) z0
-  ReduceRight xs z f -> do
+  MethReduceRight xs z f -> do
     z0 <- rec z
     evalAsArray rec xs $ foldr (\v next -> next >>= \acc -> rec (f acc v)) (pure z0)
-  ToSorted xs f ->
+  MethToSorted xs f ->
     evalAsArray rec xs $ \vs ->
       ValueArray <$> sortByM (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
-  From n f -> do
+  MethFrom n f -> do
     nv <- rec n
     let
       d = unNumber nv
@@ -888,12 +896,7 @@ valueNeedsStructuralEq = \case
 stdNeedsStructuralEq :: Std Stamp u -> Bool
 stdNeedsStructuralEq = \case
   Fixed {} -> False
-  Map {} -> True
-  Filter {} -> True
-  Reduce {} -> True
-  ReduceRight {} -> True
-  ToSorted {} -> True
-  From {} -> True
+  Method {} -> True
 
 needsStructuralEq :: Expr Stamp u -> Bool
 needsStructuralEq e = case e of
@@ -1360,12 +1363,19 @@ mapStd ::
   -> Std f u
 mapStd ge = \case
   Fixed op args -> Fixed op (mapFixedArgs ge args)
-  Map x f -> Map (ge x) (ge . f)
-  Filter x f -> Filter (ge x) (ge . f)
-  Reduce x z f -> Reduce (ge x) (ge z) (\a b -> ge (f a b))
-  ReduceRight x z f -> ReduceRight (ge x) (ge z) (\a b -> ge (f a b))
-  ToSorted x f -> ToSorted (ge x) (\a b -> ge (f a b))
-  From n f -> From (ge n) (ge . f)
+  Method m -> Method (mapMethod ge m)
+
+mapMethod ::
+  (forall v. Expr f v -> Expr f v)
+  -> Method f u
+  -> Method f u
+mapMethod ge = \case
+  MethMap x f -> MethMap (ge x) (ge . f)
+  MethFilter x f -> MethFilter (ge x) (ge . f)
+  MethReduce x z f -> MethReduce (ge x) (ge z) (\a b -> ge (f a b))
+  MethReduceRight x z f -> MethReduceRight (ge x) (ge z) (\a b -> ge (f a b))
+  MethToSorted x f -> MethToSorted (ge x) (\a b -> ge (f a b))
+  MethFrom n f -> MethFrom (ge n) (ge . f)
 
 mapEff ::
   (forall v. Expr f v -> Expr f v)
@@ -1460,12 +1470,23 @@ foldStd ::
   -> m
 foldStd dummy se le = \case
   Fixed op args -> foldFixed dummy se op args
-  Map x f -> se x <> le (f dummy)
-  Filter x f -> se x <> le (f dummy)
-  Reduce x z f -> se x <> se z <> le (f dummy dummy)
-  ReduceRight x z f -> se x <> se z <> le (f dummy dummy)
-  ToSorted x f -> se x <> le (f dummy dummy)
-  From n f -> se n <> le (f dummy)
+  Method m -> foldMethod dummy se le m
+
+foldMethod ::
+  forall f m u.
+  Monoid m =>
+  (forall v. f v)
+  -> (forall v. Expr f v -> m)
+  -> (forall v. Expr f v -> m)
+  -> Method f u
+  -> m
+foldMethod dummy se le = \case
+  MethMap x f -> se x <> le (f dummy)
+  MethFilter x f -> se x <> le (f dummy)
+  MethReduce x z f -> se x <> se z <> le (f dummy dummy)
+  MethReduceRight x z f -> se x <> se z <> le (f dummy dummy)
+  MethToSorted x f -> se x <> le (f dummy dummy)
+  MethFrom n f -> se n <> le (f dummy)
 
 foldFieldLit ::
   (forall v. Expr f v -> m)
@@ -2272,17 +2293,21 @@ optToSorted k t0 x f =
 optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u)
 optStd t0 = \case
   Fixed op args -> optFixed t0 op args
-  Map x f -> optMapped (\a g -> Std (Map a g)) t0 x f
-  Filter x f -> optMapped (\a g -> Std (Filter a g)) t0 x f
-  Reduce x z f -> optReduced (\a b g -> Std (Reduce a b g)) t0 x z f
-  ReduceRight x z f -> optReduced (\a b g -> Std (ReduceRight a b g)) t0 x z f
-  ToSorted x f -> optToSorted (\a g -> Std (ToSorted a g)) t0 x f
-  From n f ->
+  Method m -> optMethod t0 m
+
+optMethod :: Int -> Method Stamp u -> (Int, Expr Stamp u)
+optMethod t0 = \case
+  MethMap x f -> optMapped (\a g -> Std (Method (MethMap a g))) t0 x f
+  MethFilter x f -> optMapped (\a g -> Std (Method (MethFilter a g))) t0 x f
+  MethReduce x z f -> optReduced (\a b g -> Std (Method (MethReduce a b g))) t0 x z f
+  MethReduceRight x z f -> optReduced (\a b g -> Std (Method (MethReduceRight a b g))) t0 x z f
+  MethToSorted x f -> optToSorted (\a g -> Std (Method (MethToSorted a g))) t0 x f
+  MethFrom n f ->
     let
       (t1, n') = optExpr t0 n
       (t2, tag, body) = optUnder t1 f
      in
-      (t2, Std (From n' (keepExprCont t2 tag body f)))
+      (t2, Std (Method (MethFrom n' (keepExprCont t2 tag body f))))
 
 optEffect :: Int -> Effect Stamp u -> (Int, Effect Stamp u)
 optEffect t0 = \case
@@ -3194,18 +3219,22 @@ renderBinaryFn s0 f =
 renderStd :: CG -> Std Stamp u -> (CG, Code)
 renderStd s0 = \case
   Fixed op args -> renderFixed s0 op args
-  Map recv f -> renderCallbackMethod "map" s0 recv f
-  Filter recv f -> renderCallbackMethod "filter" s0 recv f
-  Reduce recv z f -> renderFold ".reduce" s0 recv z f
-  ReduceRight recv z f -> renderFold ".reduceRight" s0 recv z f
-  ToSorted recv f ->
+  Method m -> renderMethod s0 m
+
+renderMethod :: CG -> Method Stamp u -> (CG, Code)
+renderMethod s0 = \case
+  MethMap recv f -> renderCallbackMethod "map" s0 recv f
+  MethFilter recv f -> renderCallbackMethod "filter" s0 recv f
+  MethReduce recv z f -> renderFold ".reduce" s0 recv z f
+  MethReduceRight recv z f -> renderFold ".reduceRight" s0 recv z f
+  MethToSorted recv f ->
     let
       (s1, Code rDecl rRef) = pureAST' s0 recv
       (s2, cb) = renderBinaryFn s1 f
       call = wrapOperand recv rRef <> ".toSorted" <> P.parens cb
      in
       (s2, Code rDecl call)
-  From n f ->
+  MethFrom n f ->
     let
       (s1, Code nDecl nRef) = pureAST' s0 n
       (nHole, s2) = allocIdent s1

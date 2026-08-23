@@ -56,11 +56,11 @@ length = expr1 FixArrLen
 
 -- | @arr.map(function(x){...})@. The callback stays on 'Expr'.
 map :: Expr f ('Array u) -> (Expr f u -> Expr f v) -> Expr f ('Array v)
-map arr f = Std (Map arr (\x -> f (var x)))
+map arr f = Std (Method (MethMap arr (\x -> f (var x))))
 
 -- | @arr.filter(function(x){...})@. The callback stays on 'Expr'.
 filter :: Expr f ('Array u) -> (Expr f u -> Expr f 'Bool) -> Expr f ('Array u)
-filter arr f = Std (Filter arr (\x -> f (var x)))
+filter arr f = Std (Method (MethFilter arr (\x -> f (var x))))
 
 -- | @arr.map@ with an 'Effect' callback (e.g. 'getProp'' inside).
 mapE :: Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f ('Array v)
@@ -126,12 +126,12 @@ fromEffects = ArrayLit
 -- | @arr.reduce(function(acc,x){…}, z)@
 reduce ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
-reduce arr z f = Std (Reduce arr z (\a x -> f (var a) (var x)))
+reduce arr z f = Std (Method (MethReduce arr z (\a x -> f (var a) (var x))))
 
 -- | @arr.reduceRight(function(acc,x){…}, z)@. JS callback is still @(acc, x)@.
 reduceRight ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
-reduceRight arr z f = Std (ReduceRight arr z (\a x -> f (var a) (var x)))
+reduceRight arr z f = Std (Method (MethReduceRight arr z (\a x -> f (var a) (var x))))
 
 -- | @[x]@. One-element array; used by 'JShark.Classes.pure'.
 singleton :: Expr f u -> Expr f ('Array u)
@@ -178,7 +178,7 @@ zipWith ::
   -> Expr f ('Array c)
 zipWith f xs ys =
   let_ (Math.min (length xs) (length ys)) $ \n ->
-    Std (From n $ \i -> f (index xs (var i)) (index ys (var i)))
+    Std (Method (MethFrom n $ \i -> f (index xs (var i)) (index ys (var i))))
 
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::
@@ -198,4 +198,4 @@ toSorted ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f u -> Expr f 'Number)
   -> Expr f ('Array u)
-toSorted arr cmp = Std (ToSorted arr (\a b -> cmp (var a) (var b)))
+toSorted arr cmp = Std (Method (MethToSorted arr (\a b -> cmp (var a) (var b))))
