@@ -24,6 +24,8 @@ module Grid
   , packedIsAlive
   , bumpPackedNeighbors
   , setPackedAlive
+  , refreshPackedAt
+  , refreshPackedRegion
   , cellIdx
   , inBounds
   , clampLiveBounds
@@ -113,6 +115,71 @@ setPackedAlive ::
 setPackedAlive grid i alive = do
   cur <- u8Get grid i
   setU8 grid i (bitAnd cur (number 0xFE) + alive)
+
+-- | Recompute packed neighbor count for one cell from live bits.
+refreshPackedAt ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+refreshPackedAt grid w h x y = do
+  toSyntax_ $
+    ffi
+      ( "(g,w,h,x,y)=>{"
+          <> "let n=0;"
+          <> "for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){"
+          <> "if(!dx&&!dy)continue;"
+          <> "const nx=x+dx,ny=y+dy;"
+          <> "if(nx<0||ny<0||nx>=w||ny>=h)continue;"
+          <> "if(g[ny*w+nx]&1)n++;"
+          <> "}}"
+          <> "const i=y*w+x;"
+          <> "g[i]=(g[i]&1)+n*2;"
+          <> "}"
+      )
+      (arg grid <: arg w <: arg h <: arg x <: arg y <: RecNil)
+  done
+
+-- | Refresh packed counts in a bbox plus one-cell margin.
+refreshPackedRegion ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+refreshPackedRegion grid w h x0 y0 x1 y1 =
+  ffi
+    ( "(g,w,h,x0,y0,x1,y1)=>{"
+        <> "const xs=Math.max(0,Math.floor(x0)-1);"
+        <> "const ys=Math.max(0,Math.floor(y0)-1);"
+        <> "const xe=Math.min(w-1,Math.floor(x1)+1);"
+        <> "const ye=Math.min(h-1,Math.floor(y1)+1);"
+        <> "for(let y=ys;y<=ye;y++){for(let x=xs;x<=xe;x++){"
+        <> "let n=0;"
+        <> "for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){"
+        <> "if(!dx&&!dy)continue;"
+        <> "const nx=x+dx,ny=y+dy;"
+        <> "if(nx<0||ny<0||nx>=w||ny>=h)continue;"
+        <> "if(g[ny*w+nx]&1)n++;"
+        <> "}}"
+        <> "const i=y*w+x;"
+        <> "g[i]=(g[i]&1)+n*2;"
+        <> "}}}"
+    )
+    ( arg grid
+        <: arg w
+        <: arg h
+        <: arg x0
+        <: arg y0
+        <: arg x1
+        <: arg y1
+        <: RecNil
+    )
 
 initPaletteRgba ::
   Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)

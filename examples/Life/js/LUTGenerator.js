@@ -67,62 +67,11 @@
     return computeNextByte(top, cur, bot, leftBit, rightBit);
   }
 
-  function stepRowSIMD32(gridA, gridB, y, w, h) {
-    if (y <= 0 || y >= h - 1) return false;
-    if ((w & 31) !== 0) return false;
-    const row = y * w;
-    const above = (y - 1) * w;
-    const below = (y + 1) * w;
-    const a32 = new Uint32Array(gridA.buffer, gridA.byteOffset, (gridA.length / 4) | 0);
-    const b32 = new Uint32Array(gridB.buffer, gridB.byteOffset, (gridB.length / 4) | 0);
-    const row32 = (row / 4) | 0;
-    const w32 = (w / 4) | 0;
-    const above32 = (above / 4) | 0;
-    const below32 = (below / 4) | 0;
-
-    for (let x = 0; x < w32; x++) {
-      const t = a32[above32 + x];
-      const m = a32[row32 + x];
-      const b = a32[below32 + x];
-      const lm = x > 0 ? a32[row32 + x - 1] : 0;
-      const rm = x < w32 - 1 ? a32[row32 + x + 1] : 0;
-      const lt = x > 0 ? a32[above32 + x - 1] : 0;
-      const rt = x < w32 - 1 ? a32[above32 + x + 1] : 0;
-      const lb = x > 0 ? a32[below32 + x - 1] : 0;
-      const rb = x < w32 - 1 ? a32[below32 + x + 1] : 0;
-
-      if ((t | m | b | lm | rm | lt | rt | lb | rb) === 0) {
-        b32[row32 + x] = 0;
-        continue;
-      }
-
-      let out = 0;
-      for (let bit = 0; bit < 32; bit++) {
-        const mask = 1 << bit;
-        const alive = m & mask;
-        let n = 0;
-        if (t & mask) n++;
-        if (b & mask) n++;
-        if (lm & mask) n++;
-        if (rm & mask) n++;
-        if (lt & mask) n++;
-        if (rt & mask) n++;
-        if (lb & mask) n++;
-        if (rb & mask) n++;
-        const next = alive ? n === 2 || n === 3 : n === 3;
-        if (next) out |= mask;
-      }
-      b32[row32 + x] = out;
-    }
-    return true;
-  }
-
-  /** Step rows [y0, y1) with LUT chunking and optional SIMD rows. */
-  function stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1, useSIMD) {
+  /** Step rows [y0, y1) with LUT chunking. */
+  function stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1) {
     const yStart = Math.max(1, y0);
     const yStop = Math.min(h - 1, y1);
     for (let y = yStart; y < yStop; y++) {
-      if (useSIMD && stepRowSIMD32(gridA, gridB, y, w, h)) continue;
       const topOff = (y - 1) * w;
       const curOff = y * w;
       const botOff = (y + 1) * w;
@@ -164,7 +113,6 @@
     stepChunk,
     stepCell,
     countNeighbors,
-    stepRowSIMD32,
     stepRegionLUT,
   };
 })(typeof self !== 'undefined' ? self : globalThis);

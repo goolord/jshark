@@ -15,11 +15,10 @@ importScripts('LUTGenerator.js');
   let y1 = 0;
   let w = 0;
   let h = 0;
-  let useSIMD = false;
 
   function stepTile() {
     if (!LUT) LUT = LifeLUT.createLifeLUT();
-    LifeLUT.stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1, useSIMD);
+    LifeLUT.stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1);
   }
 
   self.onmessage = function (ev) {
@@ -34,7 +33,6 @@ importScripts('LUTGenerator.js');
     y1 = msg.y1;
     w = msg.w;
     h = msg.h;
-    useSIMD = !!msg.useSIMD;
     LUT = LifeLUT.createLifeLUT();
     self.postMessage({ type: 'ready', workerId: msg.workerId });
     let lastGen = Atomics.load(sync, 0);

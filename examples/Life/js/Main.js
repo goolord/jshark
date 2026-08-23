@@ -2,7 +2,7 @@
 
 /**
  * Life engine orchestrator: worker pool, SharedArrayBuffer sync, LUT fallback,
- * pseudo-SIMD rows, and optional WASM SIMD hook. Exposes globalThis.LifeEngine.
+ * and optional WASM hook. Exposes globalThis.LifeEngine.
  */
 (function (global) {
   const LifeLUT = global.LifeLUT;
@@ -24,7 +24,6 @@
       this.sab = null;
       this.sync = null;
       this.ready = false;
-      this.useSIMD = false;
       this.workerUrl = 'js/EngineWorker.js';
       this._speciesCounts = new Uint16Array(256);
     }
@@ -56,7 +55,6 @@
       this.width = opts.width | 0;
       this.height = opts.height | 0;
       this.workerUrl = opts.workerUrl || this.workerUrl;
-      this.useSIMD = (this.width & 31) === 0;
       const n = this.width * this.height;
       this.LUT = LifeLUT.createLifeLUT();
 
@@ -101,7 +99,6 @@
           y1,
           w: this.width,
           h: this.height,
-          useSIMD: this.useSIMD,
         });
         this.workers.push(worker);
       }
@@ -137,8 +134,7 @@
         this.width,
         this.height,
         0,
-        this.height,
-        this.useSIMD
+        this.height
       );
       const tmp = this.gridA;
       this.gridA = this.gridB;
@@ -159,7 +155,6 @@
         tickMs: this.lastTickMs,
         renderMs: this.lastRenderMs,
         workers: this.workers.length,
-        simd: this.useSIMD,
         wasm: !!this.wasmStep,
       };
     }

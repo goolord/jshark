@@ -31,7 +31,11 @@ import Grid
   , initPaletteRgba
   , rebuildLiveList
   , rebuildPackedCounts
+  , refreshPackedAt
+  , refreshPackedRegion
   , setU8
+  , setPackedAlive
+  , bumpPackedNeighbors
   , stepGrid
   , u8Get
   )
@@ -427,17 +431,22 @@ flipCell state gx gy = do
     ifS
       (bitAnd a (number 1) .== 1)
       ( do
-          setU8 alive i (bitAnd a (number 0xFE))
+          setPackedAlive alive i (number 0)
+          bumpPackedNeighbors alive w h gx gy (number (-2))
+          refreshPackedAt alive w h gx gy
           setU8 species i 0
           set @"pop" state (pop0 - 1)
       )
       ( do
-          setU8 alive i (bitAnd a (number 0xFE) + number 1)
+          setPackedAlive alive i (number 1)
+          bumpPackedNeighbors alive w h gx gy (number 2)
+          refreshPackedAt alive w h gx gy
           setU8 species i (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
           includeBounds state gx gy
       )
     syncLiveList state
+    done
   markSceneDirty state
 
 placePattern ::
@@ -453,6 +462,7 @@ placePattern state cells gx gy sid = do
   whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
     alive <- state.alive
     species <- state.species
+    bbox <- hold (toObject (BoundScratch 1e9 1e9 (-1) (-1)))
     forRange_ (number 0) (Array.length cells) $ \k -> do
       let
         cell = Array.index cells k
@@ -464,12 +474,31 @@ placePattern state cells gx gy sid = do
         let
           i = cellIdx w x y
         a <- u8Get alive i
-        pop0 <- state.pop
-        setU8 alive i (bitAnd a (number 0xFE) + number 1)
+        whenS (bitAnd a (number 1) .== 0) $ do
+          setPackedAlive alive i (number 1)
+          curPop <- state.pop
+          set @"pop" state (curPop + 1)
         setU8 species i sid
-        whenS (bitAnd a (number 1) .== 0) (set @"pop" state (pop0 + 1))
         includeBounds state x y
+        curBx0 <- bbox.bx0
+        curBy0 <- bbox.by0
+        curBx1 <- bbox.bx1
+        curBy1 <- bbox.by1
+        _ <- set @"bx0" bbox (Math.min curBx0 x)
+        _ <- set @"by0" bbox (Math.min curBy0 y)
+        _ <- set @"bx1" bbox (Math.max curBx1 x)
+        set @"by1" bbox (Math.max curBy1 y)
+        done
     syncLiveList state
+    bx0n <- bbox.bx0
+    by0n <- bbox.by0
+    bx1n <- bbox.bx1
+    by1n <- bbox.by1
+    whenS (bx1n .>= bx0n) $ do
+      toSyntax_ (refreshPackedRegion alive w h bx0n by0n bx1n by1n)
+      done
+    done
+  markSceneDirty state
 
 includeBounds ::
   Effect f (MutableObjectOf LifeState)
