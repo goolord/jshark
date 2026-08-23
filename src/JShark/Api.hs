@@ -46,8 +46,11 @@ module JShark.Api
   , u8Set
   , u8Fill
   , u8FillRegion
+  , u8Copy
   , u8Len
   , fillRgbaImageData
+  , rgbaPixelSet
+  , rgbaFillRect
 
     -- * Variables and lifting
   , var
@@ -427,6 +430,39 @@ u8Set = U8Set
 
 u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
 u8Fill = U8Fill
+
+-- | @dst.set(src)@ — copy one @Uint8Array@ into another of the same length.
+u8Copy :: Expr f 'Uint8Array -> Expr f 'Uint8Array -> Effect f 'Unit
+u8Copy dst src =
+  FFI
+    (FFILambda "(d,s)=>{d.set(s);}")
+    (arg dst <: arg src <: RecNil)
+
+-- | Write one premultiplied-ready RGBA pixel (@0xAABBGGRR@) into @ImageData.data@.
+rgbaPixelSet ::
+  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> Effect f 'Unit
+rgbaPixelSet pixels idx color =
+  FFI
+    ( FFILambda
+        "(p,i,c)=>{const o=(i<<2)|0;p[o]=c&255;p[o+1]=(c>>8)&255;p[o+2]=(c>>16)&255;p[o+3]=(c>>>24)&255;}"
+    )
+    (arg pixels <: arg idx <: arg color <: RecNil)
+
+-- | Fill a solid @cellPx×cellPx@ block on a row-major RGBA canvas buffer.
+rgbaFillRect ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+rgbaFillRect pixels canvasW x y cellPx color =
+  FFI
+    ( FFILambda
+        "(p,w,x,y,s,c)=>{const x0=x|0,y0=y|0,s0=s|0;for(let dy=0;dy<s0;dy++){const row=(y0+dy)*w|0;for(let dx=0;dx<s0;dx++){const i=row+x0+dx;const o=i<<2;p[o]=c&255;p[o+1]=(c>>8)&255;p[o+2]=(c>>16)&255;p[o+3]=(c>>>24)&255;}}}"
+    )
+    (arg pixels <: arg canvasW <: arg x <: arg y <: arg cellPx <: arg color <: RecNil)
 
 -- | Zero a rectangular region of a row-major @Uint8Array@ (@y * gridW + x@).
 -- Half-open intervals: @x0 <= x < x1@, @y0 <= y < y1@.

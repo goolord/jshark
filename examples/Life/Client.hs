@@ -21,7 +21,7 @@ import Discover
   )
 import Engine
 import GHC.Generics (Generic)
-import Grid (cellIdx, u8Get)
+import Grid (cellIdx, packedIsAlive, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
@@ -82,7 +82,8 @@ boot canvas ctx = do
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
   _ <- setProp ctxH "imageSmoothingEnabled" false_
-  state <- initLife ctxH
+  viewport <- initViewport
+  state <- initLife ctxH viewport
   registry <- initRegistry
   indexTracker <- initIndexTracker
   seenSpecies <- initSeenSpecies
@@ -91,7 +92,6 @@ boot canvas ctx = do
   swatchEl <- Dom.lookupId (string lifeTooltipSwatchId)
   nameEl <- Dom.lookupId (string lifeTooltipNameId)
   meter <- hold (G.toObject (Fps (-1) 0))
-  viewport <- initViewport
   rectSym <- toSyntax emptyObject
   let
     rectRef = Lift (Var rectSym)
@@ -175,7 +175,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number zoomFactor)
+                  zoomBy viewport state (number zoomFactor)
                   done
             )
           ,
@@ -183,7 +183,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number 1 / number zoomFactor)
+                  zoomBy viewport state (number 1 / number zoomFactor)
                   done
             )
           ,
@@ -191,7 +191,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number zoomFactor)
+                  zoomBy viewport state (number zoomFactor)
                   done
             )
           ,
@@ -199,7 +199,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomBy viewport (number 1 / number zoomFactor)
+                  zoomBy viewport state (number 1 / number zoomFactor)
                   done
             )
           ]
@@ -249,6 +249,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
               bufScale = number canvasW / width
             _ <- setProp viewport "panX" (panX + (cx - dragX) * bufScale)
             _ <- setProp viewport "panY" (panY + (cy - dragY) * bufScale)
+            markSceneDirty state
             _ <- setProp viewport "dragX" cx
             _ <- setProp viewport "dragY" cy
             startX <- getProp viewport "dragStartX"
@@ -350,9 +351,8 @@ applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy = 
   _ <- Set.clear hits
   let
     i = cellIdx w gx gy
-  a <- u8Get alive i
   ifS
-    (a .== 1)
+    (packedIsAlive alive i)
     ( do
         sid <- u8Get species i
         _ <- Set.insert hits sid
@@ -452,8 +452,7 @@ collectNearby alive species w h gx gy hits tipRef = do
     whenS (x .>= 0 .&& y .>= 0 .&& x .< w .&& y .< h) $ do
       let
         j = cellIdx w x y
-      aj <- u8Get alive j
-      whenS (aj .== 1) $ do
+      whenS (packedIsAlive alive j) $ do
         let
           dist = dx * dx + dy * dy
         sid <- u8Get species j
@@ -510,8 +509,11 @@ initViewport = do
   pure viewport
 
 zoomBy ::
-  Effect f ('MutableObject ()) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
-zoomBy viewport factor = do
+  Effect f ('MutableObject ())
+  -> Effect f (MutableObjectOf LifeState)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+zoomBy viewport state factor = do
   z0 <- getProp viewport "zoom"
   let
     z1 =
@@ -525,7 +527,8 @@ zoomBy viewport factor = do
     panY0 <- getProp viewport "panY"
     _ <- setProp viewport "zoom" z1
     _ <- setProp viewport "panX" (cx - (cx - panX0) * z1 / z0)
-    setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
+    _ <- setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
+    markSceneDirty state
 
 initTool :: EffectSyntax f (Effect f ('MutableObject ()))
 initTool = do

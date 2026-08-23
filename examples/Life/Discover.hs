@@ -25,7 +25,7 @@ where
 
 import Catalog (catalogNamesJson, knownCatalogJson)
 import GHC.Generics (Generic)
-import Grid (cellIdx, clampLiveBounds, setU8, u8Get)
+import Grid (cellIdx, clampLiveBounds, setU8, u8Get, packedIsAlive)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
@@ -187,10 +187,9 @@ discoverLife alive species palette registry visited stackX stackY w0 x0 y0 x1 y1
       forRange_ ix0 ixStop $ \x -> do
         let
           i = cellIdx w0 x y
-        a <- u8Get alive i
         vis <- u8Get visited i
         sp <- u8Get species i
-        whenS (a .== 1 .&& vis .== 0 .&& sp .== 0) $
+        whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
           floodComponent scratch i x y
   nid <- scratch.nextId
   pure (nid, minted)
@@ -259,9 +258,8 @@ tryPush scratch nx ny = do
     alive <- getProp scratch "alive"
     species <- getProp scratch "species"
     vis <- u8Get visited ni
-    a <- u8Get alive ni
     sp <- u8Get species ni
-    whenS (vis .== 0 .&& a .== 1 .&& sp .== 0) $ do
+    whenS (vis .== 0 .&& packedIsAlive alive ni .&& sp .== 0) $ do
       setU8 visited ni 1
       cells <- getProp scratch "cells"
       _ <- Array.push_ cells ni
@@ -462,8 +460,7 @@ stepIndexTracker alive species palette registry tracker seen container now x0 y0
             forRange_ ix0 ixStop $ \x -> do
               let
                 i = cellIdx w0 x y
-              a <- u8Get alive i
-              whenS (a .== 1) $ do
+              whenS (packedIsAlive alive i) $ do
                 sid <- u8Get species i
                 incCount counts sid
                 Set.insert seen sid

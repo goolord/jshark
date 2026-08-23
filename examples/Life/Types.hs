@@ -10,6 +10,7 @@ module Types
   , canvasW
   , canvasH
   , canvasBg
+  , canvasBgRgba
   , seedOx
   , seedOy
   , seedW
@@ -82,6 +83,10 @@ canvasBg = "#0f172a"
 seedW, seedH :: Int
 seedW = 512
 seedH = 384
+
+-- | Canvas background (#0f172a) as @0xAABBGGRR@ for RGBA buffers.
+canvasBgRgba :: Int
+canvasBgRgba = 0xFF22170F
 
 seedOx, seedOy :: Int
 seedOx = (gridW - seedW) `div` 2
@@ -182,6 +187,8 @@ data LifeState = LifeState
   , nextAlive :: ByteArray
   , nextSpecies :: ByteArray
   , palette :: ByteArray
+  , rgbaPixels :: ByteArray
+  , paletteRgba :: ByteArray
   , boundX0 :: Int
   , boundY0 :: Int
   , boundX1 :: Int
@@ -196,7 +203,13 @@ data LifeState = LifeState
   -- | Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
   , nextLiveList :: [Int]
   , stepStamp :: ByteArray
-  -- | Host schema only; runtime is a JS @Array@ of CSS color strings.
-  , paletteCss :: [Text]
+  -- | Host schema only; runtime is a JS @Array@ of changed cell indices.
+  , changedList :: [Int]
+  , nextChangedList :: [Int]
+  , dirtyCx0 :: Int
+  , dirtyCy0 :: Int
+  , dirtyCx1 :: Int
+  , dirtyCy1 :: Int
+  , sceneDirty :: Bool
   }
   deriving Generic

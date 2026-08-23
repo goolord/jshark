@@ -8,6 +8,7 @@
 -- Styles are 'Field's ('fillStyle', 'strokeStyle', 'lineWidth', …).
 module JShark.Canvas
   ( Context2D
+  , ImageData
   , TextMetrics
   , getContext2d
   , canvasWidth
@@ -18,6 +19,10 @@ module JShark.Canvas
   , rect
   , strokeRect
   , clearRect
+  , createImageData
+  , putImageData
+  , putImageDataRegion
+  , imageDataBytes
   , beginPath
   , closePath
   , moveTo
@@ -59,6 +64,9 @@ type instance Field Context2D "globalAlpha" = 'Number
 
 -- | @TextMetrics@ from 'measureText'.
 data TextMetrics
+
+-- | @ImageData@ from 'createImageData'.
+data ImageData
 
 type instance Field TextMetrics "width" = 'Number
 
@@ -148,6 +156,61 @@ fillRect ctx = call4 ctx "fillRect"
 rect ctx = call4 ctx "rect"
 strokeRect ctx = call4 ctx "strokeRect"
 clearRect ctx = call4 ctx "clearRect"
+
+createImageData ::
+  Effect f ('MutableObject Context2D)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Effect f ('MutableObject ImageData))
+createImageData ctx w h =
+  hold $ callMethod ctx "createImageData" (arg w <: arg h <: RecNil)
+
+putImageData ::
+  Effect f ('MutableObject Context2D)
+  -> Expr f ('MutableObject ImageData)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+putImageData ctx img x y = do
+  toSyntax_
+    $ discard
+    $ callMethod
+      ctx
+      "putImageData"
+      (arg img <: arg x <: arg y <: RecNil)
+  done
+
+-- | @putImageData(img, dx, dy, sx, sy, sw, sh)@ — blit a dirty sub-rectangle.
+putImageDataRegion ::
+  Effect f ('MutableObject Context2D)
+  -> Expr f ('MutableObject ImageData)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+putImageDataRegion ctx img dx dy sx sy sw sh = do
+  toSyntax_
+    $ discard
+    $ callMethod
+      ctx
+      "putImageData"
+      ( arg img
+          <: arg dx
+          <: arg dy
+          <: arg sx
+          <: arg sy
+          <: arg sw
+          <: arg sh
+          <: RecNil
+      )
+  done
+
+imageDataBytes ::
+  Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
+imageDataBytes img = getProp (expr img) "data"
 
 beginPath
   , closePath

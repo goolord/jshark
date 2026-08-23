@@ -16,17 +16,20 @@ module Engine
   , togglePause
   , flipCell
   , placePattern
+  , markSceneDirty
   )
 where
 
 import Discover (Registry, discoverLife)
 import Grid
   ( BoundScratch (..)
+  , CanvasDirty (..)
   , cellIdx
   , drawGridViewport
   , expandBoundsForLive
-  , initPaletteCss
+  , initPaletteRgba
   , rebuildLiveList
+  , rebuildPackedCounts
   , setU8
   , stepGrid
   , u8Get
@@ -66,8 +69,9 @@ import Types
 
 initLife ::
   Effect f ('MutableObject Canvas.Context2D)
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (Effect f (MutableObjectOf LifeState))
-initLife _ctx = do
+initLife ctx viewport = do
   state <- hold (newRecord @LifeState)
   set @"gen" state 0
   set @"paused" state false_
@@ -83,6 +87,10 @@ initLife _ctx = do
       (number (fromIntegral gridW))
       (number (fromIntegral soupRngSeed))
   toSyntax_ (seedLiveCells alive species initialCatalogCells)
+  let
+    w = number (fromIntegral gridW)
+    h = number (fromIntegral gridH)
+  toSyntax_ (rebuildPackedCounts alive w h)
   set @"pop" state (fromIntegral initialPop)
   set @"alive" state alive
   set @"species" state species
@@ -91,6 +99,14 @@ initLife _ctx = do
   set @"nextAlive" state nextAlive
   set @"nextSpecies" state nextSpecies
   set @"palette" state (uint8Array paletteBytes)
+  imgEffect <- Canvas.createImageData ctx (number canvasW) (number canvasH)
+  img <- bindExpr imgEffect
+  _ <- setProp viewport "img" img
+  pixels <- Canvas.imageDataBytes img
+  set @"rgbaPixels" state pixels
+  pal <- state.palette
+  paletteRgba <- initPaletteRgba pal
+  set @"paletteRgba" state paletteRgba
   set @"nextDiscover" state (fromIntegral discoverMin)
   set @"recentDiscover" state (string "")
   set @"boundX0" state (fromIntegral initialBoundX0)
@@ -105,16 +121,15 @@ initLife _ctx = do
   set @"discoverStackY" state discoverStackY
   liveList <- bindExpr $ Array.fromEffects []
   nextLiveList <- bindExpr $ Array.fromEffects []
+  changedList <- bindExpr $ Array.fromEffects []
+  nextChangedList <- bindExpr $ Array.fromEffects []
   stepStamp <- bindExpr (newByteArray (number (fromIntegral gridN)))
   set @"liveList" state liveList
   set @"nextLiveList" state nextLiveList
+  set @"changedList" state changedList
+  set @"nextChangedList" state nextChangedList
   set @"stepStamp" state stepStamp
-  pal <- state.palette
-  paletteCss <- initPaletteCss pal
-  set @"paletteCss" state paletteCss
-  let
-    w = number (fromIntegral gridW)
-    h = number (fromIntegral gridH)
+  set @"sceneDirty" state true_
   _ <-
     rebuildLiveList
       alive
@@ -191,14 +206,16 @@ stepGeneration state = do
   nextSpecies <- state.nextSpecies
   prevLiveList <- state.liveList
   nextLiveList <- state.nextLiveList
+  nextChangedList <- state.nextChangedList
   stepStamp <- state.stepStamp
   prevPop <- state.pop
   gen <- state.gen
   let
-    -- Tags 1/2 alternate; stamps start at 0. Dense 'stepGrid' scans skip stamps;
+    -- Tags 1/2 alternate; stamps start at 0. Dense scans skip stamps;
     -- sparse dedup requires the active tag never be 0.
     stepTagVal = rem_ gen (number 2) + number 1
   Array.clear_ nextLiveList
+  Array.clear_ nextChangedList
   expanded <- expandBoundsForLive alive w h x0 y0 x1 y1
   x0e <- expanded.bx0
   y0e <- expanded.by0
@@ -230,6 +247,7 @@ stepGeneration state = do
             y1e
             prevLiveList
             nextLiveList
+            nextChangedList
             stepStamp
             stepTagVal
             prevPop
@@ -255,8 +273,13 @@ stepGeneration state = do
         set @"pop" state (Math.floor p)
     )
   swapLiveLists state
+  swapChangedLists state
   swapBuffers state
   set @"gen" state (gen + 1)
+
+markSceneDirty ::
+  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+markSceneDirty state = set @"sceneDirty" state true_
 
 syncLiveList ::
   Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
@@ -279,6 +302,13 @@ swapLiveLists state = do
   set @"liveList" state next
   set @"nextLiveList" state live
 
+swapChangedLists :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+swapChangedLists state = do
+  cur <- state.changedList
+  next <- state.nextChangedList
+  set @"changedList" state next
+  set @"nextChangedList" state cur
+
 swapBuffers :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 swapBuffers state = do
   a <- state.alive
@@ -300,13 +330,37 @@ renderLife ctx viewport state = do
   px <- pure (number (fromIntegral cellPx))
   cw <- pure (number canvasW)
   ch <- pure (number canvasH)
+  img <- getProp viewport "img"
+  pixels <- state.rgbaPixels
+  paletteRgba <- state.paletteRgba
+  alive <- state.alive
   species <- state.species
   liveList <- state.liveList
-  paletteCss <- state.paletteCss
+  changedList <- state.changedList
+  sceneDirty <- state.sceneDirty
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
-  drawGridViewport ctx species liveList paletteCss w px cw ch panX panY zoom
+  dirtyScratch <- hold (toObject (CanvasDirty 0 0 (-1) (-1)))
+  drawGridViewport
+    ctx
+    img
+    pixels
+    paletteRgba
+    alive
+    species
+    liveList
+    changedList
+    sceneDirty
+    w
+    px
+    cw
+    ch
+    panX
+    panY
+    zoom
+    dirtyScratch
+  set @"sceneDirty" state false_
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 togglePause state = do
@@ -329,22 +383,21 @@ flipCell state gx gy = do
     a <- u8Get alive i
     pop0 <- state.pop
     ifS
-      (a .== 1)
+      (bitAnd a (number 1) .== 1)
       ( do
-          setU8 alive i 0
+          setU8 alive i (bitAnd a (number 0xFE))
           setU8 species i 0
           set @"pop" state (pop0 - 1)
       )
       ( do
-          setU8 alive i 1
+          setU8 alive i (bitAnd a (number 0xFE) + number 1)
           setU8 species i (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
           includeBounds state gx gy
       )
     syncLiveList state
+  markSceneDirty state
 
--- | Stamp @cells@ (local @[x,y]@ pairs) at @(gx, gy)@. Already-live cells
---   keep the population count and take @sid@.
 placePattern ::
   Effect f (MutableObjectOf LifeState)
   -> Expr f ('Array ('Array 'Number))
@@ -370,11 +423,11 @@ placePattern state cells gx gy sid = do
           i = cellIdx w x y
         a <- u8Get alive i
         pop0 <- state.pop
-        setU8 alive i 1
+        setU8 alive i (bitAnd a (number 0xFE) + number 1)
         setU8 species i sid
-        whenS (a .== 0) (set @"pop" state (pop0 + 1))
+        whenS (bitAnd a (number 1) .== 0) (set @"pop" state (pop0 + 1))
         includeBounds state x y
-  syncLiveList state
+    syncLiveList state
 
 includeBounds ::
   Effect f (MutableObjectOf LifeState)
