@@ -213,6 +213,23 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -> Effect f 'Unit
     -> Effect f 'Unit
     -- ^ Loop while the condition holds. The rendered condition is re-emitted on every iteration, so it must not depend on declarations that only run once. Use 'FFI' (not a bound var) when the test itself is a call.
+  ForRange ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> (f 'Number -> Effect f 'Unit)
+    -> Effect f 'Unit
+    -- ^ @for (let i = start; i < end; i++)@. Emits a C-style counted loop, not @forEach@.
+  U8Set ::
+    Expr f 'Uint8Array
+    -> Expr f 'Number
+    -> Expr f 'Number
+    -> Effect f 'Unit
+    -- ^ @u8[i] = v@.
+  U8Fill ::
+    Expr f 'Uint8Array
+    -> Expr f 'Number
+    -> Effect f 'Unit
+    -- ^ @u8.fill(v)@.
   OptionCaseE ::
     Expr f ('Option u)
     -> Effect f v
@@ -355,6 +372,11 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f 'Number
     -> Expr f u
     -- ^ JS @a[i]@. 'JShark.Array.index' wraps this with trunc / bounds / 'Error'.
+  U8Index ::
+    Expr f 'Uint8Array
+    -> Expr f 'Number
+    -> Expr f 'Number
+    -- ^ JS @u8[i]@ without array bounds helper.
   Error ::
     Expr f 'String
     -> Expr f u
@@ -421,6 +443,7 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixToLower :: FixedOp 'String 'Unit 'Unit 'String
   FixTrim :: FixedOp 'String 'Unit 'Unit 'String
   FixArrLen :: FixedOp ('Array u) 'Unit 'Unit 'Number
+  FixU8Len :: FixedOp 'Uint8Array 'Unit 'Unit 'Number
   FixStrLen :: FixedOp 'String 'Unit 'Unit 'Number
   FixStringify :: FixedOp u 'Unit 'Unit 'String
   FixIndexOf :: FixedOp 'String 'String 'Unit 'Number

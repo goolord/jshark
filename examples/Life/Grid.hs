@@ -1,13 +1,18 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
--- | Typed grid buffer and canvas helpers. Byte indexing and ImageData
---    live behind minimal 'ffi' — everything else stays in JShark.
+-- | Typed grid buffer and canvas helpers. Hot grid loops use native JShark
+--    @forRange_@ and @u8Index@/@u8Set@ so the compiler emits tight JS @for@
+--    loops instead of @forEach@ callbacks.
 module Grid
   ( ImageData
   , u8Get
-  , u8Set
-  , u8Fill
+  , setU8
   , createImageData
   , putImageData
   , imageDataBytes
@@ -18,27 +23,33 @@ module Grid
   )
 where
 
+import GHC.Generics (Generic)
 import JShark.Api
 import qualified JShark.Canvas as Canvas
+import JShark.Generic (MutableObjectOf, toObject)
 import JShark.Rec (Rec (..), (<:))
 
 data ImageData
 
-u8Get :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Number
-u8Get buf i = ffi "((b, i) => b[i])" (arg buf <: arg i <: RecNil)
+data StepScratch = StepScratch
+  { pop :: Double
+  , touchedLen :: Double
+  , best :: Double
+  , bestCount :: Double
+  , n :: Double
+  }
+  deriving Generic
 
-u8Set ::
+u8Get ::
+  Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+u8Get buf i = pure (u8Index buf i)
+
+setU8 ::
   Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f 'Unit
-u8Set buf i v =
-  discard $
-    ffi "((b, i, v) => { b[i] = v; })" (arg buf <: arg i <: arg v <: RecNil)
-
-u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
-u8Fill buf v =
-  discard $ ffi "((b, v) => b.fill(v))" (arg buf <: arg v <: RecNil)
+  -> EffectSyntax f (f 'Unit)
+setU8 buf i v = toSyntax (u8Set buf i v)
 
 createImageData ::
   Effect f ('MutableObject Canvas.Context2D)
@@ -72,76 +83,141 @@ stepGrid ::
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f 'Number
-stepGrid alive species nextAlive nextSpecies w h =
-  ffi
-    stepGridJs
-    ( arg alive
-        <: arg species
-        <: arg nextAlive
-        <: arg nextSpecies
-        <: arg w
-        <: arg h
-        <: RecNil
-    )
+  -> EffectSyntax f (Expr f 'Number)
+stepGrid alive species nextAlive nextSpecies w h = do
+  counts <- bindExpr (newByteArray (number 256))
+  touchedBuf <- bindExpr (newByteArray (number 8))
+  popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
+  cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
+  forRange_ (number 0) h $ \y ->
+    forRange_ (number 0) w $ \x ->
+      processCell
+        alive
+        species
+        nextAlive
+        nextSpecies
+        counts
+        touchedBuf
+        popScratch
+        cellScratch
+        w
+        h
+        x
+        y
+  popScratch.pop
 
-stepGridJs :: String
-stepGridJs =
-  "((alive, species, nextAlive, nextSpecies, w, h) => {"
-    ++ "let pop = 0;"
-    ++ "const counts = new Uint8Array(256);"
-    ++ "const touched = [];"
-    ++ "for (let y = 0; y < h; y++) {"
-    ++ "for (let x = 0; x < w; x++) {"
-    ++ "  let n = 0;"
-    ++ "  let bestSp = 0;"
-    ++ "  let bestCount = 0;"
-    ++ "  touched.length = 0;"
-    ++ "  for (let dy = -1; dy <= 1; dy++) {"
-    ++ "    for (let dx = -1; dx <= 1; dx++) {"
-    ++ "      if (dx === 0 && dy === 0) continue;"
-    ++ "      const nx = (x + dx + w) % w;"
-    ++ "      const ny = (y + dy + h) % h;"
-    ++ "      const ni = ny * w + nx;"
-    ++ "      if (alive[ni] !== 1) continue;"
-    ++ "      n++;"
-    ++ "      const sp = species[ni];"
-    ++ "      if (counts[sp] === 0) touched.push(sp);"
-    ++ "      counts[sp]++;"
-    ++ "    }"
-    ++ "  }"
-    ++ "  for (const sp of touched) {"
-    ++ "    const c = counts[sp];"
-    ++ "    if (c > bestCount || (c === bestCount && sp < bestSp)) {"
-    ++ "      bestCount = c;"
-    ++ "      bestSp = sp;"
-    ++ "    }"
-    ++ "    counts[sp] = 0;"
-    ++ "  }"
-    ++ "  const i = y * w + x;"
-    ++ "  const a = alive[i];"
-    ++ "  const sp = species[i];"
-    ++ "  if (a === 1) {"
-    ++ "    if (n === 2 || n === 3) {"
-    ++ "      nextAlive[i] = 1;"
-    ++ "      nextSpecies[i] = sp;"
-    ++ "      pop++;"
-    ++ "    } else {"
-    ++ "      nextAlive[i] = 0;"
-    ++ "      nextSpecies[i] = 0;"
-    ++ "    }"
-    ++ "  } else if (n === 3) {"
-    ++ "    nextAlive[i] = 1;"
-    ++ "    nextSpecies[i] = bestSp;"
-    ++ "    pop++;"
-    ++ "  } else {"
-    ++ "    nextAlive[i] = 0;"
-    ++ "    nextSpecies[i] = 0;"
-    ++ "  }"
-    ++ "}"
-    ++ "}"
-    ++ "return pop;"
-    ++ "})"
+processCell ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Effect f (MutableObjectOf StepScratch)
+  -> Effect f (MutableObjectOf StepScratch)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+processCell alive species nextAlive nextSpecies counts touchedBuf popScratch cellScratch w h x y = do
+  set @"touchedLen" cellScratch 0
+  set @"best" cellScratch 0
+  set @"bestCount" cellScratch 0
+  set @"n" cellScratch 0
+  forRange_ (number (-1)) (number 2) $ \dy ->
+    forRange_ (number (-1)) (number 2) $ \dx ->
+      whenS (not_ (dx .== 0 .&& dy .== 0)) $
+        countNeighbor alive species counts touchedBuf cellScratch w h x y dx dy
+  let
+    i = cellIdx w x y
+  nCount <- cellScratch.n
+  a <- u8Get alive i
+  sp <- u8Get species i
+  bestSp <- cellScratch.best
+  ifS
+    (a .== 1)
+    ( ifS
+        (nCount .== 2 .|| nCount .== 3)
+        ( do
+            setU8 nextAlive i 1
+            setU8 nextSpecies i sp
+            bumpPop popScratch
+        )
+        ( do
+            setU8 nextAlive i 0
+            setU8 nextSpecies i 0
+        )
+    )
+    ( ifS
+        (nCount .== 3)
+        ( do
+            setU8 nextAlive i 1
+            setU8 nextSpecies i bestSp
+            bumpPop popScratch
+        )
+        ( do
+            setU8 nextAlive i 0
+            setU8 nextSpecies i 0
+        )
+    )
+  resetTouched counts touchedBuf cellScratch
+
+countNeighbor ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Effect f (MutableObjectOf StepScratch)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+countNeighbor alive species counts touchedBuf scratch w h x y dx dy = do
+  let
+    nx = toroidal w (x + dx)
+    ny = toroidal h (y + dy)
+    ni = cellIdx w nx ny
+  a <- u8Get alive ni
+  whenS (a .== 1) $ do
+    sp <- u8Get species ni
+    n0 <- scratch.n
+    set @"n" scratch (n0 + 1)
+    cur <- u8Get counts sp
+    let
+      next = cur + 1
+    whenS (cur .== 0) $ do
+      len <- scratch.touchedLen
+      setU8 touchedBuf len sp
+      set @"touchedLen" scratch (len + 1)
+    setU8 counts sp next
+    bestC <- scratch.bestCount
+    bestSp <- scratch.best
+    whenS
+      (next .> bestC .|| (next .== bestC .&& sp .< bestSp))
+      ( do
+          set @"bestCount" scratch next
+          set @"best" scratch sp
+      )
+
+resetTouched ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Effect f (MutableObjectOf StepScratch)
+  -> EffectSyntax f (f 'Unit)
+resetTouched counts touchedBuf scratch = do
+  len <- scratch.touchedLen
+  forRange_ (number 0) len $ \j -> do
+    sp <- u8Get touchedBuf j
+    setU8 counts sp 0
+
+bumpPop :: Effect f (MutableObjectOf StepScratch) -> EffectSyntax f (f 'Unit)
+bumpPop scratch = do
+  p <- scratch.pop
+  set @"pop" scratch (p + 1)
 
 renderGrid ::
   Expr f 'Uint8Array
@@ -152,48 +228,51 @@ renderGrid ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f 'Unit
-renderGrid pixels alive species pal w h px cw =
-  discard $
-    ffi
-      ( "((pixels, alive, species, pal, w, h, px, cw) => {"
-          <> "const data = pixels;"
-          <> "for (let i = 0; i < data.length; i += 4) {"
-          <> "data[i] = 15; data[i + 1] = 23; data[i + 2] = 42; data[i + 3] = 255;"
-          <> "}"
-          <> "for (let y = 0; y < h; y++) {"
-          <> "for (let x = 0; x < w; x++) {"
-          <> "const gi = y * w + x;"
-          <> "if (alive[gi] !== 1) continue;"
-          <> "const sp = species[gi];"
-          <> "const base = sp * 3;"
-          <> "const r = pal[base], g = pal[base + 1], b = pal[base + 2];"
-          <> "const py = y * px, px0 = x * px;"
-          <> "for (let dy = 0; dy < px; dy++) {"
-          <> "const row = (py + dy) * cw;"
-          <> "for (let dx = 0; dx < px; dx++) {"
-          <> "const pix = (row + px0 + dx) * 4;"
-          <> "data[pix] = r; data[pix + 1] = g; data[pix + 2] = b;"
-          <> "}"
-          <> "}"
-          <> "}"
-          <> "}"
-          <> "})"
-      )
-      ( arg pixels
-          <: arg alive
-          <: arg species
-          <: arg pal
-          <: arg w
-          <: arg h
-          <: arg px
-          <: arg cw
-          <: RecNil
-      )
+  -> EffectSyntax f (f 'Unit)
+renderGrid pixels alive species pal w h px cw = do
+  let
+    pixLen = u8Len pixels
+    bgCells = pixLen / number 4
+  forRange_ (number 0) bgCells $ \cell ->
+    let
+      base = cell * number 4
+     in
+      do
+        setU8 pixels base 15
+        setU8 pixels (base + 1) 23
+        setU8 pixels (base + 2) 42
+        setU8 pixels (base + 3) 255
+  forRange_ (number 0) h $ \y ->
+    forRange_ (number 0) w $ \x -> do
+      let
+        gi = cellIdx w x y
+      a <- u8Get alive gi
+      whenS (a .== 1) $ do
+        sp <- u8Get species gi
+        let
+          palBase = sp * number 3
+        r <- u8Get pal palBase
+        g <- u8Get pal (palBase + 1)
+        b <- u8Get pal (palBase + 2)
+        let
+          py = y * px
+          px0 = x * px
+        forRange_ (number 0) px $ \dy ->
+          let
+            row = (py + dy) * cw
+           in
+            forRange_ (number 0) px $ \dx ->
+              let
+                pix = (row + px0 + dx) * number 4
+               in
+                do
+                  setU8 pixels pix r
+                  setU8 pixels (pix + 1) g
+                  setU8 pixels (pix + 2) b
+  done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 cellIdx w x y = y * w + x
 
--- | Toroidal wrap. Requires positive @w@ (grid width/height are fixed constants).
 toroidal :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 toroidal w c = rem_ (c + w) w

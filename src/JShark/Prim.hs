@@ -213,6 +213,7 @@ fixedUnaryJS n r = case n of
   FixToLower -> r <> ".toLowerCase()"
   FixTrim -> r <> ".trim()"
   FixArrLen -> dotLength
+  FixU8Len -> dotLength
   FixStrLen -> dotLength
   FixStringify -> "JSON.stringify" <> P.parens r
   _ -> error "JShark.Prim.fixedUnaryJS: not a std unary op"

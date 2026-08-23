@@ -139,7 +139,7 @@ discoverJs =
     ++ "      sid = id;"
     ++ "      const rgb = discoverColor(sid);"
     ++ "      paint(sid, rgb);"
-    ++ "      const name = makeName(sid);"
+    ++ "      const name = uniqueName(sid, registry);"
     ++ "      registry.seen.set(hash, sid);"
     ++ "      registry.names.set(sid, name);"
     ++ "      label = name;"

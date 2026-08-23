@@ -54,6 +54,7 @@ module JShark
       , ResultErr
       , ResultCase
       , Index
+      , U8Index
       , Error
       , Std
       , FnLit
@@ -80,6 +81,9 @@ module JShark
     , ApplyE
     , IfE
     , While
+    , ForRange
+    , U8Set
+    , U8Fill
     , OptionCaseE
     , ResultCaseE
     , StringCaseE
@@ -552,6 +556,17 @@ evalAlg rec apply = \case
         if isFiniteDouble d && idx >= 0 && idx < length vs
           then pure (vs !! idx)
           else error "evaluate: array index out of bounds"
+  U8Index buf i -> do
+    iv <- rec i
+    evalAsUint8Array rec buf $ \ba ->
+      let
+        d = unNumber iv
+        idx = truncate d :: Int
+        elems = uint8Elems ba
+       in
+        if isFiniteDouble d && idx >= 0 && idx < length elems
+          then pure (ValueNumber (fromIntegral (elems !! idx)))
+          else error "evaluate: uint8 index out of bounds"
   Error msg -> do
     m <- rec msg
     error ("evaluate: " ++ T.unpack (unString m))
@@ -574,6 +589,17 @@ evalAsArray rec xs k = do
   arr <- rec xs
   case arr of
     ValueArray vs -> k vs
+
+evalAsUint8Array ::
+  Monad m =>
+  (forall w. Expr Value w -> m (Value w))
+  -> Expr Value 'Uint8Array
+  -> (ByteArray -> m a)
+  -> m a
+evalAsUint8Array rec buf k = do
+  arr <- rec buf
+  case arr of
+    ValueUint8Array ba -> k ba
 
 sortByM :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
 sortByM cmp xs = mergeSort cmp xs
@@ -704,6 +730,9 @@ evalFixed rec op args = case (op, args) of
   (FixArrLen, ArgsU xs) ->
     evalAsArray rec xs $ \vs ->
       pure (ValueNumber (fromIntegral (Prelude.length vs)))
+  (FixU8Len, ArgsU buf) ->
+    evalAsUint8Array rec buf $ \ba ->
+      pure (ValueNumber (fromIntegral (Prelude.length (uint8Elems ba))))
   (FixParseInt, ArgsB s r) -> do
     sv <- rec s
     rv <- rec r
@@ -940,6 +969,7 @@ needsStructuralEq e = case e of
           Literal v -> valueNeedsStructuralEq v
           Std s -> stdNeedsStructuralEq s
           Index {} -> True
+          U8Index {} -> True
           FrozenLit {} -> True
           GetField {} -> True
           _ -> False
@@ -1107,6 +1137,7 @@ isSimple = \case
   Std {} -> True
   FnLit {} -> True
   Index {} -> True
+  U8Index {} -> True
   Error {} -> False
   UnsafeNullable x -> isSimple x
   FrozenLit {} -> True
@@ -1351,6 +1382,7 @@ mapExpr ge gf = \case
   ResultErr x -> ResultErr (ge x)
   ResultCase o e s -> ResultCase (ge o) (ge . e) (ge . s)
   Index x i -> Index (ge x) (ge i)
+  U8Index x i -> U8Index (ge x) (ge i)
   Error x -> Error (ge x)
   Std s -> Std (mapStd ge s)
   FnLit body -> FnLit (mapFnBody ge body)
@@ -1426,6 +1458,9 @@ mapEff ge gf = \case
   ApplyE f x -> ApplyE (gf f) (gf x)
   IfE c u v -> IfE (gf c) (gf u) (gf v)
   While c b -> While (gf c) (gf b)
+  ForRange s e b -> ForRange (ge s) (ge e) (gf . b)
+  U8Set b i v -> U8Set (ge b) (ge i) (ge v)
+  U8Fill b v -> U8Fill (ge b) (ge v)
   OptionCaseE o n s -> OptionCaseE (ge o) (gf n) (gf . s)
   ResultCaseE o e s -> ResultCaseE (ge o) (gf . e) (gf . s)
   StringCaseE o arms d ->
@@ -1461,6 +1496,7 @@ foldExpr dummy se le sf = \case
   ResultErr x -> se x
   ResultCase o e s -> se o <> le (e dummy) <> le (s dummy)
   Index x i -> se x <> se i
+  U8Index x i -> se x <> se i
   Error x -> se x
   Std s -> foldStd dummy se le s
   FnLit body -> foldFnBody dummy le body
@@ -1561,6 +1597,9 @@ foldEff dummy se sf lf = \case
   ApplyE f x -> sf f <> sf x
   IfE c u v -> sf c <> lf u <> lf v
   While c b -> lf c <> lf b
+  ForRange s e b -> se s <> se e <> lf (b dummy)
+  U8Set b i v -> se b <> se i <> se v
+  U8Fill b v -> se b <> se v
   OptionCaseE o n s -> se o <> lf n <> lf (s dummy)
   ResultCaseE o e s -> se o <> lf (e dummy) <> lf (s dummy)
   StringCaseE o arms d -> se o <> foldMap (lf . snd) arms <> lf d
@@ -1789,6 +1828,9 @@ isPureEffectStamp e = case e of
   CallMethod {} -> False
   ApplyE {} -> False
   While {} -> False
+  ForRange {} -> False
+  U8Set {} -> False
+  U8Fill {} -> False
   Throw {} -> False
   Try {} -> False
   DeleteProp {} -> False
@@ -2226,6 +2268,12 @@ optExpr t0 = \case
       (t2, idx') = optExpr t1 idx
      in
       (t2, foldIndex arr' idx')
+  U8Index buf idx ->
+    let
+      (t1, buf') = optExpr t0 buf
+      (t2, idx') = optExpr t1 idx
+     in
+      (t2, U8Index buf' idx')
   Error x -> fmap Error (optExpr t0 x)
   Std s -> optStd t0 s
   FnLit body ->
@@ -2452,6 +2500,26 @@ optEffect t0 = \case
             (t2, b') = optEffect t1 b
            in
             (t2, While c' b')
+  ForRange s e b ->
+    let
+      (t1, s') = optExpr t0 s
+      (t2, e') = optExpr t1 e
+      (t3, tag, body) = optUnderE t2 b
+     in
+      (t3, ForRange s' e' (keepEffCont t3 tag body b))
+  U8Set b i v ->
+    let
+      (t1, b') = optExpr t0 b
+      (t2, i') = optExpr t1 i
+      (t3, v') = optExpr t2 v
+     in
+      (t3, U8Set b' i' v')
+  U8Fill b v ->
+    let
+      (t1, b') = optExpr t0 b
+      (t2, v') = optExpr t1 v
+     in
+      (t2, U8Fill b' v')
   OptionCaseE o n s ->
     let
       (t1, o') = optExpr t0 o
@@ -2622,6 +2690,7 @@ isUnitWitness = \case
   Lift (Var (EmbedEff e)) -> isUnitWitness e
   Lift _ -> False
   While {} -> True
+  ForRange {} -> True
   Bind _ f -> isUnitWitness (f nestedDummy)
   BindRec _ f -> isUnitWitness (f nestedDummy)
   IfE _ t e -> isUnitWitness t && isUnitWitness e
@@ -2780,6 +2849,44 @@ effectfulAST' !s0 = \case
       whileStmt = "while" <+> P.parens condRef <+> P.braces (P.nest 2 bodyStmt)
      in
       (s2, Code (condDecl $$ whileStmt) mempty)
+  ForRange start end body ->
+    let
+      (s1, Code startDecl startRef) = pureAST' s0 start
+      (s2, Code endDecl endRef) = pureAST' s1 end
+      (loopN, s3) = allocIdent s2
+      loopVar = nDoc loopN
+      (s4, Code bodyDecl bodyRef) = effectfulAST' s3 (body (Name loopN))
+      bodyStmt = if P.isEmpty bodyRef then bodyDecl else bodyDecl $$ (bodyRef <> P.semi)
+      forHead =
+        "let"
+          <+> loopVar
+          <+> "="
+          <+> startRef
+          <+> ";"
+          <+> loopVar
+          <+> "<"
+          <+> endRef
+          <+> ";"
+          <+> loopVar
+          <+> "++"
+      forStmt = "for" <+> P.parens forHead <+> P.braces (P.nest 2 bodyStmt)
+     in
+      (s4, Code (startDecl $$ endDecl $$ forStmt) mempty)
+  U8Set buf idx val ->
+    let
+      (s1, Code bDecl bRef) = pureAST' s0 buf
+      (s2, Code iDecl iRef) = pureAST' s1 idx
+      (s3, Code vDecl vRef) = pureAST' s2 val
+      stmt = (bRef <> P.brackets iRef) <+> "=" <+> vRef
+     in
+      (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> P.semi)) mempty)
+  U8Fill buf val ->
+    let
+      (s1, Code bDecl bRef) = pureAST' s0 buf
+      (s2, Code vDecl vRef) = pureAST' s1 val
+      stmt = bRef <> ".fill" <> P.parens vRef
+     in
+      (s2, Code (bDecl $$ vDecl $$ (stmt <> P.semi)) mempty)
   OptionCaseE opt noneE someF ->
     emitBranching
       (isUnitWitness noneE && isUnitWitness (someF nestedDummy))
@@ -3004,6 +3111,12 @@ pureAST' !s0 = \case
       (s2, Code iDecl iRef) = pureAST' s1 idx
      in
       (s2, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+  U8Index buf idx ->
+    let
+      (s1, Code bDecl bRef) = pureAST' s0 buf
+      (s2, Code iDecl iRef) = pureAST' s1 idx
+     in
+      (s2, Code (bDecl $$ iDecl) (bRef <> P.brackets iRef))
   Error msg ->
     let
       (s1, Code d r) = pureAST' s0 msg

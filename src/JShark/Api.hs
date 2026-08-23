@@ -35,6 +35,10 @@ module JShark.Api
 
     -- * Byte arrays
   , newByteArray
+  , u8Index
+  , u8Set
+  , u8Fill
+  , u8Len
 
     -- * Variables and lifting
   , var
@@ -69,6 +73,8 @@ module JShark.Api
   , ifS
   , forEach
   , forEach_
+  , forRange
+  , forRange_
   , arrayCallback
   , try_
   , catch_
@@ -298,6 +304,36 @@ newByteArray ::
   Expr f 'Number -> Effect f 'Uint8Array
 newByteArray n =
   FFI (FFILambda "n => new Uint8Array(n)") (arg n <: RecNil)
+
+u8Index :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number
+u8Index = U8Index
+
+u8Set ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+u8Set = U8Set
+
+u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
+u8Fill = U8Fill
+
+u8Len :: Expr f 'Uint8Array -> Expr f 'Number
+u8Len = expr1 FixU8Len
+
+forRange ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> (Expr f 'Number -> Effect f 'Unit)
+  -> Effect f 'Unit
+forRange start end body = ForRange start end (\i -> body (var i))
+
+forRange_ ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> (Expr f 'Number -> EffectSyntax f (f 'Unit))
+  -> EffectSyntax f (f 'Unit)
+forRange_ start end f = toSyntax $ forRange start end (\x -> stmts (f x))
 
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])

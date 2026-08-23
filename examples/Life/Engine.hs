@@ -20,7 +20,7 @@ module Engine
 where
 
 import Discover (Registry, discoverLife)
-import Grid (ImageData, cellIdx, imageDataBytes, putImageData, renderGrid, stepGrid, u8Get, u8Set)
+import Grid (ImageData, cellIdx, imageDataBytes, putImageData, renderGrid, setU8, stepGrid, u8Get)
 import JShark.Api
 import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf, newRecord)
@@ -92,7 +92,7 @@ stepGeneration state = do
   species <- state.species
   nextAlive <- state.nextAlive
   nextSpecies <- state.nextSpecies
-  pop <- bindExpr $ stepGrid alive species nextAlive nextSpecies w h
+  pop <- stepGrid alive species nextAlive nextSpecies w h
   swapBuffers state
   set @"pop" state (Math.floor pop)
   gen <- state.gen
@@ -123,7 +123,7 @@ renderLife ctx img state = do
   alive <- state.alive
   species <- state.species
   pal <- state.palette
-  toSyntax_ $ renderGrid pixels alive species pal w h px cw
+  renderGrid pixels alive species pal w h px cw
   putImageData ctx img
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
@@ -144,7 +144,7 @@ flipCell state gx gy = do
     species <- state.species
     let
       i = cellIdx w gx gy
-    a <- bindExpr (u8Get alive i)
+    a <- u8Get alive i
     pop0 <- state.pop
     ifS
       (a .== 1)
@@ -158,10 +158,3 @@ flipCell state gx gy = do
           setU8 species i (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
       )
-
-setU8 ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-setU8 buf i v = toSyntax (u8Set buf i v)
