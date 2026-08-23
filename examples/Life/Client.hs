@@ -60,6 +60,8 @@ import Types
   , zoomMax
   , zoomMin
   )
+import JShark.Worker (performanceNow)
+import WorkerBridge (engineModeLabel, engineTickMs, setEngineRenderMs)
 
 data Fps = Fps
   { lastMs :: Double
@@ -112,7 +114,10 @@ boot canvas ctx = do
     paused <- state.paused
     whenS (not_ paused) (stepLife state registry)
     tickIndex state registry indexTracker seenSpecies typesList now
+    renderStart <- performanceNow
     renderLife ctxH viewport state
+    renderEnd <- performanceNow
+    setEngineRenderMs (renderEnd - renderStart)
     paintHud ctxH state meter viewport
     tickHover tipRef state registry tooltip swatchEl nameEl hits
 
@@ -461,13 +466,8 @@ collectNearby alive species w h gx gy hits tipRef = do
           _ <- setProp tipRef "best" dist
           _ <- setProp tipRef "swatchSid" sid
           _ <- Set.clear hits
-          _ <- Set.insert hits sid
-          done
+          Set.insert hits sid
         whenS (dist .== best) $ Set.insert hits sid
-        done
-      done
-    done
-  done
 
 gridFromClient ::
   Effect f ('MutableObject ())
@@ -611,6 +611,8 @@ paintHud ctx state meter viewport = do
   pop <- state.pop
   paused <- state.paused
   fpsN <- meter.fps
+  tickMs <- engineTickMs
+  mode <- engineModeLabel
   zoom <- getProp viewport "zoom"
   let
     zoomPct = Math.round (zoom * number 100)
@@ -629,6 +631,14 @@ paintHud ctx state meter viewport = do
       (string "Zoom: " <> toString zoomPct <> string "%")
       (number (canvasW - 8))
       36
+  _ <-
+    Canvas.fillText
+      ctx
+      (string "Tick: " <> toString (Math.round tickMs) <> string "ms")
+      (number (canvasW / 2))
+      54
+  _ <-
+    Canvas.fillText ctx (string "Engine: " <> mode) (number (canvasW / 2)) 72
   ifS
     paused
     (Canvas.fillText ctx (string "paused") (number (canvasW - 8)) 18)

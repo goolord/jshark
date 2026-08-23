@@ -38,6 +38,9 @@ data-files:
   examples/static/*.png
   examples/static/*.js
   examples/static/*.css
+  examples/Life/js/LUTGenerator.js
+  examples/Life/js/EngineWorker.js
+  examples/Life/js/Main.js
 
 common warnings
   ghc-options:
@@ -69,6 +72,7 @@ library
     JShark.Storage
     JShark.String
     JShark.Timers
+    JShark.Worker
     JShark.Types
     JShark.Ajax
     JShark.Object
@@ -181,6 +185,7 @@ library life
     Page
     Patterns
     Types
+    WorkerBridge
   hs-source-dirs:
     examples/Life
 

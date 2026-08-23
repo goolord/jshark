@@ -12,6 +12,7 @@
 module Grid
   ( BoundScratch (..)
   , CanvasDirty (..)
+  , StepScratch (..)
   , u8Get
   , setU8
   , stepGrid
@@ -338,46 +339,44 @@ processCell
         whenS (not_ (dx .== 0 .&& dy .== 0)) $
           countBirthSpecies alive species counts touchedBuf cellScratch w h x y dx dy
   bestSp <- cellScratch.best
-  ifS
-    (alive0 .== 1)
-    ( ifS
-        (nCount .== 2 .|| nCount .== 3)
-        ( do
-            setU8 nextSpecies i sp
-            Array.push_ nextLiveList i
-            bumpPop popScratch
-            bumpBounds boundScratch x y
-        )
-        ( markDead
-            nextAlive
-            nextSpecies
-            nextLiveList
-            nextChangedList
-            w
-            h
-            x
-            y
-            i
-        )
+  whenS
+    (alive0 .== 1 .&& (nCount .== 2 .|| nCount .== 3))
+    ( do
+        setU8 nextSpecies i sp
+        Array.push_ nextLiveList i
+        bumpPop popScratch
+        bumpBounds boundScratch x y
     )
-    ( ifS
-        (nCount .== 3)
-        ( markBorn
-            nextAlive
-            nextSpecies
-            nextLiveList
-            nextChangedList
-            popScratch
-            boundScratch
-            w
-            h
-            x
-            y
-            i
-            bestSp
-        )
-        (setU8 nextSpecies i 0)
+  whenS
+    (alive0 .== 1 .&& not_ (nCount .== 2 .|| nCount .== 3))
+    ( markDead
+        nextAlive
+        nextSpecies
+        nextLiveList
+        nextChangedList
+        w
+        h
+        x
+        y
+        i
     )
+  whenS
+    (alive0 .== 0 .&& nCount .== 3)
+    ( markBorn
+        nextAlive
+        nextSpecies
+        nextLiveList
+        nextChangedList
+        popScratch
+        boundScratch
+        w
+        h
+        x
+        y
+        i
+        bestSp
+    )
+  whenS (alive0 .== 0 .&& nCount .!= 3) (setU8 nextSpecies i (number 0))
   resetBirthCounts counts touchedBuf cellScratch
 
 markBorn ::
@@ -622,40 +621,38 @@ drawGridViewport
         + shl (number 23) (number 8)
         + shl (number 42) (number 16)
         + shl (number 255) (number 24)
-  whenS sceneDirty $
-    do
-      toSyntax_
-        ( fillRgbaImageData
-            pixels
-            (number 15)
-            (number 23)
-            (number 42)
-            (number 255)
-        )
-      done
   set @"cx0" dirtyScratch (number 1e9)
   set @"cy0" dirtyScratch (number 1e9)
   set @"cx1" dirtyScratch (number (-1))
   set @"cy1" dirtyScratch (number (-1))
   ifS
     sceneDirty
-    ( forRange_ (number 0) (Array.length liveList) $ \k -> do
-        let
-          gi = Array.index liveList k
-        paintGridCell
-          pixels
-          cw
-          paletteRgba
-          alive
-          species
-          w
-          scale
-          panX
-          panY
-          cellDraw
-          bg
-          dirtyScratch
-          gi
+    ( do
+        toSyntax_
+          ( fillRgbaImageData
+              pixels
+              (number 15)
+              (number 23)
+              (number 42)
+              (number 255)
+          )
+        forRange_ (number 0) (Array.length liveList) $ \k -> do
+          let
+            gi = Array.index liveList k
+          paintGridCell
+            pixels
+            cw
+            paletteRgba
+            alive
+            species
+            w
+            scale
+            panX
+            panY
+            cellDraw
+            bg
+            dirtyScratch
+            gi
     )
     ( forRange_ (number 0) (Array.length changedList) $ \k -> do
         let

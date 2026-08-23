@@ -24,6 +24,7 @@ import Discover (Registry, discoverLife)
 import Grid
   ( BoundScratch (..)
   , CanvasDirty (..)
+  , StepScratch (..)
   , cellIdx
   , drawGridViewport
   , expandBoundsForLive
@@ -65,6 +66,11 @@ import Types
   , seedOy
   , seedW
   , soupRngSeed
+  )
+import WorkerBridge
+  ( engineCanStep
+  , engineStepGeneration
+  , initWorkerEngine
   )
 
 initLife ::
@@ -140,6 +146,7 @@ initLife ctx viewport = do
       (number (fromIntegral initialBoundX1))
       (number (fromIntegral initialBoundY1))
       liveList
+  _ <- initWorkerEngine
   pure state
 
 stepLife ::
@@ -233,25 +240,60 @@ stepGeneration state = do
     )
     ( do
         boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
-        p <-
-          stepGrid
-            alive
-            species
-            nextAlive
-            nextSpecies
-            w
-            h
-            x0e
-            y0e
-            x1e
-            y1e
-            prevLiveList
-            nextLiveList
-            nextChangedList
-            stepStamp
-            stepTagVal
-            prevPop
-            boundScratch
+        popHolder <- hold (toObject (StepScratch 0 0 0 0 0))
+        canEngine <- engineCanStep
+        let
+          regionW = x1e - x0e + number 1
+          regionH = y1e - y0e + number 1
+          regionCells = regionW * regionH
+        denseEnough <-
+          pure $
+            regionCells .> (w * h) / number 2
+              .|| ( prevPop .> 0
+                      .&& regionCells .> prevPop * number 12
+                  )
+        useEngine <- pure (canEngine .&& denseEnough)
+        ifS
+          useEngine
+          ( do
+              v <-
+                engineStepGeneration
+                  alive
+                  species
+                  nextAlive
+                  nextSpecies
+                  w
+                  h
+                  nextLiveList
+                  nextChangedList
+                  boundScratch
+              set @"pop" popHolder v
+              done
+          )
+          ( do
+              v <-
+                stepGrid
+                  alive
+                  species
+                  nextAlive
+                  nextSpecies
+                  w
+                  h
+                  x0e
+                  y0e
+                  x1e
+                  y1e
+                  prevLiveList
+                  nextLiveList
+                  nextChangedList
+                  stepStamp
+                  stepTagVal
+                  prevPop
+                  boundScratch
+              set @"pop" popHolder v
+              done
+          )
+        p <- popHolder.pop
         bx0n <- boundScratch.bx0
         by0n <- boundScratch.by0
         bx1n <- boundScratch.bx1

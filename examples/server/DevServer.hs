@@ -10,7 +10,7 @@ module DevServer
   )
 where
 
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, unless, when)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -68,6 +68,19 @@ exportPaths =
     , srcStatic = "../static"
     }
 
+-- | Extra JS assets for an example (route suffix, data-file path under package).
+lifeEngineJs :: [(FilePath, FilePath)]
+lifeEngineJs =
+  [ ("js/LUTGenerator.js", "examples/Life/js/LUTGenerator.js")
+  , ("js/Main.js", "examples/Life/js/Main.js")
+  , ("js/EngineWorker.js", "examples/Life/js/EngineWorker.js")
+  ]
+
+lifeIsolationHeaders :: ActionM ()
+lifeIsolationHeaders = do
+  setHeader "Cross-Origin-Opener-Policy" "same-origin"
+  setHeader "Cross-Origin-Embedder-Policy" "require-corp"
+
 -- | Serve every example and a screenshot directory at @/@.
 serveExamples :: Int -> String -> [Example] -> IO ()
 serveExamples port banner examples = do
@@ -77,6 +90,7 @@ serveExamples port banner examples = do
   assets <-
     fmap concat $
       traverse staticAsset staticFiles
+  lifeJs <- traverse lifeJsAsset lifeEngineJs
   scotty port $ do
     get "/" $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
@@ -86,18 +100,29 @@ serveExamples port banner examples = do
         base = "/" <> T.unpack (exampleName ex)
         page =
           examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
+        isLife = exampleName ex == "life"
       get (fromString base) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
+        when isLife lifeIsolationHeaders
         html $ renderText page
       get (fromString (base <> "/")) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
+        when isLife lifeIsolationHeaders
         html $ renderText page
       get (fromString (base <> "/app.js")) $ do
         setHeader "Content-Type" "application/javascript; charset=utf-8"
+        when isLife lifeIsolationHeaders
         text (TL.fromStrict (exampleJs ex))
+      when isLife $
+        forM_ lifeJs $ \(route, path) ->
+          get (fromString (base <> "/" <> route)) $ do
+            setHeader "Content-Type" "application/javascript; charset=utf-8"
+            lifeIsolationHeaders
+            file path
     forM_ assets $ \(name, path) ->
       get (fromString ("/static/" <> name)) $ do
         setHeader "Content-Type" (staticType name)
+        setHeader "Cross-Origin-Resource-Policy" "cross-origin"
         file path
     forM_ shots $ \(ex, path) ->
       case path of
@@ -105,6 +130,7 @@ serveExamples port banner examples = do
         Just filePath ->
           get (fromString ("/static/" <> T.unpack (exampleName ex) <> ".png")) $ do
             setHeader "Content-Type" "image/png"
+            setHeader "Cross-Origin-Resource-Policy" "cross-origin"
             file filePath
 
 -- | Write a static tree GitHub Pages can host.
@@ -137,6 +163,11 @@ exportExamples dest examples = do
           (examplePage ex (srcScript exportPaths (exampleName ex)) (srcStatic exportPaths))
       )
     T.writeFile (dir </> "app.js") (exampleJs ex)
+    when (exampleName ex == "life") $ do
+      createDirectoryIfMissing True (dir </> "js")
+      forM_ lifeEngineJs $ \(route, rel) -> do
+        src <- getDataFileName rel
+        copyFile src (dir </> route)
 
 -- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
 -- @app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
@@ -173,6 +204,13 @@ staticAsset name = do
   path <- getDataFileName ("examples/static/" <> name)
   exists <- doesFileExist path
   pure [(name, path) | exists]
+
+lifeJsAsset :: (FilePath, FilePath) -> IO (FilePath, FilePath)
+lifeJsAsset (route, rel) = do
+  path <- getDataFileName rel
+  exists <- doesFileExist path
+  unless exists (fail ("serve: missing data-file " <> rel))
+  pure (route, path)
 
 staticType :: FilePath -> TL.Text
 staticType name

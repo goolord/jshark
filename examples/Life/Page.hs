@@ -101,6 +101,8 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
         h2_ "Biomass Index"
         div_ [id_ lifeIndexHostId] $
           div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
+    script_ [src_ "js/LUTGenerator.js"] ("" :: Html ())
+    script_ [src_ "js/Main.js"] ("" :: Html ())
     script_ [src_ scriptSrc] ("" :: Html ())
 
 shellCss :: T.Text
