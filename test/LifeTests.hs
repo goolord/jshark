@@ -65,6 +65,7 @@ lifeTests =
           "js engine"
           [ lifeJsCase "LifeLUT.stepCell matches Conway rules" testJsStepCell
           , lifeJsCase "LifeLUT.stepRegionLUT matches stepCell on blinker" testJsLutRegion
+          , lifeJsCase "LifeLUT.stepRegionLUT matches stepCell for glider on 8-cell seam" testJsLutGliderSeam
           , lifeJsCase "LifeEngine.step keeps block stable" testJsEngineBlock
           , lifeJsCase "LifeEngineSync.finishStep rebuilds packed counts" testJsFinishStep
           , lifeJsCase "engineStepGeneration keeps block stable" testEngineStepGeneration
@@ -294,6 +295,36 @@ testJsLutRegion = fromSyntax $ do
           <> "const i=y*w+x;"
           <> "if((b[i]&1)!==(c[i]&1))throw new Error('lut mismatch at '+i);"
           <> "}"
+          <> "})"
+      )
+      RecNil
+  done
+
+testJsLutGliderSeam :: forall f. Effect f 'Unit
+testJsLutGliderSeam = fromSyntax $ do
+  toSyntax_ $
+    ffi
+      ( "(()=>{"
+          <> "const w=16,h=16,n=w*h;"
+          <> "const lut=LifeLUT.createLifeLUT();"
+          <> "const a=new Uint8Array(n);"
+          <> "const b=new Uint8Array(n);"
+          <> "const c=new Uint8Array(n);"
+          <> "const cells=[[8,2],[9,3],[7,4],[8,4],[9,4]];"
+          <> "for(const [x,y] of cells)a[y*w+x]=1;"
+          <> "LifeLUT.stepRegionLUT(lut,a,b,w,h,0,h);"
+          <> "for(let y=0;y<h;y++)for(let x=0;x<w;x++){"
+          <> "LifeLUT.stepCell(a,c,w,h,x,y);"
+          <> "const i=y*w+x;"
+          <> "if((b[i]&1)!==(c[i]&1))throw new Error('seam mismatch at '+i);"
+          <> "}"
+          <> "let src=b,dst=new Uint8Array(n);"
+          <> "for(let g=0;g<3;g++){"
+          <> "LifeLUT.stepRegionLUT(lut,src,dst,w,h,0,h);"
+          <> "const tmp=src;src=dst;dst=tmp;"
+          <> "}"
+          <> "let pop=0;for(let i=0;i<n;i++)if(src[i]&1)pop++;"
+          <> "if(pop!==5)throw new Error('glider pop after 4 '+pop);"
           <> "})"
       )
       RecNil

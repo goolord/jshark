@@ -216,11 +216,11 @@
     const E = global.LifeEngine;
     if (!E || !E.ready || E.mode === 'none') return null;
     const n = w * h | 0;
-    const grid = E.gridA;
     const counts = E._speciesCounts;
     const touched = E._speciesTouched;
-    for (let i = 0; i < n; i++) grid[i] = alive[i] & 1;
+    for (let i = 0; i < n; i++) E.gridA[i] = alive[i] & 1;
     E.stepMainLUT();
+    const grid = E.gridA;
     let pop = 0;
     let bx0 = 1e9;
     let by0 = 1e9;
