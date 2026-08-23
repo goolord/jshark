@@ -7,9 +7,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
-{- | Conway step and render in JShark. Grid buffers use typed byte
-   helpers ('Grid'); pixel blitting uses one minimal 'renderGrid' ffi.
--}
+-- | Conway step and render in JShark. Grid buffers use typed byte
+--    helpers ('Grid'); pixel blitting uses one minimal 'renderGrid' ffi.
 module Engine
   ( initLife
   , stepLife
@@ -21,7 +20,6 @@ module Engine
 where
 
 import Discover (Registry, discoverLife)
-
 import GHC.Generics (Generic)
 import Grid
 import JShark.Api
@@ -104,7 +102,8 @@ maybeDiscover state registry = do
     set @"nextDiscover" state (Math.floor nextOut)
     set @"recentDiscover" state recentOut
 
-stepGeneration :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+stepGeneration ::
+  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 stepGeneration state = do
   w <- pure (number (fromIntegral gridW))
   h <- pure (number (fromIntegral gridH))

@@ -1,10 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Runtime discovery of emergent life forms: connected components of soup
-   cells are hashed, matched against the catalog, or minted with a fresh
-   id, golden-angle hue, and procedural name.
--}
+-- | Runtime discovery of emergent life forms: connected components of soup
+--    cells are hashed, matched against the catalog, or minted with a fresh
+--    id, golden-angle hue, and procedural name.
 module Discover
   ( Registry
   , initRegistry
@@ -39,7 +38,8 @@ discoverLife ::
   -> Expr f 'String
   -> Effect f ('MutableObject ())
 discoverLife alive species palette registry nextId recent =
-  ffi discoverJs
+  ffi
+    discoverJs
     ( arg alive
         <: arg species
         <: arg palette

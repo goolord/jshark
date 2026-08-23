@@ -1,9 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Typed grid buffer and canvas helpers. Byte indexing and ImageData
-   live behind minimal 'ffi' — everything else stays in JShark.
--}
+-- | Typed grid buffer and canvas helpers. Byte indexing and ImageData
+--    live behind minimal 'ffi' — everything else stays in JShark.
 module Grid
   ( ImageData
   , u8Get
@@ -33,7 +32,8 @@ u8Set ::
   -> Expr f 'Number
   -> Effect f 'Unit
 u8Set buf i v =
-  discard $ ffi "((b, i, v) => { b[i] = v; })" (arg buf <: arg i <: arg v <: RecNil)
+  discard $
+    ffi "((b, i, v) => { b[i] = v; })" (arg buf <: arg i <: arg v <: RecNil)
 
 u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
 u8Fill buf v =
@@ -52,9 +52,12 @@ putImageData ::
   -> Expr f ('MutableObject ImageData)
   -> EffectSyntax f (f 'Unit)
 putImageData ctx img = do
-  toSyntax_ $
-    discard $
-      callMethod ctx "putImageData" (arg img <: arg (number 0) <: arg (number 0) <: RecNil)
+  toSyntax_
+    $ discard
+    $ callMethod
+      ctx
+      "putImageData"
+      (arg img <: arg (number 0) <: arg (number 0) <: RecNil)
   done
 
 imageDataBytes ::

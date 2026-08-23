@@ -27,12 +27,12 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
         mempty
       p_ [class_ "help"] $
         "Space to pause. Click to toggle cells. "
-        <> "Emergent soup patterns are scanned every 45 generations: "
-        <> "known shapes inherit catalog hues; novel ones get procedural names and colors."
+          <> "Emergent soup patterns are scanned every 45 generations: "
+          <> "known shapes inherit catalog hues; novel ones get procedural names and colors."
       p_ $
         "A "
-        <> toHtml (T.pack (show (gridW * gridH :: Int)))
-        <> "-cell toroidal universe — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded alongside random soup."
+          <> toHtml (T.pack (show (gridW * gridH :: Int)))
+          <> "-cell toroidal universe — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded alongside random soup."
       div_ [class_ "legend"] $ do
         span_ $ do
           span_ [class_ "swatch swatch--still"] ""

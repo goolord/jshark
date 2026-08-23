@@ -122,10 +122,10 @@ import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
-import Data.List (mapAccumL)
 import Data.Int (Int32)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
+import Data.List (mapAccumL)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
 import Data.Monoid (All (..), Any (..), Sum (..))
@@ -135,10 +135,8 @@ import qualified Data.Text as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
 import Data.Word (Word32)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
-import Unsafe.Coerce (unsafeCoerce)
-import GHC.Word (Word8 (..))
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
-import JShark.Rec
+import GHC.Word (Word8 (..))
 import JShark.Prim
   ( MathBinary (..)
   , MathUnary (..)
@@ -146,6 +144,7 @@ import JShark.Prim
   , matchMathUnary
   )
 import qualified JShark.Prim as Prim
+import JShark.Rec
 import JShark.Types
 import Numeric (readInt, showFFloat, showHex)
 import System.IO.Unsafe (unsafePerformIO)
@@ -157,6 +156,7 @@ import System.Mem.StableName
   )
 import Text.PrettyPrint (Doc, ($$), (<+>))
 import qualified Text.PrettyPrint as P
+import Unsafe.Coerce (unsafeCoerce)
 
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
@@ -445,7 +445,9 @@ jsUint8ArrayLit :: ByteArray -> Doc
 jsUint8ArrayLit ba =
   "new Uint8Array"
     <> P.parens
-      (P.brackets (P.hcat (P.punctuate ", " (map (P.int . fromIntegral) (uint8Elems ba)))))
+      ( P.brackets
+          (P.hcat (P.punctuate ", " (map (P.int . fromIntegral) (uint8Elems ba))))
+      )
 
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
 -- 'Embed' / 'EmbedEff' are typed hole fillers for bind inlining.
@@ -580,7 +582,8 @@ mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
 mergeSort _ [] = pure []
 mergeSort _ [x] = pure [x]
 mergeSort cmp xs = do
-  let (l, r) = splitAt (Prelude.length xs `div` 2) xs
+  let
+    (l, r) = splitAt (Prelude.length xs `div` 2) xs
   ls <- mergeSort cmp l
   rs <- mergeSort cmp r
   mergeByM cmp ls rs
@@ -670,7 +673,8 @@ evalMethod rec = \case
     evalAsArray rec xs $ foldr (\v next -> next >>= \acc -> rec (f acc v)) (pure z0)
   MethToSorted xs f ->
     evalAsArray rec xs $ \vs ->
-      ValueArray <$> sortByM (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
+      ValueArray
+        <$> sortByM (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
   MethFrom n f -> do
     nv <- rec n
     let
@@ -695,7 +699,8 @@ evalFixed rec op args = case (op, args) of
         ValueNumber . Prim.mathUnaryFn n' . unNumber <$> rec x
   (n, ArgsB x y)
     | Just (MathBinary n') <- matchMathBinary n ->
-        ValueNumber <$> (Prim.mathBinaryFn n' <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
+        ValueNumber
+          <$> (Prim.mathBinaryFn n' <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
   (FixArrLen, ArgsU xs) ->
     evalAsArray rec xs $ \vs ->
       pure (ValueNumber (fromIntegral (Prelude.length vs)))
@@ -1223,7 +1228,8 @@ keepExprCont2 t tA tB body f a b
 mapFnBody ::
   forall f.
   (forall v. Expr f v -> Expr f v)
-  -> forall us r. FnBody f us r
+  -> forall us r.
+  FnBody f us r
   -> FnBody f us r
 mapFnBody ge = \case
   JfNil e -> JfNil (ge e)
@@ -1681,10 +1687,9 @@ optimizeEffect :: ClosedEffect u -> Effect Stamp u
 optimizeEffect e = flattenEff (snd (optEffect (-2) e))
 {-# NOINLINE optimizeEffect #-}
 
-{- | Tags step by two, keeping the optimizer on the even negatives.
-Codegen's 'allocTag' owns the odd ones, so neither can name a binder the
-other is counting.
--}
+-- | Tags step by two, keeping the optimizer on the even negatives.
+-- Codegen's 'allocTag' owns the odd ones, so neither can name a binder the
+-- other is counting.
 optStep :: Int
 optStep = 2
 
@@ -1928,7 +1933,8 @@ foldIndex arr idx = case (arr, idx) of
         Literal (vs !! i)
   _ -> Index arr idx
 
-foldFixedUnary :: FixedOp Number 'Unit 'Unit Number -> Expr Stamp 'Number -> Expr Stamp 'Number
+foldFixedUnary ::
+  FixedOp Number 'Unit 'Unit Number -> Expr Stamp 'Number -> Expr Stamp 'Number
 foldFixedUnary n x = case x of
   Literal (ValueNumber a)
     | Just r <- Prim.exactMathUnary n a -> Literal (ValueNumber r)
@@ -1958,28 +1964,40 @@ optFixed ::
 optFixed t0 op args = case (op, args) of
   (n, ArgsU x)
     | Just (MathUnary n') <- matchMathUnary n ->
-        let (t1, x') = optExpr t0 x
-         in (t1, foldFixedUnary n' x')
+        let
+          (t1, x') = optExpr t0 x
+         in
+          (t1, foldFixedUnary n' x')
   (n, ArgsB x y)
     | Just (MathBinary n') <- matchMathBinary n ->
-        let (t1, x') = optExpr t0 x
-            (t2, y') = optExpr t1 y
-         in (t2, foldFixedBinary n' x' y')
+        let
+          (t1, x') = optExpr t0 x
+          (t2, y') = optExpr t1 y
+         in
+          (t2, foldFixedBinary n' x' y')
   (FixArrLen, ArgsU x) ->
-    let (t1, x') = optExpr t0 x
-     in (t1, foldArrLen x')
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldArrLen x')
   (n, ArgsU x) ->
-    let (t1, x') = optExpr t0 x
-     in (t1, expr1 n x')
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, expr1 n x')
   (n, ArgsB x y) ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-     in (t2, expr2 n x' y')
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+     in
+      (t2, expr2 n x' y')
   (n, ArgsT x y z) ->
-    let (t1, x') = optExpr t0 x
-        (t2, y') = optExpr t1 y
-        (t3, z') = optExpr t2 z
-     in (t3, expr3 n x' y' z')
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+      (t3, z') = optExpr t2 z
+     in
+      (t3, expr3 n x' y' z')
 
 optLet ::
   Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (Int, Expr Stamp v)
@@ -3009,12 +3027,15 @@ renderFixed ::
 renderFixed s0 op args = case (op, args) of
   (n, ArgsU x)
     | Just name <- Prim.math1Name n ->
-        let (s1, Code xDecl xRef) = pureAST' s0 x
-         in (s1, Code xDecl ("Math." <> P.text (T.unpack name) <> P.parens xRef))
+        let
+          (s1, Code xDecl xRef) = pureAST' s0 x
+         in
+          (s1, Code xDecl ("Math." <> P.text (T.unpack name) <> P.parens xRef))
   (n, ArgsB x y)
     | Just name <- Prim.math2Name n ->
-        let (s1, Code xDecl xRef) = pureAST' s0 x
-            (s2, Code yDecl yRef) = pureAST' s1 y
+        let
+          (s1, Code xDecl xRef) = pureAST' s0 x
+          (s2, Code yDecl yRef) = pureAST' s1 y
          in
           ( s2
           , Code
@@ -3025,18 +3046,27 @@ renderFixed s0 op args = case (op, args) of
               )
           )
   (n, ArgsU recv) ->
-    let (s1, Code rDecl rRef) = pureAST' s0 recv
-     in (s1, Code rDecl (Prim.fixedUnaryJS n (wrapOperand recv rRef)))
-  (n, ArgsB recv arg) ->
-    let (s1, Code rDecl rRef) = pureAST' s0 recv
-        (s2, Code aDecl aRef) = pureAST' s1 arg
-     in (s2, Code (rDecl $$ aDecl) (Prim.fixedBinaryJS n (wrapOperand recv rRef) aRef))
-  (n, ArgsT recv a b) ->
-    let (s1, Code rDecl rRef) = pureAST' s0 recv
-        (s2, Code aDecl aRef) = pureAST' s1 a
-        (s3, Code bDecl bRef) = pureAST' s2 b
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
      in
-      (s3, Code (rDecl $$ aDecl $$ bDecl) (Prim.fixedTernaryJS n (wrapOperand recv rRef) aRef bRef))
+      (s1, Code rDecl (Prim.fixedUnaryJS n (wrapOperand recv rRef)))
+  (n, ArgsB recv arg) ->
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
+      (s2, Code aDecl aRef) = pureAST' s1 arg
+     in
+      (s2, Code (rDecl $$ aDecl) (Prim.fixedBinaryJS n (wrapOperand recv rRef) aRef))
+  (n, ArgsT recv a b) ->
+    let
+      (s1, Code rDecl rRef) = pureAST' s0 recv
+      (s2, Code aDecl aRef) = pureAST' s1 a
+      (s3, Code bDecl bRef) = pureAST' s2 b
+     in
+      ( s3
+      , Code
+          (rDecl $$ aDecl $$ bDecl)
+          (Prim.fixedTernaryJS n (wrapOperand recv rRef) aRef bRef)
+      )
 
 resultPayloadRef :: Doc -> Doc
 resultPayloadRef r
@@ -3326,7 +3356,11 @@ renderCallbackMethod name s0 recv f =
     (s1, Code rDecl rRef) = pureAST' s0 recv
     (nParam, s2) = allocIdent s1
     (s3, Code exDecl exRef) = pureAST' s2 (f (Name nParam))
-    call = wrapOperand recv rRef <> "." <> P.text name <> P.parens (jsCallback [nDoc nParam] exDecl exRef)
+    call =
+      wrapOperand recv rRef
+        <> "."
+        <> P.text name
+        <> P.parens (jsCallback [nDoc nParam] exDecl exRef)
    in
     (s3, Code rDecl call)
 

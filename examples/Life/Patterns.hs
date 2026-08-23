@@ -2,12 +2,11 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 
-{- | Pattern catalog and species palette for the life demo.
-
-Species @0@ soup; @1–24@ still lifes; @25–44@ oscillators; @45–59@ spaceships;
-@60–69@ methuselah seeds; @70–79@ eaters; @80–89@ misc; @90@ manual;
-@91–255@ runtime discoveries.
--}
+-- | Pattern catalog and species palette for the life demo.
+--
+-- Species @0@ soup; @1–24@ still lifes; @25–44@ oscillators; @45–59@ spaceships;
+-- @60–69@ methuselah seeds; @70–79@ eaters; @80–89@ misc; @90@ manual;
+-- @91–255@ runtime discoveries.
 module Patterns
   ( PatternSpec (..)
   , allPatterns
@@ -24,17 +23,23 @@ import Data.Array.Byte (ByteArray (..))
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
 import Data.Word (Word8)
-import GHC.Exts (Int (I#), newByteArray#, unsafeFreezeByteArray#, writeWord8Array#, (+#))
+import GHC.Exts
+  ( Int (I#)
+  , newByteArray#
+  , unsafeFreezeByteArray#
+  , writeWord8Array#
+  , (+#)
+  )
 import GHC.ST (ST (..))
 import GHC.Word (Word8 (W8#))
 import Types
-  ( gridH
+  ( discoverMin
+  , eaterMax
+  , eaterMin
+  , gridH
   , gridN
   , gridW
   , manualSpecies
-  , discoverMin
-  , eaterMax
-  , eaterMin
   , methuselahMax
   , methuselahMin
   , miscMax
@@ -43,9 +48,9 @@ import Types
   , oscMin
   , shipMax
   , shipMin
+  , soupSpecies
   , stillMax
   , stillMin
-  , soupSpecies
   )
 
 data PatternSpec = PatternSpec
@@ -190,7 +195,8 @@ longBoat :: [(Int, Int)]
 longBoat = [(0, 0), (1, 0), (0, 1), (3, 1), (1, 2), (2, 2), (3, 2)]
 
 mango :: [(Int, Int)]
-mango = [(1, 0), (2, 0), (3, 0), (0, 1), (4, 1), (0, 2), (4, 2), (1, 3), (2, 3), (3, 3)]
+mango =
+  [(1, 0), (2, 0), (3, 0), (0, 1), (4, 1), (0, 2), (4, 2), (1, 3), (2, 3), (3, 3)]
 
 hat :: [(Int, Int)]
 hat = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (3, 2)]
@@ -321,7 +327,8 @@ unix :: [(Int, Int)]
 unix = [(0, 0), (1, 0), (1, 1), (2, 1), (1, 2), (2, 2), (2, 3)]
 
 tumbler :: [(Int, Int)]
-tumbler = [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (1, 2), (2, 2), (3, 2), (1, 3), (2, 3)]
+tumbler =
+  [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (1, 2), (2, 2), (3, 2), (1, 3), (2, 3)]
 
 -- Spaceships ----------------------------------------------------------------
 
@@ -428,7 +435,8 @@ mold :: [(Int, Int)]
 mold = [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (1, 3), (2, 3)]
 
 clock :: [(Int, Int)]
-clock = [(2, 0), (5, 0), (1, 1), (0, 2), (1, 3), (2, 4), (3, 4), (4, 3), (5, 2), (4, 1)]
+clock =
+  [(2, 0), (5, 0), (1, 1), (0, 2), (1, 3), (2, 4), (3, 4), (4, 3), (5, 2), (4, 1)]
 
 quadpole :: [(Int, Int)]
 quadpole = [(0, 0), (1, 0), (2, 0), (3, 0), (5, 0), (6, 0), (7, 0), (8, 0)]
@@ -457,7 +465,19 @@ lwssPerp :: [(Int, Int)]
 lwssPerp = [(0, 1), (0, 4), (1, 0), (2, 0), (2, 4), (3, 0), (3, 1), (3, 2), (3, 3)]
 
 mwssAlt :: [(Int, Int)]
-mwssAlt = [(0, 2), (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (2, 0), (2, 4), (3, 1), (3, 2), (3, 3)]
+mwssAlt =
+  [ (0, 2)
+  , (1, 0)
+  , (1, 1)
+  , (1, 2)
+  , (1, 3)
+  , (1, 4)
+  , (2, 0)
+  , (2, 4)
+  , (3, 1)
+  , (3, 2)
+  , (3, 3)
+  ]
 
 dart :: [(Int, Int)]
 dart = [(0, 2), (1, 0), (1, 1), (1, 2), (2, 2), (2, 3), (3, 3)]
@@ -489,7 +509,20 @@ diehard :: [(Int, Int)]
 diehard = [(6, 1), (0, 2), (1, 2), (2, 2), (2, 3), (6, 5), (7, 5)]
 
 rabbits :: [(Int, Int)]
-rabbits = [(2, 0), (0, 1), (1, 1), (2, 1), (3, 1), (4, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (5, 2)]
+rabbits =
+  [ (2, 0)
+  , (0, 1)
+  , (1, 1)
+  , (2, 1)
+  , (3, 1)
+  , (4, 1)
+  , (0, 2)
+  , (1, 2)
+  , (2, 2)
+  , (3, 2)
+  , (4, 2)
+  , (5, 2)
+  ]
 
 sDiehard :: [(Int, Int)]
 sDiehard = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 2), (2, 2), (3, 2)]

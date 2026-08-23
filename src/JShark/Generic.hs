@@ -282,7 +282,9 @@ data FieldDispatch f u where
   FDExpr :: Expr f u -> FieldDispatch f u
   FDEffect :: Effect f u -> FieldDispatch f u
 
-toFieldLit :: forall k r f u. (KnownSymbol k, Field r k ~ u) => FieldDispatch f u -> FieldLit f r
+toFieldLit ::
+  forall k r f u.
+  (KnownSymbol k, Field r k ~ u) => FieldDispatch f u -> FieldLit f r
 toFieldLit (FDExpr e) = FieldLit @k e
 toFieldLit (FDEffect e) = FieldLitEffect @k e
 
@@ -686,7 +688,9 @@ instance
   GToSum a (C1 ('MetaCons name fx rec) (S1 m (Rec0 t)))
   where
   gtoSum (M1 (M1 (K1 x))) =
-    emitTaggedPayloadDispatch @a (symbolVal (Proxy @name)) (dispatchField @(KindOf t) x)
+    emitTaggedPayloadDispatch @a
+      (symbolVal (Proxy @name))
+      (dispatchField @(KindOf t) x)
 
 instance
   ( KnownSymbol name

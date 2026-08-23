@@ -13,13 +13,12 @@ import BunTests (bunEvalTests)
 import qualified Control.Exception as Ex
 import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
-import ExampleTests (exampleTests)
 import Data.Text (Text)
 import qualified Data.Text as T
+import ExampleTests (exampleTests)
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
-import JShark.Params (Param)
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Classes as C
@@ -30,6 +29,7 @@ import qualified JShark.Generic as G
 import qualified JShark.Json as Json
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
+import JShark.Params (Param)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Regex as Regex
 import qualified JShark.Storage as Storage
@@ -96,7 +96,9 @@ evaluatorTests =
           ValueBool b -> b @?= True
         T.isInfixOf
           "$deepEqual"
-          (T.pack (renderJS (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> a .== b)))))
+          ( T.pack
+              (renderJS (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> a .== b))))
+          )
           @?= True
     , testCase "GetField of FrozenLit evaluates" $
         evaluateNumber
@@ -621,7 +623,13 @@ stdlibTests =
           ValueString s -> s @?= ",1"
     , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
-          js = T.pack (renderJS (pureProgram (toLambda (\(a :: Expr f u) (b :: Expr f u) -> (a .== b) .|| (b .== a)))))
+          js =
+            T.pack
+              ( renderJS
+                  ( pureProgram
+                      (toLambda (\(a :: Expr f u) (b :: Expr f u) -> (a .== b) .|| (b .== a)))
+                  )
+              )
         T.count "const $valueEq" js @?= 1
         T.count "const $arrayEq" js @?= 1
         T.count "const $deepEqual" js @?= 1
@@ -731,56 +739,59 @@ stdlibTests =
           )
           @?= "const n0 = document.getElementById(\"c\").getContext(\"2d\");\n(n0 === null ? \"no\" : \"ok\")"
     , testCase
-        "optionCaseE of getContext plus a large object array tests that context" $ do
-        let
-          people = [Person ("p" <> T.pack (show i)) (fromIntegral i) | i <- [1 .. 15 :: Int]]
-          js =
-            T.pack $
-              renderJS
-                ( effectfulAST
-                    ( fromSyntax $ do
-                        c <- Dom.lookupId (string "c")
-                        ctx <- Canvas.getContext2d c
-                        toSyntax $
-                          Bind ctx $ \o ->
-                            optionCaseE (var o) noOp $ \_ ->
-                              stmts $ do
-                                _ <- toSyntax (G.toObject (Group people))
-                                done
-                    )
-                )
-          jsIdent = T.takeWhile (\c -> c == 'n' || isDigit c)
-          ctxIds =
-            [ i
-            | chunk <- T.splitOn "const " js
-            , T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
-            , let
-                i = jsIdent chunk
-            , not (T.null i)
-            ]
-          nullId =
-            let
-              pre = fst (T.breakOn " === null" js)
-              stem = T.dropWhileEnd (\c -> c == 'n' || isDigit c) pre
-             in
-              T.drop (T.length stem) pre
-          -- `const a = b;` aliases can chain, so follow them rather than
-          -- assuming the null test names the context binding directly.
-          aliasOf i =
-            [ rhs
-            | chunk <- T.splitOn "const " js
-            , let (lhs, rest) = T.breakOn " = " chunk
-            , lhs == i
-            , let rhs = T.takeWhile (/= ';') (T.drop 3 rest)
-            , rhs == jsIdent rhs
-            , not (T.null rhs)
-            ]
-          resolvesToCtx fuel i
-            | i `elem` ctxIds = True
-            | fuel <= (0 :: Int) = False
-            | otherwise = any (resolvesToCtx (fuel - 1)) (aliasOf i)
-        T.isInfixOf "=;" js @?= False
-        (not (null ctxIds) && resolvesToCtx 8 nullId) @?= True
+        "optionCaseE of getContext plus a large object array tests that context"
+        $ do
+          let
+            people = [Person ("p" <> T.pack (show i)) (fromIntegral i) | i <- [1 .. 15 :: Int]]
+            js =
+              T.pack $
+                renderJS
+                  ( effectfulAST
+                      ( fromSyntax $ do
+                          c <- Dom.lookupId (string "c")
+                          ctx <- Canvas.getContext2d c
+                          toSyntax $
+                            Bind ctx $ \o ->
+                              optionCaseE (var o) noOp $ \_ ->
+                                stmts $ do
+                                  _ <- toSyntax (G.toObject (Group people))
+                                  done
+                      )
+                  )
+            jsIdent = T.takeWhile (\c -> c == 'n' || isDigit c)
+            ctxIds =
+              [ i
+              | chunk <- T.splitOn "const " js
+              , T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
+              , let
+                  i = jsIdent chunk
+              , not (T.null i)
+              ]
+            nullId =
+              let
+                pre = fst (T.breakOn " === null" js)
+                stem = T.dropWhileEnd (\c -> c == 'n' || isDigit c) pre
+               in
+                T.drop (T.length stem) pre
+            -- `const a = b;` aliases can chain, so follow them rather than
+            -- assuming the null test names the context binding directly.
+            aliasOf i =
+              [ rhs
+              | chunk <- T.splitOn "const " js
+              , let
+                  (lhs, rest) = T.breakOn " = " chunk
+              , lhs == i
+              , let
+                  rhs = T.takeWhile (/= ';') (T.drop 3 rest)
+              , rhs == jsIdent rhs
+              , not (T.null rhs)
+              ]
+            resolvesToCtx fuel i
+              | i `elem` ctxIds = True
+              | fuel <= (0 :: Int) = False
+              | otherwise = any (resolvesToCtx (fuel - 1)) (aliasOf i)
+          T.isInfixOf "=;" js @?= False
+          (not (null ctxIds) && resolvesToCtx 8 nullId) @?= True
     , testCase "Canvas.fillRect renders a 2D call" $
         renderJS
           ( effectfulAST
@@ -903,7 +914,10 @@ stdlibTests =
         let
           js =
             T.pack $
-              renderJS (pureAST (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b))))
+              renderJS
+                ( pureAST
+                    (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b)))
+                )
         T.count "const $valueEq" js @?= 0
         T.isInfixOf "===" js @?= True
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
@@ -994,7 +1008,13 @@ goodPartsTests =
           (Array.index (Array.arraySlice numArray (number (-1)) (number 2)) (number 0))
           @?= 2
     , testCase "apply2 is curried Apply" $
-        evaluateNumber (apply2 (toLambda (\(x :: Expr f 'Number) (y :: Expr f 'Number) -> x + y)) (number 1) (number 2)) @?= 3
+        evaluateNumber
+          ( apply2
+              (toLambda (\(x :: Expr f 'Number) (y :: Expr f 'Number) -> x + y))
+              (number 1)
+              (number 2)
+          )
+          @?= 3
     , testCase "try_ of two Unit arms still skips the result bind" $
         renderJS (effectfulAST (try_ noOp noOp))
           @?= "try {}\ncatch (n0) {}"
@@ -1071,14 +1091,23 @@ goodPartsTests =
     , testCase "toFn emits a binary function value" $
         renderJS
           ( effectfulAST
-              ( ffi "f" (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b)) <: RecNil)
+              ( ffi
+                  "f"
+                  (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b)) <: RecNil)
               )
           )
           @?= "f(function (n0, n1) {return n0 + n1})"
     , testCase "toFn emits a ternary function value" $
         renderJS
           ( effectfulAST
-              ( ffi "f" (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) (c :: Expr f 'Number) -> a + b + c)) <: RecNil)
+              ( ffi
+                  "f"
+                  ( arg
+                      ( toFn
+                          (\(a :: Expr f 'Number) (b :: Expr f 'Number) (c :: Expr f 'Number) -> a + b + c)
+                      )
+                      <: RecNil
+                  )
               )
           )
           @?= "f(function (n0, n1, n2) {return (n0 + n1) + n2})"
@@ -1321,7 +1350,10 @@ optimizeTests =
     , testCase "top-level do-notation bind chain compiles" $ do
         let
           chain =
-            foldr (\_ k -> toSyntax (ffi "step" RecNil) *> k) (toSyntax noOp) [1 .. 40 :: Int]
+            foldr
+              (\_ k -> toSyntax (ffi "step" RecNil) *> k)
+              (toSyntax noOp)
+              [1 .. 40 :: Int]
         out <- compileEffect readableConfig (fromSyntax chain)
         assertBool "emitted js" (T.length out > 20)
     , testCase "lambda application of a literal folds" $

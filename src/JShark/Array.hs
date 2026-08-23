@@ -145,30 +145,36 @@ groupBy ::
   -> Expr f ('Array ('Object (GroupBy u)))
 groupBy arr keyFn =
   reduce arr (Literal (ValueArray [])) $ \groups x ->
-    let k = keyFn x
+    let
+      k = keyFn x
      in
-      let_ (reduce groups (Literal (ValueBool False)) $ \found g ->
-             Or found (GetField @"key" g .== k)
-           ) $ \found ->
-        if_ found
-          ( map groups $ \g ->
-              if_ (GetField @"key" g .== k)
-                ( FrozenLit
-                    [ FieldLit @"key" k
-                    , FieldLit @"items" (concat (GetField @"items" g) (singleton x))
-                    ]
-                )
-                g
-          )
-          ( concat groups
-              ( singleton
+      let_
+        ( reduce groups (Literal (ValueBool False)) $ \found g ->
+            Or found (GetField @"key" g .== k)
+        )
+        $ \found ->
+          if_
+            found
+            ( map groups $ \g ->
+                if_
+                  (GetField @"key" g .== k)
                   ( FrozenLit
                       [ FieldLit @"key" k
-                      , FieldLit @"items" (singleton x)
+                      , FieldLit @"items" (concat (GetField @"items" g) (singleton x))
                       ]
                   )
-              )
-          )
+                  g
+            )
+            ( concat
+                groups
+                ( singleton
+                    ( FrozenLit
+                        [ FieldLit @"key" k
+                        , FieldLit @"items" (singleton x)
+                        ]
+                    )
+                )
+            )
 
 -- | @zipWith@; result length is 'Math.min'. @Array.from@ over the indices.
 zipWith ::

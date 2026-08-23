@@ -156,7 +156,14 @@ import Data.Text (Text)
 import GHC.TypeLits (KnownSymbol)
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
-import JShark.Params (ToFn (..), ToLambda (..), fnLit, lambdaRow, toFn, toLambda)
+import JShark.Params
+  ( ToFn (..)
+  , ToLambda (..)
+  , fnLit
+  , lambdaRow
+  , toFn
+  , toLambda
+  )
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
 
@@ -190,7 +197,7 @@ ffi :: String -> Rec (Arg f) us -> Effect f v
 ffi s = FFI (classifyFFI s)
 
 classifyFFI :: String -> FFIForm
-classifyFFI s@('(':_) = FFICall s
+classifyFFI s@('(' : _) = FFICall s
 classifyFFI s
   | isUnparenthesizedArrow s = FFILambda s
   | otherwise = FFICall s
@@ -281,13 +288,12 @@ string = Literal . ValueString
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
 
-{- | @new Uint8Array(n)@ — @n@ zeroed bytes.
-
-'uint8Array' is for bytes the host already has; this is for a buffer whose
-size is known but whose contents are not, which is what a JS API filling a
-buffer wants. Allocation has identity: bind it; two occurrences would be
-two arrays. JS can write the object.
--}
+-- | @new Uint8Array(n)@ — @n@ zeroed bytes.
+--
+-- 'uint8Array' is for bytes the host already has; this is for a buffer whose
+-- size is known but whose contents are not, which is what a JS API filling a
+-- buffer wants. Allocation has identity: bind it; two occurrences would be
+-- two arrays. JS can write the object.
 newByteArray ::
   Expr f 'Number -> Effect f 'Uint8Array
 newByteArray n =

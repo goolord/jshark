@@ -31,14 +31,18 @@ import qualified Text.PrettyPrint as P
 
 -- | Witness that a 'FixedOp' is a unary @Math@ op (refines kind indices).
 data MathUnary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where
-  MathUnary :: FixedOp 'Number 'Unit 'Unit 'Number -> MathUnary 'Number 'Unit 'Unit 'Number
+  MathUnary ::
+    FixedOp 'Number 'Unit 'Unit 'Number -> MathUnary 'Number 'Unit 'Unit 'Number
 
 -- | Witness that a 'FixedOp' is a binary @Math@ op (refines kind indices).
 data MathBinary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where
-  MathBinary :: FixedOp 'Number 'Number 'Unit 'Number -> MathBinary 'Number 'Number 'Unit 'Number
+  MathBinary ::
+    FixedOp 'Number 'Number 'Unit 'Number
+    -> MathBinary 'Number 'Number 'Unit 'Number
 
 -- | JS @Math.*@ unary names. Keep in sync with 'matchMathUnary'.
-lookupMathUnary :: FixedOp a b c u -> Maybe (FixedOp 'Number 'Unit 'Unit 'Number, Text)
+lookupMathUnary ::
+  FixedOp a b c u -> Maybe (FixedOp 'Number 'Unit 'Unit 'Number, Text)
 lookupMathUnary = \case
   FixAbs -> Just (FixAbs, "abs")
   FixSign -> Just (FixSign, "sign")
@@ -67,7 +71,8 @@ lookupMathUnary = \case
   _ -> Nothing
 
 -- | JS @Math.*@ binary names. Keep in sync with 'matchMathBinary'.
-lookupMathBinary :: FixedOp a b c u -> Maybe (FixedOp 'Number 'Number 'Unit 'Number, Text)
+lookupMathBinary ::
+  FixedOp a b c u -> Maybe (FixedOp 'Number 'Number 'Unit 'Number, Text)
 lookupMathBinary = \case
   FixPow -> Just (FixPow, "pow")
   FixAtan2 -> Just (FixAtan2, "atan2")
@@ -173,7 +178,8 @@ exactMathUnary n a = case n of
   FixAtanh | a == 0 -> Just 0
   FixSqrt
     | a >= 0
-    , let r = sqrt a
+    , let
+        r = sqrt a
     , r * r == a ->
         Just r
   FixFloor | isFiniteDouble a -> Just (fromIntegral (floor a :: Integer))
@@ -182,7 +188,8 @@ exactMathUnary n a = case n of
   FixTrunc | isFiniteDouble a -> Just (fromIntegral (truncate a :: Integer))
   _ -> Nothing
 
-exactMathBinary :: FixedOp Number Number 'Unit Number -> Double -> Double -> Maybe Double
+exactMathBinary ::
+  FixedOp Number Number 'Unit Number -> Double -> Double -> Maybe Double
 exactMathBinary n a b = case n of
   FixMax | isFiniteDouble a && isFiniteDouble b -> Just (max a b)
   FixMin | isFiniteDouble a && isFiniteDouble b -> Just (min a b)

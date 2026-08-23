@@ -52,10 +52,9 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
     source
     script_ [src_ scriptSrc] ("" :: Html ())
 
-{- | A key. A black key is absolutely positioned, and its offset comes
-from 'blackLeft' rather than the stylesheet, so the layout has one source
-of truth.
--}
+-- | A key. A black key is absolutely positioned, and its offset comes
+-- from 'blackLeft' rather than the stylesheet, so the layout has one source
+-- of truth.
 keyButton :: Key -> Html ()
 keyButton k =
   button_

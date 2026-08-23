@@ -83,7 +83,8 @@ newObject = UnsafeObject "{}"
 field :: forall k r f. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
 field = FieldLit @k
 
-fieldEffect :: forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
+fieldEffect ::
+  forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
 fieldEffect = FieldLitEffect @k
 
 -- | Typed mutable object literal @{k: v, …}@. Identity-sensitive; not cheap to inline.
@@ -106,7 +107,9 @@ delete = DeleteProp
 -- | @Object.prototype.hasOwnProperty.call(o, k)@ — the book's enumeration guard.
 hasOwn :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
 hasOwn o k =
-  FFI (FFICall "Object.prototype.hasOwnProperty.call") (ArgEffect o <: ArgExpr k <: RecNil)
+  FFI
+    (FFICall "Object.prototype.hasOwnProperty.call")
+    (ArgEffect o <: ArgExpr k <: RecNil)
 
 unsafeObject :: Text -> Effect f ('MutableObject a)
 unsafeObject = UnsafeObject

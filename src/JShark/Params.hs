@@ -3,13 +3,13 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Type-level parameter rows for n-ary callbacks.
@@ -132,8 +132,8 @@ instance
 fnLit ::
   forall row r f.
   FnFromRow row (RowUs row) =>
-  (ParamRec f row -> Expr f r) ->
-  Expr f ('Fn (RowUs row) r)
+  (ParamRec f row -> Expr f r)
+  -> Expr f ('Fn (RowUs row) r)
 fnLit k = FnLit (fnFromRow k)
 
 class ToFn k where
@@ -151,8 +151,9 @@ instance forall f a b c. ToFn (Expr f a -> Expr f b -> Expr f c) where
 
 instance forall f a b c d. ToFn (Expr f a -> Expr f b -> Expr f c -> Expr f d) where
   type ToFnBinder (Expr f a -> Expr f b -> Expr f c -> Expr f d) = f
-  type ToFnRow (Expr f a -> Expr f b -> Expr f c -> Expr f d) =
-    '[Param "a" a, Param "b" b, Param "c" c]
+  type
+    ToFnRow (Expr f a -> Expr f b -> Expr f c -> Expr f d) =
+      '[Param "a" a, Param "b" b, Param "c" c]
   type ToFnResult (Expr f a -> Expr f b -> Expr f c -> Expr f d) = d
   toFn g =
     fnLit @('[Param "a" a, Param "b" b, Param "c" c]) (\p -> g p.a p.b p.c)
@@ -164,20 +165,23 @@ class ToLambda k where
 
 instance forall f a b c. ToLambda (Expr f a -> Expr f b -> Expr f c) where
   type ToLambdaBinder (Expr f a -> Expr f b -> Expr f c) = f
-  type ToLambdaResult (Expr f a -> Expr f b -> Expr f c) = 'Function a ('Function b c)
+  type
+    ToLambdaResult (Expr f a -> Expr f b -> Expr f c) =
+      'Function a ('Function b c)
   toLambda g =
     lambdaFromRow @('[Param "a" a, Param "b" b]) (\p -> g p.a p.b)
 
 instance forall f a b c d. ToLambda (Expr f a -> Expr f b -> Expr f c -> Expr f d) where
   type ToLambdaBinder (Expr f a -> Expr f b -> Expr f c -> Expr f d) = f
-  type ToLambdaResult (Expr f a -> Expr f b -> Expr f c -> Expr f d) =
-    'Function a ('Function b ('Function c d))
+  type
+    ToLambdaResult (Expr f a -> Expr f b -> Expr f c -> Expr f d) =
+      'Function a ('Function b ('Function c d))
   toLambda g =
     lambdaFromRow @('[Param "a" a, Param "b" b, Param "c" c]) (\p -> g p.a p.b p.c)
 
 lambdaRow ::
   forall row r fn f.
   LambdaFromRow row r fn =>
-  (ParamRec f row -> Expr f r) ->
-  Expr f fn
+  (ParamRec f row -> Expr f r)
+  -> Expr f fn
 lambdaRow = lambdaFromRow

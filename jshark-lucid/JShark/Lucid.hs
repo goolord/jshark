@@ -236,7 +236,8 @@ build parent name attrs ns = do
   el <- Dom.createElement (string name)
   mapM_ (applyAttribute el) attrs
   -- Attributes first, then modifiers: a dynAttr overrides a static one.
-  let (mods, children) = partitionNodes ns
+  let
+    (mods, children) = partitionNodes ns
   mapM_ (applyModifier el) mods
   mapM_ (renderNode el) children
   void (Dom.appendChild parent el)

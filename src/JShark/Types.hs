@@ -1,7 +1,3 @@
-{-# LANGUAGE PatternSynonyms #-}
--- Suppresses missing sigs on compare pattern synonyms only; GHC 9.14 cannot
--- attach @Comparable@ to bidirectional @GTh@/@LTh@/@GTEq@/@LTEq@ (see 'mkGTh').
-{-# OPTIONS_GHC -Wno-missing-pattern-synonym-signatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
@@ -13,6 +9,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -21,6 +18,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- Suppresses missing sigs on compare pattern synonyms only; GHC 9.14 cannot
+-- attach @Comparable@ to bidirectional @GTh@/@LTh@/@GTEq@/@LTEq@ (see 'mkGTh').
+{-# OPTIONS_GHC -Wno-missing-pattern-synonym-signatures #-}
 
 -- | Two PHOAS syntax trees for a typed subset of JavaScript
 -- (Crockford's Good Parts kernel; binders as in Kmett's PHOAS).
@@ -102,15 +102,15 @@ module JShark.Types
   , jsHelperDeepEqual
   , jsHelperUint8ArrayEq
   , jsEqHelpers
-)
+  )
 where
 
 import Control.Monad (ap, void)
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
-import Data.Typeable (Typeable)
 import Data.Text (Text)
+import Data.Typeable (Typeable)
 import qualified GHC.Exts as Exts
 import GHC.TypeLits
   ( KnownSymbol
@@ -366,8 +366,8 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     --         Haskell functions over this tree, not extra constructors.
   FnLit ::
     forall f (us :: [Universe]) r.
-    FnBody f us r ->
-    Expr f ('Fn us r)
+    FnBody f us r
+    -> Expr f ('Fn us r)
     -- ^ @function(a,b,…){ return … }@ from a row-typed callback ('fnLit' / 'toFn').
     -- Not a nested @'Function@ chain ('toLambda' / 'lambdaRow').
   UnsafeNullable ::
@@ -587,83 +587,83 @@ data Std :: (Universe -> Type) -> Universe -> Type where
 
 pattern Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Plus x y <- Std (Kernel (KPlus x y))
-  where
-    Plus x y = Std (Kernel (KPlus x y))
+ where
+  Plus x y = Std (Kernel (KPlus x y))
 
 pattern Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Times x y <- Std (Kernel (KTimes x y))
-  where
-    Times x y = Std (Kernel (KTimes x y))
+ where
+  Times x y = Std (Kernel (KTimes x y))
 
 pattern Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Minus x y <- Std (Kernel (KMinus x y))
-  where
-    Minus x y = Std (Kernel (KMinus x y))
+ where
+  Minus x y = Std (Kernel (KMinus x y))
 
 pattern Negate :: Expr f 'Number -> Expr f 'Number
 pattern Negate x <- Std (Kernel (KNegate x))
-  where
-    Negate x = Std (Kernel (KNegate x))
+ where
+  Negate x = Std (Kernel (KNegate x))
 
 pattern FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern FracDiv x y <- Std (Kernel (KFracDiv x y))
-  where
-    FracDiv x y = Std (Kernel (KFracDiv x y))
+ where
+  FracDiv x y = Std (Kernel (KFracDiv x y))
 
 pattern Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Rem x y <- Std (Kernel (KRem x y))
-  where
-    Rem x y = Std (Kernel (KRem x y))
+ where
+  Rem x y = Std (Kernel (KRem x y))
 
 pattern BitAnd :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitAnd x y <- Std (Kernel (KBitAnd x y))
-  where
-    BitAnd x y = Std (Kernel (KBitAnd x y))
+ where
+  BitAnd x y = Std (Kernel (KBitAnd x y))
 
 pattern BitOr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitOr x y <- Std (Kernel (KBitOr x y))
-  where
-    BitOr x y = Std (Kernel (KBitOr x y))
+ where
+  BitOr x y = Std (Kernel (KBitOr x y))
 
 pattern BitXor :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitXor x y <- Std (Kernel (KBitXor x y))
-  where
-    BitXor x y = Std (Kernel (KBitXor x y))
+ where
+  BitXor x y = Std (Kernel (KBitXor x y))
 
 pattern Shl :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Shl x y <- Std (Kernel (KShl x y))
-  where
-    Shl x y = Std (Kernel (KShl x y))
+ where
+  Shl x y = Std (Kernel (KShl x y))
 
 pattern Shr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Shr x y <- Std (Kernel (KShr x y))
-  where
-    Shr x y = Std (Kernel (KShr x y))
+ where
+  Shr x y = Std (Kernel (KShr x y))
 
 pattern UShr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern UShr x y <- Std (Kernel (KUShr x y))
-  where
-    UShr x y = Std (Kernel (KUShr x y))
+ where
+  UShr x y = Std (Kernel (KUShr x y))
 
 pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern And x y <- Std (Kernel (KAnd x y))
-  where
-    And x y = Std (Kernel (KAnd x y))
+ where
+  And x y = Std (Kernel (KAnd x y))
 
 pattern Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern Or x y <- Std (Kernel (KOr x y))
-  where
-    Or x y = Std (Kernel (KOr x y))
+ where
+  Or x y = Std (Kernel (KOr x y))
 
 pattern Eq :: Expr f a -> Expr f a -> Expr f 'Bool
 pattern Eq x y <- Std (Kernel (KEq x y))
-  where
-    Eq x y = Std (Kernel (KEq x y))
+ where
+  Eq x y = Std (Kernel (KEq x y))
 
 pattern NEq :: Expr f a -> Expr f a -> Expr f 'Bool
 pattern NEq x y <- Std (Kernel (KNEq x y))
-  where
-    NEq x y = Std (Kernel (KNEq x y))
+ where
+  NEq x y = Std (Kernel (KNEq x y))
 
 -- | Compare helpers carry the 'Comparable' constraint GHC cannot attach to
 -- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
@@ -690,18 +690,18 @@ pattern LTEq x y = Std (Kernel (KLTEq x y))
 
 pattern Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
 pattern Concat x y <- Std (Kernel (KConcat x y))
-  where
-    Concat x y = Std (Kernel (KConcat x y))
+ where
+  Concat x y = Std (Kernel (KConcat x y))
 
 pattern Show :: Expr f a -> Expr f 'String
 pattern Show x <- Std (Kernel (KShow x))
-  where
-    Show x = Std (Kernel (KShow x))
+ where
+  Show x = Std (Kernel (KShow x))
 
 pattern TypeOf :: Expr f a -> Expr f 'String
 pattern TypeOf x <- Std (Kernel (KTypeOf x))
-  where
-    TypeOf x = Std (Kernel (KTypeOf x))
+ where
+  TypeOf x = Std (Kernel (KTypeOf x))
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u

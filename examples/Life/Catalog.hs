@@ -1,9 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Canonical shape hashes for catalog patterns. Used at runtime to
-   recognize emergent soup formations as known taxa before minting novel
-   species ids.
--}
+-- | Canonical shape hashes for catalog patterns. Used at runtime to
+--    recognize emergent soup formations as known taxa before minting novel
+--    species ids.
 module Catalog
   ( shapeHash
   , knownCatalogJson

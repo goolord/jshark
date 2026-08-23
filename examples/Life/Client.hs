@@ -12,8 +12,8 @@ module Client (mainJS) where
 
 import Discover (initRegistry)
 import Engine
-import Grid (createImageData)
 import GHC.Generics (Generic)
+import Grid (createImageData)
 import JShark.Api
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
@@ -44,16 +44,16 @@ boot canvas ctx = do
   ctxH <- hold (expr ctx)
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
-  toSyntax_ $
-    discard $
-      ffi
-        "((canvas, ctx, w, h) => { canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; ctx.imageSmoothingEnabled = false; })"
-        ( ArgEffect canvas
-            <: ArgEffect ctxH
-            <: arg (number canvasW)
-            <: arg (number canvasH)
-            <: RecNil
-        )
+  toSyntax_
+    $ discard
+    $ ffi
+      "((canvas, ctx, w, h) => { canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; ctx.imageSmoothingEnabled = false; })"
+      ( ArgEffect canvas
+          <: ArgEffect ctxH
+          <: arg (number canvasW)
+          <: arg (number canvasH)
+          <: RecNil
+      )
   state <- initLife ctxH
   registry <- initRegistry
   img <- bindExpr =<< createImageData ctxH (number canvasW) (number canvasH)
@@ -77,7 +77,8 @@ wire canvas state = do
       toSyntax $
         stringCaseE
           code
-          [ ( "Space"
+          [
+            ( "Space"
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil

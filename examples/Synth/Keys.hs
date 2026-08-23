@@ -1,9 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | The keyboard: which notes exist, what they sound like, and which
-computer key plays them. Page and Client both read this, so neither
-restates a note name or a frequency.
--}
+-- | The keyboard: which notes exist, what they sound like, and which
+-- computer key plays them. Page and Client both read this, so neither
+-- restates a note name or a frequency.
 module Keys
   ( Key (..)
   , keys
@@ -30,9 +29,8 @@ where
 
 import Data.Text (Text)
 
-{- | One playable note. 'keyChar' is the computer key; 'noteId' doubles as
-the @data-note@ value and the DOM id.
--}
+-- | One playable note. 'keyChar' is the computer key; 'noteId' doubles as
+-- the @data-note@ value and the DOM id.
 data Key = Key
   { noteId :: Text
   , label :: Text
@@ -67,19 +65,18 @@ whiteKeys = filter (not . black) keys
 blackWidth :: Double
 blackWidth = 5.4
 
-{- | Left edge of a black key, percent of the keyboard width.
-
-A black key straddles the boundary after the naturals that precede it.
-Derived from 'keys' so that adding or removing a note cannot leave a
-hand-written offset pointing at the wrong gap.
--}
+-- | Left edge of a black key, percent of the keyboard width.
+--
+-- A black key straddles the boundary after the naturals that precede it.
+-- Derived from 'keys' so that adding or removing a note cannot leave a
+-- hand-written offset pointing at the wrong gap.
 blackLeft :: Key -> Double
 blackLeft k = whitesBefore * whiteWidth - blackWidth / 2
-  where
-    whitesBefore =
-      fromIntegral
-        (length (filter (not . black) (takeWhile ((/= noteId k) . noteId) keys)))
-    whiteWidth = 100 / fromIntegral (length whiteKeys)
+ where
+  whitesBefore =
+    fromIntegral
+      (length (filter (not . black) (takeWhile ((/= noteId k) . noteId) keys)))
+  whiteWidth = 100 / fromIntegral (length whiteKeys)
 
 -- | An oscillator shape offered by the UI.
 data Wave = Wave
@@ -117,18 +114,16 @@ classHeld, classWave :: Text
 classHeld = "held"
 classWave = "wave"
 
-{- | Envelope shape, in seconds. Attack is short enough to feel immediate
-and long enough to avoid a click; 'sustain' is the level a held note
-settles at.
--}
+-- | Envelope shape, in seconds. Attack is short enough to feel immediate
+-- and long enough to avoid a click; 'sustain' is the level a held note
+-- settles at.
 attack :: Double
 attack = 0.012
 
 sustain :: Double
 sustain = 0.22
 
-{- | How far ahead of @currentTime@ a note is scheduled. One frame of
-slack, so an event that lands mid-frame still starts cleanly.
--}
+-- | How far ahead of @currentTime@ a note is scheduled. One frame of
+-- slack, so an event that lands mid-frame still starts cleanly.
 lookahead :: Double
 lookahead = 0.015

@@ -1,17 +1,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RankNTypes #-}
 
-{- | Every example must emit JavaScript that parses.
-
-Compiling the Haskell says nothing about whether the emitted program is
-syntactically valid — a codegen bug can produce a statement like
-@.setAttribute(…)@ with no receiver, and only a browser would notice.
-These cases hand each example's whole program to bun.
-
-The program is wrapped in an arrow function that is never called, so bun
-parses every line without running any of it: no DOM, no audio, no
-listeners. A syntax error anywhere still fails the parse.
--}
+-- | Every example must emit JavaScript that parses.
+--
+-- Compiling the Haskell says nothing about whether the emitted program is
+-- syntactically valid — a codegen bug can produce a statement like
+-- @.setAttribute(…)@ with no receiver, and only a browser would notice.
+-- These cases hand each example's whole program to bun.
+--
+-- The program is wrapped in an arrow function that is never called, so bun
+-- parses every line without running any of it: no DOM, no audio, no
+-- listeners. A syntax error anywhere still fails the parse.
 module ExampleTests (exampleTests) where
 
 import qualified Breakout

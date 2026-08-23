@@ -8,23 +8,22 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
-{- | A polyphonic synthesizer.
-
-The graph is built once; every voice feeds a shared filter, which feeds a
-master gain and an analyser.
-
-@
-osc --> vca --\\
-               filter --> master --> analyser --> speakers
-osc --> vca --/
-@
-
-Handlers only start and release voices. Nothing about the sound is timed
-from JavaScript: pitch and the amplitude envelope are @AudioParam@
-automation, so they run on the audio thread whatever the main thread is
-doing. The only per-frame work is repainting the meter, where a dropped
-frame costs a frame of animation rather than a click in the audio.
--}
+-- | A polyphonic synthesizer.
+--
+-- The graph is built once; every voice feeds a shared filter, which feeds a
+-- master gain and an analyser.
+--
+-- @
+-- osc --> vca --\\
+--                filter --> master --> analyser --> speakers
+-- osc --> vca --/
+-- @
+--
+-- Handlers only start and release voices. Nothing about the sound is timed
+-- from JavaScript: pitch and the amplitude envelope are @AudioParam@
+-- automation, so they run on the audio thread whatever the main thread is
+-- doing. The only per-frame work is repainting the meter, where a dropped
+-- frame costs a frame of animation rather than a click in the audio.
 module Client (mainJS, Settings) where
 
 import qualified Audio
@@ -39,19 +38,17 @@ import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Keys
 
-{- | What the controls hold. Cutoff and resonance are absent on purpose:
-they go straight into the filter when a slider moves, so the graph is
-their state.
--}
+-- | What the controls hold. Cutoff and resonance are absent on purpose:
+-- they go straight into the filter when a slider moves, so the graph is
+-- their state.
 data Settings = Settings
   { wave :: Text
   , release :: Double
   }
   deriving Generic
 
-{- | A DOM event. Its fields are read with 'getProp'', which needs the
-universe pinned, so handlers name this rather than leaving it open.
--}
+-- | A DOM event. Its fields are read with 'getProp'', which needs the
+-- universe pinned, so handlers name this rather than leaving it open.
 type Event f = Expr f ('MutableObject ())
 
 -- | Absence of a note, as the key table reports it.
@@ -74,9 +71,8 @@ whenNoneS ::
   Expr f ('Option u) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenNoneS opt body = toSyntax (optionCaseE opt (discard (stmts body)) (\_ -> noOp))
 
-{- | Which note a computer key plays, or @""@. A switch over the table the
-Haskell side already has, so the mapping cannot drift from 'Keys.keys'.
--}
+-- | Which note a computer key plays, or @""@. A switch over the table the
+-- Haskell side already has, so the mapping cannot drift from 'Keys.keys'.
 noteForKey :: Expr f 'String -> Effect f 'String
 noteForKey k =
   stringCaseE
@@ -91,8 +87,8 @@ freqForNote n =
     n
     [(noteId key, expr (number (hz key))) | key <- keys]
     (expr (number 0))
-  where
-    hz key = 440 * (2 ** ((fromIntegral (midi key) - 69) / 12))
+ where
+  hz key = 440 * (2 ** ((fromIntegral (midi key) - 69) / 12))
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
@@ -124,7 +120,9 @@ mainJS = do
   Audio.connect filt master
   Audio.connect master comp
   Audio.connect comp ana
-  Audio.connect ana (Audio.destination ctx :: Effect f ('MutableObject Audio.Node))
+  Audio.connect
+    ana
+    (Audio.destination ctx :: Effect f ('MutableObject Audio.Node))
   Audio.setValue (Audio.param master "gain") (number 0.8)
   -- Sized to the buffer, so the meter sees the whole spectrum rather than
   -- the bottom of it.
@@ -228,7 +226,8 @@ mainJS = do
     releasePointer :: Event f -> Effect f 'Unit
     releasePointer ev = stmts $ do
       pid <- getProp' ev "pointerId"
-      found <- toSyntax (Audio.dictGet pointers (toString pid) :: Effect f ('Option 'String))
+      found <-
+        toSyntax (Audio.dictGet pointers (toString pid) :: Effect f ('Option 'String))
       whenSomeS (var found) $ \note -> do
         toSyntax_ (Object.delete pointers (toString pid))
         noteOff note
@@ -282,9 +281,8 @@ mainJS = do
     level <- Audio.meanByte spectrum
     setProp meterBar "style.width" (toString (level * number 100) <> string "%")
 
-{- | @el.classList.toggle("on", isChosen)@ — one call per button, no
-branch, so the emitted JS stays flat.
--}
+-- | @el.classList.toggle("on", isChosen)@ — one call per button, no
+-- branch, so the emitted JS stays flat.
 markWave ::
   Text
   -> (Wave, Effect f ('MutableObject Dom.DomElement))

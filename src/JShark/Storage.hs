@@ -32,9 +32,9 @@ getItem ::
   -> Expr f 'String
   -> EffectSyntax f (Expr f ('Option 'String))
 getItem s key =
-  fmap unsafeNullable $
-    bindExpr $
-      callMethod s "getItem" (arg key <: RecNil)
+  fmap unsafeNullable
+    $ bindExpr
+    $ callMethod s "getItem" (arg key <: RecNil)
 
 -- | @storage.setItem(key, value)@
 setItem ::
