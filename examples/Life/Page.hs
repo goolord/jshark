@@ -27,11 +27,12 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
         mempty
       p_ [class_ "help"] $
         "Space to pause. Click to toggle cells. "
-        <> "Blues = still lifes, greens = oscillators, warm = spaceships, pale = manual edits."
+        <> "Emergent soup patterns are scanned every 45 generations: "
+        <> "known shapes inherit catalog hues; novel ones get procedural names and colors."
       p_ $
         "A "
         <> toHtml (T.pack (show (gridW * gridH :: Int)))
-        <> "-cell toroidal universe seeded with random soup plus stamped still lifes, oscillators, and spaceships — each pattern type gets its own hue."
+        <> "-cell toroidal universe — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded alongside random soup."
       div_ [class_ "legend"] $ do
         span_ $ do
           span_ [class_ "swatch swatch--still"] ""
@@ -43,10 +44,22 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
           span_ [class_ "swatch swatch--ship"] ""
           "Spaceships"
         span_ $ do
+          span_ [class_ "swatch swatch--meth"] ""
+          "Methuselahs"
+        span_ $ do
+          span_ [class_ "swatch swatch--eater"] ""
+          "Eaters"
+        span_ $ do
+          span_ [class_ "swatch swatch--misc"] ""
+          "Misc"
+        span_ $ do
           span_ [class_ "swatch swatch--soup"] ""
-          "Random soup"
+          "Soup"
         span_ $ do
           span_ [class_ "swatch swatch--manual"] ""
-          "Manual edits"
+          "Manual"
+        span_ $ do
+          span_ [class_ "swatch swatch--discover"] ""
+          "Discovered"
     source
     script_ [src_ scriptSrc] ("" :: Html ())

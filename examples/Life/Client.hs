@@ -10,6 +10,7 @@
 
 module Client (mainJS) where
 
+import Discover (initRegistry)
 import Engine
 import Grid (createImageData)
 import GHC.Generics (Generic)
@@ -54,13 +55,14 @@ boot canvas ctx = do
             <: RecNil
         )
   state <- initLife ctxH
+  registry <- initRegistry
   img <- bindExpr =<< createImageData ctxH (number canvasW) (number canvasH)
   meter <- hold (G.toObject (Fps (-1) 0))
   wire canvas state
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
-    whenS (not_ paused) (stepLife state)
+    whenS (not_ paused) (stepLife state registry)
     renderLife ctxH img state
     paintHud ctxH state meter
 
@@ -106,6 +108,7 @@ paintHud ctx state meter = do
   gen <- state.gen
   pop <- state.pop
   paused <- state.paused
+  recent <- state.recentDiscover
   fpsN <- meter.fps
   set @"font" ctx (string "15px Georgia")
   fill ctx (string ink)
@@ -124,6 +127,13 @@ paintHud ctx state meter = do
     (Canvas.fillText ctx (string "paused") (number (canvasW - 8)) 18)
     (Canvas.fillText ctx (string "running") (number (canvasW - 8)) 18)
   set @"textAlign" ctx (string "left")
+  set @"font" ctx (string "13px Georgia")
+  _ <-
+    Canvas.fillText
+      ctx
+      (string "Discovered: " <> recent)
+      8
+      (number canvasH - 6)
   done
 
 tickFps ::

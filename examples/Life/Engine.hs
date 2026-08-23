@@ -13,11 +13,14 @@
 module Engine
   ( initLife
   , stepLife
+  , maybeDiscover
   , renderLife
   , togglePause
   , flipCell
   )
 where
+
+import Discover (Registry, discoverLife)
 
 import GHC.Generics (Generic)
 import Grid
@@ -32,6 +35,8 @@ import Types
   ( LifeState
   , canvasW
   , cellPx
+  , discoverEvery
+  , discoverMin
   , gridH
   , gridN
   , gridW
@@ -69,10 +74,35 @@ initLife _ctx = do
   set @"palette" state (uint8Array paletteBytes)
   set @"rows" state =<< bindExpr rowsE
   set @"cols" state =<< bindExpr colsE
+  set @"nextDiscover" state (fromIntegral discoverMin)
+  set @"recentDiscover" state (string "")
   pure state
 
-stepLife :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
-stepLife state = stepGeneration state
+stepLife ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Registry)
+  -> EffectSyntax f (f 'Unit)
+stepLife state registry = do
+  stepGeneration state
+  maybeDiscover state registry
+
+maybeDiscover ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Registry)
+  -> EffectSyntax f (f 'Unit)
+maybeDiscover state registry = do
+  gen <- state.gen
+  whenS (rem_ gen (number (fromIntegral discoverEvery)) .== 0) $ do
+    alive <- state.alive
+    species <- state.species
+    pal <- state.palette
+    nextD <- state.nextDiscover
+    recentD <- state.recentDiscover
+    result <- bindExpr $ discoverLife alive species pal registry nextD recentD
+    nextOut <- getProp' result "nextId"
+    recentOut <- getProp' result "recent"
+    set @"nextDiscover" state (Math.floor nextOut)
+    set @"recentDiscover" state recentOut
 
 stepGeneration :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 stepGeneration state = do

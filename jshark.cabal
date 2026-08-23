@@ -169,7 +169,9 @@ library life
   exposed-modules:
     Life
   other-modules:
+    Catalog
     Client
+    Discover
     Engine
     Grid
     Page

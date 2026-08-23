@@ -10,7 +10,23 @@ module Types
   , canvasW
   , canvasH
   , ink
+  , soupSpecies
+  , stillMin
+  , stillMax
+  , oscMin
+  , oscMax
+  , shipMin
+  , shipMax
+  , methuselahMin
+  , methuselahMax
+  , eaterMin
+  , eaterMax
+  , miscMin
+  , miscMax
   , manualSpecies
+  , discoverMin
+  , discoverMax
+  , discoverEvery
   , LifeState (..)
   )
 where
@@ -37,8 +53,42 @@ canvasH = fromIntegral (gridH * cellPx)
 ink :: Text
 ink = "#e2e8f0"
 
+soupSpecies :: Int
+soupSpecies = 0
+
+stillMin, stillMax :: Int
+stillMin = 1
+stillMax = 24
+
+oscMin, oscMax :: Int
+oscMin = 25
+oscMax = 44
+
+shipMin, shipMax :: Int
+shipMin = 45
+shipMax = 59
+
+methuselahMin, methuselahMax :: Int
+methuselahMin = 60
+methuselahMax = 69
+
+eaterMin, eaterMax :: Int
+eaterMin = 70
+eaterMax = 79
+
+miscMin, miscMax :: Int
+miscMin = 80
+miscMax = 89
+
 manualSpecies :: Int
-manualSpecies = 31
+manualSpecies = 90
+
+discoverMin, discoverMax :: Int
+discoverMin = 91
+discoverMax = 255
+
+discoverEvery :: Int
+discoverEvery = 45
 
 data LifeState = LifeState
   { gen :: Int
@@ -52,5 +102,7 @@ data LifeState = LifeState
   , palette :: ByteArray
   , rows :: [Double]
   , cols :: [Double]
+  , nextDiscover :: Int
+  , recentDiscover :: Text
   }
   deriving Generic

@@ -91,3 +91,19 @@ a {
 .swatch--manual {
   background: hsl(280, 45%, 68%);
 }
+
+.swatch--meth {
+  background: hsl(175, 55%, 50%);
+}
+
+.swatch--eater {
+  background: hsl(35, 60%, 52%);
+}
+
+.swatch--misc {
+  background: hsl(52, 58%, 54%);
+}
+
+.swatch--discover {
+  background: hsl(137, 62%, 56%);
+}
