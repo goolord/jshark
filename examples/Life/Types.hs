@@ -9,6 +9,10 @@ module Types
   , gridN
   , canvasW
   , canvasH
+  , canvasBgR
+  , canvasBgG
+  , canvasBgB
+  , canvasBgA
   , seedOx
   , seedOy
   , seedW
@@ -72,6 +76,13 @@ gridN = gridW * gridH
 canvasW, canvasH :: Double
 canvasW = 768
 canvasH = 576
+
+-- | Canvas clear color (#0f172a).
+canvasBgR, canvasBgG, canvasBgB, canvasBgA :: Int
+canvasBgR = 15
+canvasBgG = 23
+canvasBgB = 42
+canvasBgA = 255
 
 -- | Initial soup and catalog stamps land in this central region.
 seedW, seedH :: Int
@@ -183,5 +194,8 @@ data LifeState = LifeState
   , boundY1 :: Int
   , nextDiscover :: Int
   , recentDiscover :: Text
+  , discoverVisited :: ByteArray
+  , discoverStackX :: ByteArray
+  , discoverStackY :: ByteArray
   }
   deriving Generic

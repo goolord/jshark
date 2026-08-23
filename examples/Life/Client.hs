@@ -655,7 +655,11 @@ tickIndex state registry tracker seen listEl now = do
   alive <- state.alive
   species <- state.species
   pal <- state.palette
-  stepIndexTracker alive species pal registry tracker seen listEl now
+  liveX0 <- state.boundX0
+  liveY0 <- state.boundY0
+  liveX1 <- state.boundX1
+  liveY1 <- state.boundY1
+  stepIndexTracker alive species pal registry tracker seen listEl now liveX0 liveY0 liveX1 liveY1
 
 fill ::
   Effect f ('MutableObject Canvas.Context2D)

@@ -43,8 +43,9 @@ module JShark.Api
   , u8Index
   , u8Set
   , u8Fill
+  , u8FillRegion
   , u8Len
-  , clearRgbaImageData
+  , fillRgbaImageData
 
     -- * Variables and lifting
   , var
@@ -357,14 +358,20 @@ seedLiveCells alive species cells =
         <: RecNil
     )
 
--- | Fill an @ImageData.data@ buffer with opaque @#0f172a@.
-clearRgbaImageData :: Expr f 'Uint8Array -> Effect f 'Unit
-clearRgbaImageData pixels =
+-- | Fill every RGBA pixel in an @ImageData.data@ buffer.
+fillRgbaImageData ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+fillRgbaImageData pixels r g b a =
   FFI
     ( FFILambda
-        "(p)=>{for(let i=0;i<p.length;i+=4){p[i]=15;p[i+1]=23;p[i+2]=42;p[i+3]=255}}"
+        "(p,r,g,b,a)=>{for(let i=0;i<p.length;i+=4){p[i]=r;p[i+1]=g;p[i+2]=b;p[i+3]=a;}}"
     )
-    (arg pixels <: RecNil)
+    (arg pixels <: arg r <: arg g <: arg b <: arg a <: RecNil)
 
 -- | Random soup in a rectangular region. Matches 'Patterns.seedCell' LCG (@20%@
 -- live, species untouched — caller should stamp catalog ids afterward).
@@ -410,6 +417,22 @@ u8Set = U8Set
 
 u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
 u8Fill = U8Fill
+
+-- | Zero a rectangular region of a row-major @Uint8Array@ (@y * gridW + x@).
+-- Half-open intervals: @x0 <= x < x1@, @y0 <= y < y1@.
+u8FillRegion ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+u8FillRegion buf gridW x0 y0 x1 y1 val =
+  forRange y0 y1 $ \y ->
+    forRange x0 x1 $ \x ->
+      u8Set buf (y * gridW + x) val
 
 u8Len :: Expr f 'Uint8Array -> Expr f 'Number
 u8Len = expr1 FixU8Len

@@ -22,6 +22,7 @@ module Grid
   , renderGridViewport
   , cellIdx
   , inBounds
+  , clampLiveBounds
   )
 where
 
@@ -31,6 +32,7 @@ import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf, toObject)
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
+import Types (canvasBgA, canvasBgB, canvasBgG, canvasBgR)
 
 data ImageData
 
@@ -87,6 +89,30 @@ imageDataBytes ::
   Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
 imageDataBytes img = getProp (expr img) "data"
 
+-- | Half-open scan range @\[xStart, xStop) × \[yStart, yStop)@ clamped to the grid.
+-- @margin@ expands live bounds (use @1@ for step/discovery halos).
+clampLiveBounds ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> ( Expr f 'Number
+     , Expr f 'Number
+     , Expr f 'Number
+     , Expr f 'Number
+     )
+clampLiveBounds w h x0 y0 x1 y1 margin =
+  let
+    xStart = Math.max (number 0) (x0 - margin)
+    yStart = Math.max (number 0) (y0 - margin)
+    xEnd = Math.min (w - number 1) (x1 + margin)
+    yEnd = Math.min (h - number 1) (y1 + margin)
+   in
+    (xStart, yStart, xEnd + number 1, yEnd + number 1)
+
 stepGrid ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -101,8 +127,22 @@ stepGrid ::
   -> Effect f (MutableObjectOf BoundScratch)
   -> EffectSyntax f (Expr f 'Number)
 stepGrid alive species nextAlive nextSpecies w h x0 y0 x1 y1 boundScratch = do
-  toSyntax (u8Fill nextAlive (number 0))
-  toSyntax (u8Fill nextSpecies (number 0))
+  let
+    (xStart, yStart, xStop, yStop) =
+      clampLiveBounds w h x0 y0 x1 y1 (number 1)
+    regionCells = (xStop - xStart) * (yStop - yStart)
+  ifS
+    (regionCells .> (w * h) / number 2)
+    ( do
+        toSyntax_ (u8Fill nextAlive (number 0))
+        toSyntax_ (u8Fill nextSpecies (number 0))
+        done
+    )
+    ( do
+        toSyntax_ (u8FillRegion nextAlive w xStart yStart xStop yStop (number 0))
+        toSyntax_ (u8FillRegion nextSpecies w xStart yStart xStop yStop (number 0))
+        done
+    )
   set @"bx0" boundScratch (number 1e9)
   set @"by0" boundScratch (number 1e9)
   set @"bx1" boundScratch (number (-1))
@@ -111,13 +151,8 @@ stepGrid alive species nextAlive nextSpecies w h x0 y0 x1 y1 boundScratch = do
   touchedBuf <- bindExpr (newByteArray (number 8))
   popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
   cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-  let
-    xStart = Math.max (number 0) (x0 - number 1)
-    yStart = Math.max (number 0) (y0 - number 1)
-    xEnd = Math.min (w - number 1) (x1 + number 1)
-    yEnd = Math.min (h - number 1) (y1 + number 1)
-  forRange_ yStart (yEnd + number 1) $ \y ->
-    forRange_ xStart (xEnd + number 1) $ \x ->
+  forRange_ yStart yStop $ \y ->
+    forRange_ xStart xStop $ \x ->
       processCell
         alive
         species
@@ -314,7 +349,14 @@ renderGridViewport ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 renderGridViewport pixels alive species pal w h px cw ch panX panY zoom boundX0 boundY0 boundX1 boundY1 = do
-  toSyntax_ (clearRgbaImageData pixels)
+  toSyntax_
+    ( fillRgbaImageData
+        pixels
+        (number (fromIntegral canvasBgR))
+        (number (fromIntegral canvasBgG))
+        (number (fromIntegral canvasBgB))
+        (number (fromIntegral canvasBgA))
+    )
   whenS (boundX1 .>= boundX0) $ do
     let
       cellDraw = Math.max (number 1) (Math.floor (px * zoom))

@@ -25,7 +25,7 @@ where
 
 import Catalog (catalogNamesJson, knownCatalogJson)
 import GHC.Generics (Generic)
-import Grid (cellIdx, setU8, u8Get)
+import Grid (cellIdx, clampLiveBounds, setU8, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
@@ -48,7 +48,6 @@ import Names (lookupDisplayName)
 import Types
   ( discoverMax
   , gridH
-  , gridN
   , gridW
   , indexRefreshMs
   , lifeTypesListId
@@ -144,16 +143,20 @@ discoverLife ::
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Effect f ('MutableObject Registry)
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f ('Array 'Number))
-discoverLife alive species palette registry nextId0 = do
+discoverLife alive species palette registry visited stackX stackY w0 x0 y0 x1 y1 nextId0 = do
+  toSyntax_ (u8Fill visited (number 0))
   let
-    w0 = number (fromIntegral gridW)
     h0 = number (fromIntegral gridH)
-    n = number (fromIntegral gridN)
-  visited <- bindExpr (newByteArray n)
-  stackX <- bindExpr (newByteArray n)
-  stackY <- bindExpr (newByteArray n)
   minted <- bindExpr $ Array.fromEffects []
   scratch <- hold (newRecord @DiscoverScratch)
   set @"nextId" scratch nextId0
@@ -174,15 +177,20 @@ discoverLife alive species palette registry nextId0 = do
   _ <- setProp scratch "stackX" stackX
   _ <- setProp scratch "stackY" stackY
   _ <- setProp scratch "minted" minted
-  forRange_ (number 0) h0 $ \y ->
-    forRange_ (number 0) w0 $ \x -> do
-      let
-        i = cellIdx w0 x y
-      a <- u8Get alive i
-      vis <- u8Get visited i
-      sp <- u8Get species i
-      whenS (a .== 1 .&& vis .== 0 .&& sp .== 0) $
-        floodComponent scratch i x y
+  -- Margin 1 so unlabeled seeds on the live-bounds halo still flood in.
+  let
+    (ix0, iy0, ixStop, iyStop) =
+      clampLiveBounds w0 h0 x0 y0 x1 y1 (number 1)
+  whenS (ixStop .> ix0 .&& iyStop .> iy0) $
+    forRange_ iy0 iyStop $ \y ->
+      forRange_ ix0 ixStop $ \x -> do
+        let
+          i = cellIdx w0 x y
+        a <- u8Get alive i
+        vis <- u8Get visited i
+        sp <- u8Get species i
+        whenS (a .== 1 .&& vis .== 0 .&& sp .== 0) $
+          floodComponent scratch i x y
   nid <- scratch.nextId
   pure (nid, minted)
 
@@ -428,24 +436,36 @@ stepIndexTracker ::
   -> Effect f ('Set Number)
   -> Effect f ('MutableObject Dom.DomElement)
   -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-stepIndexTracker alive species palette registry tracker seen container now = do
+stepIndexTracker alive species palette registry tracker seen container now x0 y0 x1 y1 = do
   pending <- getProp tracker "pending"
   lastMs <- getProp tracker "lastMs"
   let
     refresh = number (fromIntegral indexRefreshMs)
+    w0 = number (fromIntegral gridW)
+    h0 = number (fromIntegral gridH)
+    (ix0, iy0, ixStop, iyStop) =
+      clampLiveBounds w0 h0 x0 y0 x1 y1 (number 0)
   whenS
     (not_ pending .&& (lastMs .== 0 .|| now - lastMs .>= refresh))
     ( do
         _ <- setProp tracker "lastMs" now
         _ <- setProp tracker "pending" true_
         counts <- bindExpr (newByteArray (number 512))
-        forRange_ (number 0) (u8Len alive) $ \i -> do
-          a <- u8Get alive i
-          whenS (a .== 1) $ do
-            sid <- u8Get species i
-            incCount counts sid
-            Set.insert seen sid
+        whenS (ixStop .> ix0 .&& iyStop .> iy0) $
+          forRange_ iy0 iyStop $ \y ->
+            forRange_ ix0 ixStop $ \x -> do
+              let
+                i = cellIdx w0 x y
+              a <- u8Get alive i
+              whenS (a .== 1) $ do
+                sid <- u8Get species i
+                incCount counts sid
+                Set.insert seen sid
         _ <-
           Timers.setTimeout
             ( \_ ->

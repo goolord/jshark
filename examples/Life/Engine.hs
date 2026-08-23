@@ -98,6 +98,12 @@ initLife _ctx = do
   set @"boundY0" state (fromIntegral initialBoundY0)
   set @"boundX1" state (fromIntegral initialBoundX1)
   set @"boundY1" state (fromIntegral initialBoundY1)
+  discoverVisited <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  discoverStackX <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  discoverStackY <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  set @"discoverVisited" state discoverVisited
+  set @"discoverStackX" state discoverStackX
+  set @"discoverStackY" state discoverStackY
   pure state
 
 stepLife ::
@@ -118,8 +124,29 @@ maybeDiscover state registry = do
     alive <- state.alive
     species <- state.species
     pal <- state.palette
+    visited <- state.discoverVisited
+    stackX <- state.discoverStackX
+    stackY <- state.discoverStackY
+    liveX0 <- state.boundX0
+    liveY0 <- state.boundY0
+    liveX1 <- state.boundX1
+    liveY1 <- state.boundY1
     nextD <- state.nextDiscover
-    (nextOut, mintedArr) <- discoverLife alive species pal registry nextD
+    (nextOut, mintedArr) <-
+      discoverLife
+        alive
+        species
+        pal
+        registry
+        visited
+        stackX
+        stackY
+        (number (fromIntegral gridW))
+        liveX0
+        liveY0
+        liveX1
+        liveY1
+        nextD
     set @"nextDiscover" state (Math.floor nextOut)
     _ <- refreshTakenNames registry
     forRange_ (number 0) (Array.length mintedArr) $ \i -> do

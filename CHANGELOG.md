@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* `fillRgbaImageData` replaces `clearRgbaImageData` (parameterized RGBA fill for
+  `ImageData.data` buffers). `u8FillRegion` clears a rectangular slice of a
+  row-major `Uint8Array` via `forRange` + `u8Set`.
+
 * `'Uint8Array`. Host `ByteArray` (base) via `ToJS` / `ToValue` /
   `uint8Array`. Literals emit `new Uint8Array([…])`. A runtime-sized
   buffer is `newByteArray n` (`ffi` → `new Uint8Array(n)`), not a
