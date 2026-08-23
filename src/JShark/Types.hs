@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+{-# OPTIONS_GHC -Wno-missing-pattern-synonym-signatures #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
@@ -47,6 +49,30 @@ module JShark.Types
   , Expr (..)
   , FnBody (..)
   , Std (..)
+  , Kernel (..)
+  , data Plus
+  , data Times
+  , data Minus
+  , data Negate
+  , data FracDiv
+  , data Rem
+  , data BitAnd
+  , data BitOr
+  , data BitXor
+  , data Shl
+  , data Shr
+  , data UShr
+  , data And
+  , data Or
+  , data Eq
+  , data NEq
+  , data GTh
+  , data LTh
+  , data GTEq
+  , data LTEq
+  , data Concat
+  , data Show
+  , data TypeOf
   , FixedOp (..)
   , FixedArgs (..)
   , Method (..)
@@ -274,114 +300,6 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     Value u
     -> Expr f u
     -- ^ A literal value. eg. 1, "foo", etc
-  Concat ::
-    Expr f 'String
-    -> Expr f 'String
-    -> Expr f 'String
-    -- ^ String concatenation: @+@
-  Plus ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Addition: @+@
-  Times ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Multiplication: @*@
-  Minus ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Subtraction: @-@
-  Negate ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @-(x)@
-  FracDiv ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Division: @/@
-  Rem ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ Remainder: @%@ (JS, not floor-mod)
-  BitAnd ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @&@ after ToInt32
-  BitOr ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @|@
-  BitXor ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @^@
-  Shl ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @<<@
-  Shr ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @>>@
-  UShr ::
-    Expr f 'Number
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ @>>>@
-  And ::
-    Expr f 'Bool
-    -> Expr f 'Bool
-    -> Expr f 'Bool
-    -- ^ @&&@
-  Or ::
-    Expr f 'Bool
-    -> Expr f 'Bool
-    -> Expr f 'Bool
-    -- ^ @||@
-  Eq ::
-    Expr f a
-    -> Expr f a
-    -> Expr f 'Bool
-    -- ^ Strict equality: @===@ (never @==@)
-  NEq ::
-    Expr f a
-    -> Expr f a
-    -> Expr f 'Bool
-    -- ^ Strict inequality: @!==@ (never @!=@)
-  GTh ::
-    Comparable a =>
-    Expr f a
-    -> Expr f a
-    -> Expr f 'Bool
-    -- ^ @>@ (numbers, strings, bools — not objects)
-  LTh ::
-    Comparable a =>
-    Expr f a
-    -> Expr f a
-    -> Expr f 'Bool
-    -- ^ @<@
-  GTEq ::
-    Comparable a =>
-    Expr f a
-    -> Expr f a
-    -> Expr f 'Bool
-    -- ^ @>=@
-  LTEq ::
-    Comparable a =>
-    Expr f a
-    -> Expr f a
-    -> Expr f 'Bool
-    -- ^ @<=@
   Let ::
     Expr f u
     -> (f u -> Expr f v)
@@ -398,14 +316,6 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f ('Function u v)
     -- ^ Weak PHOAS lambda: binder is @f u@
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
-  Show ::
-    Expr f u
-    -> Expr f 'String
-    -- ^ @String(x)@
-  TypeOf ::
-    Expr f u
-    -> Expr f 'String
-    -- ^ @typeof x@ (closed name; @null@ is @\"object\"@)
   Var ::
     f u
     -> Expr f u
@@ -571,6 +481,74 @@ data Method :: (Universe -> Type) -> Universe -> Type where
     -> (f 'Number -> Expr f a)
     -> Method f ('Array a)
 
+-- | Good Parts kernel operators (@+@, @===@, @&&@, …).
+data Kernel :: (Universe -> Type) -> Universe -> Type where
+  KConcat ::
+    Expr f 'String
+    -> Expr f 'String
+    -> Kernel f 'String
+  KPlus ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KTimes ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KMinus ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KNegate :: Expr f 'Number -> Kernel f 'Number
+  KFracDiv ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KRem ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KBitAnd ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KBitOr ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KBitXor ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KShl ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KShr ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KUShr ::
+    Expr f 'Number
+    -> Expr f 'Number
+    -> Kernel f 'Number
+  KAnd ::
+    Expr f 'Bool
+    -> Expr f 'Bool
+    -> Kernel f 'Bool
+  KOr ::
+    Expr f 'Bool
+    -> Expr f 'Bool
+    -> Kernel f 'Bool
+  KEq :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KNEq :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KGTh :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KLTh :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KGTEq :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KLTEq :: Expr f a -> Expr f a -> Kernel f 'Bool
+  KShow :: Expr f a -> Kernel f 'String
+  KTypeOf :: Expr f a -> Kernel f 'String
+
 -- | Pure JS standard library, applied. One 'Expr' constructor ('Std')
 -- holds this sum — not a constructor per method.
 data Std :: (Universe -> Type) -> Universe -> Type where
@@ -581,6 +559,112 @@ data Std :: (Universe -> Type) -> Universe -> Type where
   Method ::
     Method f u
     -> Std f u
+  Kernel ::
+    Kernel f u
+    -> Std f u
+
+pattern Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern Plus x y <- Std (Kernel (KPlus x y))
+  where
+    Plus x y = Std (Kernel (KPlus x y))
+
+pattern Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern Times x y <- Std (Kernel (KTimes x y))
+  where
+    Times x y = Std (Kernel (KTimes x y))
+
+pattern Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern Minus x y <- Std (Kernel (KMinus x y))
+  where
+    Minus x y = Std (Kernel (KMinus x y))
+
+pattern Negate :: Expr f 'Number -> Expr f 'Number
+pattern Negate x <- Std (Kernel (KNegate x))
+  where
+    Negate x = Std (Kernel (KNegate x))
+
+pattern FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern FracDiv x y <- Std (Kernel (KFracDiv x y))
+  where
+    FracDiv x y = Std (Kernel (KFracDiv x y))
+
+pattern Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern Rem x y <- Std (Kernel (KRem x y))
+  where
+    Rem x y = Std (Kernel (KRem x y))
+
+pattern BitAnd :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern BitAnd x y <- Std (Kernel (KBitAnd x y))
+  where
+    BitAnd x y = Std (Kernel (KBitAnd x y))
+
+pattern BitOr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern BitOr x y <- Std (Kernel (KBitOr x y))
+  where
+    BitOr x y = Std (Kernel (KBitOr x y))
+
+pattern BitXor :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern BitXor x y <- Std (Kernel (KBitXor x y))
+  where
+    BitXor x y = Std (Kernel (KBitXor x y))
+
+pattern Shl :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern Shl x y <- Std (Kernel (KShl x y))
+  where
+    Shl x y = Std (Kernel (KShl x y))
+
+pattern Shr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern Shr x y <- Std (Kernel (KShr x y))
+  where
+    Shr x y = Std (Kernel (KShr x y))
+
+pattern UShr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+pattern UShr x y <- Std (Kernel (KUShr x y))
+  where
+    UShr x y = Std (Kernel (KUShr x y))
+
+pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+pattern And x y <- Std (Kernel (KAnd x y))
+  where
+    And x y = Std (Kernel (KAnd x y))
+
+pattern Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+pattern Or x y <- Std (Kernel (KOr x y))
+  where
+    Or x y = Std (Kernel (KOr x y))
+
+pattern Eq :: Expr f a -> Expr f a -> Expr f 'Bool
+pattern Eq x y <- Std (Kernel (KEq x y))
+  where
+    Eq x y = Std (Kernel (KEq x y))
+
+pattern NEq :: Expr f a -> Expr f a -> Expr f 'Bool
+pattern NEq x y <- Std (Kernel (KNEq x y))
+  where
+    NEq x y = Std (Kernel (KNEq x y))
+
+pattern GTh x y = Std (Kernel (KGTh x y))
+
+pattern LTh x y = Std (Kernel (KLTh x y))
+
+pattern GTEq x y = Std (Kernel (KGTEq x y))
+
+pattern LTEq x y = Std (Kernel (KLTEq x y))
+
+pattern Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
+pattern Concat x y <- Std (Kernel (KConcat x y))
+  where
+    Concat x y = Std (Kernel (KConcat x y))
+
+pattern Show :: Expr f a -> Expr f 'String
+pattern Show x <- Std (Kernel (KShow x))
+  where
+    Show x = Std (Kernel (KShow x))
+
+pattern TypeOf :: Expr f a -> Expr f 'String
+pattern TypeOf x <- Std (Kernel (KTypeOf x))
+  where
+    TypeOf x = Std (Kernel (KTypeOf x))
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u

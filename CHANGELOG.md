@@ -26,6 +26,10 @@
   HO array stdlib (`Map`, `Filter`, `Reduce`, `ToSorted`, `From`) unified
   under `Std (Method …)` with shared `evalMethod` / `optMethod` /
   `renderMethod` dispatch.
+  Good Parts kernel operators (`+`, `===`, `&&`, `typeof`, …) unified under
+  `Std (Kernel …)` with shared `evalKernel` / `optKernel` / `renderKernel`
+  dispatch; bidirectional pattern synonyms (`Plus`, `Eq`, …) preserve the
+  public surface and `Num` instances.
   `FFIForm`
   tags lambda vs call (not string matching).
   `Expr` is a Good Parts kernel plus one `Std` constructor for pure JS

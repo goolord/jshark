@@ -549,7 +549,7 @@ infixr 2 .||
   , (.<)
   , (.>=)
   , (.<=) ::
-    Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+    Expr f a -> Expr f a -> Expr f 'Bool
 (.>) = GTh
 (.<) = LTh
 (.>=) = GTEq

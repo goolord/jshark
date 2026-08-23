@@ -515,39 +515,9 @@ evalAlg ::
   -> m (Value v)
 evalAlg rec apply = \case
   Literal v -> pure v
-  Plus x y -> num2 (+) x y
-  Times x y -> num2 (*) x y
-  Minus x y -> num2 (-) x y
-  Negate x -> num1 negate x
-  FracDiv x y -> num2 (/) x y
-  Rem x y -> num2 jsRem x y
-  BitAnd x y -> num2 (jsBit2 (.&.)) x y
-  BitOr x y -> num2 (jsBit2 (.|.)) x y
-  BitXor x y -> num2 (jsBit2 xor) x y
-  Shl x y -> num2 jsShl x y
-  Shr x y -> num2 jsShr x y
-  UShr x y -> num2 jsUShr x y
   Var x -> pure x
   Apply g x -> unFunction <$> rec g <*> rec x
   Lambda g -> pure (ValueFunction (apply g))
-  Concat x y -> do
-    a <- rec x
-    b <- rec y
-    pure (ValueString (unString a <> unString b))
-  Show x -> ValueString . jsShow <$> rec x
-  TypeOf x -> ValueString . typeOfValue <$> rec x
-  And x y -> do
-    a <- rec x
-    if unBool a then rec y else pure (ValueBool False)
-  Or x y -> do
-    a <- rec x
-    if unBool a then pure (ValueBool True) else rec y
-  Eq x y -> ValueBool <$> (valueEq <$> rec x <*> rec y)
-  NEq x y -> ValueBool . not <$> (valueEq <$> rec x <*> rec y)
-  GTh x y -> ValueBool . (== GT) <$> (valueCompare <$> rec x <*> rec y)
-  LTh x y -> ValueBool . (== LT) <$> (valueCompare <$> rec x <*> rec y)
-  GTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> rec x <*> rec y)
-  LTEq x y -> ValueBool . (/= GT) <$> (valueCompare <$> rec x <*> rec y)
   Let x g -> rec x >>= rec . g
   LetRec r b ->
     let
@@ -589,9 +559,6 @@ evalAlg rec apply = \case
   GetField @k o -> do
     ov <- rec o
     withFrozenField @k ov rec
- where
-  num1 f x = ValueNumber . f . unNumber <$> rec x
-  num2 f x y = ValueNumber <$> (f <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
 
 -- | Force an array 'Value' and continue. Every array node is a
 -- 'ValueArray' constructor; the case is here so call sites stay linear.
@@ -635,6 +602,47 @@ evalStd ::
 evalStd rec = \case
   Fixed op args -> evalFixed rec op args
   Method m -> evalMethod rec m
+  Kernel k -> evalKernel rec k
+
+evalKernel ::
+  Monad m =>
+  (forall w. Expr Value w -> m (Value w))
+  -> Kernel Value u
+  -> m (Value u)
+evalKernel rec = \case
+  KPlus x y -> num2 (+) x y
+  KTimes x y -> num2 (*) x y
+  KMinus x y -> num2 (-) x y
+  KNegate x -> num1 negate x
+  KFracDiv x y -> num2 (/) x y
+  KRem x y -> num2 jsRem x y
+  KBitAnd x y -> num2 (jsBit2 (.&.)) x y
+  KBitOr x y -> num2 (jsBit2 (.|.)) x y
+  KBitXor x y -> num2 (jsBit2 xor) x y
+  KShl x y -> num2 jsShl x y
+  KShr x y -> num2 jsShr x y
+  KUShr x y -> num2 jsUShr x y
+  KConcat x y -> do
+    a <- rec x
+    b <- rec y
+    pure (ValueString (unString a <> unString b))
+  KShow x -> ValueString . jsShow <$> rec x
+  KTypeOf x -> ValueString . typeOfValue <$> rec x
+  KAnd x y -> do
+    a <- rec x
+    if unBool a then rec y else pure (ValueBool False)
+  KOr x y -> do
+    a <- rec x
+    if unBool a then pure (ValueBool True) else rec y
+  KEq x y -> ValueBool <$> (valueEq <$> rec x <*> rec y)
+  KNEq x y -> ValueBool . not <$> (valueEq <$> rec x <*> rec y)
+  KGTh x y -> ValueBool . (== GT) <$> (valueCompare <$> rec x <*> rec y)
+  KLTh x y -> ValueBool . (== LT) <$> (valueCompare <$> rec x <*> rec y)
+  KGTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> rec x <*> rec y)
+  KLTEq x y -> ValueBool . (/= GT) <$> (valueCompare <$> rec x <*> rec y)
+ where
+  num1 f x = ValueNumber . f . unNumber <$> rec x
+  num2 f x y = ValueNumber <$> (f <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
 
 evalMethod ::
   Monad m =>
@@ -799,29 +807,29 @@ applyCached cache g v = unsafePerformIO (goOpen cache (g v))
 -- evidence); they fall through to 'evalValue'.
 goOpen :: EvalCache -> Expr Value v -> IO (Value v)
 goOpen cache e = case e of
-  Plus {} -> go cache e
-  Times {} -> go cache e
-  Minus {} -> go cache e
-  Negate {} -> go cache e
-  FracDiv {} -> go cache e
-  Rem {} -> go cache e
-  BitAnd {} -> go cache e
-  BitOr {} -> go cache e
-  BitXor {} -> go cache e
-  Shl {} -> go cache e
-  Shr {} -> go cache e
-  UShr {} -> go cache e
-  Concat {} -> go cache e
-  Show {} -> go cache e
-  TypeOf {} -> go cache e
-  And {} -> go cache e
-  Or {} -> go cache e
-  Eq {} -> go cache e
-  NEq {} -> go cache e
-  GTh {} -> go cache e
-  LTh {} -> go cache e
-  GTEq {} -> go cache e
-  LTEq {} -> go cache e
+  Std (Kernel (KPlus {})) -> go cache e
+  Std (Kernel (KTimes {})) -> go cache e
+  Std (Kernel (KMinus {})) -> go cache e
+  Std (Kernel (KNegate {})) -> go cache e
+  Std (Kernel (KFracDiv {})) -> go cache e
+  Std (Kernel (KRem {})) -> go cache e
+  Std (Kernel (KBitAnd {})) -> go cache e
+  Std (Kernel (KBitOr {})) -> go cache e
+  Std (Kernel (KBitXor {})) -> go cache e
+  Std (Kernel (KShl {})) -> go cache e
+  Std (Kernel (KShr {})) -> go cache e
+  Std (Kernel (KUShr {})) -> go cache e
+  Std (Kernel (KConcat {})) -> go cache e
+  Std (Kernel (KShow {})) -> go cache e
+  Std (Kernel (KTypeOf {})) -> go cache e
+  Std (Kernel (KAnd {})) -> go cache e
+  Std (Kernel (KOr {})) -> go cache e
+  Std (Kernel (KEq {})) -> go cache e
+  Std (Kernel (KNEq {})) -> go cache e
+  Std (Kernel (KGTh {})) -> go cache e
+  Std (Kernel (KLTh {})) -> go cache e
+  Std (Kernel (KGTEq {})) -> go cache e
+  Std (Kernel (KLTEq {})) -> go cache e
   -- Memoize @Math@ / @parseInt@ only ('Typeable' @Number@ — see 'matchMathUnary').
   Std (Fixed FixParseInt _) -> go cache e
   Std (Fixed op _) ->
@@ -897,6 +905,7 @@ stdNeedsStructuralEq :: Std Stamp u -> Bool
 stdNeedsStructuralEq = \case
   Fixed {} -> False
   Method {} -> True
+  Kernel {} -> False
 
 needsStructuralEq :: Expr Stamp u -> Bool
 needsStructuralEq e = case e of
@@ -1078,9 +1087,7 @@ isSimple = \case
   Literal {} -> True
   Var (EmbedEff e) -> isSimpleEffect e
   Var {} -> True
-  Show {} -> True
-  TypeOf {} -> True
-  Negate {} -> True
+  Std (Kernel _) -> False
   Std {} -> True
   FnLit {} -> True
   Index {} -> True
@@ -1317,33 +1324,10 @@ mapExpr ::
 mapExpr ge gf = \case
   Literal x -> Literal x
   Var s -> Var s
-  Concat x y -> Concat (ge x) (ge y)
-  Plus x y -> Plus (ge x) (ge y)
-  Times x y -> Times (ge x) (ge y)
-  Minus x y -> Minus (ge x) (ge y)
-  Negate x -> Negate (ge x)
-  FracDiv x y -> FracDiv (ge x) (ge y)
-  Rem x y -> Rem (ge x) (ge y)
-  BitAnd x y -> BitAnd (ge x) (ge y)
-  BitOr x y -> BitOr (ge x) (ge y)
-  BitXor x y -> BitXor (ge x) (ge y)
-  Shl x y -> Shl (ge x) (ge y)
-  Shr x y -> Shr (ge x) (ge y)
-  UShr x y -> UShr (ge x) (ge y)
-  And x y -> And (ge x) (ge y)
-  Or x y -> Or (ge x) (ge y)
-  Eq x y -> Eq (ge x) (ge y)
-  NEq x y -> NEq (ge x) (ge y)
-  GTh x y -> GTh (ge x) (ge y)
-  LTh x y -> LTh (ge x) (ge y)
-  GTEq x y -> GTEq (ge x) (ge y)
-  LTEq x y -> LTEq (ge x) (ge y)
   Let x g -> Let (ge x) (ge . g)
   LetRec rhs body -> LetRec (ge . rhs) (ge . body)
   Lambda g -> Lambda (ge . g)
   Apply f x -> Apply (ge f) (ge x)
-  Show x -> Show (ge x)
-  TypeOf x -> TypeOf (ge x)
   If c u v -> If (ge c) (ge u) (ge v)
   OptionCase o n s -> OptionCase (ge o) (ge n) (ge . s)
   ResultOk x -> ResultOk (ge x)
@@ -1364,6 +1348,36 @@ mapStd ::
 mapStd ge = \case
   Fixed op args -> Fixed op (mapFixedArgs ge args)
   Method m -> Method (mapMethod ge m)
+  Kernel k -> Kernel (mapKernel ge k)
+
+mapKernel ::
+  (forall v. Expr f v -> Expr f v)
+  -> Kernel f u
+  -> Kernel f u
+mapKernel ge = \case
+  KPlus x y -> KPlus (ge x) (ge y)
+  KTimes x y -> KTimes (ge x) (ge y)
+  KMinus x y -> KMinus (ge x) (ge y)
+  KNegate x -> KNegate (ge x)
+  KFracDiv x y -> KFracDiv (ge x) (ge y)
+  KRem x y -> KRem (ge x) (ge y)
+  KBitAnd x y -> KBitAnd (ge x) (ge y)
+  KBitOr x y -> KBitOr (ge x) (ge y)
+  KBitXor x y -> KBitXor (ge x) (ge y)
+  KShl x y -> KShl (ge x) (ge y)
+  KShr x y -> KShr (ge x) (ge y)
+  KUShr x y -> KUShr (ge x) (ge y)
+  KConcat x y -> KConcat (ge x) (ge y)
+  KShow x -> KShow (ge x)
+  KTypeOf x -> KTypeOf (ge x)
+  KAnd x y -> KAnd (ge x) (ge y)
+  KOr x y -> KOr (ge x) (ge y)
+  KEq x y -> KEq (ge x) (ge y)
+  KNEq x y -> KNEq (ge x) (ge y)
+  KGTh x y -> KGTh (ge x) (ge y)
+  KLTh x y -> KLTh (ge x) (ge y)
+  KGTEq x y -> KGTEq (ge x) (ge y)
+  KLTEq x y -> KLTEq (ge x) (ge y)
 
 mapMethod ::
   (forall v. Expr f v -> Expr f v)
@@ -1420,33 +1434,10 @@ foldExpr ::
 foldExpr dummy se le sf = \case
   Literal {} -> mempty
   Var {} -> mempty
-  Concat x y -> se x <> se y
-  Plus x y -> se x <> se y
-  Times x y -> se x <> se y
-  Minus x y -> se x <> se y
-  Negate x -> se x
-  FracDiv x y -> se x <> se y
-  Rem x y -> se x <> se y
-  BitAnd x y -> se x <> se y
-  BitOr x y -> se x <> se y
-  BitXor x y -> se x <> se y
-  Shl x y -> se x <> se y
-  Shr x y -> se x <> se y
-  UShr x y -> se x <> se y
-  And x y -> se x <> le y
-  Or x y -> se x <> le y
-  Eq x y -> se x <> se y
-  NEq x y -> se x <> se y
-  GTh x y -> se x <> se y
-  LTh x y -> se x <> se y
-  GTEq x y -> se x <> se y
-  LTEq x y -> se x <> se y
   Let x g -> se x <> se (g dummy)
   LetRec r b -> le (r dummy) <> se (b dummy)
   Lambda g -> le (g dummy)
   Apply f x -> se f <> se x
-  Show x -> se x
-  TypeOf x -> se x
   If c u v -> se c <> le u <> le v
   OptionCase o n s -> se o <> le n <> le (s dummy)
   ResultOk x -> se x
@@ -1471,6 +1462,39 @@ foldStd ::
 foldStd dummy se le = \case
   Fixed op args -> foldFixed dummy se op args
   Method m -> foldMethod dummy se le m
+  Kernel k -> foldKernel se le k
+
+foldKernel ::
+  forall f m u.
+  Monoid m =>
+  (forall v. Expr f v -> m)
+  -> (forall v. Expr f v -> m)
+  -> Kernel f u
+  -> m
+foldKernel se le = \case
+  KPlus x y -> se x <> se y
+  KTimes x y -> se x <> se y
+  KMinus x y -> se x <> se y
+  KNegate x -> se x
+  KFracDiv x y -> se x <> se y
+  KRem x y -> se x <> se y
+  KBitAnd x y -> se x <> se y
+  KBitOr x y -> se x <> se y
+  KBitXor x y -> se x <> se y
+  KShl x y -> se x <> se y
+  KShr x y -> se x <> se y
+  KUShr x y -> se x <> se y
+  KConcat x y -> se x <> se y
+  KShow x -> se x
+  KTypeOf x -> se x
+  KAnd x y -> se x <> le y
+  KOr x y -> se x <> le y
+  KEq x y -> se x <> se y
+  KNEq x y -> se x <> se y
+  KGTh x y -> se x <> se y
+  KLTh x y -> se x <> se y
+  KGTEq x y -> se x <> se y
+  KLTEq x y -> se x <> se y
 
 foldMethod ::
   forall f m u.
@@ -2054,6 +2078,32 @@ optBin t0 k x y =
    in
     (t2, k x' y')
 
+optBinNum ::
+  Int
+  -> (Double -> Double -> Double)
+  -> (Expr Stamp 'Number -> Expr Stamp 'Number -> Expr Stamp 'Number)
+  -> Expr Stamp 'Number
+  -> Expr Stamp 'Number
+  -> (Int, Expr Stamp 'Number)
+optBinNum t0 f k x y =
+  let
+    (t1, x') = optExpr t0 x
+    (t2, y') = optExpr t1 y
+   in
+    (t2, foldNum2 f k x' y')
+
+optUnNum ::
+  Int
+  -> (Double -> Double)
+  -> (Expr Stamp 'Number -> Expr Stamp 'Number)
+  -> Expr Stamp 'Number
+  -> (Int, Expr Stamp 'Number)
+optUnNum t0 f k x =
+  let
+    (t1, x') = optExpr t0 x
+   in
+    (t1, foldNum1 f k x')
+
 optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u)
 optExpr t0 = \case
   Literal v -> (t0, Literal v)
@@ -2067,55 +2117,6 @@ optExpr t0 = \case
         Lift x -> (t1, x)
         _ -> (t1, Var (EmbedEff e'))
   Var v -> (t0, Var v)
-  Concat x y ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-     in
-      (t2, foldConcat x' y')
-  Plus x y -> binNum (+) Plus x y
-  Times x y -> binNum (*) Times x y
-  Minus x y -> binNum (-) Minus x y
-  FracDiv x y -> binNum (/) FracDiv x y
-  Rem x y -> binNum jsRem Rem x y
-  BitAnd x y -> binNum (jsBit2 (.&.)) BitAnd x y
-  BitOr x y -> binNum (jsBit2 (.|.)) BitOr x y
-  BitXor x y -> binNum (jsBit2 xor) BitXor x y
-  Shl x y -> binNum jsShl Shl x y
-  Shr x y -> binNum jsShr Shr x y
-  UShr x y -> binNum jsUShr UShr x y
-  Negate x -> unNum negate Negate x
-  And x y ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      case x' of
-        -- JS && short-circuits: `false && e` does not evaluate `e`.
-        Literal (ValueBool False) -> (t1, Literal (ValueBool False))
-        Literal (ValueBool True) -> optExpr t1 y
-        _ ->
-          let
-            (t2, y') = optExpr t1 y
-           in
-            (t2, foldAnd x' y')
-  Or x y ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      case x' of
-        Literal (ValueBool True) -> (t1, Literal (ValueBool True))
-        Literal (ValueBool False) -> optExpr t1 y
-        _ ->
-          let
-            (t2, y') = optExpr t1 y
-           in
-            (t2, foldOr x' y')
-  Eq x y -> optBin t0 foldEq x y
-  NEq x y -> optBin t0 foldNEq x y
-  GTh x y -> optBin t0 (foldOrd GT GTh) x y
-  LTh x y -> optBin t0 (foldOrd LT LTh) x y
-  GTEq x y -> optBin t0 (foldOrdNeq LT GTEq) x y
-  LTEq x y -> optBin t0 (foldOrdNeq GT LTEq) x y
   Let x f -> optLet t0 x f
   LetRec r b ->
     let
@@ -2137,16 +2138,6 @@ optExpr t0 = \case
       case f' of
         Lambda g -> optLet t2 x' g
         _ -> (t2, Apply f' x')
-  Show x ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      (t1, foldShow x')
-  TypeOf x ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      (t1, foldTypeOf x')
   If c t e ->
     let
       (t1, c') = optExpr t0 c
@@ -2226,18 +2217,6 @@ optExpr t0 = \case
       case foldGetField @k o' of
         Just e -> optExpr t1 e
         Nothing -> (t1, GetField @k o')
- where
-  binNum f k x y =
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-     in
-      (t2, foldNum2 f k x' y')
-  unNum f k x =
-    let
-      (t1, x') = optExpr t0 x
-     in
-      (t1, foldNum1 f k x')
 
 optMapped ::
   ( Expr Stamp ('Array u)
@@ -2294,6 +2273,68 @@ optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u)
 optStd t0 = \case
   Fixed op args -> optFixed t0 op args
   Method m -> optMethod t0 m
+  Kernel k -> optKernel t0 k
+
+optKernel :: Int -> Kernel Stamp u -> (Int, Expr Stamp u)
+optKernel t0 = \case
+  KPlus x y -> optBinNum t0 (+) Plus x y
+  KTimes x y -> optBinNum t0 (*) Times x y
+  KMinus x y -> optBinNum t0 (-) Minus x y
+  KFracDiv x y -> optBinNum t0 (/) FracDiv x y
+  KRem x y -> optBinNum t0 jsRem Rem x y
+  KBitAnd x y -> optBinNum t0 (jsBit2 (.&.)) BitAnd x y
+  KBitOr x y -> optBinNum t0 (jsBit2 (.|.)) BitOr x y
+  KBitXor x y -> optBinNum t0 (jsBit2 xor) BitXor x y
+  KShl x y -> optBinNum t0 jsShl Shl x y
+  KShr x y -> optBinNum t0 jsShr Shr x y
+  KUShr x y -> optBinNum t0 jsUShr UShr x y
+  KNegate x -> optUnNum t0 negate Negate x
+  KConcat x y ->
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+     in
+      (t2, foldConcat x' y')
+  KShow x ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldShow x')
+  KTypeOf x ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldTypeOf x')
+  KAnd x y ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      case x' of
+        Literal (ValueBool False) -> (t1, Literal (ValueBool False))
+        Literal (ValueBool True) -> optExpr t1 y
+        _ ->
+          let
+            (t2, y') = optExpr t1 y
+           in
+            (t2, foldAnd x' y')
+  KOr x y ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      case x' of
+        Literal (ValueBool True) -> (t1, Literal (ValueBool True))
+        Literal (ValueBool False) -> optExpr t1 y
+        _ ->
+          let
+            (t2, y') = optExpr t1 y
+           in
+            (t2, foldOr x' y')
+  KEq x y -> optBin t0 foldEq x y
+  KNEq x y -> optBin t0 foldNEq x y
+  KGTh x y -> optBin t0 (foldOrd GT GTh) x y
+  KLTh x y -> optBin t0 (foldOrd LT LTh) x y
+  KGTEq x y -> optBin t0 (foldOrdNeq LT GTEq) x y
+  KLTEq x y -> optBin t0 (foldOrdNeq GT LTEq) x y
 
 optMethod :: Int -> Method Stamp u -> (Int, Expr Stamp u)
 optMethod t0 = \case
@@ -2851,54 +2892,7 @@ pureAST' !s0 = \case
     ValueBool True -> (s0, Code mempty "true")
     ValueBool False -> (s0, Code mempty "false")
     ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
-  Concat x y -> renderBin "+" s0 x y
-  Plus x y -> renderBin "+" s0 x y
-  Minus x y -> renderBin "-" s0 x y
-  Times x y -> renderBin "*" s0 x y
-  FracDiv x y -> renderBin "/" s0 x y
-  Rem x y -> renderBin "%" s0 x y
-  BitAnd x y -> renderBin "&" s0 x y
-  BitOr x y -> renderBin "|" s0 x y
-  BitXor x y -> renderBin "^" s0 x y
-  Shl x y -> renderBin "<<" s0 x y
-  Shr x y -> renderBin ">>" s0 x y
-  UShr x y -> renderBin ">>>" s0 x y
-  Show x ->
-    let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 x
-     in
-      (s1, Code x1Decl $ "String" <> P.parens x1Ref)
-  TypeOf x ->
-    let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 x
-      wrapped = case x of
-        FrozenLit {} -> P.parens x1Ref
-        _ -> x1Ref
-     in
-      (s1, Code x1Decl $ "typeof" <+> wrapped)
-  Negate x ->
-    let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 x
-     in
-      (s1, Code x1Decl $ "-" <> P.parens x1Ref)
   Lambda f -> emitExprLambda s0 f
-  And x y -> renderBin "&&" s0 x y
-  Or x y -> renderBin "||" s0 x y
-  Eq x y
-    | needsStructuralEq x || needsStructuralEq y ->
-        renderBinApp jsValueEq (useEqHelpers s0) x y
-    | otherwise ->
-        renderBin "===" s0 x y
-  NEq x y
-    | needsStructuralEq x || needsStructuralEq y ->
-        renderBinApp jsValueNEq (useEqHelpers s0) x y
-    | otherwise ->
-        renderBin "!==" s0 x y
-  GTh x y -> renderBin ">" s0 x y
-  LTh x y -> renderBin "<" s0 x y
-  GTEq x y -> renderBin ">=" s0 x y
-  LTEq x y -> renderBin "<=" s0 x y
-  -- Inline a let used once in a strict position; drop one never used;
   -- `const` when shared or used under a lambda/loop/short-circuit.
   Let x g -> letCode s0 x g
   LetRec r b ->
@@ -3220,6 +3214,56 @@ renderStd :: CG -> Std Stamp u -> (CG, Code)
 renderStd s0 = \case
   Fixed op args -> renderFixed s0 op args
   Method m -> renderMethod s0 m
+  Kernel k -> renderKernel s0 k
+
+renderKernel :: CG -> Kernel Stamp u -> (CG, Code)
+renderKernel s0 = \case
+  KConcat x y -> renderBin "+" s0 x y
+  KPlus x y -> renderBin "+" s0 x y
+  KMinus x y -> renderBin "-" s0 x y
+  KTimes x y -> renderBin "*" s0 x y
+  KFracDiv x y -> renderBin "/" s0 x y
+  KRem x y -> renderBin "%" s0 x y
+  KBitAnd x y -> renderBin "&" s0 x y
+  KBitOr x y -> renderBin "|" s0 x y
+  KBitXor x y -> renderBin "^" s0 x y
+  KShl x y -> renderBin "<<" s0 x y
+  KShr x y -> renderBin ">>" s0 x y
+  KUShr x y -> renderBin ">>>" s0 x y
+  KShow x ->
+    let
+      (s1, Code x1Decl x1Ref) = pureAST' s0 x
+     in
+      (s1, Code x1Decl $ "String" <> P.parens x1Ref)
+  KTypeOf x ->
+    let
+      (s1, Code x1Decl x1Ref) = pureAST' s0 x
+      wrapped = case x of
+        FrozenLit {} -> P.parens x1Ref
+        _ -> x1Ref
+     in
+      (s1, Code x1Decl $ "typeof" <+> wrapped)
+  KNegate x ->
+    let
+      (s1, Code x1Decl x1Ref) = pureAST' s0 x
+     in
+      (s1, Code x1Decl $ "-" <> P.parens x1Ref)
+  KAnd x y -> renderBin "&&" s0 x y
+  KOr x y -> renderBin "||" s0 x y
+  KEq x y
+    | needsStructuralEq x || needsStructuralEq y ->
+        renderBinApp jsValueEq (useEqHelpers s0) x y
+    | otherwise ->
+        renderBin "===" s0 x y
+  KNEq x y
+    | needsStructuralEq x || needsStructuralEq y ->
+        renderBinApp jsValueNEq (useEqHelpers s0) x y
+    | otherwise ->
+        renderBin "!==" s0 x y
+  KGTh x y -> renderBin ">" s0 x y
+  KLTh x y -> renderBin "<" s0 x y
+  KGTEq x y -> renderBin ">=" s0 x y
+  KLTEq x y -> renderBin "<=" s0 x y
 
 renderMethod :: CG -> Method Stamp u -> (CG, Code)
 renderMethod s0 = \case
