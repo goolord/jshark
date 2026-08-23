@@ -578,4 +578,4 @@ ushr = UShr
 
 -- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
 parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number
-parseInt_ s r = Std (Bin StdParseInt s r)
+parseInt_ s r = expr2 FixParseInt s r

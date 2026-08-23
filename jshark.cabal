@@ -71,6 +71,7 @@ library
     JShark.Ajax
     JShark.Object
     JShark.Params
+    JShark.Prim
     JShark.Dom
     JShark.Canvas
     JShark.Generic

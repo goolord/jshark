@@ -2,8 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | JS @String.prototype@ wrappers. Opaque to 'JShark.evaluate'.
--- Built on 'Std' 'Un' / 'Bin' / 'Tern'. Import qualified; names clash
--- with 'Prelude'.
+-- Built on 'Std' 'Fixed'. Import qualified; names clash with 'Prelude'.
 module JShark.String
   ( length
   , indexOf
@@ -19,34 +18,26 @@ where
 import JShark.Types
 import Prelude hiding (length)
 
--- | @s.length@
 length :: Expr f 'String -> Expr f 'Number
-length = Std . Un StdStrLen
+length = expr1 FixStrLen
 
--- | @s.indexOf(sub)@
 indexOf :: Expr f 'String -> Expr f 'String -> Expr f 'Number
-indexOf s sub = Std (Bin StdIndexOf s sub)
+indexOf s sub = expr2 FixIndexOf s sub
 
--- | @s.slice(start, end)@
 slice :: Expr f 'String -> Expr f 'Number -> Expr f 'Number -> Expr f 'String
-slice s a b = Std (Tern StdSlice s a b)
+slice s a b = expr3 FixSlice s a b
 
--- | @s.toUpperCase()@
 toUpper :: Expr f 'String -> Expr f 'String
-toUpper = Std . Un StdToUpper
+toUpper = expr1 FixToUpper
 
--- | @s.toLowerCase()@
 toLower :: Expr f 'String -> Expr f 'String
-toLower = Std . Un StdToLower
+toLower = expr1 FixToLower
 
--- | @s.trim()@
 trim :: Expr f 'String -> Expr f 'String
-trim = Std . Un StdTrim
+trim = expr1 FixTrim
 
--- | @s.split(sep)@
 split :: Expr f 'String -> Expr f 'String -> Expr f ('Array 'String)
-split s sep = Std (Bin StdSplit s sep)
+split s sep = expr2 FixSplit s sep
 
--- | @s.replace(pat, rep)@
 replace :: Expr f 'String -> Expr f 'String -> Expr f 'String -> Expr f 'String
-replace s pat rep = Std (Tern StdReplace s pat rep)
+replace s pat rep = expr3 FixReplace s pat rep

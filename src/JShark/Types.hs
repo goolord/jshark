@@ -47,13 +47,14 @@ module JShark.Types
   , Expr (..)
   , FnBody (..)
   , Std (..)
-  , StdUnary (..)
-  , StdBinary (..)
-  , StdTernary (..)
-  , MathFn1 (..)
-  , MathFn2 (..)
-  , mathFn1Name
-  , mathFn2Name
+  , FixedOp (..)
+  , FixedArgs (..)
+  , fixed1
+  , fixed2
+  , fixed3
+  , expr1
+  , expr2
+  , expr3
   , GroupBy
   , ClosedExpr
   , ClosedEffect
@@ -73,7 +74,7 @@ where
 
 import Control.Monad (ap, void)
 import Data.Array.Byte (ByteArray)
-import Data.Kind
+import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import Data.Text (Text)
@@ -467,60 +468,86 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f (Field r k)
     -- ^ Pure @o.k@. Folded by 'sameSymbol' against 'FrozenLit'.
 
--- | Closed unary names on 'Expr'. There is no way to write @alert@ here.
-data StdUnary :: Universe -> Universe -> Type where
-  StdToUpper :: StdUnary 'String 'String
-  StdToLower :: StdUnary 'String 'String
-  StdTrim :: StdUnary 'String 'String
-  StdArrLen :: StdUnary ('Array u) 'Number
-  StdStrLen :: StdUnary 'String 'Number
-  StdStringify :: StdUnary u 'String
+-- | Closed fixed-arity pure JS names (@Math.sin@, @arr.length@, …).
+-- Higher-order stdlib (@map@, @reduce@, …) stays on 'Std' separately.
+data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where
+  FixSin :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixCos :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixTan :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAsin :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAcos :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAtan :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixSinh :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixCosh :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixTanh :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAsinh :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAcosh :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAtanh :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixSqrt :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixCbrt :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixExp :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixLog :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixLog2 :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixLog10 :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixFloor :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixCeil :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixRound :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixTrunc :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixAbs :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixSign :: FixedOp 'Number 'Unit 'Unit 'Number
+  FixPow :: FixedOp 'Number 'Number 'Unit 'Number
+  FixAtan2 :: FixedOp 'Number 'Number 'Unit 'Number
+  FixMax :: FixedOp 'Number 'Number 'Unit 'Number
+  FixMin :: FixedOp 'Number 'Number 'Unit 'Number
+  FixHypot :: FixedOp 'Number 'Number 'Unit 'Number
+  FixToUpper :: FixedOp 'String 'Unit 'Unit 'String
+  FixToLower :: FixedOp 'String 'Unit 'Unit 'String
+  FixTrim :: FixedOp 'String 'Unit 'Unit 'String
+  FixArrLen :: FixedOp ('Array u) 'Unit 'Unit 'Number
+  FixStrLen :: FixedOp 'String 'Unit 'Unit 'Number
+  FixStringify :: FixedOp u 'Unit 'Unit 'String
+  FixIndexOf :: FixedOp 'String 'String 'Unit 'Number
+  FixSplit :: FixedOp 'String 'String 'Unit ('Array 'String)
+  FixIncludes :: FixedOp ('Array u) u 'Unit 'Bool
+  FixConcat :: FixedOp ('Array u) ('Array u) 'Unit ('Array u)
+  FixJoin :: FixedOp ('Array u) 'String 'Unit 'String
+  FixTest :: FixedOp 'Regex 'String 'Unit 'Bool
+  FixParseInt :: FixedOp 'String 'Number 'Unit 'Number
+  FixSlice :: FixedOp 'String 'Number 'Number 'String
+  FixArrSlice :: FixedOp ('Array u) 'Number 'Number ('Array u)
+  FixReplace :: FixedOp 'String 'String 'String 'String
 
--- | Closed binary names on 'Expr'.
-data StdBinary :: Universe -> Universe -> Universe -> Type where
-  StdIndexOf :: StdBinary 'String 'String 'Number
-  StdSplit :: StdBinary 'String 'String ('Array 'String)
-  StdIncludes :: StdBinary ('Array u) u 'Bool
-  StdConcat :: StdBinary ('Array u) ('Array u) ('Array u)
-  StdJoin :: StdBinary ('Array u) 'String 'String
-  StdTest :: StdBinary 'Regex 'String 'Bool
-  StdParseInt ::
-    StdBinary 'String 'Number 'Number
-    -- ^ radix required (book appendix A)
+data FixedArgs f a b c where
+  ArgsU :: Expr f a -> FixedArgs f a 'Unit 'Unit
+  ArgsB :: Expr f a -> Expr f b -> FixedArgs f a b 'Unit
+  ArgsT :: Expr f a -> Expr f b -> Expr f c -> FixedArgs f a b c
 
--- | Closed ternary names on 'Expr'.
-data StdTernary :: Universe -> Universe -> Universe -> Universe -> Type where
-  StdSlice :: StdTernary 'String 'Number 'Number 'String
-  StdArrSlice :: StdTernary ('Array u) 'Number 'Number ('Array u)
-  StdReplace :: StdTernary 'String 'String 'String 'String
+fixed1 :: FixedOp a 'Unit 'Unit u -> Expr f a -> Std f u
+fixed1 op x = Fixed op (ArgsU x)
+
+fixed2 :: FixedOp a b 'Unit u -> Expr f a -> Expr f b -> Std f u
+fixed2 op x y = Fixed op (ArgsB x y)
+
+fixed3 :: FixedOp a b c u -> Expr f a -> Expr f b -> Expr f c -> Std f u
+fixed3 op x y z = Fixed op (ArgsT x y z)
+
+-- | 'Std' 'Fixed' as an 'Expr' (for 'Num'/'Floating' instances).
+expr1 :: FixedOp a 'Unit 'Unit u -> Expr f a -> Expr f u
+expr1 op x = Std (fixed1 op x)
+
+expr2 :: FixedOp a b 'Unit u -> Expr f a -> Expr f b -> Expr f u
+expr2 op x y = Std (fixed2 op x y)
+
+expr3 :: FixedOp a b c u -> Expr f a -> Expr f b -> Expr f c -> Expr f u
+expr3 op x y z = Std (fixed3 op x y z)
 
 -- | Pure JS standard library, applied. One 'Expr' constructor ('Std')
 -- holds this sum — not a constructor per method.
 data Std :: (Universe -> Type) -> Universe -> Type where
-  Math1 ::
-    MathFn1
-    -> Expr f 'Number
-    -> Std f 'Number
-  Math2 ::
-    MathFn2
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -> Std f 'Number
-  Un ::
-    StdUnary a b
-    -> Expr f a
-    -> Std f b
-  Bin ::
-    StdBinary a b c
-    -> Expr f a
-    -> Expr f b
-    -> Std f c
-  Tern ::
-    StdTernary a b c d
-    -> Expr f a
-    -> Expr f b
-    -> Expr f c
-    -> Std f d
+  Fixed ::
+    FixedOp a b c u
+    -> FixedArgs f a b c
+    -> Std f u
   Map ::
     Expr f ('Array a)
     -> (f a -> Expr f b)
@@ -548,76 +575,6 @@ data Std :: (Universe -> Type) -> Universe -> Type where
     Expr f 'Number
     -> (f 'Number -> Expr f a)
     -> Std f ('Array a)
-
--- | Closed unary @Math.*@ names. JS identifier is 'mathFn1Name'.
-data MathFn1
-  = MathSin
-  | MathCos
-  | MathTan
-  | MathAsin
-  | MathAcos
-  | MathAtan
-  | MathSinh
-  | MathCosh
-  | MathTanh
-  | MathAsinh
-  | MathAcosh
-  | MathAtanh
-  | MathSqrt
-  | MathCbrt
-  | MathExp
-  | MathLog
-  | MathLog2
-  | MathLog10
-  | MathFloor
-  | MathCeil
-  | MathRound
-  | MathTrunc
-  | MathAbs
-  | MathSign
-
--- | Closed binary @Math.*@ names. JS identifier is 'mathFn2Name'.
-data MathFn2
-  = MathPow
-  | MathAtan2
-  | MathMax
-  | MathMin
-  | MathHypot
-
-mathFn1Name :: MathFn1 -> Text
-mathFn1Name = \case
-  MathSin -> "sin"
-  MathCos -> "cos"
-  MathTan -> "tan"
-  MathAsin -> "asin"
-  MathAcos -> "acos"
-  MathAtan -> "atan"
-  MathSinh -> "sinh"
-  MathCosh -> "cosh"
-  MathTanh -> "tanh"
-  MathAsinh -> "asinh"
-  MathAcosh -> "acosh"
-  MathAtanh -> "atanh"
-  MathSqrt -> "sqrt"
-  MathCbrt -> "cbrt"
-  MathExp -> "exp"
-  MathLog -> "log"
-  MathLog2 -> "log2"
-  MathLog10 -> "log10"
-  MathFloor -> "floor"
-  MathCeil -> "ceil"
-  MathRound -> "round"
-  MathTrunc -> "trunc"
-  MathAbs -> "abs"
-  MathSign -> "sign"
-
-mathFn2Name :: MathFn2 -> Text
-mathFn2Name = \case
-  MathPow -> "pow"
-  MathAtan2 -> "atan2"
-  MathMax -> "max"
-  MathMin -> "min"
-  MathHypot -> "hypot"
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
@@ -655,7 +612,7 @@ instance Monoid (Expr f 'String) where
   mempty = Literal (ValueString mempty)
 
 instance Semigroup (Expr f ('Array u)) where
-  (<>) xs ys = Std (Bin StdConcat xs ys)
+  (<>) xs ys = expr2 FixConcat xs ys
 
 instance Monoid (Expr f ('Array u)) where
   mempty = Literal (ValueArray [])
@@ -686,7 +643,7 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
 -- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
---   ('Plus'/'Times'/'Std' 'Math1'/…) and fold later in codegen.
+--   ('Plus'/'Times'/'Std' ('Fixed …')/…) and fold later in codegen.
 --   @(**)@ is @Math.pow@, not @exp (log x * y)@.
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
@@ -715,8 +672,8 @@ instance forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus
-  abs = Std . Math1 MathAbs
-  signum = Std . Math1 MathSign
+  abs = expr1 FixAbs
+  signum = expr1 FixSign
   fromInteger n = Literal (fromInteger n)
   negate = Negate
 
@@ -729,22 +686,22 @@ jsPi = pi
 
 instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) where
   pi = Literal (ValueNumber jsPi)
-  exp = Std . Math1 MathExp
-  log = Std . Math1 MathLog
-  sqrt = Std . Math1 MathSqrt
-  (**) x y = Std (Math2 MathPow x y)
-  sin = Std . Math1 MathSin
-  cos = Std . Math1 MathCos
-  tan = Std . Math1 MathTan
-  asin = Std . Math1 MathAsin
-  acos = Std . Math1 MathAcos
-  atan = Std . Math1 MathAtan
-  sinh = Std . Math1 MathSinh
-  cosh = Std . Math1 MathCosh
-  tanh = Std . Math1 MathTanh
-  asinh = Std . Math1 MathAsinh
-  acosh = Std . Math1 MathAcosh
-  atanh = Std . Math1 MathAtanh
+  exp = expr1 FixExp
+  log = expr1 FixLog
+  sqrt = expr1 FixSqrt
+  (**) x y = expr2 FixPow x y
+  sin = expr1 FixSin
+  cos = expr1 FixCos
+  tan = expr1 FixTan
+  asin = expr1 FixAsin
+  acos = expr1 FixAcos
+  atan = expr1 FixAtan
+  sinh = expr1 FixSinh
+  cosh = expr1 FixCosh
+  tanh = expr1 FixTanh
+  asinh = expr1 FixAsinh
+  acosh = expr1 FixAcosh
+  atanh = expr1 FixAtanh
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).

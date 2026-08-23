@@ -139,6 +139,13 @@ import Unsafe.Coerce (unsafeCoerce)
 import GHC.Word (Word8 (..))
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import JShark.Rec
+import JShark.Prim
+  ( MathBinary (..)
+  , MathUnary (..)
+  , matchMathBinary
+  , matchMathUnary
+  )
+import qualified JShark.Prim as Prim
 import JShark.Types
 import Numeric (readInt, showFFloat, showHex)
 import System.IO.Unsafe (unsafePerformIO)
@@ -318,82 +325,11 @@ jsToIntegral f d
   | isFiniteDouble d = fromIntegral (f d)
   | otherwise = d
 
--- | Implements the unary @Math@ functions supported by 'Math1'.
-mathUnaryFn :: MathFn1 -> Double -> Double
-mathUnaryFn = \case
-  MathAbs -> abs
-  MathSign -> signum
-  MathSin -> sin
-  MathCos -> cos
-  MathTan -> tan
-  MathAsin -> asin
-  MathAcos -> acos
-  MathAtan -> atan
-  MathSinh -> sinh
-  MathCosh -> cosh
-  MathTanh -> tanh
-  MathAsinh -> asinh
-  MathAcosh -> acosh
-  MathAtanh -> atanh
-  MathSqrt -> sqrt
-  MathCbrt -> \x -> signum x * (abs x ** (1 / 3))
-  MathExp -> exp
-  MathLog -> log
-  MathLog2 -> logBase 2
-  MathLog10 -> logBase 10
-  MathFloor -> jsToIntegral floor
-  MathCeil -> jsToIntegral ceiling
-  -- JS's Math.round rounds half-way values toward +Infinity (e.g.
-  -- Math.round(2.5) === 3, Math.round(-2.5) === -2), unlike Haskell's
-  -- 'round' (banker's rounding to even: round 2.5 == 2). floor(x + 0.5)
-  -- matches JS's semantics. Non-finite inputs are the identity.
-  MathRound -> jsToIntegral (floor . (+ 0.5))
-  MathTrunc -> jsToIntegral truncate
-
--- | Implements the binary @Math@ functions supported by 'Math2'.
-mathBinaryFn :: MathFn2 -> Double -> Double -> Double
-mathBinaryFn = \case
-  MathPow -> (**)
-  MathAtan2 -> atan2
-  MathMax -> max
-  MathMin -> min
-  MathHypot -> \x y -> sqrt (x * x + y * y)
-
--- | Fold @Math.*@ only when the Haskell result is known to match JS.
--- Transcendentals (@sin(1)@, @cbrt@, @pow@, …) stay in JS.
-exactMathUnary :: MathFn1 -> Double -> Maybe Double
-exactMathUnary n a = case n of
-  MathAbs -> Just (abs a)
-  MathSign | isFiniteDouble a -> Just (signum a)
-  MathSin | a == 0 -> Just 0
-  MathCos | a == 0 -> Just 1
-  MathTan | a == 0 -> Just 0
-  MathSinh | a == 0 -> Just 0
-  MathCosh | a == 0 -> Just 1
-  MathTanh | a == 0 -> Just 0
-  MathAsinh | a == 0 -> Just 0
-  MathAcosh | a == 1 -> Just 0
-  MathAtanh | a == 0 -> Just 0
-  MathSqrt
-    | a >= 0
-    , let
-        r = sqrt a
-    , r * r == a ->
-        Just r
-  MathFloor | isFiniteDouble a -> Just (fromIntegral (floor a :: Integer))
-  MathCeil | isFiniteDouble a -> Just (fromIntegral (ceiling a :: Integer))
-  MathRound | isFiniteDouble a -> Just (fromIntegral (floor (a + 0.5) :: Integer))
-  MathTrunc | isFiniteDouble a -> Just (fromIntegral (truncate a :: Integer))
-  _ -> Nothing
-
-exactMathBinary :: MathFn2 -> Double -> Double -> Maybe Double
-exactMathBinary n a b = case n of
-  MathMax | isFiniteDouble a && isFiniteDouble b -> Just (max a b)
-  MathMin | isFiniteDouble a && isFiniteDouble b -> Just (min a b)
-  _ -> Nothing
-
 cannotEval :: String -> a
 cannotEval what = error ("evaluate: cannot evaluate " ++ what)
+
+arrayValues :: Value ('Array u) -> [Value u]
+arrayValues (ValueArray vs) = vs
 
 isOrderableValue :: Value u -> Bool
 isOrderableValue = \case
@@ -697,23 +633,7 @@ evalStd ::
   -> Std Value u
   -> m (Value u)
 evalStd rec = \case
-  Math1 name x -> ValueNumber . mathUnaryFn name . unNumber <$> rec x
-  Math2 name x y ->
-    ValueNumber
-      <$> (mathBinaryFn name <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
-  Un n x -> case n of
-    StdArrLen ->
-      evalAsArray rec x $ \vs ->
-        pure (ValueNumber (fromIntegral (Prelude.length vs)))
-    _ -> cannotEval "a stdlib Un"
-  Bin n x y -> evalStdBinary n <$> rec x <*> rec y
-  Tern n xs a b -> case n of
-    StdArrSlice -> do
-      i <- rec a
-      j <- rec b
-      evalAsArray rec xs $ \vs ->
-        pure (ValueArray (jsArraySlice vs (unNumber i) (unNumber j)))
-    _ -> cannotEval "a stdlib Tern"
+  Fixed op args -> evalFixed rec op args
   Map xs f ->
     evalAsArray rec xs $ \vs -> ValueArray <$> traverse (rec . f) vs
   Filter xs f ->
@@ -746,6 +666,69 @@ evalStd rec = \case
       <$> traverse
         (\i -> rec (f (ValueNumber (fromIntegral i))))
         [0 .. len - 1]
+
+evalFixed ::
+  Monad m =>
+  (forall w. Expr Value w -> m (Value w))
+  -> FixedOp a b c u
+  -> FixedArgs Value a b c
+  -> m (Value u)
+evalFixed rec op args = case (op, args) of
+  (n, ArgsU x)
+    | Just (MathUnary n') <- matchMathUnary n ->
+        ValueNumber . Prim.mathUnaryFn n' . unNumber <$> rec x
+  (n, ArgsB x y)
+    | Just (MathBinary n') <- matchMathBinary n ->
+        ValueNumber <$> (Prim.mathBinaryFn n' <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
+  (FixArrLen, ArgsU xs) ->
+    evalAsArray rec xs $ \vs ->
+      pure (ValueNumber (fromIntegral (Prelude.length vs)))
+  (FixParseInt, ArgsB s r) -> do
+    sv <- rec s
+    rv <- rec r
+    pure (ValueNumber (jsParseInt (unString sv) (truncate (unNumber rv))))
+  (FixConcat, ArgsB x y) -> do
+    as <- arrayValues <$> rec x
+    bs <- arrayValues <$> rec y
+    pure (ValueArray (as ++ bs))
+  (FixIncludes, ArgsB xs y) -> do
+    yv <- rec y
+    evalAsArray rec xs $ \vs ->
+      pure (ValueBool (any (valueEq yv) vs))
+  (FixJoin, ArgsB xs sep) ->
+    evalAsArray rec xs $ \vs -> do
+      sv <- rec sep
+      pure (ValueString (T.intercalate (unString sv) (map jsJoinElem vs)))
+  (FixArrSlice, ArgsT xs a b) -> do
+    av <- rec a
+    bv <- rec b
+    evalAsArray rec xs $ \vs ->
+      pure (ValueArray (jsArraySlice vs (unNumber av) (unNumber bv)))
+  -- String/regex fixed ops are codegen-only (same as old Un/Bin/Tern gaps).
+  _ -> cannotEval "a fixed stdlib op"
+
+mapFixedArgs ::
+  forall f a b c.
+  (forall v. Expr f v -> Expr f v)
+  -> FixedArgs f a b c
+  -> FixedArgs f a b c
+mapFixedArgs ge = \case
+  ArgsU x -> ArgsU (ge x)
+  ArgsB x y -> ArgsB (ge x) (ge y)
+  ArgsT x y z -> ArgsT (ge x) (ge y) (ge z)
+
+foldFixed ::
+  forall f m a b c u.
+  Monoid m =>
+  (forall v. f v)
+  -> (forall v. Expr f v -> m)
+  -> FixedOp a b c u
+  -> FixedArgs f a b c
+  -> m
+foldFixed _ se _ = \case
+  ArgsU x -> se x
+  ArgsB x y -> se x <> se y
+  ArgsT x y z -> se x <> se y <> se z
 
 -- Per-evaluation memo table keyed by 'StableName'. Recovers host-language
 -- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
@@ -831,9 +814,15 @@ goOpen cache e = case e of
   LTh {} -> go cache e
   GTEq {} -> go cache e
   LTEq {} -> go cache e
-  Std (Math1 {}) -> go cache e
-  Std (Math2 {}) -> go cache e
-  Std (Bin StdParseInt _ _) -> go cache e
+  -- Memoize @Math@ / @parseInt@ only ('Typeable' @Number@ — see 'matchMathUnary').
+  Std (Fixed FixParseInt _) -> go cache e
+  Std (Fixed op _) ->
+    case matchMathUnary op of
+      Just (MathUnary _) -> go cache e
+      Nothing ->
+        case matchMathBinary op of
+          Just (MathBinary _) -> go cache e
+          Nothing -> pure (evalValue e)
   Literal ValueNumber {} -> go cache e
   Literal ValueString {} -> go cache e
   Literal ValueBool {} -> go cache e
@@ -848,24 +837,6 @@ goOpen cache e = case e of
 
 goNode :: EvalCache -> Expr Value v -> IO (Value v)
 goNode cache = evalAlg (goOpen cache) (applyCached cache)
-
-evalStdBinary :: StdBinary a b c -> Value a -> Value b -> Value c
-evalStdBinary n x y = case n of
-  StdParseInt ->
-    ValueNumber (jsParseInt (unString x) (truncate (unNumber y)))
-  StdConcat ->
-    case (x, y) of
-      (ValueArray as, ValueArray bs) -> ValueArray (as ++ bs)
-  StdIncludes ->
-    case x of
-      ValueArray vs -> ValueBool (any (valueEq y) vs)
-  StdJoin ->
-    case x of
-      ValueArray vs ->
-        ValueString (T.intercalate (unString y) (map jsJoinElem vs))
-  StdTest -> cannotEval "RegExp.test"
-  StdIndexOf -> cannotEval "String.indexOf"
-  StdSplit -> cannotEval "String.split"
 
 printComputation :: Doc -> IO ()
 printComputation computation = putStrLn (renderJSCompact computation)
@@ -916,11 +887,7 @@ valueNeedsStructuralEq = \case
 
 stdNeedsStructuralEq :: Std Stamp u -> Bool
 stdNeedsStructuralEq = \case
-  Math1 {} -> False
-  Math2 {} -> False
-  Un {} -> False
-  Bin {} -> False
-  Tern {} -> False
+  Fixed {} -> False
   Map {} -> True
   Filter {} -> True
   Reduce {} -> True
@@ -1392,11 +1359,7 @@ mapStd ::
   -> Std f u
   -> Std f u
 mapStd ge = \case
-  Math1 n x -> Math1 n (ge x)
-  Math2 n x y -> Math2 n (ge x) (ge y)
-  Un n x -> Un n (ge x)
-  Bin n x y -> Bin n (ge x) (ge y)
-  Tern n x y z -> Tern n (ge x) (ge y) (ge z)
+  Fixed op args -> Fixed op (mapFixedArgs ge args)
   Map x f -> Map (ge x) (ge . f)
   Filter x f -> Filter (ge x) (ge . f)
   Reduce x z f -> Reduce (ge x) (ge z) (\a b -> ge (f a b))
@@ -1496,11 +1459,7 @@ foldStd ::
   -> Std f u
   -> m
 foldStd dummy se le = \case
-  Math1 _ x -> se x
-  Math2 _ x y -> se x <> se y
-  Un _ x -> se x
-  Bin _ x y -> se x <> se y
-  Tern _ x y z -> se x <> se y <> se z
+  Fixed op args -> foldFixed dummy se op args
   Map x f -> se x <> le (f dummy)
   Filter x f -> se x <> le (f dummy)
   Reduce x z f -> se x <> se z <> le (f dummy dummy)
@@ -1749,9 +1708,15 @@ instance PhoasDummy Value where
 
 isPureExpr :: PhoasDummy f => Expr f u -> Bool
 isPureExpr e = case e of
-  Std (Un n x) -> isPureStdUnary n && isPureExpr x
+  Std (Fixed op args) -> isPureFixedArgs op args
   _ -> getAll (foldExpr phoasDummy p p pe e)
  where
+  isPureFixedArgs op args =
+    Prim.isPureFixed op
+      && case args of
+        ArgsU x -> isPureExpr x
+        ArgsB x y -> isPureExpr x && isPureExpr y
+        ArgsT x y z -> isPureExpr x && isPureExpr y && isPureExpr z
   p = All . isPureExpr
   pe = All . isPureEffectStamp
 
@@ -1775,12 +1740,6 @@ isPureEffectStamp e = case e of
           (All . isPureEffectStamp)
           e
       )
-
--- | @JSON.stringify@ throws on bigint / circular values, so unused
--- stringify is kept.
-isPureStdUnary :: StdUnary a b -> Bool
-isPureStdUnary StdStringify = False
-isPureStdUnary _ = True
 
 isPureEffect :: Effect Stamp u -> Bool
 isPureEffect = isPureEffectStamp
@@ -1913,26 +1872,58 @@ foldIndex arr idx = case (arr, idx) of
         Literal (vs !! i)
   _ -> Index arr idx
 
-foldMathUnary :: MathFn1 -> Expr Stamp 'Number -> Expr Stamp 'Number
-foldMathUnary n x = case x of
+foldFixedUnary :: FixedOp Number 'Unit 'Unit Number -> Expr Stamp 'Number -> Expr Stamp 'Number
+foldFixedUnary n x = case x of
   Literal (ValueNumber a)
-    | Just r <- exactMathUnary n a -> Literal (ValueNumber r)
-  _ -> Std (Math1 n x)
+    | Just r <- Prim.exactMathUnary n a -> Literal (ValueNumber r)
+  _ -> expr1 n x
 
-foldMathBinary ::
-  MathFn2 -> Expr Stamp 'Number -> Expr Stamp 'Number -> Expr Stamp 'Number
-foldMathBinary n x y = case (x, y) of
+foldFixedBinary ::
+  FixedOp 'Number 'Number 'Unit 'Number
+  -> Expr Stamp 'Number
+  -> Expr Stamp 'Number
+  -> Expr Stamp 'Number
+foldFixedBinary n x y = case (x, y) of
   (Literal (ValueNumber a), Literal (ValueNumber b))
-    | Just r <- exactMathBinary n a b -> Literal (ValueNumber r)
-  _ -> Std (Math2 n x y)
+    | Just r <- Prim.exactMathBinary n a b -> Literal (ValueNumber r)
+  _ -> expr2 n x y
 
-foldStdUn :: StdUnary a b -> Expr Stamp a -> Expr Stamp b
-foldStdUn n x = case n of
-  StdArrLen -> case x of
-    Literal (ValueArray vs) ->
-      Literal (ValueNumber (fromIntegral (Prelude.length vs)))
-    _ -> Std (Un n x)
-  _ -> Std (Un n x)
+foldArrLen :: Expr Stamp ('Array u) -> Expr Stamp 'Number
+foldArrLen x = case x of
+  Literal (ValueArray vs) ->
+    Literal (ValueNumber (fromIntegral (Prelude.length vs)))
+  _ -> expr1 FixArrLen x
+
+optFixed ::
+  Int
+  -> FixedOp a b c u
+  -> FixedArgs Stamp a b c
+  -> (Int, Expr Stamp u)
+optFixed t0 op args = case (op, args) of
+  (n, ArgsU x)
+    | Just (MathUnary n') <- matchMathUnary n ->
+        let (t1, x') = optExpr t0 x
+         in (t1, foldFixedUnary n' x')
+  (n, ArgsB x y)
+    | Just (MathBinary n') <- matchMathBinary n ->
+        let (t1, x') = optExpr t0 x
+            (t2, y') = optExpr t1 y
+         in (t2, foldFixedBinary n' x' y')
+  (FixArrLen, ArgsU x) ->
+    let (t1, x') = optExpr t0 x
+     in (t1, foldArrLen x')
+  (n, ArgsU x) ->
+    let (t1, x') = optExpr t0 x
+     in (t1, expr1 n x')
+  (n, ArgsB x y) ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+     in (t2, expr2 n x' y')
+  (n, ArgsT x y z) ->
+    let (t1, x') = optExpr t0 x
+        (t2, y') = optExpr t1 y
+        (t3, z') = optExpr t2 z
+     in (t3, expr3 n x' y' z')
 
 optLet ::
   Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (Int, Expr Stamp v)
@@ -2280,35 +2271,7 @@ optToSorted k t0 x f =
 
 optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u)
 optStd t0 = \case
-  Math1 n x ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      (t1, foldMathUnary n x')
-  Math2 n x y ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-     in
-      (t2, foldMathBinary n x' y')
-  Un n x ->
-    let
-      (t1, x') = optExpr t0 x
-     in
-      (t1, foldStdUn n x')
-  Bin n x y ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-     in
-      (t2, Std (Bin n x' y'))
-  Tern n x y z ->
-    let
-      (t1, x') = optExpr t0 x
-      (t2, y') = optExpr t1 y
-      (t3, z') = optExpr t2 z
-     in
-      (t3, Std (Tern n x' y' z'))
+  Fixed op args -> optFixed t0 op args
   Map x f -> optMapped (\a g -> Std (Map a g)) t0 x f
   Filter x f -> optMapped (\a g -> Std (Filter a g)) t0 x f
   Reduce x z f -> optReduced (\a b g -> Std (Reduce a b g)) t0 x z f
@@ -3008,34 +2971,42 @@ pureAST' !s0 = \case
      in
       (s1, Code d (jsDotOrBracket r (symbolVal (Proxy @k))))
 
-stdUnaryJS :: StdUnary a b -> Doc -> Doc
-stdUnaryJS n r = case n of
-  StdToUpper -> r <> ".toUpperCase()"
-  StdToLower -> r <> ".toLowerCase()"
-  StdTrim -> r <> ".trim()"
-  StdArrLen -> dotLength
-  StdStrLen -> dotLength
-  StdStringify -> "JSON.stringify" <> P.parens r
- where
-  dotLength = r <> ".length"
-
-stdBinaryJS :: StdBinary a b c -> Doc -> Doc -> Doc
-stdBinaryJS n r a = case n of
-  StdIndexOf -> r <> ".indexOf" <> P.parens a
-  StdSplit -> r <> ".split" <> P.parens a
-  StdIncludes -> r <> ".includes" <> P.parens a
-  StdConcat -> r <> ".concat" <> P.parens a
-  StdJoin -> r <> ".join" <> P.parens a
-  StdTest -> r <> ".test" <> P.parens a
-  StdParseInt -> "parseInt" <> P.parens (r <> ", " <> a)
-
-stdTernaryJS :: StdTernary a b c d -> Doc -> Doc -> Doc -> Doc
-stdTernaryJS n r a b = case n of
-  StdSlice -> slice
-  StdArrSlice -> slice
-  StdReplace -> r <> ".replace" <> P.parens (a <> ", " <> b)
- where
-  slice = r <> ".slice" <> P.parens (a <> ", " <> b)
+renderFixed ::
+  CG
+  -> FixedOp a b c u
+  -> FixedArgs Stamp a b c
+  -> (CG, Code)
+renderFixed s0 op args = case (op, args) of
+  (n, ArgsU x)
+    | Just name <- Prim.math1Name n ->
+        let (s1, Code xDecl xRef) = pureAST' s0 x
+         in (s1, Code xDecl ("Math." <> P.text (T.unpack name) <> P.parens xRef))
+  (n, ArgsB x y)
+    | Just name <- Prim.math2Name n ->
+        let (s1, Code xDecl xRef) = pureAST' s0 x
+            (s2, Code yDecl yRef) = pureAST' s1 y
+         in
+          ( s2
+          , Code
+              (xDecl $$ yDecl)
+              ( "Math."
+                  <> P.text (T.unpack name)
+                  <> P.parens (xRef <> ", " <> yRef)
+              )
+          )
+  (n, ArgsU recv) ->
+    let (s1, Code rDecl rRef) = pureAST' s0 recv
+     in (s1, Code rDecl (Prim.fixedUnaryJS n (wrapOperand recv rRef)))
+  (n, ArgsB recv arg) ->
+    let (s1, Code rDecl rRef) = pureAST' s0 recv
+        (s2, Code aDecl aRef) = pureAST' s1 arg
+     in (s2, Code (rDecl $$ aDecl) (Prim.fixedBinaryJS n (wrapOperand recv rRef) aRef))
+  (n, ArgsT recv a b) ->
+    let (s1, Code rDecl rRef) = pureAST' s0 recv
+        (s2, Code aDecl aRef) = pureAST' s1 a
+        (s3, Code bDecl bRef) = pureAST' s2 b
+     in
+      (s3, Code (rDecl $$ aDecl $$ bDecl) (Prim.fixedTernaryJS n (wrapOperand recv rRef) aRef bRef))
 
 resultPayloadRef :: Doc -> Doc
 resultPayloadRef r
@@ -3222,42 +3193,7 @@ renderBinaryFn s0 f =
 
 renderStd :: CG -> Std Stamp u -> (CG, Code)
 renderStd s0 = \case
-  Math1 name x ->
-    let
-      (s1, Code xDecl xRef) = pureAST' s0 x
-     in
-      (s1, Code xDecl ("Math." <> P.text (T.unpack (mathFn1Name name)) <> P.parens xRef))
-  Math2 name x y ->
-    let
-      (s1, Code xDecl xRef) = pureAST' s0 x
-      (s2, Code yDecl yRef) = pureAST' s1 y
-     in
-      ( s2
-      , Code
-          (xDecl $$ yDecl)
-          ( "Math."
-              <> P.text (T.unpack (mathFn2Name name))
-              <> P.parens (xRef <> ", " <> yRef)
-          )
-      )
-  Un n recv ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-     in
-      (s1, Code rDecl (stdUnaryJS n (wrapOperand recv rRef)))
-  Bin n recv arg ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-      (s2, Code aDecl aRef) = pureAST' s1 arg
-     in
-      (s2, Code (rDecl $$ aDecl) (stdBinaryJS n (wrapOperand recv rRef) aRef))
-  Tern n recv a b ->
-    let
-      (s1, Code rDecl rRef) = pureAST' s0 recv
-      (s2, Code aDecl aRef) = pureAST' s1 a
-      (s3, Code bDecl bRef) = pureAST' s2 b
-     in
-      (s3, Code (rDecl $$ aDecl $$ bDecl) (stdTernaryJS n (wrapOperand recv rRef) aRef bRef))
+  Fixed op args -> renderFixed s0 op args
   Map recv f -> renderCallbackMethod "map" s0 recv f
   Filter recv f -> renderCallbackMethod "filter" s0 recv f
   Reduce recv z f -> renderFold ".reduce" s0 recv z f

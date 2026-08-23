@@ -52,7 +52,7 @@ index arr i =
 
 -- | @arr.length@
 length :: Expr f ('Array u) -> Expr f 'Number
-length = Std . Un StdArrLen
+length = expr1 FixArrLen
 
 -- | @arr.map(function(x){...})@. The callback stays on 'Expr'.
 map :: Expr f ('Array u) -> (Expr f u -> Expr f v) -> Expr f ('Array v)
@@ -87,15 +87,15 @@ filterE_ arr f = bindExpr $ filterE arr (\x -> fromSyntax (f x))
 
 -- | @arr.includes(x)@
 includes :: Expr f ('Array u) -> Expr f u -> Expr f 'Bool
-includes xs x = Std (Bin StdIncludes xs x)
+includes xs x = expr2 FixIncludes xs x
 
 -- | @xs.concat(ys)@
 concat :: Expr f ('Array u) -> Expr f ('Array u) -> Expr f ('Array u)
-concat xs ys = Std (Bin StdConcat xs ys)
+concat xs ys = expr2 FixConcat xs ys
 
 -- | @arr.join(sep)@
 join :: Expr f ('Array u) -> Expr f 'String -> Expr f 'String
-join xs sep = Std (Bin StdJoin xs sep)
+join xs sep = expr2 FixJoin xs sep
 
 -- | @arr.push(x)@. Mutates in place; a 'CallMethod' on 'Effect'.
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
@@ -183,7 +183,7 @@ zipWith f xs ys =
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::
   Expr f ('Array u) -> Expr f 'Number -> Expr f 'Number -> Expr f ('Array u)
-arraySlice xs a b = Std (Tern StdArrSlice xs a b)
+arraySlice xs a b = expr3 FixArrSlice xs a b
 
 -- | @arr.sort(function(a,b){…})@. Mutates in place.
 sort ::

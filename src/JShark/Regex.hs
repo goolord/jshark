@@ -18,4 +18,4 @@ regex = Literal . ValueRegex
 
 -- | @re.test(s)@
 test :: Expr f 'Regex -> Expr f 'String -> Expr f 'Bool
-test re s = Std (Bin StdTest re s)
+test re s = expr2 FixTest re s

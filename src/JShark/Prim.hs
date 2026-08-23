@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -16,7 +17,6 @@ module JShark.Prim
   , fixedBinaryJS
   , fixedTernaryJS
   , isPureFixed
-  , fixedMemoizable
   , MathUnary (..)
   , MathBinary (..)
   , matchMathUnary
@@ -37,6 +37,7 @@ data MathUnary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) w
 data MathBinary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where
   MathBinary :: FixedOp 'Number 'Number 'Unit 'Number -> MathBinary 'Number 'Number 'Unit 'Number
 
+-- | JS @Math.*@ unary names. Keep in sync with 'matchMathUnary'.
 lookupMathUnary :: FixedOp a b c u -> Maybe (FixedOp 'Number 'Unit 'Unit 'Number, Text)
 lookupMathUnary = \case
   FixAbs -> Just (FixAbs, "abs")
@@ -65,6 +66,7 @@ lookupMathUnary = \case
   FixTrunc -> Just (FixTrunc, "trunc")
   _ -> Nothing
 
+-- | JS @Math.*@ binary names. Keep in sync with 'matchMathBinary'.
 lookupMathBinary :: FixedOp a b c u -> Maybe (FixedOp 'Number 'Number 'Unit 'Number, Text)
 lookupMathBinary = \case
   FixPow -> Just (FixPow, "pow")
@@ -75,27 +77,47 @@ lookupMathBinary = \case
   _ -> Nothing
 
 matchMathUnary :: FixedOp a b c u -> Maybe (MathUnary a b c u)
-matchMathUnary op = fmap (\(op', _) -> MathUnary op') (lookupMathUnary op)
+matchMathUnary = \case
+  FixAbs -> Just (MathUnary FixAbs)
+  FixSign -> Just (MathUnary FixSign)
+  FixSin -> Just (MathUnary FixSin)
+  FixCos -> Just (MathUnary FixCos)
+  FixTan -> Just (MathUnary FixTan)
+  FixAsin -> Just (MathUnary FixAsin)
+  FixAcos -> Just (MathUnary FixAcos)
+  FixAtan -> Just (MathUnary FixAtan)
+  FixSinh -> Just (MathUnary FixSinh)
+  FixCosh -> Just (MathUnary FixCosh)
+  FixTanh -> Just (MathUnary FixTanh)
+  FixAsinh -> Just (MathUnary FixAsinh)
+  FixAcosh -> Just (MathUnary FixAcosh)
+  FixAtanh -> Just (MathUnary FixAtanh)
+  FixSqrt -> Just (MathUnary FixSqrt)
+  FixCbrt -> Just (MathUnary FixCbrt)
+  FixExp -> Just (MathUnary FixExp)
+  FixLog -> Just (MathUnary FixLog)
+  FixLog2 -> Just (MathUnary FixLog2)
+  FixLog10 -> Just (MathUnary FixLog10)
+  FixFloor -> Just (MathUnary FixFloor)
+  FixCeil -> Just (MathUnary FixCeil)
+  FixRound -> Just (MathUnary FixRound)
+  FixTrunc -> Just (MathUnary FixTrunc)
+  _ -> Nothing
 
 matchMathBinary :: FixedOp a b c u -> Maybe (MathBinary a b c u)
-matchMathBinary op = fmap (\(op', _) -> MathBinary op') (lookupMathBinary op)
+matchMathBinary = \case
+  FixPow -> Just (MathBinary FixPow)
+  FixAtan2 -> Just (MathBinary FixAtan2)
+  FixMax -> Just (MathBinary FixMax)
+  FixMin -> Just (MathBinary FixMin)
+  FixHypot -> Just (MathBinary FixHypot)
+  _ -> Nothing
 
 math1Name :: FixedOp a b c u -> Maybe Text
 math1Name op = fmap snd (lookupMathUnary op)
 
 math2Name :: FixedOp a b c u -> Maybe Text
 math2Name op = fmap snd (lookupMathBinary op)
-
--- | Host-evaluable fixed ops safe to memoize in 'evaluateCached' (concrete
--- 'Typeable' @Number@ results only — same set as pre-'Fixed' @Math1@/@Math2@/
--- @parseInt@).
-fixedMemoizable :: FixedOp a b c u -> Bool
-fixedMemoizable FixParseInt = True
-fixedMemoizable op =
-  case (lookupMathUnary op, lookupMathBinary op) of
-    (Just _, _) -> True
-    (_, Just _) -> True
-    _ -> False
 
 mathUnaryFn :: FixedOp Number 'Unit 'Unit Number -> Double -> Double
 mathUnaryFn = \case

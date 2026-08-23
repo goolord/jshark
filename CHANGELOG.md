@@ -17,6 +17,12 @@
   n-ary curried `'Function` nests via the same rows (replaces `lambda2` /
   `lambda3`). `Array.toSorted` — pure copy via ES2023
   `Array.prototype.toSorted` (`Std ToSorted`).
+  Fixed-arity stdlib ops (`Math.*`, `Array.length`, `String.*`, …) share
+  one `Std (Fixed op args)` constructor with a `FixedOp` GADT and
+  `JShark.Prim` for host math, JS names, and codegen templates (replaces
+  `Math1` / `Math2` / `Un` / `Bin` / `Tern`). Higher-order stdlib
+  (`Map`, `Filter`, `Reduce`, …) stays on separate `Std` constructors.
+  `expr1` / `expr2` / `expr3` wrap `Fixed` as `Expr` for call sites.
   `FFIForm`
   tags lambda vs call (not string matching).
   `Expr` is a Good Parts kernel plus one `Std` constructor for pure JS
