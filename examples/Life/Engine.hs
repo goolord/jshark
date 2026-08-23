@@ -390,22 +390,15 @@ renderLife ctx viewport state = do
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
   renderValid <- getProp viewport "renderPanValid"
-  whenS (not_ renderValid) $ do
-    _ <- setProp viewport "renderPanX" panX
-    _ <- setProp viewport "renderPanY" panY
-    _ <- setProp viewport "renderZoom" zoom
-    setProp viewport "renderPanValid" true_
   lastPanX <- getProp viewport "renderPanX"
   lastPanY <- getProp viewport "renderPanY"
   lastZoom <- getProp viewport "renderZoom"
-  let
-    panSnap v = Math.round (v * number 100)
-    zoomSnap v = Math.round (v * number 1000)
   viewportDirty <-
     pure $
-      panSnap panX .!= panSnap lastPanX
-        .|| panSnap panY .!= panSnap lastPanY
-        .|| zoomSnap zoom .!= zoomSnap lastZoom
+      not_ renderValid
+        .|| panX .!= lastPanX
+        .|| panY .!= lastPanY
+        .|| zoom .!= lastZoom
   fullRedraw <- pure (sceneDirty .|| viewportDirty)
   dirtyScratch <- hold (toObject (CanvasDirty 0 0 (-1) (-1)))
   drawGridViewport
@@ -430,7 +423,8 @@ renderLife ctx viewport state = do
   set @"sceneDirty" state false_
   _ <- setProp viewport "renderPanX" panX
   _ <- setProp viewport "renderPanY" panY
-  setProp viewport "renderZoom" zoom
+  _ <- setProp viewport "renderZoom" zoom
+  setProp viewport "renderPanValid" true_
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 togglePause state = do

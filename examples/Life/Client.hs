@@ -636,6 +636,7 @@ paintHud ::
   -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
 paintHud ctx state meter viewport = do
+  _ <- Canvas.clearRect ctx (number 0) (number 0) (number canvasW) (number 96)
   gen <- state.gen
   pop <- state.pop
   paused <- state.paused

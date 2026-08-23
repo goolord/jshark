@@ -448,7 +448,7 @@ rgbaPixelSet pixels idx color =
     )
     (arg pixels <: arg idx <: arg color <: RecNil)
 
--- | Fill a solid @cellPx×cellPx@ block clipped to the canvas buffer.
+-- | Fill a solid @sw×sh@ block clipped to the canvas buffer.
 rgbaFillRect ::
   Expr f 'Uint8Array
   -> Expr f 'Number
@@ -457,18 +457,20 @@ rgbaFillRect ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
   -> Effect f 'Unit
-rgbaFillRect pixels canvasW canvasH x y cellPx color =
+rgbaFillRect pixels canvasW canvasH x y sw sh color =
   FFI
     ( FFILambda
-        "(p,w,h,x,y,s,c)=>{const x0=Math.max(0,0|x),y0=Math.max(0,0|y);const x1=Math.min(w,0|x+0|s),y1=Math.min(h,0|y+0|s);for(let yy=y0;yy<y1;yy++){const row=yy*w|0;for(let xx=x0;xx<x1;xx++){const o=(row+xx)<<2;p[o]=c&255;p[o+1]=(c>>8)&255;p[o+2]=(c>>16)&255;p[o+3]=(c>>>24)&255;}}}"
+        "(p,w,h,x,y,s,t,c)=>{const x0=Math.max(0,0|x),y0=Math.max(0,0|y);const x1=Math.min(w,(0|x)+(0|s)),y1=Math.min(h,(0|y)+(0|t));for(let yy=y0;yy<y1;yy++){const row=yy*w|0;for(let xx=x0;xx<x1;xx++){const o=(row+xx)<<2;p[o]=c&255;p[o+1]=(c>>8)&255;p[o+2]=(c>>16)&255;p[o+3]=(c>>>24)&255;}}}"
     )
     ( arg pixels
         <: arg canvasW
         <: arg canvasH
         <: arg x
         <: arg y
-        <: arg cellPx
+        <: arg sw
+        <: arg sh
         <: arg color
         <: RecNil
     )
