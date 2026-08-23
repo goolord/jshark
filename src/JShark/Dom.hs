@@ -125,11 +125,11 @@ setStyleProperty ::
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 setStyleProperty el prop value =
-  toSyntax $
-    discard $
-      ffi
-        "((el, p, v) => { el.style[p] = v; })"
-        (ArgEffect el <: arg (string prop) <: arg value <: RecNil)
+  toSyntax
+    $ discard
+    $ ffi
+      "((el, p, v) => { el.style[p] = v; })"
+      (ArgEffect el <: arg (string prop) <: arg value <: RecNil)
 
 innerHTML ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)

@@ -39,8 +39,8 @@ import Types
   , cellPx
   , gridH
   , gridW
-  , lifeTypesListId
   , ink
+  , lifeTypesListId
   )
 
 data Fps = Fps
@@ -96,17 +96,20 @@ wire ::
   -> EffectSyntax f (f 'Unit)
 wire canvas state registry = do
   rectSym <- toSyntax emptyObject
-  let rectRef = Lift (Var rectSym)
+  let
+    rectRef = Lift (Var rectSym)
   tipSym <- toSyntax emptyObject
-  let tipRef = Lift (Var tipSym)
+  let
+    tipRef = Lift (Var tipSym)
   _ <- setProp tipRef "sid" (number (-1))
-  let refreshRect = do
-        r <- hold $ callMethod canvas "getBoundingClientRect" RecNil
-        left <- getProp r "left"
-        top <- getProp r "top"
-        _ <- setProp rectRef "left" left
-        _ <- setProp rectRef "top" top
-        done
+  let
+    refreshRect = do
+      r <- hold $ callMethod canvas "getBoundingClientRect" RecNil
+      left <- getProp r "left"
+      top <- getProp r "top"
+      _ <- setProp rectRef "left" left
+      _ <- setProp rectRef "top" top
+      done
   win <- hold window
   addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
   addEventListener "resize" win $ \_ -> stmts refreshRect
@@ -142,7 +145,8 @@ wire canvas state registry = do
         w = number (fromIntegral gridW)
         h = number (fromIntegral gridH)
       whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
-        let i = cellIdx w gx gy
+        let
+          i = cellIdx w gx gy
         alive <- state.alive
         spArr <- state.species
         a <- u8Get alive i

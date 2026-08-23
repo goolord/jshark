@@ -30,10 +30,10 @@ import qualified JShark.Canvas as Canvas
 import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
+import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
 import JShark.Rec (Rec (..), (<:))
-import qualified JShark.Map as Map
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Support

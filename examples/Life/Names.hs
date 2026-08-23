@@ -304,7 +304,12 @@ verbsIng =
 wordArray :: [Text] -> Expr f ('Array 'String)
 wordArray xs = Literal (ValueArray (map ValueString xs))
 
-prefixesArr, suffixesArr, nounsArr, adjectivesArr, verbsIngArr :: Expr f ('Array 'String)
+prefixesArr
+  , suffixesArr
+  , nounsArr
+  , adjectivesArr
+  , verbsIngArr ::
+    Expr f ('Array 'String)
 prefixesArr = wordArray prefixes
 suffixesArr = wordArray suffixes
 nounsArr = wordArray nouns
@@ -345,7 +350,9 @@ makeName n =
       )
 
 collectTaken ::
-  Effect f ('MutableObject a) -> Effect f ('Set 'String) -> EffectSyntax f (f 'Unit)
+  Effect f ('MutableObject a)
+  -> Effect f ('Set 'String)
+  -> EffectSyntax f (f 'Unit)
 collectTaken registry taken = do
   catalogNames <- getProp registry "catalogNames"
   _ <- Map.mapM_ (\_ v -> Set.insert taken v) (Lift catalogNames)
@@ -357,7 +364,8 @@ refreshTakenNames ::
   Effect f ('MutableObject a) -> EffectSyntax f (f 'Unit)
 refreshTakenNames registry = do
   taken <- getProp registry "takenNames"
-  let takenSet = Lift taken
+  let
+    takenSet = Lift taken
   _ <- Set.clear takenSet
   collectTaken registry takenSet
 
@@ -381,10 +389,13 @@ uniqueNameSid ::
   -> EffectSyntax f (Expr f 'String)
 uniqueNameSid sid registry = bindExpr $ fromSyntax $ do
   taken <- getProp registry "takenNames"
-  let takenSet = Lift taken
-  let base = makeName sid
+  let
+    takenSet = Lift taken
+  let
+    base = makeName sid
   stSym <- toSyntax emptyObject
-  let st = Lift (Var stSym)
+  let
+    st = Lift (Var stSym)
   _ <- setProp st "candidate" base
   _ <- setProp st "seq" (number 2)
   inTaken <- Set.member takenSet base
@@ -463,8 +474,9 @@ cachedNameOfSid sid registry =
       toSyntax $
         optionCaseE
           hit
-          (fromSyntax $ do
-            nm <- nameOfSid sid registry
-            _ <- Map.insert (Lift cache) sid nm
-            toSyntax $ expr nm)
+          ( fromSyntax $ do
+              nm <- nameOfSid sid registry
+              _ <- Map.insert (Lift cache) sid nm
+              toSyntax $ expr nm
+          )
           (\nm -> expr nm)

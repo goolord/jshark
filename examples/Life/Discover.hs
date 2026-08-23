@@ -24,8 +24,8 @@ import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
-import Names (nameOfSid)
 import JShark.Types (Effect (Lift), Expr (Var))
+import Names (nameOfSid)
 import Types (gridN, indexRefreshMs)
 
 data Registry
@@ -199,7 +199,8 @@ stepIndexTracker alive species palette registry tracker seen container now = do
         _ <- Set.insert seen sid
         done
   lastMs <- getProp tracker "lastMs"
-  let refresh = number (fromIntegral indexRefreshMs)
+  let
+    refresh = number (fromIntegral indexRefreshMs)
   _ <-
     whenS (lastMs .== 0 .|| (now - lastMs) .>= refresh) $
       Map.withMap $ \current -> do
@@ -210,17 +211,20 @@ stepIndexTracker alive species palette registry tracker seen container now = do
             whenS (a .== 1) $ do
               sid <- u8Get species i
               prev <- Map.lookup current sid
-              let next = orElse prev (number 0) + 1
+              let
+                next = orElse prev (number 0) + 1
               _ <- Map.insert current sid next
               done
         rowsRef <- bindExpr (Array.fromEffects [])
         namesSym <- toSyntax Map.new
-        let namesBySid = Lift (Var namesSym)
+        let
+          namesBySid = Lift (Var namesSym)
         _ <-
           Set.mapM_
             ( \sid -> do
                 cnt <- Map.lookup current sid
-                let n = orElse cnt (number 0)
+                let
+                  n = orElse cnt (number 0)
                 nm <- nameOfSid sid registry
                 _ <- Map.insert namesBySid sid nm
                 row <-
@@ -266,14 +270,16 @@ stepIndexTracker alive species palette registry tracker seen container now = do
                 sid <- pure (Array.index row (number 0))
                 cnt <- pure (Array.index row (number 1))
                 nm <- Map.lookup namesBySid sid
-                let label = orElse nm (string "?")
+                let
+                  label = orElse nm (string "?")
                 rowEl <- Dom.createElement (string "div")
                 _ <- Dom.classAdd rowEl (string "index-row")
                 -- cnt==0: seen before but extinct on the current board
                 _ <- whenS (cnt .== 0) (Dom.classAdd rowEl (string "index-row-dead"))
                 swatch <- Dom.createElement (string "span")
                 _ <- Dom.classAdd swatch (string "swatch")
-                let base = sid * number 3
+                let
+                  base = sid * number 3
                 r <- u8Get palette base
                 g <- u8Get palette (base + 1)
                 b <- u8Get palette (base + 2)

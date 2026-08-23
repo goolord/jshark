@@ -20,7 +20,16 @@ module Engine
 where
 
 import Discover (Registry, discoverLife)
-import Grid (ImageData, cellIdx, imageDataBytes, putImageData, renderGrid, setU8, stepGrid, u8Get)
+import Grid
+  ( ImageData
+  , cellIdx
+  , imageDataBytes
+  , putImageData
+  , renderGrid
+  , setU8
+  , stepGrid
+  , u8Get
+  )
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas

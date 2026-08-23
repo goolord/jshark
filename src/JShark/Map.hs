@@ -108,10 +108,10 @@ mapM_ body m =
       "((m, f) => { m.forEach((v, k) => f(k)(v)); })"
       ( ArgEffect m
           <: ArgEffect
-              ( LambdaE $ \k ->
-                  LambdaE $ \v ->
-                    stmts (body (var k) (var v))
-              )
+            ( LambdaE $ \k ->
+                LambdaE $ \v ->
+                  stmts (body (var k) (var v))
+            )
           <: RecNil
       )
 
