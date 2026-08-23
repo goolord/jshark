@@ -22,9 +22,11 @@ where
 import Discover (Registry, discoverLife)
 import Grid (ImageData, cellIdx, imageDataBytes, putImageData, renderGrid, setU8, stepGrid, u8Get)
 import JShark.Api
+import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
+import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)
 import Patterns (initialAlive, initialPop, initialSpecies, paletteBytes)
 import Types
   ( LifeState
@@ -79,9 +81,14 @@ maybeDiscover state registry = do
     recentD <- state.recentDiscover
     result <- bindExpr $ discoverLife alive species pal registry nextD recentD
     nextOut <- getProp' result "nextId"
-    recentOut <- getProp' result "recent"
+    mintedArr <- getProp' result "mintedSids"
     set @"nextDiscover" state (Math.floor nextOut)
-    set @"recentDiscover" state recentOut
+    _ <- refreshTakenNames registry
+    forRange_ (number 0) (Array.length mintedArr) $ \i -> do
+      sid <- pure (Array.index mintedArr i)
+      nm <- uniqueNameSid sid registry
+      _ <- recordDiscoveredName sid nm registry
+      set @"recentDiscover" state nm
 
 stepGeneration ::
   Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
