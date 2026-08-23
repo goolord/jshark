@@ -59,6 +59,7 @@ tests =
   testGroup
     "jshark"
     [ evaluatorTests
+    , bigIntTests
     , codegenTests
     , controlFlowTests
     , stdlibTests
@@ -69,6 +70,72 @@ tests =
     , bunEvalTests
     , lucidDomTests
     , exampleTests
+    ]
+
+bigIntTests :: TestTree
+bigIntTests =
+  testGroup
+    "bigint"
+    [ testCase "bigInt 10 + bigInt 3 evaluates to 13" $
+        evaluateBigInt (bigInt 10 + bigInt 3) @?= 13
+    , testCase "2^80+1 stays exact" $
+        evaluateBigInt (bigInt (2 ^ (80 :: Int) + 1)) @?= 2 ^ (80 :: Int) + 1
+    , testCase "codegen emits 42n" $
+        renderJS (pureAST (bigInt 42)) @?= "42n"
+    , testCase "negative literal is parenthesized" $
+        renderJS (pureAST (bigInt (-42))) @?= "(-42n)"
+    , testCase "Number inference still defaults" $
+        evaluateNumber (let_ (number 1) (\seqN -> seqN + 1)) @?= 2
+    , testCase "quot_ truncates toward 0" $
+        evaluateBigInt (quot_ (bigInt (-7)) (bigInt 3)) @?= -2
+    , testCase "rem_ is remainder after truncating division" $
+        evaluateBigInt (rem_ (bigInt (-7)) (bigInt 3)) @?= -1
+    , testCase "bitwise and shifts evaluate" $ do
+        evaluateBigInt (bitAnd (bigInt 7) (bigInt 3)) @?= 3
+        evaluateBigInt (bitOr (bigInt 4) (bigInt 1)) @?= 5
+        evaluateBigInt (bitXor (bigInt 7) (bigInt 3)) @?= 4
+        evaluateBigInt (shl (bigInt 1) (bigInt 8)) @?= 256
+        evaluateBigInt (shr (bigInt 256) (bigInt 3)) @?= 32
+    , testCase "negative shift throws" $ do
+        r <- Ex.try (Ex.evaluate (evaluateBigInt (shl (bigInt 1) (bigInt (-1)))))
+        case r of
+          Left (Ex.ErrorCall msg)
+            | "negative" `T.isInfixOf` T.pack msg -> pure ()
+            | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+          Right n -> assertFailure ("expected throw, got " <> show n)
+    , testCase "toBigInt of an integer Number" $
+        evaluateBigInt (toBigInt (number 10)) @?= 10
+    , testCase "toBigInt of a non-integer Number throws" $ do
+        r <- Ex.try (Ex.evaluate (evaluateBigInt (toBigInt (number 1.5))))
+        case r of
+          Left (Ex.ErrorCall msg)
+            | "not an integer" `T.isInfixOf` T.pack msg -> pure ()
+            | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+          Right n -> assertFailure ("expected throw, got " <> show n)
+    , testCase "fromBigInt of a small value" $
+        evaluateNumber (fromBigInt (bigInt 9)) @?= 9
+    , testCase "parseBigInt_ sign and prefixes" $ do
+        evaluateBigInt (parseBigInt_ (string "-10")) @?= -10
+        evaluateBigInt (parseBigInt_ (string "0x10")) @?= 16
+        evaluateBigInt (parseBigInt_ (string "0b101")) @?= 5
+        evaluateBigInt (parseBigInt_ (string "0o17")) @?= 15
+        evaluateBigInt (parseBigInt_ (string "+0Xff")) @?= 255
+    , testCase "comparisons and toString" $ do
+        case evaluate (bigInt 3 .> bigInt 2) of
+          ValueBool b -> b @?= True
+        case evaluate (toString (bigInt 10 + bigInt 3)) of
+          ValueString s -> s @?= "13"
+    , testCase "typeof bigint" $
+        case evaluate (typeOf (bigInt 1)) of
+          ValueString s -> s @?= "bigint"
+    , testCase "Generic Integer is BigInt" $
+        G.fromValue (evaluate (G.toJS (13 :: Integer))) @?= (13 :: Integer)
+    , testCase "evaluateCached matches evaluate" $ do
+        let
+          e = bigInt 10 + bigInt 3
+        cached <- evaluateCached e
+        case cached of
+          ValueBigInt n -> n @?= evaluateBigInt e
     ]
 
 evaluatorTests :: TestTree

@@ -57,6 +57,9 @@ bunEvalTests =
           testGroup
             "eval"
             [ bunCase "addition" (number 1 + number 2)
+            , bunCase "bigint add via toString" (toString (bigInt 10 + bigInt 3))
+            , bunCase "bigint exact via toString" (toString (bigInt (2 ^ (80 :: Int) + 1)))
+            , bunCase "bigint literal via toString" (toString (bigInt 42))
             , bunCase "subtraction" ((number 5 :: Expr f 'Number) - number 2)
             , bunCase
                 "multiplication and division"
@@ -472,6 +475,7 @@ encodeJSValue = \case
       ++ "}"
   ValueFrozen {} -> error "encodeJSValue: frozen objects are not JSON"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
+  ValueBigInt {} -> error "encodeJSValue: bigint is not JSON"
 
 encodeResult :: Bool -> Value u -> String
 encodeResult okFlag payload =

@@ -216,6 +216,9 @@ fixedUnaryJS n r = case n of
   FixU8Len -> dotLength
   FixStrLen -> dotLength
   FixStringify -> "JSON.stringify" <> P.parens r
+  FixToBigInt -> "BigInt" <> P.parens r
+  FixFromBigInt -> "Number" <> P.parens r
+  FixParseBigInt -> "BigInt" <> P.parens r
   _ -> error "JShark.Prim.fixedUnaryJS: not a std unary op"
  where
   dotLength = r <> ".length"

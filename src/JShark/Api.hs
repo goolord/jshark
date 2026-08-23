@@ -22,12 +22,14 @@ module JShark.Api
   , Field
   , Comparable
   , KnownScalar
+  , NumericU
   , structuralEq
   , structuralNEq
   , GroupBy
 
     -- * Literals
   , number
+  , bigInt
   , bool
   , true_
   , false_
@@ -159,7 +161,11 @@ module JShark.Api
   , shl
   , shr
   , ushr
+  , quot_
   , parseInt_
+  , toBigInt
+  , fromBigInt
+  , parseBigInt_
   )
 where
 
@@ -288,6 +294,10 @@ loop0 rec body =
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
+
+-- | Exact integer literal. Codegen emits @Nn@ (negatives parenthesized).
+bigInt :: Integer -> Expr f 'BigInt
+bigInt = Literal . ValueBigInt
 
 bool :: Bool -> Expr f 'Bool
 bool = Literal . ValueBool
@@ -717,23 +727,25 @@ infixr 2 .||
 (.&&) = And
 (.||) = Or
 
-rem_ :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-rem_ = Rem
-
-bitAnd
-  , bitOr
-  , bitXor
-  , shl
-  , shr
-  , ushr ::
-    Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-bitAnd = BitAnd
-bitOr = BitOr
-bitXor = BitXor
-shl = Shl
-shr = Shr
+ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 ushr = UShr
+
+-- | BigInt truncating division (JS @/@). Number uses 'Fractional' @/@.
+quot_ :: Expr f 'BigInt -> Expr f 'BigInt -> Expr f 'BigInt
+quot_ x y = Std (Kernel (KBig BQuot x y))
 
 -- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
 parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number
 parseInt_ s r = expr2 FixParseInt s r
+
+-- | @BigInt(n)@. Throws when @n@ is not an integer Number.
+toBigInt :: Expr f 'Number -> Expr f 'BigInt
+toBigInt = expr1 FixToBigInt
+
+-- | @Number(n)@. Large values may lose precision.
+fromBigInt :: Expr f 'BigInt -> Expr f 'Number
+fromBigInt = expr1 FixFromBigInt
+
+-- | @BigInt(s)@. Accepts an optional sign and @0x@ / @0b@ / @0o@ prefixes.
+parseBigInt_ :: Expr f 'String -> Expr f 'BigInt
+parseBigInt_ = expr1 FixParseBigInt

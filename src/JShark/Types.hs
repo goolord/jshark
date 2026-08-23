@@ -89,6 +89,8 @@ module JShark.Types
   , ClosedEffect
   , Comparable
   , KnownScalar
+  , NumericU (..)
+  , BigBinOp (..)
   , mkEq
   , mkNEq
   , structuralEq
@@ -126,6 +128,7 @@ import JShark.Rec
 
 data Universe
   = Number
+  | BigInt
   | String
   | Unit
   | Array Universe
@@ -159,6 +162,7 @@ data Universe
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
   ValueNumber :: Double -> Value 'Number
+  ValueBigInt :: Integer -> Value 'BigInt
   ValueString :: Text -> Value 'String
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
@@ -465,6 +469,9 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixJoin :: FixedOp ('Array u) 'String 'Unit 'String
   FixTest :: FixedOp 'Regex 'String 'Unit 'Bool
   FixParseInt :: FixedOp 'String 'Number 'Unit 'Number
+  FixToBigInt :: FixedOp 'Number 'Unit 'Unit 'BigInt
+  FixFromBigInt :: FixedOp 'BigInt 'Unit 'Unit 'Number
+  FixParseBigInt :: FixedOp 'String 'Unit 'Unit 'BigInt
   FixSlice :: FixedOp 'String 'Number 'Number 'String
   FixArrSlice :: FixedOp ('Array u) 'Number 'Number ('Array u)
   FixReplace :: FixedOp 'String 'String 'String 'String
@@ -522,6 +529,19 @@ data Method :: (Universe -> Type) -> Universe -> Type where
     -> (f 'Number -> Expr f a)
     -> Method f ('Array a)
 
+-- | Exact integer kernel ops. JS @/@ on BigInt is truncating quot.
+data BigBinOp
+  = BPlus
+  | BMinus
+  | BTimes
+  | BQuot
+  | BRem
+  | BBitAnd
+  | BBitOr
+  | BBitXor
+  | BShl
+  | BShr
+
 -- | Good Parts kernel operators (@+@, @===@, @&&@, …).
 data Kernel :: (Universe -> Type) -> Universe -> Type where
   KConcat ::
@@ -573,6 +593,12 @@ data Kernel :: (Universe -> Type) -> Universe -> Type where
     Expr f 'Number
     -> Expr f 'Number
     -> Kernel f 'Number
+  KBig ::
+    BigBinOp
+    -> Expr f 'BigInt
+    -> Expr f 'BigInt
+    -> Kernel f 'BigInt
+  KBigNeg :: Expr f 'BigInt -> Kernel f 'BigInt
   KAnd ::
     Expr f 'Bool
     -> Expr f 'Bool
@@ -716,6 +742,9 @@ class KnownScalar (u :: Universe) where
 instance KnownScalar 'Number where
   isScalarTy = True
 
+instance KnownScalar 'BigInt where
+  isScalarTy = True
+
 instance KnownScalar 'String where
   isScalarTy = True
 
@@ -784,6 +813,8 @@ class Comparable (u :: Universe)
 
 instance Comparable 'Number
 
+instance Comparable 'BigInt
+
 instance Comparable 'String
 
 instance Comparable 'Bool
@@ -844,7 +875,7 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
 -- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
-instance forall u. u ~ 'Number => Num (Value u) where
+instance {-# INCOHERENT #-} forall u. u ~ 'Number => Num (Value u) where
   (+) = liftValue2 (+)
   (*) = liftValue2 (*)
   (-) = liftValue2 (-)
@@ -864,7 +895,68 @@ liftValue2 ::
   (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
-instance forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
+-- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.
+-- @>>>@ stays Number-only ('UShr').
+class NumericU (u :: Universe) where
+  rem_ :: Expr f u -> Expr f u -> Expr f u
+  bitAnd :: Expr f u -> Expr f u -> Expr f u
+  bitOr :: Expr f u -> Expr f u -> Expr f u
+  bitXor :: Expr f u -> Expr f u -> Expr f u
+  shl :: Expr f u -> Expr f u -> Expr f u
+  shr :: Expr f u -> Expr f u -> Expr f u
+
+instance NumericU 'Number where
+  rem_ = Rem
+  bitAnd = BitAnd
+  bitOr = BitOr
+  bitXor = BitXor
+  shl = Shl
+  shr = Shr
+
+instance NumericU 'BigInt where
+  rem_ = bigBin BRem
+  bitAnd = bigBin BBitAnd
+  bitOr = bigBin BBitOr
+  bitXor = bigBin BBitXor
+  shl = bigBin BShl
+  shr = bigBin BShr
+
+bigBin :: BigBinOp -> Expr f 'BigInt -> Expr f 'BigInt -> Expr f 'BigInt
+bigBin op x y = Std (Kernel (KBig op x y))
+
+bigNeg :: Expr f 'BigInt -> Expr f 'BigInt
+bigNeg x = Std (Kernel (KBigNeg x))
+
+liftBig1 :: (Integer -> Integer) -> Value 'BigInt -> Value 'BigInt
+liftBig1 f (ValueBigInt a) = ValueBigInt (f a)
+
+liftBig2 ::
+  (Integer -> Integer -> Integer) -> Value 'BigInt -> Value 'BigInt -> Value 'BigInt
+liftBig2 f (ValueBigInt a) (ValueBigInt b) = ValueBigInt (f a b)
+
+instance Num (Value 'BigInt) where
+  (+) = liftBig2 (+)
+  (*) = liftBig2 (*)
+  (-) = liftBig2 (-)
+  abs = liftBig1 abs
+  signum = liftBig1 signum
+  fromInteger = ValueBigInt
+  negate = liftBig1 negate
+
+instance Num (Expr f 'BigInt) where
+  (+) = bigBin BPlus
+  (*) = bigBin BTimes
+  (-) = bigBin BMinus
+  abs x = If (GTEq x (Literal (ValueBigInt 0))) x (bigNeg x)
+  signum x =
+    If
+      (GTh x (Literal (ValueBigInt 0)))
+      (Literal (ValueBigInt 1))
+      (If (LTh x (Literal (ValueBigInt 0))) (bigNeg (Literal (ValueBigInt 1))) (Literal (ValueBigInt 0)))
+  fromInteger n = Literal (ValueBigInt n)
+  negate = bigNeg
+
+instance {-# INCOHERENT #-} forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
   (+) = Plus
   (*) = Times
   (-) = Minus

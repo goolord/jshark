@@ -133,6 +133,10 @@ evaluateEffectJSONWith
 `Result` (below) — eliminate them with `optionCase` / `resultCase`,
 not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
 is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
+Exact integers are `'BigInt` (`bigInt`, `42n`): `quot_` is JS `/`
+(trunc toward 0), `rem_` is `rem`, and shifts throw if the count is
+negative. `toBigInt` throws on a non-integer `Number`.
+`parseBigInt_` accepts a sign and `0x` / `0b` / `0o`.
 Host `ByteArray` maps to `'Uint8Array` (`uint8Array`, `new Uint8Array([…])`).
 JS can write the object. A runtime-sized buffer whose bytes are not
 yet known is `newByteArray n` on `Effect` (`new Uint8Array(n)`).

@@ -96,6 +96,7 @@ module JShark
   -- Evaluation
   , evaluate
   , evaluateNumber
+  , evaluateBigInt
   , evaluateCached
   -- Optimization
   , optimize
@@ -167,6 +168,9 @@ import Unsafe.Coerce (unsafeCoerce)
 unNumber :: Value 'Number -> Double
 unNumber (ValueNumber d) = d
 
+unBigInt :: Value 'BigInt -> Integer
+unBigInt (ValueBigInt n) = n
+
 unBool :: Value 'Bool -> Bool
 unBool (ValueBool b) = b
 
@@ -178,6 +182,7 @@ unFunction (ValueFunction f) = f
 
 valueEq :: Value u -> Value u -> Bool
 valueEq (ValueNumber a) (ValueNumber b) = a == b
+valueEq (ValueBigInt a) (ValueBigInt b) = a == b
 valueEq (ValueString a) (ValueString b) = a == b
 valueEq (ValueBool a) (ValueBool b) = a == b
 valueEq ValueUnit ValueUnit = True
@@ -262,18 +267,20 @@ extraFieldEq a b =
         (Literal x, Literal y) -> valueEq x y
         _ -> error "evaluate: frozen extra field was not forced"
 
--- | Only numbers, strings, and booleans support ordering comparisons.
+-- | Only numbers, bigints, strings, and booleans support ordering comparisons.
 valueCompare :: Value u -> Value u -> Ordering
 valueCompare (ValueNumber a) (ValueNumber b) = compare a b
+valueCompare (ValueBigInt a) (ValueBigInt b) = compare a b
 valueCompare (ValueString a) (ValueString b) = compare a b
 valueCompare (ValueBool a) (ValueBool b) = compare a b
 valueCompare _ _ =
   error
-    "evaluate: only numbers, strings, and booleans support ordering comparisons"
+    "evaluate: only numbers, bigints, strings, and booleans support ordering comparisons"
 
 -- | Mimics JS's @String(x)@ coercion closely enough for the reference interpreter.
 jsShow :: Value u -> Text
 jsShow (ValueNumber d) = T.pack (jsShowNumber d)
+jsShow (ValueBigInt n) = T.pack (show n)
 jsShow (ValueString s) = s
 jsShow (ValueBool True) = "true"
 jsShow (ValueBool False) = "false"
@@ -301,6 +308,7 @@ jsJoinElem = \case
 typeOfValue :: Value u -> Text
 typeOfValue = \case
   ValueNumber {} -> "number"
+  ValueBigInt {} -> "bigint"
   ValueString {} -> "string"
   ValueBool {} -> "boolean"
   ValueUnit -> "undefined"
@@ -340,6 +348,7 @@ arrayValues (ValueArray vs) = vs
 isOrderableValue :: Value u -> Bool
 isOrderableValue = \case
   ValueNumber {} -> True
+  ValueBigInt {} -> True
   ValueString {} -> True
   ValueBool {} -> True
   _ -> False
@@ -398,6 +407,102 @@ jsParseInt s r
         | otherwise = 99
      in
       v < r
+
+numberToBigInt :: Double -> Integer
+numberToBigInt d
+  | isFiniteDouble d && d == fromInteger n = n
+  | otherwise =
+      error "evaluate: Number cannot be converted to BigInt because it is not an integer"
+ where
+  n = truncate d
+
+parseBigIntText :: Text -> Integer
+parseBigIntText s =
+  case parseBigIntString (T.unpack s) of
+    Just n -> n
+    Nothing -> error "evaluate: invalid BigInt string"
+
+parseBigIntString :: String -> Maybe Integer
+parseBigIntString raw =
+  let
+    stripped = reverse (dropWhile isSpace (reverse (dropWhile isSpace raw)))
+    (neg, rest0) = case stripped of
+      '-' : xs -> (True, xs)
+      '+' : xs -> (False, xs)
+      xs -> (False, xs)
+    (base, digits) = case rest0 of
+      '0' : 'x' : xs -> (16, xs)
+      '0' : 'X' : xs -> (16, xs)
+      '0' : 'b' : xs -> (2, xs)
+      '0' : 'B' : xs -> (2, xs)
+      '0' : 'o' : xs -> (8, xs)
+      '0' : 'O' : xs -> (8, xs)
+      xs -> (10, xs)
+   in
+    case digits of
+      [] -> Nothing
+      _ ->
+        case readInt (fromIntegral base :: Integer) (okBigDigit base) digitToInt digits of
+          (n, []) : _ -> Just (if neg then negate n else n)
+          _ -> Nothing
+
+okBigDigit :: Int -> Char -> Bool
+okBigDigit base c =
+  let
+    v
+      | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
+      | c >= 'a' && c <= 'z' = Char.ord c - Char.ord 'a' + 10
+      | c >= 'A' && c <= 'Z' = Char.ord c - Char.ord 'A' + 10
+      | otherwise = 99
+   in
+    v < base
+
+evalBigBin :: BigBinOp -> Integer -> Integer -> Integer
+evalBigBin BPlus = (+)
+evalBigBin BMinus = (-)
+evalBigBin BTimes = (*)
+evalBigBin BQuot = quot
+evalBigBin BRem = rem
+evalBigBin BBitAnd = (.&.)
+evalBigBin BBitOr = (.|.)
+evalBigBin BBitXor = xor
+evalBigBin BShl = bigShl
+evalBigBin BShr = bigShr
+
+tryEvalBigBin :: BigBinOp -> Integer -> Integer -> Maybe Integer
+tryEvalBigBin BQuot _ 0 = Nothing
+tryEvalBigBin BRem _ 0 = Nothing
+tryEvalBigBin BShl _ b | b < 0 = Nothing
+tryEvalBigBin BShr _ b | b < 0 = Nothing
+tryEvalBigBin op a b = Just (evalBigBin op a b)
+
+bigShl :: Integer -> Integer -> Integer
+bigShl a b
+  | b < 0 = error "evaluate: BigInt shift count is negative"
+  | otherwise = shiftL a (fromInteger b)
+
+bigShr :: Integer -> Integer -> Integer
+bigShr a b
+  | b < 0 = error "evaluate: BigInt shift count is negative"
+  | otherwise = shiftR a (fromInteger b)
+
+jsBigIntLit :: Integer -> Doc
+jsBigIntLit n
+  | n >= 0 = P.text (shows n "n")
+  | otherwise = P.parens (P.text (shows n "n"))
+
+bigOpJS :: BigBinOp -> String
+bigOpJS = \case
+  BPlus -> "+"
+  BMinus -> "-"
+  BTimes -> "*"
+  BQuot -> "/"
+  BRem -> "%"
+  BBitAnd -> "&"
+  BBitOr -> "|"
+  BBitXor -> "^"
+  BShl -> "<<"
+  BShr -> ">>"
 
 -- | JS @Array.prototype.slice@: ToInteger, negatives from the end, clamp.
 jsArraySlice :: [a] -> Double -> Double -> [a]
@@ -510,6 +615,9 @@ peelString _ = Nothing
 
 evaluateNumber :: ClosedExpr 'Number -> Double
 evaluateNumber e = unNumber (evaluate e)
+
+evaluateBigInt :: ClosedExpr 'BigInt -> Integer
+evaluateBigInt e = unBigInt (evaluate e)
 
 -- | Pure reference interpreter. Shared Haskell heap nodes are walked
 -- once per occurrence (no memo table). Use 'evaluateCached' when host-level
@@ -660,6 +768,11 @@ evalKernel rec = \case
   KShl x y -> num2 jsShl x y
   KShr x y -> num2 jsShr x y
   KUShr x y -> num2 jsUShr x y
+  KBig op x y -> do
+    a <- rec x
+    b <- rec y
+    pure (ValueBigInt (evalBigBin op (unBigInt a) (unBigInt b)))
+  KBigNeg x -> ValueBigInt . negate . unBigInt <$> rec x
   KConcat x y -> do
     a <- rec x
     b <- rec y
@@ -746,6 +859,12 @@ evalFixed rec op args = case (op, args) of
     sv <- rec s
     rv <- rec r
     pure (ValueNumber (jsParseInt (unString sv) (truncate (unNumber rv))))
+  (FixToBigInt, ArgsU x) ->
+    ValueBigInt . numberToBigInt . unNumber <$> rec x
+  (FixFromBigInt, ArgsU x) ->
+    ValueNumber . fromInteger . unBigInt <$> rec x
+  (FixParseBigInt, ArgsU x) ->
+    ValueBigInt . parseBigIntText . unString <$> rec x
   (FixConcat, ArgsB x y) -> do
     as <- arrayValues <$> rec x
     bs <- arrayValues <$> rec y
@@ -861,6 +980,8 @@ goKernel cache e = \case
   KShl {} -> go cache e
   KShr {} -> go cache e
   KUShr {} -> go cache e
+  KBig {} -> go cache e
+  KBigNeg {} -> go cache e
   KConcat {} -> go cache e
   KShow {} -> go cache e
   KTypeOf {} -> go cache e
@@ -881,6 +1002,9 @@ goOpen cache e = case e of
   Std (Kernel k) -> goKernel cache e k
   -- Memoize @Math@ / @parseInt@ only ('Typeable' @Number@ — see 'matchMathUnary').
   Std (Fixed FixParseInt _) -> go cache e
+  Std (Fixed FixToBigInt _) -> go cache e
+  Std (Fixed FixFromBigInt _) -> go cache e
+  Std (Fixed FixParseBigInt _) -> go cache e
   Std (Fixed op _) ->
     case matchMathUnary op of
       Just (MathUnary _) -> go cache e
@@ -889,6 +1013,7 @@ goOpen cache e = case e of
           Just (MathBinary _) -> go cache e
           Nothing -> pure (evalValue e)
   Literal ValueNumber {} -> go cache e
+  Literal ValueBigInt {} -> go cache e
   Literal ValueString {} -> go cache e
   Literal ValueBool {} -> go cache e
   Literal ValueUnit -> go cache e
@@ -1142,6 +1267,7 @@ isSimple = \case
   Std (Kernel (KShow {})) -> True
   Std (Kernel (KTypeOf {})) -> True
   Std (Kernel (KNegate {})) -> True
+  Std (Kernel (KBigNeg {})) -> True
   Std (Kernel _) -> False
   Std {} -> True
   FnLit {} -> True
@@ -1425,6 +1551,8 @@ mapKernel ge = \case
   KShl x y -> KShl (ge x) (ge y)
   KShr x y -> KShr (ge x) (ge y)
   KUShr x y -> KUShr (ge x) (ge y)
+  KBig op x y -> KBig op (ge x) (ge y)
+  KBigNeg x -> KBigNeg (ge x)
   KConcat x y -> KConcat (ge x) (ge y)
   KShow x -> KShow (ge x)
   KTypeOf x -> KTypeOf (ge x)
@@ -1546,6 +1674,8 @@ foldKernel se le = \case
   KShl x y -> se x <> se y
   KShr x y -> se x <> se y
   KUShr x y -> se x <> se y
+  KBig _ x y -> se x <> se y
+  KBigNeg x -> se x
   KConcat x y -> se x <> se y
   KShow x -> se x
   KTypeOf x -> se x
@@ -1770,6 +1900,7 @@ optUnder2 t0 f =
 isCheapValue :: Value u -> Bool
 isCheapValue = \case
   ValueNumber {} -> True
+  ValueBigInt {} -> True
   ValueString {} -> True
   ValueBool {} -> True
   ValueUnit -> True
@@ -2007,6 +2138,43 @@ foldArrLen x = case x of
     Literal (ValueNumber (fromIntegral (Prelude.length vs)))
   _ -> expr1 FixArrLen x
 
+foldToBigInt :: Expr Stamp 'Number -> Expr Stamp 'BigInt
+foldToBigInt x = case x of
+  Literal (ValueNumber d)
+    | isFiniteDouble d
+    , let n = truncate d
+    , d == fromInteger n ->
+        Literal (ValueBigInt n)
+  _ -> expr1 FixToBigInt x
+
+foldFromBigInt :: Expr Stamp 'BigInt -> Expr Stamp 'Number
+foldFromBigInt x = case x of
+  Literal (ValueBigInt n) -> Literal (ValueNumber (fromInteger n))
+  _ -> expr1 FixFromBigInt x
+
+foldParseBigInt :: Expr Stamp 'String -> Expr Stamp 'BigInt
+foldParseBigInt x = case x of
+  Literal (ValueString s)
+    | Just n <- parseBigIntString (T.unpack s) ->
+        Literal (ValueBigInt n)
+  _ -> expr1 FixParseBigInt x
+
+foldBig ::
+  BigBinOp
+  -> Expr Stamp 'BigInt
+  -> Expr Stamp 'BigInt
+  -> Expr Stamp 'BigInt
+foldBig op x y = case (x, y) of
+  (Literal (ValueBigInt a), Literal (ValueBigInt b))
+    | Just r <- tryEvalBigBin op a b ->
+        Literal (ValueBigInt r)
+  _ -> Std (Kernel (KBig op x y))
+
+foldBigNeg :: Expr Stamp 'BigInt -> Expr Stamp 'BigInt
+foldBigNeg x = case x of
+  Literal (ValueBigInt n) -> Literal (ValueBigInt (negate n))
+  _ -> Std (Kernel (KBigNeg x))
+
 optFixed ::
   Int
   -> FixedOp a b c u
@@ -2031,6 +2199,21 @@ optFixed t0 op args = case (op, args) of
       (t1, x') = optExpr t0 x
      in
       (t1, foldArrLen x')
+  (FixToBigInt, ArgsU x) ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldToBigInt x')
+  (FixFromBigInt, ArgsU x) ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldFromBigInt x')
+  (FixParseBigInt, ArgsU x) ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldParseBigInt x')
   (n, ArgsU x) ->
     let
       (t1, x') = optExpr t0 x
@@ -2375,6 +2558,17 @@ optKernel t0 = \case
   KShr x y -> optBinNum t0 jsShr Shr x y
   KUShr x y -> optBinNum t0 jsUShr UShr x y
   KNegate x -> optUnNum t0 negate Negate x
+  KBig op x y ->
+    let
+      (t1, x') = optExpr t0 x
+      (t2, y') = optExpr t1 y
+     in
+      (t2, foldBig op x' y')
+  KBigNeg x ->
+    let
+      (t1, x') = optExpr t0 x
+     in
+      (t1, foldBigNeg x')
   KConcat x y ->
     let
       (t1, x') = optExpr t0 x
@@ -3023,6 +3217,7 @@ pureAST' ::
 pureAST' !s0 = \case
   Literal v -> case v of
     ValueNumber d -> (s0, Code mempty (P.text $ showFFloat Nothing d ""))
+    ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
     ValueArray xs ->
       let
         (s1, exprs) = mapAccumL (\s x -> pureAST' s (Literal x)) s0 xs
@@ -3402,6 +3597,12 @@ renderKernel s0 = \case
   KShl x y -> renderBin "<<" s0 x y
   KShr x y -> renderBin ">>" s0 x y
   KUShr x y -> renderBin ">>>" s0 x y
+  KBig op x y -> renderBin (bigOpJS op) s0 x y
+  KBigNeg x ->
+    let
+      (s1, Code x1Decl x1Ref) = pureAST' s0 x
+     in
+      (s1, Code x1Decl $ "-" <> P.parens x1Ref)
   KShow x ->
     let
       (s1, Code x1Decl x1Ref) = pureAST' s0 x

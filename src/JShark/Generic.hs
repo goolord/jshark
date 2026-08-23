@@ -133,6 +133,7 @@ type family ScalarU (a :: Type) :: Universe where
   ScalarU Double = 'Number
   ScalarU Float = 'Number
   ScalarU Int = 'Number
+  ScalarU Integer = 'BigInt
   ScalarU Text = 'String
   ScalarU Bool = 'Bool
   ScalarU () = 'Unit
@@ -152,6 +153,7 @@ type family FieldU (a :: Type) :: Universe where
   FieldU Double = ScalarU Double
   FieldU Float = ScalarU Float
   FieldU Int = ScalarU Int
+  FieldU Integer = ScalarU Integer
   FieldU Text = ScalarU Text
   FieldU Bool = ScalarU Bool
   FieldU () = ScalarU ()
@@ -201,6 +203,13 @@ instance ToJS Int where
 instance ToValue Int where
   toValue = ValueNumber . fromIntegral
   fromValue (ValueNumber d) = truncate d
+
+instance ToJS Integer where
+  toJS = Literal . toValue
+
+instance ToValue Integer where
+  toValue = ValueBigInt
+  fromValue (ValueBigInt n) = n
 
 instance ToJS Text where
   toJS = string
@@ -292,6 +301,7 @@ type family KindOf (a :: Type) :: FieldKind where
   KindOf Double = 'Prim
   KindOf Float = 'Prim
   KindOf Int = 'Prim
+  KindOf Integer = 'Prim
   KindOf Text = 'Prim
   KindOf Bool = 'Prim
   KindOf () = 'Prim

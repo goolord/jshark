@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* `'BigInt`. Host `Integer` via `ToJS` / `ToValue` / `bigInt`.
+  Literals emit `Nn` (negatives parenthesized). Kernel ops share
+  `NumericU` with `'Number` (`rem_`, bitwise, shifts); `quot_` is
+  BigInt-only truncating `/`. `toBigInt` / `fromBigInt` /
+  `parseBigInt_` (sign and `0x`/`0b`/`0o`). Number `Num` instances
+  are `INCOHERENT` so `seqN + 1` still defaults to `'Number`.
+
 * `fillRgbaImageData` replaces `clearRgbaImageData` (parameterized RGBA fill for
   `ImageData.data` buffers). `u8FillRegion` clears a rectangular slice of a
   row-major `Uint8Array` via `forRange` + `u8Set`.
