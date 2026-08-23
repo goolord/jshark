@@ -241,6 +241,8 @@ nouns =
   , "resonance"
   , "synapse"
   , "tessera"
+  , "niumbus"
+  , "nebula"
   ]
 adjectives =
   [ "pulchritudinous"
@@ -263,6 +265,7 @@ adjectives =
   , "verdant"
   , "wistful"
   , "xenial"
+  , "undead"
   ]
 verbsIng =
   [ "acceding"
@@ -289,6 +292,8 @@ verbsIng =
   , "yielding"
   , "zenithing"
   , "drifting"
+  , "bleeding"
+  , "tremoring"
   ]
 
 namingRuntimeJs :: String
