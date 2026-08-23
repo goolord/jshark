@@ -74,7 +74,7 @@ putImageData ctx img = do
 
 imageDataBytes ::
   Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
-imageDataBytes img = bindExpr $ ffi "((img) => img.data)" (arg img <: RecNil)
+imageDataBytes img = getProp (expr img) "data"
 
 stepGrid ::
   Expr f 'Uint8Array

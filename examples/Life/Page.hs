@@ -5,7 +5,7 @@ module Page (page) where
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import Lucid
-import Types (boardId, canvasH, canvasW, cellPx, gridH, gridW, hoverRadius, lifeIndexHostId, lifeTooltipId, lifeTooltipNameId, lifeTooltipSwatchId)
+import Types (boardId, canvasH, canvasW, cellPx, gridH, gridW, hoverRadius, lifeIndexHostId, lifeTooltipId, lifeTooltipNameId, lifeTooltipSwatchId, lifeTypesListId)
 
 -- | Shell page. The live board, tooltip, and index run inside a @blob:@
 --   iframe so extension content scripts (Bitwarden, video scanners) that
@@ -73,7 +73,8 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
       source
       section_ [class_ "life-index"] $ do
         h2_ "Biomass Index"
-        div_ [id_ lifeIndexHostId] mempty
+        div_ [id_ lifeIndexHostId] $
+          div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
     script_ [src_ scriptSrc] ("" :: Html ())
 
 shellCss :: T.Text

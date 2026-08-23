@@ -7,8 +7,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Conway step and render in JShark. Grid buffers use typed byte
---    helpers ('Grid'); simulation step and pixel blitting use single ffi
---    calls ('stepGrid', 'renderGrid').
+--    helpers ('Grid').
 module Engine
   ( initLife
   , stepLife
@@ -87,10 +86,7 @@ maybeDiscover state registry = do
     species <- state.species
     pal <- state.palette
     nextD <- state.nextDiscover
-    recentD <- state.recentDiscover
-    result <- bindExpr $ discoverLife alive species pal registry nextD recentD
-    nextOut <- getProp' result "nextId"
-    mintedArr <- getProp' result "mintedSids"
+    (nextOut, mintedArr) <- discoverLife alive species pal registry nextD
     set @"nextDiscover" state (Math.floor nextOut)
     _ <- refreshTakenNames registry
     forRange_ (number 0) (Array.length mintedArr) $ \i -> do

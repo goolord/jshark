@@ -29,7 +29,7 @@ import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf)
 import qualified JShark.Generic as G
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..), (<:))
+import JShark.Rec (Rec (..))
 import qualified JShark.Set as Set
 import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift), Expr (Var))
@@ -69,16 +69,7 @@ boot canvas ctx = do
   ctxH <- hold (expr ctx)
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
-  toSyntax_
-    $ discard
-    $ ffi
-      "((canvas, ctx, w, h) => { canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; ctx.imageSmoothingEnabled = false; })"
-      ( ArgEffect canvas
-          <: ArgEffect ctxH
-          <: arg (number canvasW)
-          <: arg (number canvasH)
-          <: RecNil
-      )
+  _ <- setProp ctxH "imageSmoothingEnabled" false_
   state <- initLife ctxH
   registry <- initRegistry
   indexTracker <- initIndexTracker
@@ -265,11 +256,9 @@ applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy = 
     (n .== 0)
     (hideTooltip tipRef tooltip)
     ( do
-        sortedSids <-
-          bindExpr $
-            ffi
-              "s => Array.from(s).sort((a, b) => a - b)"
-              (ArgEffect hits <: RecNil)
+        sids <- bindExpr $ Array.fromEffects []
+        _ <- Set.mapM_ (\sid -> Array.push_ sids sid) hits
+        sortedSids <- bindExpr $ Array.sort sids (\x y -> x - y)
         _ <- setProp tipRef "fpBuild" (string "")
         _ <- setProp tipRef "label" (string "")
         _ <-
