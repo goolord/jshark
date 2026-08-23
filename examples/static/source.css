@@ -1,0 +1,26 @@
+.js-source {
+  box-sizing: border-box;
+  max-width: 48rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #e2e8f0;
+  font-family: system-ui, sans-serif;
+  text-align: left;
+}
+
+.js-source summary {
+  cursor: pointer;
+  padding: 0.4rem 0;
+  color: #94a3b8;
+}
+
+.js-source pre {
+  margin: 0.5rem 0 0;
+  max-height: 28rem;
+  overflow: auto;
+  border-radius: 6px;
+}
+
+.js-source code {
+  font-size: 0.85rem;
+}

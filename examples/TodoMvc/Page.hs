@@ -6,9 +6,10 @@ import qualified Data.Text as T
 import Ids
 import Lucid
 
--- | TodoMVC shell. @headExtra@ / @source@ are the highlighter and JS pane.
-page :: Html () -> Html () -> T.Text -> Html ()
-page headExtra source scriptSrc = doctypehtml_ $ do
+-- | TodoMVC shell. @staticRoot@ is the shared assets prefix; @headExtra@ /
+-- @source@ are the highlighter and JS pane.
+page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
+page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
@@ -21,10 +22,7 @@ page headExtra source scriptSrc = doctypehtml_ $ do
       [ rel_ "stylesheet"
       , href_ "https://unpkg.com/todomvc-app-css@2.4.3/index.css"
       ]
-    style_
-      ( "body{max-width:none}"
-          <> ".todoapp,.info{max-width:550px;margin-left:auto;margin-right:auto}"
-      )
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/todo-mvc.css")]
     headExtra
   body_ $ do
     section_ [class_ "todoapp"] $ do

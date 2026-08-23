@@ -73,11 +73,7 @@ serveExamples port banner examples = do
   shots <- traverse exampleShot examples
   assets <-
     fmap concat $
-      traverse
-        staticAsset
-        [ "highlight.min.js"
-        , "github-dark.min.css"
-        ]
+      traverse staticAsset staticFiles
   scotty port $ do
     get "/" $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
@@ -118,11 +114,7 @@ exportExamples dest examples = do
   shots <- traverse exampleShot examples
   TL.writeFile (dest </> "index.html") (renderText (indexPage exportPaths shots))
   writeFile (dest </> ".nojekyll") ""
-  forM_
-    [ "highlight.min.js"
-    , "github-dark.min.css"
-    ]
-    (copyStatic dest)
+  forM_ staticFiles (copyStatic dest)
   forM_ shots $ \(ex, path) ->
     case path of
       Nothing -> pure ()
@@ -191,7 +183,7 @@ indexPage paths shots = doctypehtml_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
     title_ "JShark examples"
-    style_ indexCss
+    link_ [rel_ "stylesheet", href_ (srcStatic paths <> "/index.css")]
   body_ $
     main_ $ do
       h1_ "examples"
@@ -211,19 +203,13 @@ exampleCard paths (ex, shot) =
             ]
       span_ (toHtml (exampleTitle ex))
 
-indexCss :: T.Text
-indexCss =
-  "html,body{margin:0;min-height:100%;background:#0f172a;color:#e2e8f0;"
-    <> "font-family:Georgia,serif}"
-    <> "main{max-width:52rem;margin:2.5rem auto;padding:0 1.25rem}"
-    <> "h1{font-weight:400;letter-spacing:.04em;margin:0 0 .4rem}"
-    <> "p{color:#94a3b8;margin:0 0 1.75rem}"
-    <> "ul{list-style:none;margin:0;padding:0;display:grid;"
-    <> "grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem}"
-    <> "@media(max-width:30rem){ul{grid-template-columns:1fr}}"
-    <> "a{color:inherit;text-decoration:none;display:block;background:#1e293b;"
-    <> "border-radius:6px;overflow:hidden;outline:1px solid #334155}"
-    <> "a:hover{outline-color:#38bdf8}"
-    <> "img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;"
-    <> "object-position:top center;background:#0b1220}"
-    <> "span{display:block;padding:.85rem 1rem .95rem}"
+staticFiles :: [FilePath]
+staticFiles =
+  [ "highlight.min.js"
+  , "github-dark.min.css"
+  , "source.css"
+  , "index.css"
+  , "breakout.css"
+  , "synth.css"
+  , "todo-mvc.css"
+  ]

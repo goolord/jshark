@@ -23,21 +23,21 @@ main = do
           "breakout"
           "Breakout"
           ( \script static ->
-              Breakout.page (sourceHead static) (sourcePane static breakoutJs) script
+              Breakout.page static (sourceHead static) (sourcePane static breakoutJs) script
           )
           breakoutJs
       , Example
           "todo-mvc"
           "TodoMVC"
           ( \script static ->
-              TodoMvc.page (sourceHead static) (sourcePane static todoJs) script
+              TodoMvc.page static (sourceHead static) (sourcePane static todoJs) script
           )
           todoJs
       , Example
           "synth"
           "Synthesizer"
           ( \script static ->
-              Synth.page (sourceHead static) (sourcePane static synthJs) script
+              Synth.page static (sourceHead static) (sourcePane static synthJs) script
           )
           synthJs
       ]
