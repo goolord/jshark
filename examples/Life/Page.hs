@@ -5,7 +5,26 @@ module Page (page) where
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import Lucid
-import Types (boardId, canvasH, canvasW, cellPx, gridH, gridW, hoverRadius, lifeIndexHostId, lifeTooltipId, lifeTooltipNameId, lifeTooltipSwatchId, lifeTypesListId)
+import Lucid.Base (makeAttribute)
+import Names (patternLabel)
+import Patterns (PatternSpec (..), disturbPatterns, speciesColor)
+import Types
+  ( boardId
+  , canvasH
+  , canvasW
+  , cellPx
+  , gridH
+  , gridW
+  , hoverRadius
+  , ink
+  , lifeIndexHostId
+  , lifeTooltipId
+  , lifeTooltipNameId
+  , lifeTooltipSwatchId
+  , lifeToolsId
+  , lifeTypesListId
+  , toggleToolSid
+  )
 
 -- | Shell page. The live board, tooltip, and index run inside a @blob:@
 --   iframe so extension content scripts (Bitwarden, video scanners) that
@@ -45,23 +64,26 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
     title_ "JShark • Game of Life"
     toHtmlRaw ("<base href=\"%%LIFE_BASE%%\">" :: T.Text)
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
+    style_ toolsCss
     headExtra
   body_ $ do
     main_ $ do
       h1_ "Conway's Game of Life"
-      canvas_
-        [ id_ boardId
-        , width_ (T.pack (show (round canvasW :: Int)))
-        , height_ (T.pack (show (round canvasH :: Int)))
-        , tabindex_ "0"
-        , autofocus_
-        ]
-        mempty
+      div_ [class_ "life-stage"] $ do
+        canvas_
+          [ id_ boardId
+          , width_ (T.pack (show (round canvasW :: Int)))
+          , height_ (T.pack (show (round canvasH :: Int)))
+          , tabindex_ "0"
+          , autofocus_
+          ]
+          mempty
+        toolsHud
       div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
         span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
         span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
       p_ [class_ "help"] $
-        "Space to pause. Click to toggle cells. Hover within "
+        "Space to pause or resume. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle a cell, or drop a spaceship or methuselah. Hover within "
           <> toHtml (T.pack (show (hoverRadius * cellPx + cellPx)))
           <> "px of a species for its name. "
           <> "Emergent soup patterns are scanned every 45 generations: "
@@ -112,3 +134,103 @@ jsString t =
     '\x2028' -> "\\u2028"
     '\x2029' -> "\\u2029"
     _ -> T.singleton c
+
+toolsHud :: Html ()
+toolsHud =
+  div_
+    [ id_ lifeToolsId
+    , class_ "life-tools"
+    , role_ "toolbar"
+    , makeAttribute "aria-label" "Placement tools"
+    ]
+    $ do
+      toolButton toggleToolSid "Toggle" [(1, 1)] (Just (3, 3)) True
+      mapM_ disturbButton disturbPatterns
+
+disturbButton :: PatternSpec -> Html ()
+disturbButton p =
+  toolButton (patId p) (patternLabel (patId p)) (patCells p) Nothing False
+
+toolButton :: Int -> T.Text -> [(Int, Int)] -> Maybe (Int, Int) -> Bool -> Html ()
+toolButton sid label cells size selected =
+  button_
+    [ class_ (if selected then "life-tool is-selected" else "life-tool")
+    , type_ "button"
+    , makeAttribute "data-tool" (T.pack (show sid))
+    , title_ label
+    , makeAttribute "aria-label" label
+    , makeAttribute "aria-pressed" (if selected then "true" else "false")
+    ]
+    $ do
+      toolPreview sid cells size
+      span_ [class_ "life-tool-name"] (toHtml label)
+
+toolPreview :: Int -> [(Int, Int)] -> Maybe (Int, Int) -> Html ()
+toolPreview sid cells size =
+  span_
+    [ class_ "life-tool-preview"
+    , style_ ("--tw:" <> T.pack (show w) <> ";--th:" <> T.pack (show h) <> ";--on:" <> onColor)
+    ]
+    $ mapM_ cellSpan [(x, y) | y <- [minY .. minY + h - 1], x <- [minX .. minX + w - 1]]
+ where
+  (minX, minY, w, h) = previewBox cells size
+  onColor
+    | sid == toggleToolSid = ink
+    | otherwise = rgbCss (speciesColor sid)
+  cellSpan :: (Int, Int) -> Html ()
+  cellSpan (x, y) =
+    span_
+      [ class_
+          ( if (x, y) `elem` cells
+              then "life-tool-cell is-on"
+              else "life-tool-cell"
+          )
+      ]
+      mempty
+
+previewBox :: [(Int, Int)] -> Maybe (Int, Int) -> (Int, Int, Int, Int)
+previewBox cells size =
+  case size of
+    Just (w, h) -> (0, 0, w, h)
+    Nothing ->
+      let
+        xs = map fst cells
+        ys = map snd cells
+        minX = minimum xs
+        minY = minimum ys
+       in
+        (minX, minY, maximum xs - minX + 1, maximum ys - minY + 1)
+
+rgbCss :: (Int, Int, Int) -> T.Text
+rgbCss (r, g, b) =
+  "rgb("
+    <> T.pack (show r)
+    <> ","
+    <> T.pack (show g)
+    <> ","
+    <> T.pack (show b)
+    <> ")"
+
+-- | Inlined so the HUD still paints when /static/life.css is missing
+--   (cabal data-files 404 in some run paths).
+toolsCss :: T.Text
+toolsCss =
+  ".life-stage{position:relative;width:768px;margin:1.5rem auto}\
+  \.life-stage canvas{display:block;margin:0;width:768px;height:576px;\
+  \image-rendering:pixelated;image-rendering:crisp-edges;cursor:crosshair}\
+  \.life-tools{position:absolute;right:8px;bottom:8px;z-index:5;display:flex;\
+  \flex-wrap:wrap;justify-content:flex-end;gap:0.28rem;max-width:22rem;\
+  \padding:0.35rem;border-radius:6px;background:rgba(15,23,42,0.88);\
+  \border:1px solid #334155;box-shadow:0 2px 8px rgba(0,0,0,0.35);user-select:none;\
+  \pointer-events:none}\
+  \.life-tool{appearance:none;display:flex;flex-direction:column;align-items:center;\
+  \gap:0.2rem;width:3.35rem;padding:0.28rem 0.2rem 0.22rem;border:1px solid #334155;\
+  \border-radius:4px;background:#0f172a;color:#cbd5e1;cursor:pointer;pointer-events:auto}\
+  \.life-tool:hover{border-color:#64748b}\
+  \.life-tool.is-selected{border-color:#38bdf8;box-shadow:0 0 0 1px #38bdf8}\
+  \.life-tool-preview{display:grid;grid-template-columns:repeat(var(--tw),3px);\
+  \grid-auto-rows:3px;gap:1px;justify-content:center}\
+  \.life-tool-cell{width:3px;height:3px;background:#1e293b}\
+  \.life-tool-cell.is-on{background:var(--on,#e2e8f0)}\
+  \.life-tool-name{font-size:0.58rem;line-height:1.1;max-width:3.1rem;overflow:hidden;\
+  \text-overflow:ellipsis;white-space:nowrap;color:#94a3b8}"

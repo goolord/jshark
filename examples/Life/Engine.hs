@@ -15,6 +15,7 @@ module Engine
   , renderLife
   , togglePause
   , flipCell
+  , placePattern
   )
 where
 
@@ -27,6 +28,7 @@ import Grid
   , renderGrid
   , setU8
   , stepGrid
+  , toroidal
   , u8Get
   )
 import JShark.Api
@@ -169,4 +171,36 @@ flipCell state gx gy = do
           setU8 alive i 1
           setU8 species i (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
+          -- A lone birth dies on the next tick; pause so empty-cell
+          -- toggles stay visible until Space.
+          set @"paused" state true_
       )
+
+-- | Stamp @cells@ (local @[x,y]@ pairs) at @(gx, gy)@, wrapping the torus.
+--   Already-live cells keep the population count and take @sid@.
+placePattern ::
+  Effect f (MutableObjectOf LifeState)
+  -> Expr f ('Array ('Array 'Number))
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+placePattern state cells gx gy sid = do
+  w <- pure (number (fromIntegral gridW))
+  h <- pure (number (fromIntegral gridH))
+  whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
+    alive <- state.alive
+    species <- state.species
+    forRange_ (number 0) (Array.length cells) $ \k -> do
+      let
+        cell = Array.index cells k
+        dx = Array.index cell 0
+        dy = Array.index cell 1
+        x = toroidal w (gx + dx)
+        y = toroidal h (gy + dy)
+        i = cellIdx w x y
+      a <- u8Get alive i
+      pop0 <- state.pop
+      setU8 alive i 1
+      setU8 species i sid
+      whenS (a .== 0) (set @"pop" state (pop0 + 1))

@@ -28,12 +28,15 @@ import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf)
 import qualified JShark.Generic as G
+import qualified JShark.Json as Json
+import qualified JShark.Map as Map
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..))
+import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift), Expr (Var))
 import Names (lookupDisplayName)
+import Patterns (disturbCatalogJson)
 import Types
   ( LifeState
   , boardId
@@ -47,6 +50,7 @@ import Types
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
+  , toggleToolSid
   )
 
 data Fps = Fps
@@ -89,7 +93,12 @@ boot canvas ctx = do
   hitsSym <- toSyntax Set.new
   let
     hits = Lift (Var hitsSym)
-  wire canvas state tooltip rectRef tipRef
+  toolRef <- initTool
+  toolsMap <- initDisturbCatalog
+  toolBtns <- Dom.lookupSelector (string ".life-tool")
+  toolBtnsE <- bindExpr toolBtns
+  wire canvas state tooltip rectRef tipRef toolRef toolsMap
+  wireTools toolRef toolBtnsE
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
@@ -105,8 +114,10 @@ wire ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject ())
   -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
+  -> Effect f ('Map 'Number ('Array ('Array 'Number)))
   -> EffectSyntax f (f 'Unit)
-wire canvas state tooltip rectRef tipRef = do
+wire canvas state tooltip rectRef tipRef toolRef toolsMap = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
   _ <- setProp tipRef "over" (number 0)
@@ -151,7 +162,7 @@ wire canvas state tooltip rectRef tipRef = do
       cx <- getProp' e "clientX"
       cy <- getProp' e "clientY"
       (gx, gy) <- gridFromClient rectRef cx cy
-      flipCell state gx gy
+      applyClick state toolRef toolsMap gx gy
   addEventListener "mousemove" canvas $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       cx <- getProp' e "clientX"
@@ -373,6 +384,76 @@ gridFromClient rectRef cx cy = do
     ( Math.floor ((cx - left) / number (fromIntegral cellPx))
     , Math.floor ((cy - top) / number (fromIntegral cellPx))
     )
+
+initTool :: EffectSyntax f (Effect f ('MutableObject ()))
+initTool = do
+  toolRef <- hold newObject
+  _ <- setProp toolRef "sid" (number (fromIntegral toggleToolSid))
+  pure toolRef
+
+initDisturbCatalog ::
+  EffectSyntax f (Effect f ('Map 'Number ('Array ('Array 'Number))))
+initDisturbCatalog = do
+  pairs <- bindExpr $ Json.unsafeParse (string disturbCatalogJson)
+  hold $ Map.fromEntries pairs
+
+applyClick ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
+  -> Effect f ('Map 'Number ('Array ('Array 'Number)))
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+applyClick state toolRef toolsMap gx gy = do
+  sid <- getProp toolRef "sid"
+  ifS
+    (sid .== number (fromIntegral toggleToolSid))
+    (flipCell state gx gy)
+    ( do
+        hit <- Map.lookup toolsMap sid
+        toSyntax $
+          optionCaseE
+            hit
+            noOp
+            (\cells -> fromSyntax $ placePattern state cells gx gy sid)
+    )
+
+wireTools ::
+  Effect f ('MutableObject ())
+  -> Expr f ('Array ('MutableObject Dom.DomElement))
+  -> EffectSyntax f (f 'Unit)
+wireTools toolRef btns = do
+  forRange_ (number 0) (Array.length btns) $ \i -> do
+    btn <- hold (expr (Array.index btns i))
+    addEventListener "click" btn $ \_ ->
+      stmts $ do
+        raw <- Dom.getAttribute btn "data-tool"
+        selectTool toolRef btns (parseInt_ raw (number 10))
+    done
+
+selectTool ::
+  Effect f ('MutableObject ())
+  -> Expr f ('Array ('MutableObject Dom.DomElement))
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+selectTool toolRef btns sid = do
+  _ <- setProp toolRef "sid" sid
+  forRange_ (number 0) (Array.length btns) $ \i -> do
+    btn <- hold (expr (Array.index btns i))
+    raw <- Dom.getAttribute btn "data-tool"
+    let
+      on = parseInt_ raw (number 10) .== sid
+    toSyntax_ $
+      callMethod
+        btn
+        "classList.toggle"
+        (arg (string "is-selected") <: arg on <: RecNil)
+    _ <-
+      Dom.setAttribute
+        btn
+        "aria-pressed"
+        (if_ on (string "true") (string "false"))
+    done
 
 paintHud ::
   Effect f ('MutableObject Canvas.Context2D)

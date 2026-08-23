@@ -33,6 +33,8 @@ module Types
   , lifeTooltipId
   , lifeTooltipSwatchId
   , lifeTooltipNameId
+  , lifeToolsId
+  , toggleToolSid
   , hoverRadius
   , LifeState (..)
   )
@@ -114,6 +116,13 @@ lifeTooltipSwatchId = "life-tooltip-swatch"
 
 lifeTooltipNameId :: Text
 lifeTooltipNameId = "life-tooltip-name"
+
+lifeToolsId :: Text
+lifeToolsId = "life-tools"
+
+-- | HUD default: left-click flips a single cell (species 'manualSpecies').
+toggleToolSid :: Int
+toggleToolSid = 0
 
 -- | Chebyshev cells around the cursor that still count as hovering a species.
 hoverRadius :: Int

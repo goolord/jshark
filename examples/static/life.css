@@ -19,15 +19,93 @@ h1 {
   letter-spacing: 0.04em;
 }
 
+.life-stage {
+  position: relative;
+  width: 768px;
+  margin: 1.5rem auto;
+}
+
 canvas {
   background: #0f172a;
   display: block;
-  margin: 1.5rem auto;
+  margin: 0;
   cursor: crosshair;
   width: 768px;
   height: 576px;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+}
+
+.life-tools {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.28rem;
+  max-width: 22rem;
+  padding: 0.35rem;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid #334155;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  pointer-events: none;
+}
+
+.life-tool {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  width: 3.35rem;
+  padding: 0.28rem 0.2rem 0.22rem;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: #0f172a;
+  color: #cbd5e1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.life-tool:hover {
+  border-color: #64748b;
+}
+
+.life-tool.is-selected {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px #38bdf8;
+}
+
+.life-tool-preview {
+  display: grid;
+  grid-template-columns: repeat(var(--tw), 3px);
+  grid-auto-rows: 3px;
+  gap: 1px;
+  justify-content: center;
+}
+
+.life-tool-cell {
+  width: 3px;
+  height: 3px;
+  background: #1e293b;
+}
+
+.life-tool-cell.is-on {
+  background: var(--on, #e2e8f0);
+}
+
+.life-tool-name {
+  font-size: 0.58rem;
+  line-height: 1.1;
+  max-width: 3.1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #94a3b8;
 }
 
 canvas:focus {

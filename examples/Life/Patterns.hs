@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UnboxedTuples #-}
 
 -- | Pattern catalog and species palette for the life demo.
@@ -10,10 +11,13 @@
 module Patterns
   ( PatternSpec (..)
   , allPatterns
+  , disturbPatterns
+  , disturbCatalogJson
   , initialAlive
   , initialSpecies
   , initialPop
   , paletteBytes
+  , speciesColor
   )
 where
 
@@ -21,7 +25,11 @@ import Control.Monad (replicateM_, when)
 import Control.Monad.ST (ST, runST)
 import Data.Array.Byte (ByteArray (..))
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
+import Data.List (find)
+import Data.Maybe (mapMaybe)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Word (Word8)
 import GHC.Exts
   ( Int (I#)
@@ -132,7 +140,7 @@ allPatterns =
     [ pat 60 20 rPentomino
     , pat 61 16 acorn
     , pat 62 14 diehard
-    , pat 63 12 rabbits
+    , pat 63 12 bunnies
     , pat 64 10 sDiehard
     , pat 65 10 bHeptomino
     , pat 66 8 piHeptomino
@@ -167,6 +175,45 @@ allPatterns =
 
 pat :: Int -> Int -> [(Int, Int)] -> PatternSpec
 pat i n cells = PatternSpec i n cells
+
+-- | Spaceships and methuselahs that break still-life / oscillator beds.
+--   Order is the HUD order: gliders, xWSS, then the classic seeds.
+disturbSids :: [Int]
+disturbSids =
+  [ 45
+  , 57
+  , 58
+  , 59
+  , 46
+  , 47
+  , 48
+  , 60
+  , 61
+  , 63
+  , 68
+  ]
+
+disturbPatterns :: [PatternSpec]
+disturbPatterns =
+  mapMaybe (\sid -> find ((== sid) . patId) allPatterns) disturbSids
+
+-- | @[[sid, [[x,y], …]], …]@ for the placement HUD.
+disturbCatalogJson :: Text
+disturbCatalogJson =
+  "[" <> T.intercalate "," (map entry disturbPatterns) <> "]"
+ where
+  entry p =
+    "["
+      <> T.pack (show (patId p))
+      <> ","
+      <> cellsJson (patCells p)
+      <> "]"
+  cellsJson cells =
+    "["
+      <> T.intercalate
+        ","
+        ["[" <> T.pack (show x) <> "," <> T.pack (show y) <> "]" | (x, y) <- cells]
+      <> "]"
 
 -- Still lifes ---------------------------------------------------------------
 
@@ -488,14 +535,20 @@ crabCanonical = [(0, 2), (1, 0), (1, 1), (1, 2), (2, 2), (2, 3), (3, 1), (3, 2)]
 loaferSmall :: [(Int, Int)]
 loaferSmall = [(0, 1), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2)]
 
+-- | North-east glider (canonical 'glider' rotated 90° CCW). The old
+--   cells were an F-pentomino and exploded instead of translating.
 gliderUp :: [(Int, Int)]
-gliderUp = [(0, 2), (1, 0), (1, 1), (1, 2), (2, 1)]
+gliderUp = [(1, 0), (2, 0), (0, 1), (2, 1), (2, 2)]
 
+-- | South-west glider (canonical 'glider' flipped horizontally). The old
+--   cells were an R-pentomino.
 gliderDown :: [(Int, Int)]
-gliderDown = [(0, 1), (1, 0), (1, 1), (1, 2), (2, 0)]
+gliderDown = [(1, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
 
+-- | North-west glider. The previous cells were another SW phase of
+--   'gliderDown', so Left and Down flew the same way.
 gliderLeft :: [(Int, Int)]
-gliderLeft = [(0, 0), (0, 1), (0, 2), (1, 2), (2, 1)]
+gliderLeft = [(0, 0), (1, 0), (0, 1), (0, 2), (2, 1)]
 
 -- Methuselah seeds ----------------------------------------------------------
 
@@ -508,20 +561,18 @@ acorn = [(1, 0), (3, 1), (0, 2), (1, 2), (4, 2), (5, 2), (6, 2)]
 diehard :: [(Int, Int)]
 diehard = [(6, 1), (0, 2), (1, 2), (2, 2), (2, 3), (6, 5), (7, 5)]
 
-rabbits :: [(Int, Int)]
-rabbits =
-  [ (2, 0)
-  , (0, 1)
-  , (1, 1)
+-- | LifeWiki Bunnies (9 cells, 8×4): o5bo$2bo3bo$2bo2bobo$bobo!
+bunnies :: [(Int, Int)]
+bunnies =
+  [ (0, 0)
+  , (6, 0)
   , (2, 1)
-  , (3, 1)
-  , (4, 1)
-  , (0, 2)
-  , (1, 2)
+  , (6, 1)
   , (2, 2)
-  , (3, 2)
-  , (4, 2)
   , (5, 2)
+  , (7, 2)
+  , (1, 3)
+  , (3, 3)
   ]
 
 sDiehard :: [(Int, Int)]

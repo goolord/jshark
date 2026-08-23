@@ -89,7 +89,7 @@ patternLabel = \case
   60 -> "R-Pentomino"
   61 -> "Acorn"
   62 -> "Diehard"
-  63 -> "Rabbits"
+  63 -> "Bunnies"
   64 -> "S-Diehard"
   65 -> "B-Heptomino"
   66 -> "Pi-Heptomino"
