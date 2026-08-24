@@ -132,9 +132,7 @@ import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Int (Int32)
-import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import qualified Data.Map.Strict as M
@@ -160,13 +158,6 @@ import qualified JShark.Prim as Prim
 import JShark.Rec
 import JShark.Types
 import Numeric (readInt, showFFloat, showHex)
-import System.IO.Unsafe (unsafePerformIO)
-import System.Mem.StableName
-  ( StableName
-  , eqStableName
-  , hashStableName
-  , makeStableName
-  )
 import Prettyprinter (Doc, (<+>), braces, parens, punctuate, hcat, nest, semi, colon, dquotes)
 import qualified Prettyprinter as P
 import Prettyprinter.Internal (Doc (Annotated, Cat, Empty, Nest))
@@ -627,17 +618,14 @@ evaluateNumber e = unNumber (evaluate e)
 evaluateBigInt :: ClosedExpr 'BigInt -> Integer
 evaluateBigInt e = unBigInt (evaluate e)
 
--- | Pure reference interpreter. Shared Haskell heap nodes are walked
--- once per occurrence (no memo table). Use 'evaluateCached' when host-level
--- sharing should be observed.
+-- | Pure reference interpreter. Shared Haskell heap nodes are walked once
+-- per occurrence (no memo table).
 evaluate :: ClosedExpr u -> Value u
 evaluate = evalValue
 
 evalValue :: Expr Value v -> Value v
 evalValue = runIdentity . evalAlg (Identity . evalValue) (\g v -> evalValue (g v))
 
--- | One algebra. 'evaluate' is Identity; 'evaluateCached' memos via
--- 'goOpen' / 'applyCached'.
 evalAlg ::
   Monad m =>
   (forall w. Expr Value w -> m (Value w))
@@ -930,52 +918,11 @@ instance Semigroup Metadata where
 instance Monoid Metadata where
   mempty = Metadata 0 IM.empty True True
 
-data MetadataEntry where
-  MetadataEntry :: StableName a -> Metadata -> MetadataEntry
-
-type MetadataCache = IORef (IM.IntMap [MetadataEntry])
-
-effectMetadataCache :: MetadataCache
-effectMetadataCache = unsafePerformIO $ newIORef IM.empty
-{-# NOINLINE effectMetadataCache #-}
-
-exprMetadataCache :: MetadataCache
-exprMetadataCache = unsafePerformIO $ newIORef IM.empty
-{-# NOINLINE exprMetadataCache #-}
-
-lookupMetadata :: StableName a -> Maybe [MetadataEntry] -> Maybe Metadata
-lookupMetadata sn = \case
-  Nothing -> Nothing
-  Just entries -> findHit entries
- where
-  findHit [] = Nothing
-  findHit (MetadataEntry sn' md : rest)
-    | eqStableName sn sn' = Just md
-    | otherwise = findHit rest
-
 getExprMetadata :: Expr Stamp u -> Metadata
-getExprMetadata e = unsafePerformIO $ do
-  sn <- makeStableName $! e
-  m <- readIORef exprMetadataCache
-  let h = hashStableName sn
-  case lookupMetadata sn (IM.lookup h m) of
-    Just md -> return md
-    Nothing -> do
-      let md = computeExprMetadata e
-      modifyIORef' exprMetadataCache (IM.insertWith (++) h [MetadataEntry sn md])
-      return md
+getExprMetadata = computeExprMetadata
 
 getEffectMetadata :: Effect Stamp u -> Metadata
-getEffectMetadata e = unsafePerformIO $ do
-  sn <- makeStableName $! e
-  m <- readIORef effectMetadataCache
-  let h = hashStableName sn
-  case lookupMetadata sn (IM.lookup h m) of
-    Just md -> return md
-    Nothing -> do
-      let md = computeEffectMetadata e
-      modifyIORef' effectMetadataCache (IM.insertWith (++) h [MetadataEntry sn md])
-      return md
+getEffectMetadata = computeEffectMetadata
 
 computeExprMetadata :: Expr Stamp u -> Metadata
 computeExprMetadata = \case
@@ -1017,125 +964,10 @@ computeEffectMetadata = \case
      in Metadata 1 IM.empty pureNode cheapNode
           <> foldEff nestedDummy getExprMetadata getEffectMetadata getEffectMetadata e
 
--- | Per-evaluation memo table keyed by 'StableName'. Recovers host-language
--- sharing (Haskell @let x = e in x + x@) so a shared 'Expr' node is only
--- interpreted once. Object-language 'Let' already preserves sharing on its
--- own; this cache is what makes the two coincide.
-data CacheEntry where
-  CacheEntry :: Typeable u => StableName (Expr Value u) -> Value u -> CacheEntry
-
-type EvalCache = IORef (IntMap [CacheEntry])
-
--- | Like 'evaluate', but memoizes shared heap nodes via 'StableName'.
--- In 'IO' because observable sharing is inherently effectful.
--- No 'Typeable' on the result: 'goOpen' memos constructors whose
--- universe is a concrete 'Typeable' type ('Number', 'Bool', …).
+-- | 'evaluate' in 'IO'. No host-language sharing memo; same semantics as
+-- 'evaluate'.
 evaluateCached :: ClosedExpr u -> IO (Value u)
-evaluateCached e0 = do
-  cache <- newIORef IM.empty
-  goOpen cache e0
-
-go :: forall v. Typeable v => EvalCache -> Expr Value v -> IO (Value v)
-go cache e = do
-  sn <- makeStableName $! e
-  m <- readIORef cache
-  case lookupCache sn (IM.lookup (hashStableName sn) m) of
-    Just v -> pure v
-    Nothing -> do
-      v <- goNode cache e
-      modifyIORef'
-        cache
-        (IM.insertWith (++) (hashStableName sn) [CacheEntry sn v])
-      pure v
-
-lookupCache ::
-  forall v.
-  Typeable v =>
-  StableName (Expr Value v) -> Maybe [CacheEntry] -> Maybe (Value v)
-lookupCache sn ments = ments >>= findHit
- where
-  findHit [] = Nothing
-  findHit (CacheEntry sn' val : rest)
-    | eqStableName sn sn' =
-        case castValue val of
-          Just val' -> Just val'
-          Nothing ->
-            error "evaluateCached: StableName hit at a different universe"
-    | otherwise = findHit rest
-
-castValue :: forall u v. (Typeable u, Typeable v) => Value u -> Maybe (Value v)
-castValue val = case eqT @u @v of
-  Just Refl -> Just val
-  Nothing -> Nothing
-
--- Named and NOINLINE so GHC cannot CSE applications at different 'v'.
-applyCached :: EvalCache -> (Value u -> Expr Value v) -> Value u -> Value v
-applyCached cache g v = unsafePerformIO (goOpen cache (g v))
-{-# NOINLINE applyCached #-}
-
--- | Memoize a kernel node. Each 'Kernel' constructor fixes the result
--- universe, giving 'Typeable' evidence for 'go'.
-goKernel :: EvalCache -> Expr Value v -> Kernel Value v -> IO (Value v)
-goKernel cache e = \case
-  KPlus {} -> go cache e
-  KTimes {} -> go cache e
-  KMinus {} -> go cache e
-  KNegate {} -> go cache e
-  KFracDiv {} -> go cache e
-  KRem {} -> go cache e
-  KBitAnd {} -> go cache e
-  KBitOr {} -> go cache e
-  KBitXor {} -> go cache e
-  KShl {} -> go cache e
-  KShr {} -> go cache e
-  KUShr {} -> go cache e
-  KBig {} -> go cache e
-  KBigNeg {} -> go cache e
-  KConcat {} -> go cache e
-  KShow {} -> go cache e
-  KTypeOf {} -> go cache e
-  KAnd {} -> go cache e
-  KOr {} -> go cache e
-  KEq {} -> go cache e
-  KNEq {} -> go cache e
-  KGTh {} -> go cache e
-  KLTh {} -> go cache e
-  KGTEq {} -> go cache e
-  KLTEq {} -> go cache e
-
--- | Memoize constructors whose result universe is a concrete 'Typeable'
--- type. Polymorphic-result nodes cannot call 'go' (no 'Typeable'
--- evidence); they fall through to 'evalValue'.
-goOpen :: EvalCache -> Expr Value v -> IO (Value v)
-goOpen cache e = case e of
-  Std (Kernel k) -> goKernel cache e k
-  -- Memoize @Math@ / @parseInt@ only ('Typeable' @Number@ — see 'matchMathUnary').
-  Std (Fixed FixParseInt _) -> go cache e
-  Std (Fixed FixToBigInt _) -> go cache e
-  Std (Fixed FixFromBigInt _) -> go cache e
-  Std (Fixed FixParseBigInt _) -> go cache e
-  Std (Fixed op _) ->
-    case matchMathUnary op of
-      Just (MathUnary _) -> go cache e
-      Nothing ->
-        case matchMathBinary op of
-          Just (MathBinary _) -> go cache e
-          Nothing -> pure (evalValue e)
-  Literal ValueNumber {} -> go cache e
-  Literal ValueBigInt {} -> go cache e
-  Literal ValueString {} -> go cache e
-  Literal ValueBool {} -> go cache e
-  Literal ValueUnit -> go cache e
-  Literal ValueRegex {} -> go cache e
-  Literal ValueUint8Array {} -> go cache e
-  FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit (goOpen cache)) fs
-  GetField @k o -> do
-    ov <- goOpen cache o
-    withFrozenField @k ov (goOpen cache)
-  _ -> pure (evalValue e)
-
-goNode :: EvalCache -> Expr Value v -> IO (Value v)
-goNode cache = evalAlg (goOpen cache) (applyCached cache)
+evaluateCached e = pure (evaluate e)
 
 -- | Vertical separation of documents, equivalent to HughesPJ's $$.
 -- Empty documents are skipped, so @mempty $$ x = x@.
@@ -1378,24 +1210,31 @@ varStampDoc env s =
       then maybe mempty nDoc (IM.lookup i env)
       else nDoc i
 
--- | Optimizer tag for a PHOAS continuation probed at 'nestedDummy'.
+-- | Optimizer tag for a PHOAS continuation probed with a fresh 'allocTag'
+-- stamp (see 'probeContEff' / 'probeContExpr').
 binderTagOf :: Metadata -> Int
 binderTagOf md =
-  case IM.lookupMax (mdFreeVars md) of
+  case IM.lookupMin (mdFreeVars md) of
     Just (k, _) -> k
     Nothing -> nestedDummyId
 
 probeContEff ::
-  (Stamp u -> Effect Stamp v) -> (Effect Stamp v, Int)
-probeContEff f =
-  let probed = f nestedDummy
-   in (probed, binderTagOf (getEffectMetadata probed))
+  CG -> (Stamp u -> Effect Stamp v) -> (CG, Effect Stamp v, Int)
+probeContEff s f =
+  let
+    (probeTag, s') = allocTag s
+    probed = f (Stamp probeTag)
+   in
+    (s', probed, probeTag)
 
 probeContExpr ::
-  (Stamp u -> Expr Stamp v) -> (Expr Stamp v, Int)
-probeContExpr g =
-  let probed = g nestedDummy
-   in (probed, binderTagOf (getExprMetadata probed))
+  CG -> (Stamp u -> Expr Stamp v) -> (CG, Expr Stamp v, Int)
+probeContExpr s g =
+  let
+    (probeTag, s') = allocTag s
+    probed = g (Stamp probeTag)
+   in
+    (s', probed, probeTag)
 
 -- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
 -- counter guess: only a binder that is already in the tree.
@@ -1965,75 +1804,19 @@ foldGetField = \case
 
 -- | Unwrap 'Embed' holes. The universe of the hole is the universe of the
 -- 'Var', so this is ordinary GADT coverage — not a cast.
-data FlattenExprEntry where
-  FlattenExprEntry :: StableName (Expr Stamp u) -> Expr Stamp u -> FlattenExprEntry
-
-type FlattenExprCache = IORef (IM.IntMap [FlattenExprEntry])
-
-flattenExprCache :: FlattenExprCache
-flattenExprCache = unsafePerformIO $ newIORef IM.empty
-{-# NOINLINE flattenExprCache #-}
-
-data FlattenEffEntry where
-  FlattenEffEntry :: StableName (Effect Stamp u) -> Effect Stamp u -> FlattenEffEntry
-
-type FlattenEffCache = IORef (IM.IntMap [FlattenEffEntry])
-
-flattenEffCache :: FlattenEffCache
-flattenEffCache = unsafePerformIO $ newIORef IM.empty
-{-# NOINLINE flattenEffCache #-}
-
-lookupFlattenExpr :: StableName (Expr Stamp u) -> Maybe [FlattenExprEntry] -> Maybe (Expr Stamp u)
-lookupFlattenExpr sn = \case
-  Nothing -> Nothing
-  Just entries -> findHit entries
- where
-  findHit [] = Nothing
-  findHit (FlattenExprEntry sn' e : rest)
-    | eqStableName sn sn' = Just (unsafeCoerce e)
-    | otherwise = findHit rest
-
-lookupFlattenEff :: StableName (Effect Stamp u) -> Maybe [FlattenEffEntry] -> Maybe (Effect Stamp u)
-lookupFlattenEff sn = \case
-  Nothing -> Nothing
-  Just entries -> findHit entries
- where
-  findHit [] = Nothing
-  findHit (FlattenEffEntry sn' e : rest)
-    | eqStableName sn sn' = Just (unsafeCoerce e)
-    | otherwise = findHit rest
-
 -- | Remove 'Embed' nodes from the tree. Phantom in the universe, so this
 -- does not need a cast.
 flattenExpr :: Expr Stamp u -> Expr Stamp u
-flattenExpr e = unsafePerformIO $ do
-  sn <- makeStableName $! e
-  m <- readIORef flattenExprCache
-  let h = hashStableName sn
-  case lookupFlattenExpr sn (IM.lookup h m) of
-    Just e' -> return e'
-    Nothing -> do
-      let e' = case e of
-            Var (Embed x) -> flattenExpr x
-            Var (EmbedEff (Lift x)) -> flattenExpr x
-            Var (EmbedEff x) -> Var (EmbedEff (flattenEff x))
-            _ -> mapExpr flattenExpr flattenEff e
-      modifyIORef' flattenExprCache (IM.insertWith (++) h [FlattenExprEntry sn e'])
-      return e'
+flattenExpr = \case
+  Var (Embed x) -> flattenExpr x
+  Var (EmbedEff (Lift x)) -> flattenExpr x
+  Var (EmbedEff x) -> Var (EmbedEff (flattenEff x))
+  e -> mapExpr flattenExpr flattenEff e
 
 flattenEff :: Effect Stamp u -> Effect Stamp u
-flattenEff e = unsafePerformIO $ do
-  sn <- makeStableName $! e
-  m <- readIORef flattenEffCache
-  let h = hashStableName sn
-  case lookupFlattenEff sn (IM.lookup h m) of
-    Just e' -> return e'
-    Nothing -> do
-      let e' = case e of
-            Lift (Var (EmbedEff x)) -> flattenEff x
-            _ -> mapEff flattenExpr flattenEff e
-      modifyIORef' flattenEffCache (IM.insertWith (++) h [FlattenEffEntry sn e'])
-      return e'
+flattenEff = \case
+  Lift (Var (EmbedEff x)) -> flattenEff x
+  e -> mapEff flattenExpr flattenEff e
 
 -- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
 -- does not need a cast. Used after the one 'optUnder' apply of @f@.
@@ -2746,7 +2529,6 @@ reifyArg = \case
 -- | Constant-fold and drop dead pure bindings. Applied automatically by
 -- codegen. This is the End-algebra: a closed term is instantiated at
 -- 'Stamp' for the name supply (Kmett: take the end, then interpret).
--- Host-language sharing is recovered by 'evaluateCached' and by
 -- instantiating the 'ClosedExpr' once ('NOINLINE') before this walk.
 optimize :: ClosedExpr u -> Expr Stamp u
 optimize (e :: ClosedExpr u) =
@@ -3211,7 +2993,9 @@ optBind t0 x f =
     (t1, x', mdX) = optEffect t0 x
     (t2, tag, body, mdBody) = optUnderE t1 f
    in
-    if IM.findWithDefault 0 tag (mdFreeVars mdBody) == 0
+    if
+      IM.findWithDefault 0 tag (mdFreeVars mdBody) == 0
+        && isUnitBoundEffect x'
       then (t2, ThenE x' body, mdX <> mdBody)
       else elimBindFrom t2 x' mdX f tag body mdBody
 
@@ -3227,7 +3011,7 @@ elimBindFrom ::
 elimBindFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = \t' _ -> countEffect t' body
+      { elimCount = \t' _ -> IM.findWithDefault 0 t' (mdFreeVars mdBody)
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
       , elimSize = mdSize
@@ -3842,21 +3626,23 @@ bindEffectCode ::
   Env -> CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
 bindEffectCode env s0 x f =
   let
-    (tagged, binderTag) = probeContEff f
+    (sProbe, tagged, binderTag) = probeContEff s0 f
     uses = countEffect binderTag tagged
-    (s1, MkCode xDecl xRef xFX) = effectfulAST' env s0 x
+    (s1, MkCode xDecl xRef xFX) = effectfulAST' env sProbe x
     stmtX
       | isNothing xRef = fromMaybe mempty xDecl
       | not xFX && isJust xDecl = fromMaybe mempty xDecl
       | otherwise = asStmt xDecl xRef
   in
-    case uses of
-      0 ->
-        let
-          (s2, MkCode yDecl yRef yFX) = effectfulAST' env s1 tagged
-         in
-          (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
-      _ | isNothing xRef ->
+    case xRef of
+      Nothing ->
+        case uses of
+          0 ->
+            let
+              (s2, MkCode yDecl yRef yFX) = effectfulAST' env s1 tagged
+             in
+              (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
+          _ ->
             let
               n = fromMaybe nestedDummyId (liveBinder x)
               env' =
@@ -3866,68 +3652,39 @@ bindEffectCode env s0 x f =
               (s2, MkCode yDecl yRef yFX) = effectfulAST' env' s1 tagged
              in
               (s2, MkCode (Just (fromMaybe mempty xDecl $$ fromMaybe mempty yDecl)) yRef yFX)
-      _ ->
-            let
-              (nBind, s2) = allocIdent s1
-              env' = IM.insert binderTag nBind env
-              (s3, MkCode yDecl yRef yFX) = effectfulAST' env' s2 tagged
-             in
-              (s3, MkCode (Just (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty yDecl)) yRef yFX)
+      Just _ ->
+        let
+          (nBind, s2) = allocIdent s1
+          env' = IM.insert binderTag nBind env
+          (s3, MkCode yDecl yRef yFX) = effectfulAST' env' s2 tagged
+         in
+          ( s3
+          , MkCode
+              ( Just
+                  ( fromMaybe mempty xDecl
+                      $$ constBind nBind (fromMaybe mempty xRef)
+                      $$ fromMaybe mempty yDecl
+                  )
+              )
+              yRef
+              yFX
+          )
 
 effectfulAST :: ClosedEffect u -> Doc ann
 effectfulAST e =
   uncurry renderWithHelpers (effectfulAST' IM.empty startCG (optimizeEffect e))
 
--- | Witness that forces @u ~ 'Unit@: @noOp@, 'While', 'Throw', or
--- 'Bind' into those. Polymorphic nodes ('UnsafeObjectAssign',
--- 'CallMethod', 'FFI') do not count — they inhabit any @u@. Two-arm
--- forms require *both* arms unit; otherwise a 'Throw' would drop the
--- other arm's value. Statement @if@ is 'IfE' after 'JShark.Api.discard'.
-data IsUnitEntry where
-  IsUnitEntry :: StableName (Effect Stamp u) -> Bool -> IsUnitEntry
-
-type IsUnitCache = IORef (IM.IntMap [IsUnitEntry])
-
-isUnitCache :: IsUnitCache
-isUnitCache = unsafePerformIO $ newIORef IM.empty
-{-# NOINLINE isUnitCache #-}
-
-lookupIsUnit :: StableName (Effect Stamp u) -> Maybe [IsUnitEntry] -> Maybe Bool
-lookupIsUnit sn = \case
-  Nothing -> Nothing
-  Just entries -> findHit entries
- where
-  findHit [] = Nothing
-  findHit (IsUnitEntry sn' b : rest)
-    | eqStableName sn sn' = Just b
-    | otherwise = findHit rest
-
-isUnitWitness :: Effect Stamp u -> Bool
-isUnitWitness e = unsafePerformIO $ do
-  sn <- makeStableName $! e
-  m <- readIORef isUnitCache
-  let h = hashStableName sn
-  case lookupIsUnit sn (IM.lookup h m) of
-    Just b -> return b
-    Nothing -> do
-      let b = case e of
-            Lift (Literal ValueUnit) -> True
-            Lift (Var (EmbedEff x)) -> isUnitWitness x
-            Lift _ -> False
-            While {} -> True
-            ForRange {} -> True
-            Bind _ f -> isUnitWitness (f nestedDummy)
-            ThenE _ b' -> isUnitWitness b'
-            BindRec _ f -> isUnitWitness (f nestedDummy)
-            IfE _ t e' -> isUnitWitness t && isUnitWitness e'
-            OptionCaseE _ n s -> isUnitWitness n && isUnitWitness (s nestedDummy)
-            ResultCaseE _ er s -> isUnitWitness (er nestedDummy) && isUnitWitness (s nestedDummy)
-            StringCaseE _ arms d -> all (isUnitWitness . snd) arms && isUnitWitness d
-            Throw {} -> True
-            Try a k -> isUnitWitness a && isUnitWitness (k nestedDummy)
-            _ -> False
-      modifyIORef' isUnitCache (IM.insertWith (++) h [IsUnitEntry sn b])
-      return b
+-- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
+-- materializes continuations (@f nestedDummy@).
+isUnitBoundEffect :: Effect Stamp u -> Bool
+isUnitBoundEffect = \case
+  Lift (Literal ValueUnit) -> True
+  Lift (Var (EmbedEff e)) -> isUnitBoundEffect e
+  While {} -> True
+  ForRange {} -> True
+  Throw {} -> True
+  ThenE _ b -> isUnitBoundEffect b
+  _ -> False
 
 -- | Turn a rendered effect into a statement. Unit values may still have a
 -- non-empty ref (@el.x = v@, @foo()@); those become statements, not
@@ -3961,12 +3718,13 @@ recBindStmt n rDecl rRef =
   ("let" <+> n) <> semi $$ fromMaybe mempty rDecl $$ (n <+> "=" <+> fromMaybe mempty rRef) <> semi
 
 resultCasePrelude ::
-  CG
+  Env
+  -> CG
   -> Expr Stamp ('Result e a)
   -> (CG, Doc ann, Text, Int)
-resultCasePrelude s0 res =
+resultCasePrelude env s0 res =
   let
-    (s1, MkCode rDecl rRef _) = pureAST' s0 IM.empty res
+    (s1, MkCode rDecl rRef _) = pureAST' s0 env res
     (nObj, s2) = allocIdent s1
     (nUnw, s3) = allocIdent s2
     obj = nName nObj
@@ -4054,7 +3812,7 @@ effectfulAST' !env !s0 = \case
     -- arms. Do not use emptiness to pick a ternary — a Unit leftover
     -- ref is not a genuinely-empty Doc.
     emitBranching
-      (isUnitWitness t && isUnitWitness e)
+      False
       s0
       ( \s ->
           let
@@ -4079,8 +3837,8 @@ effectfulAST' !env !s0 = \case
       (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
   ForRange start end body ->
     let
-      (s1, MkCode startDecl startRef _) = pureAST' s0 IM.empty start
-      (s2, MkCode endDecl endRef _) = pureAST' s1 IM.empty end
+      (s1, MkCode startDecl startRef _) = pureAST' s0 env start
+      (s2, MkCode endDecl endRef _) = pureAST' s1 env end
       (loopN, s3) = allocIdent s2
       loopVar = nDoc loopN
       (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
@@ -4102,27 +3860,26 @@ effectfulAST' !env !s0 = \case
       (s4, MkCode (Just (fromMaybe mempty startDecl $$ fromMaybe mempty endDecl $$ forStmt)) Nothing False)
   U8Set buf idx val ->
     let
-      (s1, Code bDecl bRef) = pureAST' s0 IM.empty buf
-      (s2, Code iDecl iRef) = pureAST' s1 IM.empty idx
-      (s3, Code vDecl vRef) = pureAST' s2 IM.empty val
+      (s1, Code bDecl bRef) = pureAST' s0 env buf
+      (s2, Code iDecl iRef) = pureAST' s1 env idx
+      (s3, Code vDecl vRef) = pureAST' s2 env val
       stmt = (bRef <> P.brackets iRef) <+> "=" <+> vRef
      in
       (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
   U8Fill buf val ->
     let
-      (s1, Code bDecl bRef) = pureAST' s0 IM.empty buf
-      (s2, Code vDecl vRef) = pureAST' s1 IM.empty val
+      (s1, Code bDecl bRef) = pureAST' s0 env buf
+      (s2, Code vDecl vRef) = pureAST' s1 env val
       stmt = bRef <> ".fill" <> parens vRef
      in
       (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
   OptionCaseE opt noneE someF ->
     let
-      (tagged, binderTag) = probeContEff someF
-      isUnit = isUnitWitness noneE && isUnitWitness tagged
+      (sProbe, tagged, binderTag) = probeContEff s0 someF
     in
       emitBranching
-        isUnit
-        s0
+        False
+        sProbe
         ( \s ->
             let
               (s1, Code oDecl oRef) = pureAST' s env opt
@@ -4141,12 +3898,11 @@ effectfulAST' !env !s0 = \case
         )
   Try a k ->
     let
-      (tagged, binderTag) = probeContEff k
-      isUnit = isUnitWitness a && isUnitWitness tagged
+      (sProbe, tagged, binderTag) = probeContEff s0 k
     in
       emitBranching
-        isUnit
-        s0
+        False
+        sProbe
         (\s -> (s, mempty, ()))
         ( \mRes () s ->
             let
@@ -4169,7 +3925,7 @@ effectfulAST' !env !s0 = \case
       (s3, MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX)
   Throw x ->
     let
-      (s1, Code xDecl xRef) = pureAST' s0 IM.empty x
+      (s1, Code xDecl xRef) = pureAST' s0 env x
      in
       (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
   ObjectLit fs -> renderObjectLit env s0 fs
@@ -4177,7 +3933,7 @@ effectfulAST' !env !s0 = \case
   DeleteProp o k ->
     let
       (s1, Code oDecl oRef) = effectfulAST' env s0 o
-      (s2, Code kDecl kRef) = pureAST' s1 IM.empty k
+      (s2, Code kDecl kRef) = pureAST' s1 env k
      in
       (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
   ResultCaseE res errF okF -> renderResultCaseE env s0 res errF okF
@@ -4212,9 +3968,9 @@ letCode ::
   Env -> CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
 letCode env s0 x g =
   let
-    (tagged, binderTag) = probeContExpr g
+    (sProbe, tagged, binderTag) = probeContExpr s0 g
     uses = countExpr binderTag tagged
-    (s1, MkCode xDecl xRef _) = pureAST' s0 env x
+    (s1, MkCode xDecl xRef _) = pureAST' sProbe env x
   in
     case uses of
       0 ->
@@ -4344,7 +4100,7 @@ pureAST' !s0 env = \case
       (s1, MkCode d r _) = pureAST' s0 env x
      in
       (s1, MkCode d (Just (resultObject False r)) False)
-  ResultCase res errF okF -> renderResultCase s0 res errF okF
+  ResultCase res errF okF -> renderResultCase env s0 res errF okF
   Index arr idx ->
     let
       s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
@@ -4483,14 +4239,15 @@ renderObjectLit env s0 fs =
     (s1, Code (P.vcat declList) (braces (hcat (punctuate ", " pairs))))
 
 renderResultCase ::
-  CG
+  Env
+  -> CG
   -> Expr Stamp ('Result e a)
   -> (Stamp e -> Expr Stamp v)
   -> (Stamp a -> Expr Stamp v)
   -> (CG, Code ann)
-renderResultCase s0 res errF okF =
+renderResultCase env s0 res errF okF =
   let
-    (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
+    (s1, prelude, obj, nUnw) = resultCasePrelude env s0 res
     (s2, Code eDecl eRef) = pureAST' s1 IM.empty (errF (Name nUnw))
     (s3, Code oDecl oRef) = pureAST' s2 IM.empty (okF (Name nUnw))
    in
@@ -4509,15 +4266,13 @@ renderStringCaseE ::
   -> (CG, Code ann)
 renderStringCaseE env s0 scrut arms def =
   let
-    unit = all (isUnitWitness . snd) arms && isUnitWitness def
     (s1, Code oDecl oRef) = pureAST' s0 env scrut
-    (resultN, s2) =
-      if unit then (0, s1) else allocIdent s1
+    (resultN, s2) = allocIdent s1
     resultVar = nName resultN
     renderArm s e =
       let
         (s', MkCode d r _) = effectfulAST' env s e
-        body = if unit then asStmt d r else fromMaybe mempty d $$ assignResult resultVar r
+        body = fromMaybe mempty d $$ assignResult resultVar r
        in
         (s', body)
     (s3, caseDocs) =
@@ -4535,10 +4290,8 @@ renderStringCaseE env s0 scrut arms def =
     (s4, defBody) = renderArm s3 def
     defDoc = "default:" <+> bracesNest defBody
     switchStmt = "switch" <+> parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
-    prelude
-      | unit = oDecl
-      | otherwise = oDecl $$ letResult resultVar
-    ref = if unit then mempty else P.pretty resultVar
+    prelude = oDecl $$ letResult resultVar
+    ref = P.pretty resultVar
    in
     (s4, Code (prelude $$ switchStmt) ref)
 
@@ -4551,42 +4304,26 @@ renderResultCaseE ::
   -> (CG, Code ann)
 renderResultCaseE env s0 res errF okF =
   let
-    (errTagged, tagE) = probeContEff errF
-    (okTagged, tagO) = probeContEff okF
-    isUnit = isUnitWitness errTagged && isUnitWitness okTagged
-  in
-    if isUnit
-      then
-        let
-          (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
-          envE = IM.insert tagE nUnw env
-          envO = IM.insert tagO nUnw envE
-          (s2, MkCode eDecl eRef _) = effectfulAST' envE s1 errTagged
-          (s3, MkCode oDecl oRef _) = effectfulAST' envO s2 okTagged
-         in
-          ( s3
-          , Code (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef) mempty
-          )
-      else
-        let
-          (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
-          (resultN, s2) = allocIdent s1
-          resultVar = nName resultN
-          envE = IM.insert tagE nUnw env
-          envO = IM.insert tagO nUnw envE
-          (s3, MkCode eDecl eRef _) = effectfulAST' envE s2 errTagged
-          (s4, MkCode oDecl oRef _) = effectfulAST' envO s3 okTagged
-          stmt =
-            prelude
-              $$ letResult resultVar
-              $$ ifElseStmt
-                (P.pretty obj <> ".ok")
-                (Just (fromMaybe mempty oDecl $$ assignResult resultVar oRef))
-                Nothing
-                (Just (fromMaybe mempty eDecl $$ assignResult resultVar eRef))
-                Nothing
-         in
-          (s4, Code stmt (P.pretty resultVar))
+    (s1, errTagged, tagE) = probeContEff s0 errF
+    (s2, okTagged, tagO) = probeContEff s1 okF
+    (s3, prelude, obj, nUnw) = resultCasePrelude env s2 res
+    (resultN, s4) = allocIdent s3
+    resultVar = nName resultN
+    envE = IM.insert tagE nUnw env
+    envO = IM.insert tagO nUnw envE
+    (s5, MkCode eDecl eRef _) = effectfulAST' envE s4 errTagged
+    (s6, MkCode oDecl oRef _) = effectfulAST' envO s5 okTagged
+    stmt =
+      prelude
+        $$ letResult resultVar
+        $$ ifElseStmt
+          (P.pretty obj <> ".ok")
+          (Just (fromMaybe mempty oDecl $$ assignResult resultVar oRef))
+          Nothing
+          (Just (fromMaybe mempty eDecl $$ assignResult resultVar eRef))
+          Nothing
+   in
+    (s6, Code stmt (P.pretty resultVar))
 
 emitExprLambda :: Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
 emitExprLambda env = emitLambdaWith (\s e -> pureAST' s env e)

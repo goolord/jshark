@@ -257,7 +257,7 @@ test-suite jshark-test
     -Wno-deprecations
     -threaded
     -rtsopts
-    -with-rtsopts=-N
+    -with-rtsopts=-N1
     -with-rtsopts=-M10G
 
 common bench

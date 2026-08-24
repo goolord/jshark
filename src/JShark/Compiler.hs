@@ -57,9 +57,6 @@ import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import Data.Char (isAlphaNum, isSpace)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -87,7 +84,6 @@ import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
 import Prettyprinter (Doc)
 import Text.Read (readMaybe)
@@ -157,10 +153,9 @@ data CompilerBackend
 
 -- | Caching strategy for minified JavaScript artifacts.
 --
--- Memory entries are keyed by the full source+backend string (no hash
--- collisions) and capped at 256; when full, the 'Ord'-least key is
--- dropped (not LRU). Disk entries store that same key in the file and
--- verify it on read.
+-- 'DiskCache' stores entries on disk and verifies keys on read.
+-- 'MemoryCache' is kept for API compatibility but does not retain an
+-- in-process table (each call recompiles).
 data CacheStrategy
   = NoCache
   | MemoryCache
@@ -188,10 +183,10 @@ data CompilerConfig = CompilerConfig
   }
   deriving (Show, Eq, Ord)
 
--- | Auto backend, minified output, in-memory cache, fall back to the
+-- | Auto backend, minified output, no in-process cache, fall back to the
 -- unminified source if no minifier is installed (or if it crashes).
 defaultCompilerConfig :: CompilerConfig
-defaultCompilerConfig = CompilerConfig Auto MemoryCache True Minified
+defaultCompilerConfig = CompilerConfig Auto NoCache True Minified
 
 -- | Skip minification entirely. Useful in tests of the IIFE wrapper.
 passthroughConfig :: CompilerConfig
@@ -204,19 +199,12 @@ readableConfig = CompilerConfig Passthrough NoCache False Readable
 cacheFormatVersion :: Text
 cacheFormatVersion = "jshark-minify-2"
 
-memoryCacheMaxEntries :: Int
-memoryCacheMaxEntries = 256
-
 diskCacheMagic :: BS.ByteString
 diskCacheMagic = "jshark-cache-v1\n"
 
-globalMemoryCache :: IORef (Map Text Text)
-{-# NOINLINE globalMemoryCache #-}
-globalMemoryCache = unsafePerformIO (newIORef Map.empty)
-
--- | Drop the in-memory minifier cache.
+-- | No-op; retained for test harness compatibility.
 clearCompilerCache :: IO ()
-clearCompilerCache = writeIORef globalMemoryCache Map.empty
+clearCompilerCache = pure ()
 
 fnv1a64 :: BS.ByteString -> Word64
 fnv1a64 = BS.foldl' step 14695981039346656037
@@ -235,19 +223,6 @@ cacheKey cfg source =
     <> T.pack (show (configStyle cfg))
     <> ":"
     <> source
-
-insertBounded :: Text -> Text -> Map Text Text -> Map Text Text
-insertBounded k v m =
-  let
-    m' = Map.insert k v m
-   in
-    if Map.size m' > memoryCacheMaxEntries
-      then Map.deleteMin m'
-      else m'
-{-# NOINLINE insertBounded #-}
-
-memoryLookupKey :: CompilerConfig -> Text -> Text
-memoryLookupKey cfg source = T.pack (hashText (cacheKey cfg source))
 
 -- | Minify raw JavaScript using 'defaultCompilerConfig'.
 --
@@ -283,17 +258,7 @@ tryCompileWith cfg0 source =
    in
     case configCache cfg of
       NoCache -> tryRunCompile cfg source
-      MemoryCache -> do
-        let
-          key = memoryLookupKey cfg source
-        hit <- Map.lookup key <$> readIORef globalMemoryCache
-        case hit of
-          Just cached -> pure (Right cached)
-          Nothing ->
-            compileAndStore (tryRunCompile cfg source) $ \out ->
-              atomicModifyIORef'
-                globalMemoryCache
-                (\m -> (insertBounded key out m, Right out))
+      MemoryCache -> tryRunCompile cfg source
       DiskCache dir -> do
         createDirectoryIfMissing True dir
         let
