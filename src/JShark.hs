@@ -4,6 +4,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -137,7 +139,7 @@ import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
-import Data.Monoid (Any (..), Sum (..))
+import Data.Monoid (All (..), Any (..), Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -912,60 +914,22 @@ data Metadata = Metadata
   }
 
 instance Semigroup Metadata where
-  Metadata s1 f1 p1 c1 <> Metadata s2 f2 p2 c2 =
-    Metadata (s1 + s2) (IM.unionWith (+) f1 f2) (p1 && p2) (c1 && c2)
+  (<>) = mergeMetadata
 
 instance Monoid Metadata where
   mempty = Metadata 0 IM.empty True True
 
-getExprMetadata :: Expr Stamp u -> Metadata
-getExprMetadata = computeExprMetadata
+mergeMetadata :: Metadata -> Metadata -> Metadata
+mergeMetadata (Metadata s1 f1 p1 c1) (Metadata s2 f2 p2 c2) =
+  Metadata (s1 + s2) (unionFreeVars f1 f2) (p1 && p2) (c1 && c2)
 
-getEffectMetadata :: Effect Stamp u -> Metadata
-getEffectMetadata = computeEffectMetadata
+unionFreeVars :: IM.IntMap Int -> IM.IntMap Int -> IM.IntMap Int
+unionFreeVars f1 f2
+  | IM.null f1 = f2
+  | IM.null f2 = f1
+  | otherwise = IM.unionWith (+) f1 f2
 
-computeExprMetadata :: Expr Stamp u -> Metadata
-computeExprMetadata = \case
-  Var (Stamp i) -> Metadata 1 (IM.singleton i 1) True True
-  Var (Embed e) -> getExprMetadata e
-  Var (EmbedEff e) -> getEffectMetadata e
-  Literal v -> Metadata 1 IM.empty True (isCheapValue v)
-  e ->
-    let pureNode = case e of
-          Std (Fixed op _) -> Prim.isPureFixed op
-          _ -> True
-        cheapNode = case e of
-          UnsafeNullable {} -> True
-          GetField {} -> True
-          _ -> False
-     in Metadata 1 IM.empty pureNode cheapNode
-          <> foldExpr nestedDummy getExprMetadata getExprMetadata getEffectMetadata e
-
-computeEffectMetadata :: Effect Stamp u -> Metadata
-computeEffectMetadata = \case
-  e ->
-    let pureNode = case e of
-          FFI {} -> False
-          UnsafeObjectGet {} -> False
-          UnsafeObjectAssign {} -> False
-          CallMethod {} -> False
-          ApplyE {} -> False
-          While {} -> False
-          ForRange {} -> False
-          U8Set {} -> False
-          U8Fill {} -> False
-          Throw {} -> False
-          Try {} -> False
-          DeleteProp {} -> False
-          _ -> True
-        cheapNode = case e of
-          Lift {} -> True
-          _ -> False
-     in Metadata 1 IM.empty pureNode cheapNode
-          <> foldEff nestedDummy getExprMetadata getEffectMetadata getEffectMetadata e
-
--- | 'evaluate' in 'IO'. No host-language sharing memo; same semantics as
--- 'evaluate'.
+-- | 'evaluate' in 'IO'. Same semantics as 'evaluate'.
 evaluateCached :: ClosedExpr u -> IO (Value u)
 evaluateCached e = pure (evaluate e)
 
@@ -1145,7 +1109,7 @@ pureProgram e = uncurry renderIIFE (pureAST' startCG IM.empty (optimize e))
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: ClosedEffect u -> Doc ann
 effectfulProgram e =
-  uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffect e))
+  uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
 partitionCode :: [Code ann] -> ([Maybe (Doc ann)], [Maybe (Doc ann)])
 partitionCode = unzip . map (\(MkCode a b _) -> (a, b))
@@ -1324,16 +1288,195 @@ countEffect t =
       (Sum . countEffect t)
       (Sum . countLazyEffect t)
 
+newtype Occ = Occ {getOcc :: Bool}
+
+instance Semigroup Occ where
+  Occ a <> Occ b = Occ (a || b)
+
+instance Monoid Occ where
+  mempty = Occ False
+
+occursVarInExpr :: Int -> Expr Stamp u -> Bool
+occursVarInExpr t = \case
+  Var (Stamp i) -> i == t
+  Var (Embed e') -> occursVarInExpr t e'
+  Var (EmbedEff e') -> occursVarInEff t e'
+  e ->
+    getOcc $
+      foldExpr
+        nestedDummy
+        (Occ . occursVarInExpr t)
+        (const mempty)
+        (Occ . occursVarInEff t)
+        e
+
+occursVarInEff :: Int -> Effect Stamp u -> Bool
+occursVarInEff t =
+  getOcc
+    . foldEff
+      nestedDummy
+      (Occ . occursVarInExpr t)
+      (Occ . occursVarInEff t)
+      (const mempty)
+
+nodeCountExpr :: Expr Stamp u -> Int
+nodeCountExpr = \case
+  Var (Embed e') -> nodeCountExpr e'
+  Var (EmbedEff e') -> nodeCountEff e'
+  e ->
+    1
+      + getSum
+        ( foldExpr
+            nestedDummy
+            (Sum . nodeCountExpr)
+            (const mempty)
+            (Sum . nodeCountEff)
+            e
+        )
+
+nodeCountEff :: Effect Stamp u -> Int
+nodeCountEff e =
+  1
+    + getSum
+      ( foldEff
+          nestedDummy
+          (Sum . nodeCountExpr)
+          (Sum . nodeCountEff)
+          (const mempty)
+          e
+      )
+
+cheapExpr :: Expr Stamp u -> Bool
+cheapExpr = \case
+  Literal v -> isCheapValue v
+  Var (Embed e') -> cheapExpr e'
+  Var (EmbedEff e') -> cheapEffect e'
+  Var _ -> True
+  e ->
+    let here = case e of
+          UnsafeNullable {} -> True
+          GetField {} -> True
+          _ -> False
+     in here
+          && getAll
+            ( foldExpr
+                nestedDummy
+                (All . cheapExpr)
+                (const mempty)
+                (All . cheapEffect)
+                e
+            )
+
+cheapEffect :: Effect Stamp u -> Bool
+cheapEffect e =
+  let here = case e of
+        Lift {} -> True
+        _ -> False
+   in here
+        && getAll
+          ( foldEff
+              nestedDummy
+              (All . cheapExpr)
+              (All . cheapEffect)
+              (const mempty)
+              e
+          )
+
+pureExpr :: Expr Stamp u -> Bool
+pureExpr = \case
+  Literal _ -> True
+  Var (Embed e') -> pureExpr e'
+  Var (EmbedEff e') -> pureEffect e'
+  Var _ -> True
+  e ->
+    let here = case e of
+          Std (Fixed op _) -> Prim.isPureFixed op
+          _ -> True
+     in here
+          && getAll
+            ( foldExpr
+                nestedDummy
+                (All . pureExpr)
+                (const mempty)
+                (All . pureEffect)
+                e
+            )
+
+pureEffect :: Effect Stamp u -> Bool
+pureEffect e =
+  let here = case e of
+        FFI {} -> False
+        UnsafeObjectGet {} -> False
+        UnsafeObjectAssign {} -> False
+        CallMethod {} -> False
+        ApplyE {} -> False
+        While {} -> False
+        ForRange {} -> False
+        U8Set {} -> False
+        U8Fill {} -> False
+        Throw {} -> False
+        Try {} -> False
+        DeleteProp {} -> False
+        _ -> True
+   in here
+        && getAll
+          ( foldEff
+              nestedDummy
+              (All . pureExpr)
+              (All . pureEffect)
+              (const mempty)
+              e
+          )
+
+newtype MinNeg = MinNeg {getMinNeg :: Maybe Int}
+
+instance Semigroup MinNeg where
+  MinNeg Nothing <> x = x
+  x <> MinNeg Nothing = x
+  MinNeg (Just a) <> MinNeg (Just b) = MinNeg (Just (min a b))
+
+instance Monoid MinNeg where
+  mempty = MinNeg Nothing
+
+minNegStampExpr :: Expr Stamp u -> MinNeg
+minNegStampExpr = \case
+  Var (Stamp i) | i < 0 -> MinNeg (Just i)
+  Var (Embed e') -> minNegStampExpr e'
+  Var (EmbedEff e') -> minNegStampEff e'
+  e ->
+    foldExpr
+      nestedDummy
+      minNegStampExpr
+      (const mempty)
+      minNegStampEff
+      e
+
+minNegStampEff :: Effect Stamp u -> MinNeg
+minNegStampEff =
+  foldEff
+    nestedDummy
+    minNegStampExpr
+    minNegStampEff
+    (const mempty)
+
+-- | Negative binder stamp in a probed continuation. Optimizer tags and
+-- codegen probe tags can differ when 'rebindEff' skips a rename.
+binderStampIn :: Effect Stamp u -> Int -> Int
+binderStampIn tagged probeTag =
+  case getMinNeg (minNegStampEff tagged) of
+    Just t -> t
+    Nothing -> probeTag
+
 -- Re-opt only small trees. A second walk of a @bindRec@ / do-chain
 -- paint body is what hung todo-mvc and breakout.
 optSmall :: Int
 optSmall = 16
 
 sizeExpr :: Expr Stamp u -> Int
-sizeExpr e = mdSize (getExprMetadata e)
+sizeExpr e = nodeCountExpr e
 
 sizeEffect :: Effect Stamp u -> Int
-sizeEffect e = mdSize (getEffectMetadata e)
+sizeEffect e = nodeCountEff e
 
 -- | First-order reopen: rename the tag allocated by 'optUnder'. Never
 -- re-applies the original PHOAS @f@. Same tag is identity. The fold dummy
@@ -1823,7 +1966,7 @@ flattenEff = \case
 renameExpr :: Int -> Int -> Expr Stamp u -> Expr Stamp u
 renameExpr old new e
   | old == new = e
-  | IM.notMember old (mdFreeVars (getExprMetadata e)) = e
+  | not (occursVarInExpr old e) = e
   | otherwise = case e of
       Var (Embed e') -> renameExpr old new (flattenExpr e')
       Var (EmbedEff (Lift e')) -> renameExpr old new (flattenExpr e')
@@ -1835,7 +1978,7 @@ renameExpr old new e
 renameEff :: Int -> Int -> Effect Stamp u -> Effect Stamp u
 renameEff old new e
   | old == new = e
-  | IM.notMember old (mdFreeVars (getEffectMetadata e)) = e
+  | not (occursVarInEff old e) = e
   | otherwise = case e of
       Lift (Var (EmbedEff e')) -> renameEff old new (flattenEff e')
       _ -> mapEff (renameExpr old new) (renameEff old new) e
@@ -2539,13 +2682,16 @@ optimize (e :: ClosedExpr u) =
     flattenExpr final
 {-# NOINLINE optimize #-}
 
-optimizeEffect :: ClosedEffect u -> Effect Stamp u
-optimizeEffect (e :: ClosedEffect u) =
+optimizeEffectTree :: ClosedEffect u -> Effect Stamp u
+optimizeEffectTree (e :: ClosedEffect u) =
   let
     flat = flattenEff (e :: Effect Stamp u)
     (_, final, _) = optEffect (-2) flat
    in
     flattenEff final
+
+optimizeEffect :: ClosedEffect u -> Effect Stamp u
+optimizeEffect e = optimizeEffectTree e
 {-# NOINLINE optimizeEffect #-}
 
 optimizedExprSize :: ClosedExpr u -> Int
@@ -2614,7 +2760,7 @@ isCheapValue = \case
   ValueFrozen {} -> False
 
 isCheap :: Expr Stamp u -> Bool
-isCheap e = mdIsCheap (getExprMetadata e)
+isCheap = cheapExpr
 
 isCheapFieldLit :: FieldLit Stamp r -> Bool
 isCheapFieldLit = \case
@@ -2624,7 +2770,7 @@ isCheapFieldLit = \case
   FieldLitExtraEffect {} -> False
 
 isCheapEffect :: Effect Stamp u -> Bool
-isCheapEffect e = mdIsCheap (getEffectMetadata e)
+isCheapEffect = cheapEffect
 
 class PhoasDummy f where
   phoasDummy :: f u
@@ -2633,8 +2779,8 @@ class PhoasDummy f where
 
 instance PhoasDummy Stamp where
   phoasDummy = nestedDummy
-  isPureExpr_ e = mdIsPure (getExprMetadata e)
-  isPureEffect_ e = mdIsPure (getEffectMetadata e)
+  isPureExpr_ = pureExpr
+  isPureEffect_ = pureEffect
 
 instance PhoasDummy Value where
   phoasDummy = error "JShark.phoasDummy: Value binder"
@@ -2648,7 +2794,7 @@ isPureEffectStamp :: PhoasDummy f => Effect f u -> Bool
 isPureEffectStamp = isPureEffect_
 
 isPureEffect :: Effect Stamp u -> Bool
-isPureEffect e = mdIsPure (getEffectMetadata e)
+isPureEffect = pureEffect
 
 optArgs :: Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us, Metadata)
 optArgs t0 RecNil = (t0, RecNil, mempty)
@@ -3626,13 +3772,16 @@ bindEffectCode ::
   Env -> CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
 bindEffectCode env s0 x f =
   let
-    (sProbe, tagged, binderTag) = probeContEff s0 f
-    uses = countEffect binderTag tagged
+    (sProbe, tagged, probeTag) = probeContEff s0 f
+    bTag = binderStampIn tagged probeTag
+    uses = countEffect bTag tagged
     (s1, MkCode xDecl xRef xFX) = effectfulAST' env sProbe x
     stmtX
       | isNothing xRef = fromMaybe mempty xDecl
       | not xFX && isJust xDecl = fromMaybe mempty xDecl
       | otherwise = asStmt xDecl xRef
+    insertBinder env0 n =
+      IM.insert bTag n $ if bTag == probeTag then env0 else IM.insert probeTag n env0
   in
     case xRef of
       Nothing ->
@@ -3645,17 +3794,21 @@ bindEffectCode env s0 x f =
           _ ->
             let
               n = fromMaybe nestedDummyId (liveBinder x)
-              env' =
+              (env', sBind, bindDoc) =
                 if n /= nestedDummyId
-                  then IM.insert binderTag n env
-                  else env
-              (s2, MkCode yDecl yRef yFX) = effectfulAST' env' s1 tagged
+                  then (insertBinder env n, s1, mempty)
+                  else
+                    let (nBind, s2) = allocIdent s1
+                     in (insertBinder env nBind, s2, mempty)
+              (s3, MkCode yDecl yRef yFX) = effectfulAST' env' sBind tagged
              in
-              (s2, MkCode (Just (fromMaybe mempty xDecl $$ fromMaybe mempty yDecl)) yRef yFX)
+              ( s3
+              , MkCode (Just (stmtX $$ bindDoc $$ fromMaybe mempty yDecl)) yRef yFX
+              )
       Just _ ->
         let
           (nBind, s2) = allocIdent s1
-          env' = IM.insert binderTag nBind env
+          env' = insertBinder env nBind
           (s3, MkCode yDecl yRef yFX) = effectfulAST' env' s2 tagged
          in
           ( s3
@@ -3672,7 +3825,7 @@ bindEffectCode env s0 x f =
 
 effectfulAST :: ClosedEffect u -> Doc ann
 effectfulAST e =
-  uncurry renderWithHelpers (effectfulAST' IM.empty startCG (optimizeEffect e))
+  uncurry renderWithHelpers (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
 -- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
 -- materializes continuations (@f nestedDummy@).
