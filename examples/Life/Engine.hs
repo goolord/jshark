@@ -23,6 +23,7 @@ where
 import Discover (Registry, discoverLife)
 import Grid
   ( BoundScratch (..)
+  , RenderDirty (..)
   , StepCtx (..)
   , cellIdx
   , drawGridViewport
@@ -276,7 +277,7 @@ stepGeneration state stepCtx = do
         ifS
           useEngine
           ( do
-              v <-
+              engineOk <-
                 engineStepGeneration
                   alive
                   species
@@ -291,7 +292,30 @@ stepGeneration state stepCtx = do
                   nextLiveList
                   nextChangedList
                   stepCtx
-              set @"pop" stepCtx v
+              whenS (not_ engineOk) $
+                do
+                  v <-
+                    stepGrid
+                      alive
+                      species
+                      nextAlive
+                      nextSpecies
+                      w
+                      h
+                      x0e
+                      y0e
+                      x1e
+                      y1e
+                      prevLiveList
+                      nextLiveList
+                      nextChangedList
+                      stepStamp
+                      stepTagVal
+                      prevPop
+                      stepCtx
+                      birthCounts
+                      birthTouched
+                  set @"pop" stepCtx v
           )
           ( do
               v <-
@@ -389,9 +413,10 @@ swapBuffers state = do
 renderLife ::
   Effect f ('MutableObject Canvas.Context2D)
   -> Effect f ('MutableObject ())
+  -> Effect f (MutableObjectOf RenderDirty)
   -> Effect f (MutableObjectOf LifeState)
   -> EffectSyntax f (f 'Unit)
-renderLife ctx viewport state = do
+renderLife ctx viewport renderDirty state = do
   w <- pure (number (fromIntegral gridW))
   h <- pure (number (fromIntegral gridH))
   px <- pure (number (fromIntegral cellPx))
@@ -429,6 +454,7 @@ renderLife ctx viewport state = do
     panX
     panY
     zoom
+    renderDirty
   Array.clear_ changedList
   set @"sceneDirty" state false_
   _ <- setProp viewport "renderPanX" panX

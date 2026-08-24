@@ -503,7 +503,7 @@ rgbaFillRect pixels canvasW canvasH x y sw sh color =
     )
 
 -- | Paint live/changed grid cells into an RGBA canvas buffer in one JS pass.
--- Returns @\{ cx0, cy0, cx1, cy1, full \}@ for @putImageData@ blitting.
+-- Writes dirty-rect fields onto @out@ (@dirtyCx0@ … @dirtyPainted@) for blitting.
 paintGridCells ::
   Expr f 'Uint8Array
   -> Expr f 'Number
@@ -523,7 +523,8 @@ paintGridCells ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f ('MutableObject ())
+  -> Effect f u
+  -> Effect f 'Unit
 paintGridCells
   pixels
   cw
@@ -542,10 +543,11 @@ paintGridCells
   visX0
   visX1
   visY0
-  visY1 =
+  visY1
+  out =
   FFI
     ( FFILambda
-        ( "(p,cw,ch,pal,alive,species,w,scale,panX,panY,bg,live,changed,full,vx0,vx1,vy0,vy1)=>{"
+        ( "(p,cw,ch,pal,alive,species,w,scale,panX,panY,bg,live,changed,full,vx0,vx1,vy0,vy1,out)=>{"
             <> "let cx0=1e9,cy0=1e9,cx1=-1,cy1=-1,painted=false;"
             <> "const bgR=bg&255,bgG=(bg>>8)&255,bgB=(bg>>16)&255,bgA=bg>>>24;"
             <> "const bump=(a,b,c,d)=>{if(a<cx0)cx0=a;if(b<cy0)cy0=b;if(c>cx1)cx1=c;if(d>cy1)cy1=d;};"
@@ -566,9 +568,10 @@ paintGridCells
             <> "};"
             <> "if(full){for(let i=0;i<p.length;i+=4){p[i]=bgR;p[i+1]=bgG;p[i+2]=bgB;p[i+3]=bgA;}"
             <> "for(let k=0,n=live.length|0;k<n;k++)paint(live[k]);"
-            <> "return{cx0:0,cy0:0,cx1:cw,cy1:ch,full:true,painted:true};}"
+            <> "out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=cw;out.dirtyCy1=ch;out.dirtyFull=true;out.dirtyPainted=true;return;}"
             <> "for(let k=0,n=changed.length|0;k<n;k++)paint(changed[k]);"
-            <> "return{cx0,cy0,cx1,cy1,full:false,painted};"
+            <> "if(!painted){out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=0;out.dirtyCy1=0;out.dirtyPainted=false;out.dirtyFull=false;return;}"
+            <> "out.dirtyCx0=cx0;out.dirtyCy0=cy0;out.dirtyCx1=cx1;out.dirtyCy1=cy1;out.dirtyFull=false;out.dirtyPainted=painted;"
             <> "}"
         )
     )
@@ -590,6 +593,7 @@ paintGridCells
         <: arg visX1
         <: arg visY0
         <: arg visY1
+        <: ArgEffect out
         <: RecNil
     )
 

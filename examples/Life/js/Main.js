@@ -28,6 +28,7 @@
       this.workerUrl = 'js/EngineWorker.js';
       this._speciesCounts = new Uint16Array(256);
       this._speciesTouched = new Uint16Array(8);
+      this._stepOut = { pop: 0, bx0: 0, by0: 0, bx1: 0, by1: 0 };
     }
 
     /** Load WASM SIMD kernels (row clear/copy). Stepping logic stays in LifeLUT. */
@@ -218,6 +219,8 @@
   /**
    * Binary step + species + pop/bounds/lists in one pass.
    * Returns null when LifeEngine is unavailable (caller keeps Haskell path).
+   * Return value is a shallow copy of {@link LifeEngineMain#_stepOut}; do not
+   * cache it across calls.
    */
   function finishStep(
     alive,
@@ -305,7 +308,13 @@
     nextLiveList.length = liveLen;
     nextChangedList.length = changedLen;
     refreshPackedRegion(nextAlive, w, h, x0, y0, x1, y1);
-    return { pop, bx0, by0, bx1, by1 };
+    const out = E._stepOut;
+    out.pop = pop;
+    out.bx0 = bx0;
+    out.by0 = by0;
+    out.bx1 = bx1;
+    out.by1 = by1;
+    return { pop: out.pop, bx0: out.bx0, by0: out.by0, bx1: out.bx1, by1: out.by1 };
   }
 
   global.LifeEngine = new LifeEngineMain();

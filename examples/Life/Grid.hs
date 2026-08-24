@@ -12,7 +12,7 @@
 --    loops instead of @forEach@ callbacks.
 module Grid
   ( BoundScratch (..)
-  , CanvasDirty (..)
+  , RenderDirty (..)
   , StepScratch (..)
   , StepCtx (..)
   , u8Get
@@ -52,11 +52,13 @@ data StepScratch = StepScratch
   }
   deriving Generic
 
-data CanvasDirty = CanvasDirty
-  { cx0 :: Double
-  , cy0 :: Double
-  , cx1 :: Double
-  , cy1 :: Double
+data RenderDirty = RenderDirty
+  { dirtyCx0 :: Double
+  , dirtyCy0 :: Double
+  , dirtyCx1 :: Double
+  , dirtyCy1 :: Double
+  , dirtyFull :: Bool
+  , dirtyPainted :: Bool
   }
   deriving Generic
 
@@ -644,6 +646,7 @@ drawGridViewport ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Effect f (MutableObjectOf RenderDirty)
   -> EffectSyntax f (f 'Unit)
 drawGridViewport
   ctx
@@ -662,7 +665,8 @@ drawGridViewport
   ch
   panX
   panY
-  zoomLevel = do
+  zoomLevel
+  renderDirty = do
   let
     scale = px * zoomLevel
     visX0 = Math.max (number 0) (Math.floor ((number 0 - panX) / scale) - number 1)
@@ -674,48 +678,50 @@ drawGridViewport
         + shl (number 23) (number 8)
         + shl (number 42) (number 16)
         + shl (number 255) (number 24)
-  dirty <-
-    bindExpr $
-      paintGridCells
-        pixels
-        cw
-        ch
-        paletteRgba
-        alive
-        species
-        w
-        scale
-        panX
-        panY
-        bg
-        liveList
-        changedList
-        fullRedraw
-        visX0
-        visX1
-        visY0
-        visY1
-  isFull <- bindExpr $ ffi "d=>d.full" (arg dirty <: RecNil)
+  toSyntax_ $
+    paintGridCells
+      pixels
+      cw
+      ch
+      paletteRgba
+      alive
+      species
+      w
+      scale
+      panX
+      panY
+      bg
+      liveList
+      changedList
+      fullRedraw
+      visX0
+      visX1
+      visY0
+      visY1
+      renderDirty
+  isFull <- renderDirty.dirtyFull
   ifS
     isFull
     (Canvas.putImageData ctx img (number 0) (number 0))
     ( whenS (Array.length changedList .> 0) $
         do
-          painted <- bindExpr $ ffi "d=>d.painted" (arg dirty <: RecNil)
-          ix0 <- bindExpr $ ffi "d=>Math.floor(d.cx0)" (arg dirty <: RecNil)
-          iy0 <- bindExpr $ ffi "d=>Math.floor(d.cy0)" (arg dirty <: RecNil)
-          ix1 <- bindExpr $ ffi "d=>Math.ceil(d.cx1)" (arg dirty <: RecNil)
-          iy1 <- bindExpr $ ffi "d=>Math.ceil(d.cy1)" (arg dirty <: RecNil)
+          painted <- renderDirty.dirtyPainted
+          ix0 <- renderDirty.dirtyCx0
+          iy0 <- renderDirty.dirtyCy0
+          ix1 <- renderDirty.dirtyCx1
+          iy1 <- renderDirty.dirtyCy1
           let
-            dw = ix1 - ix0
-            dh = iy1 - iy0
+            dw = Math.ceil ix1 - Math.floor ix0
+            dh = Math.ceil iy1 - Math.floor iy0
+            blitX = Math.floor ix0
+            blitY = Math.floor iy0
           whenS (not_ painted) $
             toSyntax $
               ffi
                 "(()=>{console.warn('[Life] changed cells produced no visible dirty rect');})"
                 RecNil
           whenS (dw .> 0 .&& dh .> 0) $
-            Canvas.putImageDataRegion ctx img (number 0) (number 0) ix0 iy0 dw dh
+            Canvas.putImageDataRegion ctx img (number 0) (number 0) blitX blitY dw dh
     )
   done
 

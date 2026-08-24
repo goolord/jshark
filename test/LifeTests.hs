@@ -418,7 +418,7 @@ testEngineStepGeneration = fromSyntax $ do
   nextLiveList <- bindExpr $ Array.fromEffects []
   nextChangedList <- bindExpr $ Array.fromEffects []
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
-  popN <-
+  engineOk <-
     engineStepGeneration
       alive
       species
@@ -433,6 +433,8 @@ testEngineStepGeneration = fromSyntax $ do
       nextLiveList
       nextChangedList
       stepCtx
+  LifeAssert.assertEqual (number 1) (if_ engineOk (number 1) (number 0))
+  popN <- stepCtx.pop
   LifeAssert.assertEqual (number 4) popN
   cells <- blockCoords
   coordsMatch nextAlive w cells

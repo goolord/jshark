@@ -21,7 +21,7 @@ import Discover
   )
 import Engine
 import GHC.Generics (Generic)
-import Grid (StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
+import Grid (RenderDirty (..), StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
@@ -91,6 +91,7 @@ boot canvas ctx = do
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
   viewport <- initViewport
+  renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))
   state <- initLife ctxH viewport
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   registry <- initRegistry
@@ -117,6 +118,7 @@ boot canvas ctx = do
   hitsSym <- toSyntax Set.new
   let
     hits = Lift (Var hitsSym)
+  sidsScratch <- bindExpr $ Array.fromEffects []
   toolRef <- initTool
   toolsMap <- initDisturbCatalog
   toolBtns <- Dom.lookupSelector (string ".life-tool")
@@ -130,7 +132,7 @@ boot canvas ctx = do
       stepLifeBudget state registry stepCtx now
     tickIndex state registry indexTracker seenSpecies typesList now
     renderStart <- performanceNow
-    renderLife ctxH viewport state
+    renderLife ctxH viewport renderDirty state
     renderEnd <- performanceNow
     setEngineRenderMs (renderEnd - renderStart)
     lastHud <- getProp viewport "lastHudMs"
@@ -138,7 +140,7 @@ boot canvas ctx = do
       updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine
       _ <- setProp viewport "lastHudMs" now
       done
-    tickHover tipRef state registry tooltip swatchEl nameEl hits
+    tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits
 
 wire ::
   Effect f ('MutableObject Dom.DomElement)
@@ -319,6 +321,7 @@ hideTooltip tipRef tooltip = do
 
 tickHover ::
   Effect f ('MutableObject ())
+  -> Expr f ('Array 'Number)
   -> Effect f (MutableObjectOf LifeState)
   -> Effect f ('MutableObject Registry)
   -> Effect f ('MutableObject Dom.DomElement)
@@ -326,7 +329,7 @@ tickHover ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('Set Number)
   -> EffectSyntax f (f 'Unit)
-tickHover tipRef state registry tooltip swatchEl nameEl hits = do
+tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits = do
   over <- getProp tipRef "over"
   ifS
     (over .== 0)
@@ -347,7 +350,7 @@ tickHover tipRef state registry tooltip swatchEl nameEl hits = do
           let
             w = number (fromIntegral gridW)
             h = number (fromIntegral gridH)
-          applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy
+          applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx gy cx cy
     )
 
 -- | Grid index lookup, not a board-wide collision scan. A live cursor
@@ -356,6 +359,7 @@ tickHover tipRef state registry tooltip swatchEl nameEl hits = do
 --   set changes — the tooltip does not follow the cursor inside a cell.
 applyHover ::
   Effect f ('MutableObject ())
+  -> Expr f ('Array 'Number)
   -> Effect f (MutableObjectOf LifeState)
   -> Effect f ('MutableObject Registry)
   -> Effect f ('MutableObject Dom.DomElement)
@@ -369,7 +373,7 @@ applyHover ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy = do
+applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx gy cx cy = do
   alive <- state.alive
   species <- state.species
   pal <- state.palette
@@ -389,14 +393,14 @@ applyHover tipRef state registry tooltip swatchEl nameEl hits w h gx gy cx cy = 
     (n .== 0)
     (hideTooltip tipRef tooltip)
     ( do
-        sids <- bindExpr $ Array.fromEffects []
-        _ <- Set.mapM_ (\sid -> Array.push_ sids sid) hits
-        sortedSids <- bindExpr $ Array.sort sids (\x y -> x - y)
+        Array.clear_ sidsScratch
+        _ <- Set.mapM_ (\sid -> Array.push_ sidsScratch sid) hits
+        toSyntax_ $ Array.sort sidsScratch (\x y -> x - y)
         _ <- setProp tipRef "fpBuild" (string "")
         _ <- setProp tipRef "label" (string "")
         _ <-
-          forRange_ (number 0) (Array.length sortedSids) $ \idx -> do
-            sid <- pure (Array.index sortedSids idx)
+          forRange_ (number 0) (Array.length sidsScratch) $ \idx -> do
+            sid <- pure (Array.index sidsScratch idx)
             curFp <- getProp tipRef "fpBuild"
             _ <-
               setProp

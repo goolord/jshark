@@ -18,7 +18,6 @@ where
 
 import Grid (StepCtx)
 import JShark.Api
-import qualified JShark.Array as Array
 import JShark.Generic (MutableObjectOf)
 import JShark.Rec (Rec (..), (<:))
 import Types (gridH, gridW)
@@ -83,7 +82,7 @@ engineStepGeneration ::
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
   -> Effect f (MutableObjectOf StepCtx)
-  -> EffectSyntax f (Expr f 'Number)
+  -> EffectSyntax f (Expr f 'Bool)
 engineStepGeneration
   alive
   species
@@ -98,37 +97,29 @@ engineStepGeneration
   nextLiveList
   nextChangedList
   stepCtx = do
-  Array.clear_ nextLiveList
-  Array.clear_ nextChangedList
-  result <-
-    bindExpr $
-      ffi
-        ( "((alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList)=>{"
-            <> "const S=globalThis.LifeEngineSync;"
-            <> "return S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList):null;"
-            <> "})"
-        )
-        ( arg alive
-            <: arg species
-            <: arg nextAlive
-            <: arg nextSpecies
-            <: arg w
-            <: arg h
-            <: arg x0
-            <: arg y0
-            <: arg x1
-            <: arg y1
-            <: arg nextLiveList
-            <: arg nextChangedList
-            <: RecNil
-        )
-  popOut <- bindExpr $ ffi "r=>r.pop" (arg result <: RecNil)
-  bx0n <- bindExpr $ ffi "r=>r.bx0" (arg result <: RecNil)
-  by0n <- bindExpr $ ffi "r=>r.by0" (arg result <: RecNil)
-  bx1n <- bindExpr $ ffi "r=>r.bx1" (arg result <: RecNil)
-  by1n <- bindExpr $ ffi "r=>r.by1" (arg result <: RecNil)
-  set @"bx0" stepCtx bx0n
-  set @"by0" stepCtx by0n
-  set @"bx1" stepCtx bx1n
-  set @"by1" stepCtx by1n
-  pure popOut
+  bindExpr $
+    ffi
+      ( "((alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList,scratch)=>{"
+          <> "const S=globalThis.LifeEngineSync;"
+          <> "const r=S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList):null;"
+          <> "if(!r)return false;"
+          <> "scratch.pop=r.pop;"
+          <> "scratch.bx0=r.bx0;scratch.by0=r.by0;scratch.bx1=r.bx1;scratch.by1=r.by1;"
+          <> "return true;"
+          <> "})"
+      )
+      ( arg alive
+          <: arg species
+          <: arg nextAlive
+          <: arg nextSpecies
+          <: arg w
+          <: arg h
+          <: arg x0
+          <: arg y0
+          <: arg x1
+          <: arg y1
+          <: arg nextLiveList
+          <: arg nextChangedList
+          <: ArgEffect stepCtx
+          <: RecNil
+      )
