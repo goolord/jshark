@@ -167,23 +167,25 @@
     }
   }
 
-  function rebuildPackedCounts(grid, w, h) {
-    const n = w * h;
-    for (let i = 0; i < n; i++) grid[i] &= 1;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x;
-        if (grid[i] & 1) {
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (!dx && !dy) continue;
-              const nx = x + dx;
-              const ny = y + dy;
-              if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-              grid[ny * w + nx] += 2;
-            }
+  function refreshPackedRegion(grid, w, h, x0, y0, x1, y1) {
+    const xs = Math.max(0, Math.floor(x0) - 1);
+    const ys = Math.max(0, Math.floor(y0) - 1);
+    const xe = Math.min(w - 1, Math.floor(x1) + 1);
+    const ye = Math.min(h - 1, Math.floor(y1) + 1);
+    for (let y = ys; y <= ye; y++) {
+      for (let x = xs; x <= xe; x++) {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (grid[ny * w + nx] & 1) n++;
           }
         }
+        const i = y * w + x;
+        grid[i] = (grid[i] & 1) + n * 2;
       }
     }
   }
@@ -217,53 +219,101 @@
    * Binary step + species + pop/bounds/lists in one pass.
    * Returns null when LifeEngine is unavailable (caller keeps Haskell path).
    */
-  function finishStep(alive, species, nextAlive, nextSpecies, w, h, nextLiveList, nextChangedList) {
+  function finishStep(
+    alive,
+    species,
+    nextAlive,
+    nextSpecies,
+    w,
+    h,
+    x0,
+    y0,
+    x1,
+    y1,
+    nextLiveList,
+    nextChangedList
+  ) {
     const E = global.LifeEngine;
     if (!E || !E.ready || E.mode === 'none') return null;
-    const n = w * h | 0;
+    const n = (w * h) | 0;
     const counts = E._speciesCounts;
     const touched = E._speciesTouched;
+
     for (let i = 0; i < n; i++) E.gridA[i] = alive[i] & 1;
     E.stepMainLUT();
     const grid = E.gridA;
+
+    const xStart = Math.max(0, Math.floor(x0) - 1);
+    const yStart = Math.max(0, Math.floor(y0) - 1);
+    const xStop = Math.min(w, Math.floor(x1) + 2);
+    const yStop = Math.min(h, Math.floor(y1) + 2);
+
     let pop = 0;
     let bx0 = 1e9;
     let by0 = 1e9;
     let bx1 = -1;
     let by1 = -1;
-    for (let i = 0; i < n; i++) {
-      const was = alive[i] & 1;
-      const now = grid[i] & 1;
-      if (now && was) {
-        nextAlive[i] = 1;
-        nextSpecies[i] = species[i];
-      } else if (!now) {
-        nextAlive[i] = 0;
-        nextSpecies[i] = 0;
-      } else {
-        const x = i % w;
-        const y = (i / w) | 0;
-        nextAlive[i] = 1;
-        nextSpecies[i] = pickBirthSpecies(alive, species, w, h, x, y, counts, touched);
-      }
-      if (now) {
-        pop++;
-        const x = i % w;
-        const y = (i / w) | 0;
-        if (x < bx0) bx0 = x;
-        if (y < by0) by0 = y;
-        if (x > bx1) bx1 = x;
-        if (y > by1) by1 = y;
-        nextLiveList.push(i);
-        if (was !== now) nextChangedList.push(i);
-      } else if (was) {
-        nextChangedList.push(i);
+    let liveLen = 0;
+    let changedLen = 0;
+
+    for (let y = yStart; y < yStop; y++) {
+      const row = y * w;
+      for (let x = xStart; x < xStop; x++) {
+        const i = row + x;
+        const was = alive[i] & 1;
+        const now = grid[i] & 1;
+        if (now && was) {
+          nextAlive[i] = grid[i];
+          nextSpecies[i] = species[i];
+        } else if (!now) {
+          nextAlive[i] = 0;
+          nextSpecies[i] = 0;
+        } else {
+          nextAlive[i] = grid[i];
+          nextSpecies[i] = pickBirthSpecies(alive, species, w, h, x, y, counts, touched);
+        }
+        if (now) {
+          pop++;
+          if (x < bx0) bx0 = x;
+          if (y < by0) by0 = y;
+          if (x > bx1) bx1 = x;
+          if (y > by1) by1 = y;
+          nextLiveList[liveLen++] = i;
+          if (was !== now) nextChangedList[changedLen++] = i;
+        } else if (was) {
+          nextChangedList[changedLen++] = i;
+        }
       }
     }
-    rebuildPackedCounts(nextAlive, w, h);
+
+    nextLiveList.length = liveLen;
+    nextChangedList.length = changedLen;
+    refreshPackedRegion(nextAlive, w, h, x0, y0, x1, y1);
     return { pop, bx0, by0, bx1, by1 };
   }
 
   global.LifeEngine = new LifeEngineMain();
-  global.LifeEngineSync = { rebuildPackedCounts, finishStep };
+
+  function rebuildPackedCounts(grid, w, h) {
+    const n = w * h;
+    for (let i = 0; i < n; i++) grid[i] &= 1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (grid[i] & 1) {
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (!dx && !dy) continue;
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+              grid[ny * w + nx] += 2;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  global.LifeEngineSync = { finishStep, rebuildPackedCounts };
 })(globalThis);

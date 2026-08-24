@@ -137,6 +137,11 @@ initLife ctx viewport = do
   set @"changedList" state changedList
   set @"nextChangedList" state nextChangedList
   set @"stepStamp" state stepStamp
+  birthCounts <- bindExpr (newByteArray (number 256))
+  birthTouched <- bindExpr (newByteArray (number 8))
+  set @"birthCounts" state birthCounts
+  set @"birthTouched" state birthTouched
+  _ <- setProp viewport "lastHudMs" (number 0)
   set @"sceneDirty" state true_
   _ <-
     rebuildLiveList
@@ -250,14 +255,12 @@ stepGeneration state = do
     ( do
         boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
         popHolder <- hold (toObject (StepScratch 0 0 0 0 0))
+        popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
+        cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
+        birthCounts <- state.birthCounts
+        birthTouched <- state.birthTouched
         canEngine <- engineCanStep
-        let
-          regionW = x1e - x0e + number 1
-          regionH = y1e - y0e + number 1
-          regionCells = regionW * regionH
-        denseEnough <-
-          pure $ regionCells .> (w * h) * number 9 / number 10
-        useEngine <- pure (canEngine .&& denseEnough)
+        useEngine <- pure canEngine
         ifS
           useEngine
           ( do
@@ -269,6 +272,10 @@ stepGeneration state = do
                   nextSpecies
                   w
                   h
+                  x0e
+                  y0e
+                  x1e
+                  y1e
                   nextLiveList
                   nextChangedList
                   boundScratch
@@ -294,6 +301,10 @@ stepGeneration state = do
                   stepStamp
                   stepTagVal
                   prevPop
+                  popScratch
+                  cellScratch
+                  birthCounts
+                  birthTouched
                   boundScratch
               set @"pop" popHolder v
               done

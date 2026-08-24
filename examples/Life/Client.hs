@@ -64,6 +64,8 @@ import Types
   , seedW
   , zoomLevelLabels
   , zoomLevels
+  , hudRefreshMs
+  , simBudgetMs
   )
 import JShark.Worker (performanceNow)
 import WorkerBridge (engineModeLabel, engineTickMs, setEngineRenderMs)
@@ -88,7 +90,6 @@ boot canvas ctx = do
   ctxH <- hold (expr ctx)
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
-  _ <- setProp ctxH "imageSmoothingEnabled" false_
   viewport <- initViewport
   state <- initLife ctxH viewport
   registry <- initRegistry
@@ -124,13 +125,17 @@ boot canvas ctx = do
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
-    whenS (not_ paused) (stepLife state registry)
+    whenS (not_ paused) (stepLifeBudget state registry now)
     tickIndex state registry indexTracker seenSpecies typesList now
     renderStart <- performanceNow
     renderLife ctxH viewport state
     renderEnd <- performanceNow
     setEngineRenderMs (renderEnd - renderStart)
-    updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine
+    lastHud <- getProp viewport "lastHudMs"
+    whenS (now - lastHud .>= number (fromIntegral hudRefreshMs)) $ do
+      updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine
+      _ <- setProp viewport "lastHudMs" now
+      done
     tickHover tipRef state registry tooltip swatchEl nameEl hits
 
 wire ::
@@ -764,6 +769,22 @@ tickFps meter now = do
   whenS (prev .>= 0 .&& dt .<= 250) $
     set @"fps" meter (Math.round (number 1000 / Math.max 1 dt))
   set @"lastMs" meter now
+
+stepLifeBudget ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Registry)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+stepLifeBudget state registry frameStart = do
+  let
+    budget = number (fromIntegral simBudgetMs)
+  stepLife state registry
+  t1 <- performanceNow
+  whenS (t1 - frameStart .< budget) $ do
+    stepLife state registry
+    t2 <- performanceNow
+    whenS (t2 - frameStart .< budget) $
+      stepLife state registry
 
 tickIndex ::
   Effect f (MutableObjectOf LifeState)

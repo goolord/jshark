@@ -264,6 +264,10 @@ stepGrid ::
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Effect f (MutableObjectOf StepScratch)
+  -> Effect f (MutableObjectOf StepScratch)
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
   -> Effect f (MutableObjectOf BoundScratch)
   -> EffectSyntax f (Expr f 'Number)
 stepGrid
@@ -283,12 +287,26 @@ stepGrid
   stepStamp
   stepTag
   prevPop
+  popScratch
+  cellScratch
+  birthCounts
+  birthTouched
   boundScratch = do
-  toSyntax_ (u8Copy nextAlive alive)
   let
     (xStart, yStart, xStop, yStop) =
       clampLiveBounds w h x0 y0 x1 y1 (number 1)
     regionCells = (xStop - xStart) * (yStop - yStart)
+  ifS
+    (regionCells .> (w * h) / number 2)
+    ( do
+        toSyntax_ (u8Copy nextAlive alive)
+        done
+    )
+    ( do
+        toSyntax_
+          (u8CopyRegion nextAlive alive w xStart yStart xStop yStop)
+        done
+    )
   ifS
     (regionCells .> (w * h) / number 2)
     ( do
@@ -304,8 +322,7 @@ stepGrid
   set @"by0" boundScratch (number 1e9)
   set @"bx1" boundScratch (number (-1))
   set @"by1" boundScratch (number (-1))
-  popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-  cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
+  set @"pop" popScratch 0
   let
     runCell x y =
       processCell
@@ -318,6 +335,8 @@ stepGrid
         popScratch
         cellScratch
         boundScratch
+        birthCounts
+        birthTouched
         w
         h
         x
@@ -370,6 +389,8 @@ processCell ::
   -> Effect f (MutableObjectOf StepScratch)
   -> Effect f (MutableObjectOf StepScratch)
   -> Effect f (MutableObjectOf BoundScratch)
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -385,6 +406,8 @@ processCell
   popScratch
   cellScratch
   boundScratch
+  counts
+  touchedBuf
   w
   h
   x
@@ -396,8 +419,6 @@ processCell
     alive0 = bitAnd b (number 1)
     nCount = packedCount b
   sp <- u8Get species i
-  counts <- bindExpr (newByteArray (number 256))
-  touchedBuf <- bindExpr (newByteArray (number 8))
   set @"touchedLen" cellScratch 0
   set @"best" cellScratch 0
   set @"bestCount" cellScratch 0

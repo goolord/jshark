@@ -41,7 +41,6 @@ import qualified JShark.Math as Math
 import JShark.Object (field, frozen)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
-import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift))
 import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)
@@ -464,12 +463,7 @@ stepIndexTracker alive species palette registry tracker seen container now x0 y0
                 sid <- u8Get species i
                 incCount counts sid
                 Set.insert seen sid
-        _ <-
-          Timers.setTimeout
-            ( \_ ->
-                stmts $ paintIndex tracker counts palette registry seen container
-            )
-            0
+        paintIndex tracker counts palette registry seen container
         done
     )
 
@@ -572,18 +566,18 @@ paintIndex tracker counts palette registry seen container = do
           Array.push_ entries (sidCount sid (countOf counts sid))
       )
       seen
-  let
-    sorted =
-      Array.toSorted entries $ \a b ->
+  toSyntax_
+    ( Array.sort entries $ \a b ->
         let
           d = b.cnt - a.cnt
          in
           if_ (d .!= 0) d (a.sid - b.sid)
+    )
   templateE <- getProp tracker "rowTemplate"
   fragH <- hold $ ffi "document.createDocumentFragment" RecNil
-  forRange_ (number 0) (Array.length sorted) $ \idx -> do
+  forRange_ (number 0) (Array.length entries) $ \idx -> do
     let
-      e = Array.index sorted idx
+      e = Array.index entries idx
     row <- cloneIndexRow (expr templateE) palette registry e.sid e.cnt
     Dom.appendChild fragH row
   Dom.replaceChildrenFrom container fragH

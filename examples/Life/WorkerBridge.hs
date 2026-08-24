@@ -43,7 +43,7 @@ engineCanStep =
   bindExpr $
     ffi
       ( "(()=>{const E=globalThis.LifeEngine;"
-          <> "return!!(E&&E.ready&&E.mode!=='none'&&E._wasmReady!==false);"
+          <> "return!!(E&&E.ready&&E.mode!=='none');"
           <> "})"
       )
       RecNil
@@ -76,6 +76,10 @@ engineStepGeneration ::
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
   -> Effect f (MutableObjectOf BoundScratch)
@@ -87,6 +91,10 @@ engineStepGeneration
   nextSpecies
   w
   h
+  x0
+  y0
+  x1
+  y1
   nextLiveList
   nextChangedList
   boundScratch = do
@@ -95,9 +103,9 @@ engineStepGeneration
   result <-
     bindExpr $
       ffi
-        ( "((alive,species,nextAlive,nextSpecies,w,h,nextLiveList,nextChangedList)=>{"
+        ( "((alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList)=>{"
             <> "const S=globalThis.LifeEngineSync;"
-            <> "return S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,nextLiveList,nextChangedList):null;"
+            <> "return S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList):null;"
             <> "})"
         )
         ( arg alive
@@ -106,6 +114,10 @@ engineStepGeneration
             <: arg nextSpecies
             <: arg w
             <: arg h
+            <: arg x0
+            <: arg y0
+            <: arg x1
+            <: arg y1
             <: arg nextLiveList
             <: arg nextChangedList
             <: RecNil

@@ -34,6 +34,8 @@ module Types
   , discoverMax
   , discoverEvery
   , indexRefreshMs
+  , simBudgetMs
+  , hudRefreshMs
   , lifeIndexHostId
   , lifeTypesListId
   , lifeTooltipId
@@ -141,6 +143,14 @@ discoverEvery = 45
 
 indexRefreshMs :: Int
 indexRefreshMs = 2000
+
+-- | Max wall time per rAF spent stepping (ms).
+simBudgetMs :: Int
+simBudgetMs = 8
+
+-- | Min interval between HUD textContent updates (ms).
+hudRefreshMs :: Int
+hudRefreshMs = 100
 
 lifeIndexHostId :: Text
 lifeIndexHostId = "life-index-host"
@@ -252,6 +262,8 @@ data LifeState = LifeState
   -- | Host schema only; runtime is a JS @Array@ of changed cell indices.
   , changedList :: [Int]
   , nextChangedList :: [Int]
+  , birthCounts :: ByteArray
+  , birthTouched :: ByteArray
   , dirtyCx0 :: Int
   , dirtyCy0 :: Int
   , dirtyCx1 :: Int

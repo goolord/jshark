@@ -47,6 +47,7 @@ module JShark.Api
   , u8Fill
   , u8FillRegion
   , u8Copy
+  , u8CopyRegion
   , u8Len
   , fillRgbaImageData
   , rgbaPixelSet
@@ -437,6 +438,31 @@ u8Copy dst src =
   FFI
     (FFILambda "(d,s)=>{d.set(s);}")
     (arg dst <: arg src <: RecNil)
+
+-- | Copy a half-open bbox @\[x0,x1)×\[y0,y1)@ row-wise (@y * gridW + x@).
+u8CopyRegion ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f 'Unit
+u8CopyRegion dst src gridW x0 y0 x1 y1 =
+  FFI
+    ( FFILambda
+        "(d,s,w,x0,y0,x1,y1)=>{for(let y=y0|0;y<(y1|0);y++){const row=y*(w|0)|0;d.set(s.subarray(row+(x0|0),row+(x1|0)),row+(x0|0));}}"
+    )
+    ( arg dst
+        <: arg src
+        <: arg gridW
+        <: arg x0
+        <: arg y0
+        <: arg x1
+        <: arg y1
+        <: RecNil
+    )
 
 -- | Write one premultiplied-ready RGBA pixel (@0xAABBGGRR@) into @ImageData.data@.
 rgbaPixelSet ::

@@ -384,7 +384,7 @@ testJsFinishStep = fromSyntax $ do
           <> "alive[9]=1;alive[10]=1;alive[17]=1;alive[18]=1;"
           <> "LifeEngineSync.rebuildPackedCounts(alive,w,h);"
           <> "const r=LifeEngineSync.finishStep("
-          <> "alive,species,nextAlive,nextSpecies,w,h,live,changed);"
+          <> "alive,species,nextAlive,nextSpecies,w,h,0,0,7,7,live,changed);"
           <> "if(!r||r.pop!==4)throw new Error('finishStep pop');"
           <> "if((nextAlive[9]&1)!==1)throw new Error('packed bit');"
           <> "if((nextAlive[9]>>1)===0)throw new Error('packed count');"
@@ -426,6 +426,10 @@ testEngineStepGeneration = fromSyntax $ do
       nextSpecies
       w
       h
+      (number 1)
+      (number 1)
+      (number 2)
+      (number 2)
       nextLiveList
       nextChangedList
       boundScratch
