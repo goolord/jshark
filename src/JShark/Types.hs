@@ -115,7 +115,7 @@ module JShark.Types
 where
 
 import Prelude hiding ((>>))
-import Control.Monad (ap, void)
+import Control.Monad (ap)
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
@@ -1031,6 +1031,10 @@ instance Monad (EffectSyntax f) where
   EffectSyntaxPure x >>= g = g x
   EffectSyntaxUnpure m g >>= h = EffectSyntaxUnpure m (\x -> g x >>= h)
   EffectSyntaxThen m g >>= h = EffectSyntaxThen m (g >>= h)
+  -- Do-notation `e1; e2` uses this method, not the top-level `(>>)`.
+  -- The class default is `>>= \_ ->`, which kept discarded statements as
+  -- 'Bind' (quadratic in chain length). `*>` emits 'ThenE'.
+  (>>) = (*>)
 
 -- | Sequence effects without bind codegen ('*>' / '>>').
 seqSyntax :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
@@ -1044,11 +1048,11 @@ toSyntax :: Effect f v -> EffectSyntax f (f v)
 toSyntax m = EffectSyntaxUnpure m EffectSyntaxPure
 
 toSyntax_ :: Effect f v -> EffectSyntax f ()
-toSyntax_ = void . toSyntax
+toSyntax_ m = EffectSyntaxUnpure m (const (EffectSyntaxPure ()))
 
 -- | Bind an effect and reify the result as an 'Expr'.
 bindExpr :: Effect f u -> EffectSyntax f (Expr f u)
-bindExpr = fmap Var . toSyntax
+bindExpr m = EffectSyntaxUnpure m (EffectSyntaxPure . Var)
 
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)

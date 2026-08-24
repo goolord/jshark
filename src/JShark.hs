@@ -1466,16 +1466,24 @@ sizeEffect :: Effect Stamp u -> Int
 sizeEffect e = mdSize (getEffectMetadata e)
 
 -- | First-order reopen: rename the tag allocated by 'optUnder'. Never
--- re-applies the original PHOAS @f@.
+-- re-applies the original PHOAS @f@. Same tag or the fold dummy is a
+-- no-copy inspect of the already-optimized body.
 rebindExpr :: Int -> Expr Stamp v -> Stamp u -> Expr Stamp v
-rebindExpr tag body s = renameExpr tag (stampId s) body
+rebindExpr tag body s
+  | i == tag || i == nestedDummyId = body
+  | otherwise = renameExpr tag i body
+ where
+  i = stampId s
 
 rebindEff :: Int -> Effect Stamp v -> Stamp u -> Effect Stamp v
-rebindEff tag body s = renameEff tag (stampId s) body
+rebindEff tag body s
+  | i == tag || i == nestedDummyId = body
+  | otherwise = renameEff tag i body
+ where
+  i = stampId s
 
 rebindExpr2 :: Int -> Int -> Expr Stamp v -> Stamp a -> Stamp b -> Expr Stamp v
-rebindExpr2 tA tB body a b =
-  renameExpr tA (stampId a) (renameExpr tB (stampId b) body)
+rebindExpr2 tA tB body a b = rebindExpr tA (rebindExpr tB body b) a
 
 keepExprCont ::
   Int
@@ -1548,7 +1556,7 @@ rebindFn :: [Int] -> Expr Stamp v -> FnBody Stamp us v
 rebindFn tags expr = unsafeCoerce (rebindGo tags expr)
  where
   rebindGo [] e = JfNil e
-  rebindGo (t : ts) e = unsafeCoerce (JfCons $ \s -> rebindGo ts (renameExpr t (stampId s) e))
+  rebindGo (t : ts) e = unsafeCoerce (JfCons $ \s -> rebindGo ts (rebindExpr t e s))
 
 fnDepthStamp :: FnBody Stamp us r -> Int
 fnDepthStamp = \case
@@ -1999,6 +2007,7 @@ flattenEff e = unsafePerformIO $ do
 -- does not need a cast. Used after the one 'optUnder' apply of @f@.
 renameExpr :: Int -> Int -> Expr Stamp u -> Expr Stamp u
 renameExpr old new e
+  | old == new = e
   | IM.notMember old (mdFreeVars (getExprMetadata e)) = e
   | otherwise = case e of
       Var (Embed e') -> renameExpr old new (flattenExpr e')
@@ -2010,6 +2019,7 @@ renameExpr old new e
 
 renameEff :: Int -> Int -> Effect Stamp u -> Effect Stamp u
 renameEff old new e
+  | old == new = e
   | IM.notMember old (mdFreeVars (getEffectMetadata e)) = e
   | otherwise = case e of
       Lift (Var (EmbedEff e')) -> renameEff old new (flattenEff e')
@@ -3127,19 +3137,28 @@ bindEffectCode s0 x f =
     (tag, sTag) = allocTag s0
     tagged = f (Stamp tag)
     uses = countEffect tag tagged
-    (s1, MkCode xDecl xRef _) = effectfulAST' sTag x
-   in
+    (s1, MkCode xDecl xRef xFX) = effectfulAST' sTag x
+    stmtX
+      | isNothing xRef = fromMaybe mempty xDecl
+      | not xFX && isJust xDecl = fromMaybe mempty xDecl
+      | otherwise = asStmt xDecl xRef
+  in
     case uses of
-      0 -> seqEffectCode sTag x (renameEff tag nestedDummyId tagged)
+      0 ->
+        let
+          (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 tagged
+         in
+          (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
       _ | isNothing xRef ->
             let
-              (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (renameEff tag (fromMaybe nestedDummyId (liveBinder x)) tagged)
+              n = fromMaybe nestedDummyId (liveBinder x)
+              (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f (Name n))
              in
               (s2, MkCode (Just (fromMaybe mempty xDecl $$ fromMaybe mempty yDecl)) yRef yFX)
       _ ->
             let
               (nBind, s2) = allocIdent s1
-              (s3, MkCode yDecl yRef yFX) = effectfulAST' s2 (renameEff tag nBind tagged)
+              (s3, MkCode yDecl yRef yFX) = effectfulAST' s2 (f (Name nBind))
              in
               (s3, MkCode (Just (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty yDecl)) yRef yFX)
 
@@ -3386,9 +3405,7 @@ effectfulAST' !s0 = \case
       (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
   OptionCaseE opt noneE someF ->
     let
-      (tag, _) = allocTag s0
-      tagged = someF (Stamp tag)
-      isUnit = isUnitWitness noneE && isUnitWitness tagged
+      isUnit = isUnitWitness noneE && isUnitWitness (someF nestedDummy)
     in
       emitBranching
         isUnit
@@ -3403,16 +3420,14 @@ effectfulAST' !s0 = \case
         ( \mRes nBind s ->
             let
               (s1, MkCode nDecl nRef _) = effectfulAST' s noneE
-              (s2, MkCode sDecl sRef _) = effectfulAST' s1 (renameEff tag nBind tagged)
+              (s2, MkCode sDecl sRef _) = effectfulAST' s1 (someF (Name nBind))
               cond = nDoc nBind <+> "===" <+> "null"
              in
               (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
         )
   Try a k ->
     let
-      (tag, _) = allocTag s0
-      tagged = k (Stamp tag)
-      isUnit = isUnitWitness a && isUnitWitness tagged
+      isUnit = isUnitWitness a && isUnitWitness (k nestedDummy)
     in
       emitBranching
         isUnit
@@ -3422,7 +3437,7 @@ effectfulAST' !s0 = \case
             let
               (s1, MkCode aDecl aRef _) = effectfulAST' s a
               (catchN, s2) = allocIdent s1
-              (s3, MkCode bDecl bRef _) = effectfulAST' s2 (renameEff tag catchN tagged)
+              (s3, MkCode bDecl bRef _) = effectfulAST' s2 (k (Name catchN))
              in
               (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
         )
@@ -3484,11 +3499,11 @@ letCode s0 x g =
     tagged = g (Stamp tag)
     uses = countExpr tag tagged
     (s1, MkCode xDecl xRef _) = pureAST' sTag IM.empty x
-   in
+  in
     case uses of
       0 ->
         let
-          (s2, y) = pureAST' s1 IM.empty (renameExpr tag nestedDummyId tagged)
+          (s2, y) = pureAST' s1 IM.empty tagged
           stmt
             | isNothing xDecl && isJust xRef = fromMaybe mempty xRef <> semi
             | otherwise = fromMaybe mempty xDecl
@@ -3497,7 +3512,7 @@ letCode s0 x g =
       _ ->
         let
           (nBind, s2) = allocIdent s1
-          (s3, y) = pureAST' s2 IM.empty (renameExpr tag nBind tagged)
+          (s3, y) = pureAST' s2 IM.empty (g (Name nBind))
          in
           (s3, keepRef (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty (codeDecl y)) y)
 
@@ -3819,18 +3834,14 @@ renderResultCaseE ::
   -> (CG, Code ann)
 renderResultCaseE s0 res errF okF =
   let
-    (tagE, _) = allocTag s0
-    (tagO, _) = allocTag s0
-    errTagged = errF (Stamp tagE)
-    okTagged = okF (Stamp tagO)
-    isUnit = isUnitWitness errTagged && isUnitWitness okTagged
+    isUnit = isUnitWitness (errF nestedDummy) && isUnitWitness (okF nestedDummy)
   in
     if isUnit
       then
         let
           (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
-          (s2, MkCode eDecl eRef _) = effectfulAST' s1 (renameEff tagE nUnw errTagged)
-          (s3, MkCode oDecl oRef _) = effectfulAST' s2 (renameEff tagO nUnw okTagged)
+          (s2, MkCode eDecl eRef _) = effectfulAST' s1 (errF (Name nUnw))
+          (s3, MkCode oDecl oRef _) = effectfulAST' s2 (okF (Name nUnw))
          in
           ( s3
           , Code (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef) mempty
@@ -3840,8 +3851,8 @@ renderResultCaseE s0 res errF okF =
           (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
           (resultN, s2) = allocIdent s1
           resultVar = nName resultN
-          (s3, MkCode eDecl eRef _) = effectfulAST' s2 (renameEff tagE nUnw errTagged)
-          (s4, MkCode oDecl oRef _) = effectfulAST' s3 (renameEff tagO nUnw okTagged)
+          (s3, MkCode eDecl eRef _) = effectfulAST' s2 (errF (Name nUnw))
+          (s4, MkCode oDecl oRef _) = effectfulAST' s3 (okF (Name nUnw))
           stmt =
             prelude
               $$ letResult resultVar
