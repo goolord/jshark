@@ -88,6 +88,8 @@ library
     JShark.Compiler
     JShark.Bun
     JShark.Bun.Internal
+  other-modules:
+    JShark.Ir
   build-depends:
     , base >= 4.17 && < 5
     , text >= 1.2 && < 3
