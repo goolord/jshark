@@ -90,6 +90,8 @@ initIndexTracker = do
   t <- hold newObject
   _ <- setProp t "lastMs" (number 0)
   _ <- setProp t "pending" false_
+  counts <- bindExpr (newByteArray (number 512))
+  _ <- setProp t "counts" counts
   frag <- renderFragment indexRowTemplate
   templateE <- getProp frag "firstChild"
   _ <- setProp t "rowTemplate" templateE
@@ -453,7 +455,8 @@ stepIndexTracker alive species palette registry tracker seen container now x0 y0
     ( do
         _ <- setProp tracker "lastMs" now
         _ <- setProp tracker "pending" true_
-        counts <- bindExpr (newByteArray (number 512))
+        counts <- getProp tracker "counts"
+        toSyntax_ (u8Fill counts (number 0))
         whenS (ixStop .> ix0 .&& iyStop .> iy0) $
           forRange_ iy0 iyStop $ \y ->
             forRange_ ix0 ixStop $ \x -> do

@@ -60,6 +60,7 @@
         this.mode = 'none';
         return this.mode;
       }
+      this.terminateWorkers();
       this.width = opts.width | 0;
       this.height = opts.height | 0;
       this.workerUrl = opts.workerUrl || this.workerUrl;
@@ -88,7 +89,6 @@
       } else {
         this.sab = null;
         this.sync = null;
-        this.workers = [];
         this.gridA = new Uint8Array(n);
         this.gridB = new Uint8Array(n);
         this.mode = 'main-lut';
@@ -97,9 +97,16 @@
       return this.mode;
     }
 
-    spawnWorkers(pool) {
-      const tileH = Math.ceil(this.height / pool);
+    terminateWorkers() {
+      for (let i = 0; i < this.workers.length; i++) {
+        this.workers[i].terminate();
+      }
       this.workers = [];
+    }
+
+    spawnWorkers(pool) {
+      this.terminateWorkers();
+      const tileH = Math.ceil(this.height / pool);
       for (let id = 0; id < pool; id++) {
         const y0 = id * tileH;
         const y1 = Math.min(this.height, y0 + tileH);

@@ -99,7 +99,7 @@ import JShark.Api
   , (.||)
   )
 import qualified JShark.Array as A
-import JShark.Types
+import JShark.Types hiding ((>>))
 import Prelude
   ( Bool (False, True)
   , const

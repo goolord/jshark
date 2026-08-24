@@ -675,7 +675,7 @@ stringCaseE = StringCaseE
 -- | Drop a result, forcing 'Unit'. Lets statement-'if' be 'IfE' of two
 -- unit arms (polymorphic 'FFI' / 'CallMethod' are not unit witnesses).
 discard :: Effect f u -> Effect f 'Unit
-discard e = Bind e (\_ -> noOp)
+discard e = ThenE e noOp
 
 when_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
 when_ c t = IfE c (discard t) noOp

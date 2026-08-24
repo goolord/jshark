@@ -130,7 +130,7 @@ bootJs inner =
     , ".split('%%LIFE_BASE%%').join(base);"
     , "const url=URL.createObjectURL(new Blob([html],{type:'text/html'}));"
     , "frame.src=url;"
-    , "frame.addEventListener('load',function(){frame.focus();});"
+    , "frame.addEventListener('load',function(){URL.revokeObjectURL(url);frame.focus();},{once:true});"
     , "})();"
     ]
 

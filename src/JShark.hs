@@ -76,6 +76,7 @@ module JShark
     , UnsafeObjectAssign
     , CallMethod
     , Bind
+    , ThenE
     , BindRec
     , LambdaE
     , ApplyE
@@ -1062,11 +1063,15 @@ useEqHelpers s0 = foldr (uncurry useHelperSrc) s0 jsEqHelpers
 
 -- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
 -- (@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
+-- Emitted once as @$checkedIndex@; inlining the lambda at every index
+-- site blows up Life-sized programs (Doc render never finishes).
+jsCheckedIndexSrc :: String
+jsCheckedIndexSrc =
+  "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
+
 jsCheckedIndex :: Doc -> Doc -> Doc
 jsCheckedIndex arr idx =
-  P.parens
-    "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
-    <> P.parens (arr <> ("," <+> idx))
+  "$checkedIndex" <> P.parens (arr <> ("," <+> idx))
 
 valueNeedsStructuralEq :: Value u -> Bool
 valueNeedsStructuralEq = \case
@@ -1590,6 +1595,7 @@ mapEff ge gf = \case
   UnsafeObjectAssign x y -> UnsafeObjectAssign (gf x) (gf y)
   CallMethod x n args -> CallMethod (gf x) n (mapRec (mapArg ge gf) args)
   Bind x f -> Bind (gf x) (gf . f)
+  ThenE x y -> ThenE (gf x) (gf y)
   BindRec rhs body -> BindRec (gf . rhs) (gf . body)
   LambdaE f -> LambdaE (gf . f)
   ApplyE f x -> ApplyE (gf f) (gf x)
@@ -1731,6 +1737,7 @@ foldEff dummy se sf lf = \case
   UnsafeObjectAssign x y -> sf x <> sf y
   CallMethod x _ args -> sf x <> recFold (\n a -> n <> foldArg a) mempty args
   Bind x f -> sf x <> sf (f dummy)
+  ThenE x y -> sf x <> sf y
   BindRec r b -> lf (r dummy) <> sf (b dummy)
   LambdaE f -> lf (f dummy)
   ApplyE f x -> sf f <> sf x
@@ -2296,6 +2303,22 @@ elimLetFrom t x f tag body =
     tag
     body
 
+optDiscardBind ::
+  Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (Int, Effect Stamp v)
+optDiscardBind t0 x f =
+  let
+    tag = t0
+    body = f (Stamp tag)
+   in
+    if countEffect tag body == 0
+      then
+        let
+          (t1, x') = optEffect t0 x
+          (t2, y') = optEffect t1 body
+         in
+          (t2, ThenE x' y')
+      else optBind t0 x f
+
 optBind ::
   Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (Int, Effect Stamp v)
 optBind t0 x f =
@@ -2667,7 +2690,13 @@ optEffect t0 = \case
       (t2, args') = optArgs t1 args
      in
       (t2, CallMethod x' n args')
-  Bind x f -> optBind t0 x f
+  Bind x f -> optDiscardBind t0 x f
+  ThenE x y ->
+    let
+      (t1, x') = optEffect t0 x
+      (t2, y') = optEffect t1 y
+     in
+      (t2, ThenE x' y')
   BindRec r b ->
     let
       tag = t0
@@ -2844,6 +2873,22 @@ mapAccumArms = mapAccumL $ \t (k, e) ->
    in
     (t1, (k, e'))
 
+-- | Sequencing without a binder ('ThenE' / discarded bind).
+seqEffectCode :: CG -> Effect Stamp u -> Effect Stamp v -> (CG, Code)
+seqEffectCode s0 x y =
+  let
+    (s1, MkCode xDecl xRef xFX) = effectfulAST' s0 x
+    (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 y
+    -- Value-producing effects (ifE) put work in xDecl and leave a result
+    -- ident in xRef (codeRefFX False). Assignments and calls keep the
+    -- side effect in xRef (fxCode).
+    stmt
+      | P.isEmpty xRef = xDecl
+      | not xFX && not (P.isEmpty xDecl) = xDecl
+      | otherwise = asStmt xDecl xRef
+   in
+    (s2, MkCode (stmt $$ yDecl) yRef yFX)
+
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
 -- becomes `getEl().foo()`); when never, keep it as a statement.
@@ -2857,19 +2902,7 @@ bindEffectCode s0 x f =
     bodyOf s e = effectfulAST' s (f (maybe nestedDummy Name (liveBinder e)))
    in
     case uses of
-      0 ->
-        let
-          (s1, MkCode xDecl xRef xFX) = effectfulAST' sTag x
-          (s2, MkCode yDecl yRef yFX) = bodyOf s1 x
-          -- Value-producing effects (ifE) put work in xDecl and leave
-          -- a result ident in xRef (codeRefFX False). Assignments and
-          -- calls keep the side effect in xRef (fxCode).
-          stmt
-            | P.isEmpty xRef = xDecl
-            | not xFX && not (P.isEmpty xDecl) = xDecl
-            | otherwise = asStmt xDecl xRef
-         in
-          (s2, MkCode (stmt $$ yDecl) yRef yFX)
+      0 -> seqEffectCode sTag x (f nestedDummy)
       _ ->
         let
           (s1, MkCode xDecl xRef _) = effectfulAST' sTag x
@@ -2904,6 +2937,7 @@ isUnitWitness = \case
   While {} -> True
   ForRange {} -> True
   Bind _ f -> isUnitWitness (f nestedDummy)
+  ThenE _ b -> isUnitWitness b
   BindRec _ f -> isUnitWitness (f nestedDummy)
   IfE _ t e -> isUnitWitness t && isUnitWitness e
   OptionCaseE _ n s -> isUnitWitness n && isUnitWitness (s nestedDummy)
@@ -3132,6 +3166,7 @@ effectfulAST' !s0 = \case
             (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
       )
   Bind x f -> bindEffectCode s0 x f
+  ThenE x y -> seqEffectCode s0 x y
   BindRec r b ->
     let
       (nBind, s1) = allocIdent s0
@@ -3320,10 +3355,11 @@ pureAST' !s0 = \case
   ResultCase res errF okF -> renderResultCase s0 res errF okF
   Index arr idx ->
     let
-      (s1, Code aDecl aRef) = pureAST' s0 arr
-      (s2, Code iDecl iRef) = pureAST' s1 idx
+      s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
+      (s2, Code aDecl aRef) = pureAST' s1 arr
+      (s3, Code iDecl iRef) = pureAST' s2 idx
      in
-      (s2, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+      (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
   U8Index buf idx ->
     let
       (s1, Code bDecl bRef) = pureAST' s0 buf
