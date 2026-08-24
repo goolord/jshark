@@ -1,18 +1,21 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RankNTypes #-}
 
--- | Full-example compiler benches. Life codegen is the slow path;
--- the other examples are here as a comparison.
+-- | Full-example compiler benches — the only target that exercises each
+-- example's whole AST (Life is the slow path).
+--
+-- Manual profiling only (not CI-gated):
 --
 --   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p life
 --   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p 'life/optimize'
+--   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p 'life/compileEffect'
 module Main (main) where
 
 import qualified Breakout
 import JShark.Api (stmts)
 import JShark.Types (ClosedEffect, Universe (Unit))
 import qualified Life
-import Stages (emit, nfClosed, stageBenches)
+import Stages (emitLen, nfClosed, stageBenches)
 import qualified Synth
 import Test.Tasty.Bench
 import qualified TodoMvc
@@ -22,10 +25,10 @@ main =
   defaultMain
     [ bgroup
         "emit"
-        [ bench "breakout" $ nfClosed emit breakout
-        , bench "todo-mvc" $ nfClosed emit todoMvc
-        , bench "synth" $ nfClosed emit synth
-        , bench "life" $ nfClosed emit life
+        [ bench "breakout" $ nfClosed emitLen breakout
+        , bench "todo-mvc" $ nfClosed emitLen todoMvc
+        , bench "synth" $ nfClosed emitLen synth
+        , bench "life" $ nfClosed emitLen life
         ]
     , stageBenches "breakout" breakout
     , stageBenches "todo-mvc" todoMvc

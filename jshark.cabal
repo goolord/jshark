@@ -272,9 +272,12 @@ common bench
     , tasty-bench >= 0.3.5 && < 0.5
     , text
 
--- Synthetic compiler paths. Does not compile the examples.
+-- Synthetic compiler paths (AST constructor matrix + Life-shaped kernels).
+-- Does not compile full examples; use jshark-compiler-examples for that.
+--
 --   cabal bench jshark-compiler
---   cabal bench jshark-compiler -- jshark-compiler -p stages
+--   cabal bench jshark-compiler -- jshark-compiler -p 'stages/lifeStep'
+--   cabal bench jshark-compiler -- jshark-compiler -p 'codepaths/effect/lifeMedium'
 benchmark jshark-compiler
   import: bench
   type: exitcode-stdio-1.0
@@ -284,9 +287,12 @@ benchmark jshark-compiler
     Stages
   hs-source-dirs:
     bench
+  build-depends:
+    , life
 
--- Full example programs, including Life. Codegen is slow; run only
--- when measuring that path:
+-- Full example programs (whole AST). Life codegen is slow — run only when
+-- measuring that path:
+--
 --   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p life
 benchmark jshark-compiler-examples
   import: bench
