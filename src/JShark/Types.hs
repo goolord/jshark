@@ -1027,14 +1027,12 @@ instance Applicative (EffectSyntax v) where
   EffectSyntaxThen m g *> b = EffectSyntaxThen m (g *> b)
 
 -- Analogous to the Monad instance for RelativeMSyntax in section 3.3.
+-- GHC 9.14 dropped `Monad.(>>)`; do-notation sequences with `Applicative.(*>)`,
+-- which is ThenE here. The exported `(>>)` is the same operator.
 instance Monad (EffectSyntax f) where
   EffectSyntaxPure x >>= g = g x
   EffectSyntaxUnpure m g >>= h = EffectSyntaxUnpure m (\x -> g x >>= h)
   EffectSyntaxThen m g >>= h = EffectSyntaxThen m (g >>= h)
-  -- Do-notation `e1; e2` uses this method, not the top-level `(>>)`.
-  -- The class default is `>>= \_ ->`, which kept discarded statements as
-  -- 'Bind' (quadratic in chain length). `*>` emits 'ThenE'.
-  (>>) = (*>)
 
 -- | Sequence effects without bind codegen ('*>' / '>>').
 seqSyntax :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b

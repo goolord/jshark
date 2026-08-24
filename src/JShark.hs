@@ -1466,8 +1466,9 @@ sizeEffect :: Effect Stamp u -> Int
 sizeEffect e = mdSize (getEffectMetadata e)
 
 -- | First-order reopen: rename the tag allocated by 'optUnder'. Never
--- re-applies the original PHOAS @f@. Same tag or the fold dummy is a
--- no-copy inspect of the already-optimized body.
+-- re-applies the original PHOAS @f@. Same tag is identity. The fold dummy
+-- is inspect-only (no copy); count/codegen probe with `allocTag`, never
+-- `nestedDummyId` as this binder.
 rebindExpr :: Int -> Expr Stamp v -> Stamp u -> Expr Stamp v
 rebindExpr tag body s
   | i == tag || i == nestedDummyId = body
@@ -3130,6 +3131,9 @@ seqEffectCode s0 x y =
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
 -- becomes `getEl().foo()`); when never, keep it as a statement.
+-- Probe `f` once (`Stamp tag`); emit by renaming that tree. Re-applying
+-- `f` with `Name` would rebuild original PHOAS. Dummy is inspect-only
+-- (`rebindEff`); never count `nestedDummyId` as this binder.
 bindEffectCode ::
   CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
 bindEffectCode s0 x f =
@@ -3152,13 +3156,15 @@ bindEffectCode s0 x f =
       _ | isNothing xRef ->
             let
               n = fromMaybe nestedDummyId (liveBinder x)
-              (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 (f (Name n))
+              (s2, MkCode yDecl yRef yFX) =
+                effectfulAST' s1 (renameEff tag n tagged)
              in
               (s2, MkCode (Just (fromMaybe mempty xDecl $$ fromMaybe mempty yDecl)) yRef yFX)
       _ ->
             let
               (nBind, s2) = allocIdent s1
-              (s3, MkCode yDecl yRef yFX) = effectfulAST' s2 (f (Name nBind))
+              (s3, MkCode yDecl yRef yFX) =
+                effectfulAST' s2 (renameEff tag nBind tagged)
              in
               (s3, MkCode (Just (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty yDecl)) yRef yFX)
 
@@ -3405,7 +3411,9 @@ effectfulAST' !s0 = \case
       (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
   OptionCaseE opt noneE someF ->
     let
-      isUnit = isUnitWitness noneE && isUnitWitness (someF nestedDummy)
+      (tag, _) = allocTag s0
+      tagged = someF (Stamp tag)
+      isUnit = isUnitWitness noneE && isUnitWitness tagged
     in
       emitBranching
         isUnit
@@ -3420,14 +3428,17 @@ effectfulAST' !s0 = \case
         ( \mRes nBind s ->
             let
               (s1, MkCode nDecl nRef _) = effectfulAST' s noneE
-              (s2, MkCode sDecl sRef _) = effectfulAST' s1 (someF (Name nBind))
+              (s2, MkCode sDecl sRef _) =
+                effectfulAST' s1 (renameEff tag nBind tagged)
               cond = nDoc nBind <+> "===" <+> "null"
              in
               (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
         )
   Try a k ->
     let
-      isUnit = isUnitWitness a && isUnitWitness (k nestedDummy)
+      (tag, _) = allocTag s0
+      tagged = k (Stamp tag)
+      isUnit = isUnitWitness a && isUnitWitness tagged
     in
       emitBranching
         isUnit
@@ -3437,7 +3448,8 @@ effectfulAST' !s0 = \case
             let
               (s1, MkCode aDecl aRef _) = effectfulAST' s a
               (catchN, s2) = allocIdent s1
-              (s3, MkCode bDecl bRef _) = effectfulAST' s2 (k (Name catchN))
+              (s3, MkCode bDecl bRef _) =
+                effectfulAST' s2 (renameEff tag catchN tagged)
              in
               (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
         )
@@ -3512,7 +3524,7 @@ letCode s0 x g =
       _ ->
         let
           (nBind, s2) = allocIdent s1
-          (s3, y) = pureAST' s2 IM.empty (g (Name nBind))
+          (s3, y) = pureAST' s2 IM.empty (renameExpr tag nBind tagged)
          in
           (s3, keepRef (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty (codeDecl y)) y)
 
@@ -3834,14 +3846,20 @@ renderResultCaseE ::
   -> (CG, Code ann)
 renderResultCaseE s0 res errF okF =
   let
-    isUnit = isUnitWitness (errF nestedDummy) && isUnitWitness (okF nestedDummy)
+    (tagE, sE) = allocTag s0
+    (tagO, _) = allocTag sE
+    errTagged = errF (Stamp tagE)
+    okTagged = okF (Stamp tagO)
+    isUnit = isUnitWitness errTagged && isUnitWitness okTagged
   in
     if isUnit
       then
         let
           (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
-          (s2, MkCode eDecl eRef _) = effectfulAST' s1 (errF (Name nUnw))
-          (s3, MkCode oDecl oRef _) = effectfulAST' s2 (okF (Name nUnw))
+          (s2, MkCode eDecl eRef _) =
+            effectfulAST' s1 (renameEff tagE nUnw errTagged)
+          (s3, MkCode oDecl oRef _) =
+            effectfulAST' s2 (renameEff tagO nUnw okTagged)
          in
           ( s3
           , Code (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef) mempty
@@ -3851,8 +3869,10 @@ renderResultCaseE s0 res errF okF =
           (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
           (resultN, s2) = allocIdent s1
           resultVar = nName resultN
-          (s3, MkCode eDecl eRef _) = effectfulAST' s2 (errF (Name nUnw))
-          (s4, MkCode oDecl oRef _) = effectfulAST' s3 (okF (Name nUnw))
+          (s3, MkCode eDecl eRef _) =
+            effectfulAST' s2 (renameEff tagE nUnw errTagged)
+          (s4, MkCode oDecl oRef _) =
+            effectfulAST' s3 (renameEff tagO nUnw okTagged)
           stmt =
             prelude
               $$ letResult resultVar
