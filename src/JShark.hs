@@ -102,6 +102,8 @@ module JShark
   -- Optimization
   , optimize
   , optimizeEffect
+  , optimizedExprSize
+  , optimizedEffectSize
   -- Codegen
   , pureAST
   , effectfulAST
@@ -1871,6 +1873,15 @@ optimize e = flattenExpr (snd (optExpr (-2) e))
 optimizeEffect :: ClosedEffect u -> Effect Stamp u
 optimizeEffect e = flattenEff (snd (optEffect (-2) e))
 {-# NOINLINE optimizeEffect #-}
+
+-- | Node count after 'optimize'. Forces the optimizer walk; used by
+-- compiler benches that cannot 'NFData' a 'Stamp' tree.
+optimizedExprSize :: ClosedExpr u -> Int
+optimizedExprSize e = sizeExpr (optimize e)
+
+-- | Node count after 'optimizeEffect'. See 'optimizedExprSize'.
+optimizedEffectSize :: ClosedEffect u -> Int
+optimizedEffectSize e = sizeEffect (optimizeEffect e)
 
 -- | Tags step by two, keeping the optimizer on the even negatives.
 -- Codegen's 'allocTag' owns the odd ones, so neither can name a binder the

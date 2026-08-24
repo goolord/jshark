@@ -255,3 +255,50 @@ test-suite jshark-test
     -Wno-deprecations
     -threaded
     -with-rtsopts=-N
+
+common bench
+  import: warnings
+  default-language: Haskell2010
+  ghc-options:
+    -O2
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+    -Wno-unused-do-bind
+  build-depends:
+    , base
+    , deepseq >= 1.4 && < 1.6
+    , jshark
+    , tasty-bench >= 0.3.5 && < 0.5
+    , text
+
+-- Synthetic compiler paths. Does not compile the examples.
+--   cabal bench jshark-compiler
+--   cabal bench jshark-compiler -- jshark-compiler -p stages
+benchmark jshark-compiler
+  import: bench
+  type: exitcode-stdio-1.0
+  main-is:
+    Compiler.hs
+  other-modules:
+    Stages
+  hs-source-dirs:
+    bench
+
+-- Full example programs, including Life. Codegen is slow; run only
+-- when measuring that path:
+--   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p life
+benchmark jshark-compiler-examples
+  import: bench
+  type: exitcode-stdio-1.0
+  main-is:
+    Examples.hs
+  other-modules:
+    Stages
+  hs-source-dirs:
+    bench
+  build-depends:
+    , breakout
+    , life
+    , synth
+    , todo-mvc
