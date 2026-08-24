@@ -1311,7 +1311,8 @@ pureProgram e = uncurry renderIIFE (pureAST' startCG IM.empty (optimize e))
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: ClosedEffect u -> Doc ann
-effectfulProgram e = uncurry renderIIFE (effectfulAST' startCG (optimizeEffect e))
+effectfulProgram e =
+  uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffect e))
 
 partitionCode :: [Code ann] -> ([Maybe (Doc ann)], [Maybe (Doc ann)])
 partitionCode = unzip . map (\(MkCode a b _) -> (a, b))
@@ -1329,9 +1330,7 @@ arrayElemRef = fromMaybe "undefined"
 --
 -- `cgTag` walks the odd negatives and the optimizer's tags
 -- ('optimizeEffect') the even ones, so the two numberings can never name
--- the same binder. Sharing the space made `countEffect` attribute a
--- binder's uses to a leftover optimizer tag, see zero, and drop the
--- `const` while its uses rendered empty.
+-- the same binder.
 data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
@@ -1365,6 +1364,37 @@ nDoc n = P.pretty (nName n)
 
 constBind :: Int -> Doc ann -> Doc ann
 constBind n ref = ("const" <+> nDoc n <+> "=" <+> ref) <> P.pretty ';'
+
+-- | Optimizer tags (negative) map to emitted `n*` ids during codegen.
+type Env = IM.IntMap Int
+
+varStampDoc :: Env -> Stamp u -> Doc ann
+varStampDoc env s =
+  let
+    i = stampId s
+  in
+    if i < 0
+      then maybe mempty nDoc (IM.lookup i env)
+      else nDoc i
+
+-- | Optimizer tag for a PHOAS continuation probed at 'nestedDummy'.
+binderTagOf :: Metadata -> Int
+binderTagOf md =
+  case IM.lookupMax (mdFreeVars md) of
+    Just (k, _) -> k
+    Nothing -> nestedDummyId
+
+probeContEff ::
+  (Stamp u -> Effect Stamp v) -> (Effect Stamp v, Int)
+probeContEff f =
+  let probed = f nestedDummy
+   in (probed, binderTagOf (getEffectMetadata probed))
+
+probeContExpr ::
+  (Stamp u -> Expr Stamp v) -> (Expr Stamp v, Int)
+probeContExpr g =
+  let probed = g nestedDummy
+   in (probed, binderTagOf (getExprMetadata probed))
 
 -- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
 -- counter guess: only a binder that is already in the tree.
@@ -1601,12 +1631,12 @@ allocNIdents s n =
 fnArity :: FnBody Stamp us r -> Int
 fnArity = fnDepthStamp
 
-renderFn :: forall us r ann. CG -> FnBody Stamp us r -> (CG, Code ann)
-renderFn s0 body =
+renderFn :: forall us r ann. Env -> CG -> FnBody Stamp us r -> (CG, Code ann)
+renderFn env s0 body =
   let
     n = fnArity body
     (ids, s1) = allocNIdents s0 n
-    (s2, Code d r) = pureAST' s1 IM.empty (evalFnBody body ids)
+    (s2, Code d r) = pureAST' s1 env (evalFnBody body ids)
    in
     (s2, Code mempty (jsCallback (map nDoc ids) d r))
 
@@ -3113,11 +3143,12 @@ mapAccumArms t0 arms =
   step t (k, e) = let (t', e', md) = optEffect t e in (t', ((k, e'), md))
 
 -- | Sequencing without a binder ('ThenE' / discarded bind).
-seqEffectCode :: CG -> Effect Stamp u -> Effect Stamp v -> (CG, Code ann)
-seqEffectCode s0 x y =
+seqEffectCode ::
+  Env -> CG -> Effect Stamp u -> Effect Stamp v -> (CG, Code ann)
+seqEffectCode env s0 x y =
   let
-    (s1, MkCode xDecl xRef xFX) = effectfulAST' s0 x
-    (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 y
+    (s1, MkCode xDecl xRef xFX) = effectfulAST' env s0 x
+    (s2, MkCode yDecl yRef yFX) = effectfulAST' env s1 y
     -- Value-producing effects (ifE) put work in xDecl and leave a result
     -- ident in xRef (codeRefFX False). Assignments and calls keep the
     -- side effect in xRef (fxCode).
@@ -3131,17 +3162,15 @@ seqEffectCode s0 x y =
 -- Bind of an Effect: when the continuation uses the binder once in a
 -- strict position, splice the effect in place (so `x <- getEl; x.foo()`
 -- becomes `getEl().foo()`); when never, keep it as a statement.
--- Probe `f` once (`Stamp tag`); emit by renaming that tree. Re-applying
--- `f` with `Name` would rebuild original PHOAS. Dummy is inspect-only
--- (`rebindEff`); never count `nestedDummyId` as this binder.
+-- Apply `f` once at the optimizer tag; map that tag to the emitted ident
+-- via `env` instead of `renameEff` (which copied the whole continuation).
 bindEffectCode ::
-  CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
-bindEffectCode s0 x f =
+  Env -> CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
+bindEffectCode env s0 x f =
   let
-    (tag, sTag) = allocTag s0
-    tagged = f (Stamp tag)
-    uses = countEffect tag tagged
-    (s1, MkCode xDecl xRef xFX) = effectfulAST' sTag x
+    (tagged, binderTag) = probeContEff f
+    uses = countEffect binderTag tagged
+    (s1, MkCode xDecl xRef xFX) = effectfulAST' env s0 x
     stmtX
       | isNothing xRef = fromMaybe mempty xDecl
       | not xFX && isJust xDecl = fromMaybe mempty xDecl
@@ -3150,27 +3179,30 @@ bindEffectCode s0 x f =
     case uses of
       0 ->
         let
-          (s2, MkCode yDecl yRef yFX) = effectfulAST' s1 tagged
+          (s2, MkCode yDecl yRef yFX) = effectfulAST' env s1 tagged
          in
           (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
       _ | isNothing xRef ->
             let
               n = fromMaybe nestedDummyId (liveBinder x)
-              (s2, MkCode yDecl yRef yFX) =
-                effectfulAST' s1 (renameEff tag n tagged)
+              env' =
+                if n /= nestedDummyId
+                  then IM.insert binderTag n env
+                  else env
+              (s2, MkCode yDecl yRef yFX) = effectfulAST' env' s1 tagged
              in
               (s2, MkCode (Just (fromMaybe mempty xDecl $$ fromMaybe mempty yDecl)) yRef yFX)
       _ ->
             let
               (nBind, s2) = allocIdent s1
-              (s3, MkCode yDecl yRef yFX) =
-                effectfulAST' s2 (renameEff tag nBind tagged)
+              env' = IM.insert binderTag nBind env
+              (s3, MkCode yDecl yRef yFX) = effectfulAST' env' s2 tagged
              in
               (s3, MkCode (Just (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty yDecl)) yRef yFX)
 
 effectfulAST :: ClosedEffect u -> Doc ann
 effectfulAST e =
-  uncurry renderWithHelpers (effectfulAST' startCG (optimizeEffect e))
+  uncurry renderWithHelpers (effectfulAST' IM.empty startCG (optimizeEffect e))
 
 -- | Witness that forces @u ~ 'Unit@: @noOp@, 'While', 'Throw', or
 -- 'Bind' into those. Polymorphic nodes ('UnsafeObjectAssign',
@@ -3335,12 +3367,12 @@ renderFFIForm = \case
   FFICall s -> P.pretty s
   FFILambda s -> parens (P.pretty s)
 
-effectfulAST' :: forall v ann. CG -> Effect Stamp v -> (CG, Code ann)
-effectfulAST' !s0 = \case
-  Lift x -> pureAST' s0 IM.empty x
+effectfulAST' :: forall v ann. Env -> CG -> Effect Stamp v -> (CG, Code ann)
+effectfulAST' !env !s0 = \case
+  Lift x -> pureAST' s0 env x
   FFI fn args ->
     let
-      (s1, argDecl, argRefs) = renderArgList argAST s0 args
+      (s1, argDecl, argRefs) = renderArgList env s0 args
      in
       (s1, fxCode argDecl (renderFFIForm fn <> P.parens argRefs))
   IfE c t e ->
@@ -3352,21 +3384,21 @@ effectfulAST' !s0 = \case
       s0
       ( \s ->
           let
-            (s1, Code cDecl cRef) = effectfulAST' s c
+            (s1, Code cDecl cRef) = effectfulAST' env s c
            in
             (s1, cDecl, cRef)
       )
       ( \mRes cRef s ->
           let
-            (s1, MkCode tDecl tRef _) = effectfulAST' s t
-            (s2, MkCode eDecl eRef _) = effectfulAST' s1 e
+            (s1, MkCode tDecl tRef _) = effectfulAST' env s t
+            (s2, MkCode eDecl eRef _) = effectfulAST' env s1 e
            in
             (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
       )
   While cond body ->
     let
-      (s1, MkCode condDecl condRef _) = effectfulAST' s0 cond
-      (s2, MkCode bodyDecl bodyRef _) = effectfulAST' s1 body
+      (s1, MkCode condDecl condRef _) = effectfulAST' env s0 cond
+      (s2, MkCode bodyDecl bodyRef _) = effectfulAST' env s1 body
       bodyStmt = asStmt bodyDecl bodyRef
       whileStmt = "while" <+> parens (fromMaybe mempty condRef) <+> braces (nest 2 bodyStmt)
      in
@@ -3377,7 +3409,7 @@ effectfulAST' !s0 = \case
       (s2, MkCode endDecl endRef _) = pureAST' s1 IM.empty end
       (loopN, s3) = allocIdent s2
       loopVar = nDoc loopN
-      (s4, MkCode bodyDecl bodyRef _) = effectfulAST' s3 (body (Name loopN))
+      (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
       bodyStmt = asStmt bodyDecl bodyRef
       forHead =
         "let"
@@ -3411,8 +3443,7 @@ effectfulAST' !s0 = \case
       (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
   OptionCaseE opt noneE someF ->
     let
-      (tag, _) = allocTag s0
-      tagged = someF (Stamp tag)
+      (tagged, binderTag) = probeContEff someF
       isUnit = isUnitWitness noneE && isUnitWitness tagged
     in
       emitBranching
@@ -3420,24 +3451,23 @@ effectfulAST' !s0 = \case
         s0
         ( \s ->
             let
-              (s1, Code oDecl oRef) = pureAST' s IM.empty opt
+              (s1, Code oDecl oRef) = pureAST' s env opt
               (nBind, s2) = allocIdent s1
              in
               (s2, oDecl $$ constBind nBind oRef, nBind)
         )
         ( \mRes nBind s ->
             let
-              (s1, MkCode nDecl nRef _) = effectfulAST' s noneE
-              (s2, MkCode sDecl sRef _) =
-                effectfulAST' s1 (renameEff tag nBind tagged)
+              env' = IM.insert binderTag nBind env
+              (s1, MkCode nDecl nRef _) = effectfulAST' env s noneE
+              (s2, MkCode sDecl sRef _) = effectfulAST' env' s1 tagged
               cond = nDoc nBind <+> "===" <+> "null"
              in
               (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
         )
   Try a k ->
     let
-      (tag, _) = allocTag s0
-      tagged = k (Stamp tag)
+      (tagged, binderTag) = probeContEff k
       isUnit = isUnitWitness a && isUnitWitness tagged
     in
       emitBranching
@@ -3446,21 +3476,21 @@ effectfulAST' !s0 = \case
         (\s -> (s, mempty, ()))
         ( \mRes () s ->
             let
-              (s1, MkCode aDecl aRef _) = effectfulAST' s a
+              (s1, MkCode aDecl aRef _) = effectfulAST' env s a
               (catchN, s2) = allocIdent s1
-              (s3, MkCode bDecl bRef _) =
-                effectfulAST' s2 (renameEff tag catchN tagged)
+              env' = IM.insert binderTag catchN env
+              (s3, MkCode bDecl bRef _) = effectfulAST' env' s2 tagged
              in
               (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
         )
-  Bind x f -> bindEffectCode s0 x f
-  ThenE x y -> seqEffectCode s0 x y
+  Bind x f -> bindEffectCode env s0 x f
+  ThenE x y -> seqEffectCode env s0 x y
   BindRec r b ->
     let
       (nBind, s1) = allocIdent s0
       n = nDoc nBind
-      (s2, MkCode rDecl rRef _) = effectfulAST' s1 (r (Name nBind))
-      (s3, MkCode bDecl bRef bFX) = effectfulAST' s2 (b (Name nBind))
+      (s2, MkCode rDecl rRef _) = effectfulAST' env s1 (r (Name nBind))
+      (s3, MkCode bDecl bRef bFX) = effectfulAST' env s2 (b (Name nBind))
      in
       (s3, MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX)
   Throw x ->
@@ -3468,54 +3498,54 @@ effectfulAST' !s0 = \case
       (s1, Code xDecl xRef) = pureAST' s0 IM.empty x
      in
       (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
-  ObjectLit fs -> renderObjectLit s0 fs
-  ArrayLit es -> renderArrayLit s0 es
+  ObjectLit fs -> renderObjectLit env s0 fs
+  ArrayLit es -> renderArrayLit env s0 es
   DeleteProp o k ->
     let
-      (s1, Code oDecl oRef) = effectfulAST' s0 o
+      (s1, Code oDecl oRef) = effectfulAST' env s0 o
       (s2, Code kDecl kRef) = pureAST' s1 IM.empty k
      in
       (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
-  ResultCaseE res errF okF -> renderResultCaseE s0 res errF okF
-  StringCaseE scrut arms def -> renderStringCaseE s0 scrut arms def
+  ResultCaseE res errF okF -> renderResultCaseE env s0 res errF okF
+  StringCaseE scrut arms def -> renderStringCaseE env s0 scrut arms def
   UnsafeObject obj -> (s0, Code mempty (P.pretty obj))
   UnsafeObjectGet x string ->
     let
-      (s1, Code x1Decl x1Ref) = effectfulAST' s0 x
+      (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
      in
       (s1, Code x1Decl $ jsDotOrBracket x1Ref string)
   UnsafeObjectAssign x y ->
     let
-      (s1, Code x1Decl x1Ref) = effectfulAST' s0 x
-      (s2, Code y1Decl y1Ref) = effectfulAST' s1 y
+      (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
+      (s2, Code y1Decl y1Ref) = effectfulAST' env s1 y
      in
       (s2, fxCode (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref)
   CallMethod recv name args ->
     let
-      (s1, Code rDecl rRef) = effectfulAST' s0 recv
-      (s2, argDecl, argRefs) = renderArgList argAST s1 args
+      (s1, Code rDecl rRef) = effectfulAST' env s0 recv
+      (s2, argDecl, argRefs) = renderArgList env s1 args
      in
       (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> P.pretty name <> parens argRefs))
-  LambdaE f -> emitEffectLambda s0 f
+  LambdaE f -> emitEffectLambda env s0 f
   ApplyE fex ex ->
     let
-      (s1, Code exprXDecl exprXRef) = effectfulAST' s0 fex
-      (s2, Code exprYDecl exprYRef) = effectfulAST' s1 ex
+      (s1, Code exprXDecl exprXRef) = effectfulAST' env s0 fex
+      (s2, Code exprYDecl exprYRef) = effectfulAST' env s1 ex
      in
       (s2, fxCode (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
 
-letCode :: CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
-letCode s0 x g =
+letCode ::
+  Env -> CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
+letCode env s0 x g =
   let
-    (tag, sTag) = allocTag s0
-    tagged = g (Stamp tag)
-    uses = countExpr tag tagged
-    (s1, MkCode xDecl xRef _) = pureAST' sTag IM.empty x
+    (tagged, binderTag) = probeContExpr g
+    uses = countExpr binderTag tagged
+    (s1, MkCode xDecl xRef _) = pureAST' s0 env x
   in
     case uses of
       0 ->
         let
-          (s2, y) = pureAST' s1 IM.empty tagged
+          (s2, y) = pureAST' s1 env tagged
           stmt
             | isNothing xDecl && isJust xRef = fromMaybe mempty xRef <> semi
             | otherwise = fromMaybe mempty xDecl
@@ -3524,11 +3554,10 @@ letCode s0 x g =
       _ ->
         let
           (nBind, s2) = allocIdent s1
-          (s3, y) = pureAST' s2 IM.empty (renameExpr tag nBind tagged)
+          env' = IM.insert binderTag nBind env
+          (s3, y) = pureAST' s2 env' tagged
          in
           (s3, keepRef (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty (codeDecl y)) y)
-
-type Env = IM.IntMap (Doc ())
 
 pureAST :: ClosedExpr u -> Doc ann
 pureAST e = uncurry renderWithHelpers (pureAST' startCG IM.empty (optimize e))
@@ -3566,9 +3595,9 @@ pureAST' !s0 env = \case
     ValueBool True -> (s0, Code mempty "true")
     ValueBool False -> (s0, Code mempty "false")
     ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
-  Lambda f -> emitExprLambda s0 f
+  Lambda f -> emitExprLambda env s0 f
   -- `const` when shared or used under a lambda/loop/short-circuit.
-  Let x g -> letCode s0 x g
+  Let x g -> letCode env s0 x g
   LetRec r b ->
     let
       (nBind, s1) = allocIdent s0
@@ -3584,11 +3613,10 @@ pureAST' !s0 env = \case
      in
       (s2, Code (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
   Var (Embed e) -> pureAST' s0 env (flattenExpr e)
-  Var (EmbedEff e) -> effectfulAST' s0 e
-  Var s
-    -- Tags and the unused-binder dummy are negative; never emit them as JS.
-    | stampId s < 0 -> (s0, Code mempty mempty)
-    | otherwise -> (s0, Code mempty $ nDoc (stampId s))
+  Var (EmbedEff e) -> effectfulAST' env s0 e
+  Var s ->
+    -- Tags and the unused-binder dummy are negative; map via `env`.
+    (s0, Code mempty (varStampDoc env s))
   If c t e ->
     let
       (s1, Code cDecl cRef) = pureAST' s0 env c
@@ -3661,10 +3689,10 @@ pureAST' !s0 env = \case
       (s1, Code d r) = pureAST' s0 env msg
      in
       (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
-  Std s -> renderStd s0 s
-  FnLit body -> renderFn s0 body
+  Std s -> renderStd env s0 s
+  FnLit body -> renderFn env s0 body
   UnsafeNullable x -> pureAST' s0 env x
-  FrozenLit fs -> renderObjectLit s0 fs
+  FrozenLit fs -> renderObjectLit env s0 fs
   GetField @k o ->
     let
       (s1, Code d r) = pureAST' s0 env o
@@ -3672,22 +3700,23 @@ pureAST' !s0 env = \case
       (s1, Code d (jsDotOrBracket r (T.pack (symbolVal (Proxy @k)))))
 
 renderFixed ::
-  CG
+  Env
+  -> CG
   -> FixedOp a b c u
   -> FixedArgs Stamp a b c
   -> (CG, Code ann)
-renderFixed s0 op args = case (op, args) of
+renderFixed env s0 op args = case (op, args) of
   (n, ArgsU x)
     | Just name <- Prim.math1Name n ->
         let
-          (s1, Code xDecl xRef) = pureAST' s0 IM.empty x
+          (s1, Code xDecl xRef) = pureAST' s0 env x
          in
           (s1, Code xDecl ("Math." <> P.pretty (T.unpack name) <> parens xRef))
   (n, ArgsB x y)
     | Just name <- Prim.math2Name n ->
         let
-          (s1, Code xDecl xRef) = pureAST' s0 IM.empty x
-          (s2, Code yDecl yRef) = pureAST' s1 IM.empty y
+          (s1, Code xDecl xRef) = pureAST' s0 env x
+          (s2, Code yDecl yRef) = pureAST' s1 env y
          in
           ( s2
           , Code
@@ -3699,20 +3728,20 @@ renderFixed s0 op args = case (op, args) of
           )
   (n, ArgsU recv) ->
     let
-      (s1, Code rDecl rRef) = pureAST' s0 IM.empty recv
+      (s1, Code rDecl rRef) = pureAST' s0 env recv
      in
       (s1, Code rDecl (Prim.fixedUnaryJS n (wrapOperand recv rRef)))
   (n, ArgsB recv arg) ->
     let
-      (s1, Code rDecl rRef) = pureAST' s0 IM.empty recv
-      (s2, Code aDecl aRef) = pureAST' s1 IM.empty arg
+      (s1, Code rDecl rRef) = pureAST' s0 env recv
+      (s2, Code aDecl aRef) = pureAST' s1 env arg
      in
       (s2, Code (rDecl $$ aDecl) (Prim.fixedBinaryJS n (wrapOperand recv rRef) aRef))
   (n, ArgsT recv a b) ->
     let
-      (s1, Code rDecl rRef) = pureAST' s0 IM.empty recv
-      (s2, Code aDecl aRef) = pureAST' s1 IM.empty a
-      (s3, Code bDecl bRef) = pureAST' s2 IM.empty b
+      (s1, Code rDecl rRef) = pureAST' s0 env recv
+      (s2, Code aDecl aRef) = pureAST' s1 env a
+      (s3, Code bDecl bRef) = pureAST' s2 env b
      in
       ( s3
       , Code
@@ -3737,16 +3766,16 @@ renderResultLit isOk s0 x =
    in
     (s1, MkCode d (Just (resultObject isOk r)) False)
 
-renderArrayLit :: CG -> [Effect Stamp u] -> (CG, Code ann)
-renderArrayLit s0 es =
+renderArrayLit :: Env -> CG -> [Effect Stamp u] -> (CG, Code ann)
+renderArrayLit env s0 es =
   let
-    (s1, cs) = mapAccumL effectfulAST' s0 es
+    (s1, cs) = mapAccumL (\s e -> effectfulAST' env s e) s0 es
     (decls, refs) = partitionCode cs
    in
     (s1, Code (P.vcat (catMaybes decls)) (P.brackets (hcat (punctuate ", " (map arrayElemRef refs)))))
 
-renderObjectLit :: CG -> [FieldLit Stamp r] -> (CG, Code ann)
-renderObjectLit s0 fs =
+renderObjectLit :: Env -> CG -> [FieldLit Stamp r] -> (CG, Code ann)
+renderObjectLit env s0 fs =
   let
     (s1, parts) =
       mapAccumL
@@ -3754,22 +3783,22 @@ renderObjectLit s0 fs =
             case fl of
               FieldLit e ->
                 let
-                  (s', Code d r) = pureAST' s IM.empty e
+                  (s', Code d r) = pureAST' s env e
                  in
                   (s', (d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> r))
               FieldLitExtra e ->
                 let
-                  (s', Code d r) = pureAST' s IM.empty e
+                  (s', Code d r) = pureAST' s env e
                  in
                   (s', (d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> r))
               FieldLitEffect e ->
                 let
-                  (s', MkCode d r _) = effectfulAST' s e
+                  (s', MkCode d r _) = effectfulAST' env s e
                  in
                   (s', (fromMaybe mempty d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r))
               FieldLitExtraEffect e ->
                 let
-                  (s', MkCode d r _) = effectfulAST' s e
+                  (s', MkCode d r _) = effectfulAST' env s e
                  in
                   (s', (fromMaybe mempty d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r))
         )
@@ -3798,21 +3827,22 @@ renderResultCase s0 res errF okF =
     )
 
 renderStringCaseE ::
-  CG
+  Env
+  -> CG
   -> Expr Stamp 'String
   -> [(Text, Effect Stamp v)]
   -> Effect Stamp v
   -> (CG, Code ann)
-renderStringCaseE s0 scrut arms def =
+renderStringCaseE env s0 scrut arms def =
   let
     unit = all (isUnitWitness . snd) arms && isUnitWitness def
-    (s1, Code oDecl oRef) = pureAST' s0 IM.empty scrut
+    (s1, Code oDecl oRef) = pureAST' s0 env scrut
     (resultN, s2) =
       if unit then (0, s1) else allocIdent s1
     resultVar = nName resultN
     renderArm s e =
       let
-        (s', MkCode d r _) = effectfulAST' s e
+        (s', MkCode d r _) = effectfulAST' env s e
         body = if unit then asStmt d r else fromMaybe mempty d $$ assignResult resultVar r
        in
         (s', body)
@@ -3839,27 +3869,26 @@ renderStringCaseE s0 scrut arms def =
     (s4, Code (prelude $$ switchStmt) ref)
 
 renderResultCaseE ::
-  CG
+  Env
+  -> CG
   -> Expr Stamp ('Result e a)
   -> (Stamp e -> Effect Stamp v)
   -> (Stamp a -> Effect Stamp v)
   -> (CG, Code ann)
-renderResultCaseE s0 res errF okF =
+renderResultCaseE env s0 res errF okF =
   let
-    (tagE, sE) = allocTag s0
-    (tagO, _) = allocTag sE
-    errTagged = errF (Stamp tagE)
-    okTagged = okF (Stamp tagO)
+    (errTagged, tagE) = probeContEff errF
+    (okTagged, tagO) = probeContEff okF
     isUnit = isUnitWitness errTagged && isUnitWitness okTagged
   in
     if isUnit
       then
         let
           (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
-          (s2, MkCode eDecl eRef _) =
-            effectfulAST' s1 (renameEff tagE nUnw errTagged)
-          (s3, MkCode oDecl oRef _) =
-            effectfulAST' s2 (renameEff tagO nUnw okTagged)
+          envE = IM.insert tagE nUnw env
+          envO = IM.insert tagO nUnw envE
+          (s2, MkCode eDecl eRef _) = effectfulAST' envE s1 errTagged
+          (s3, MkCode oDecl oRef _) = effectfulAST' envO s2 okTagged
          in
           ( s3
           , Code (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef) mempty
@@ -3869,10 +3898,10 @@ renderResultCaseE s0 res errF okF =
           (s1, prelude, obj, nUnw) = resultCasePrelude s0 res
           (resultN, s2) = allocIdent s1
           resultVar = nName resultN
-          (s3, MkCode eDecl eRef _) =
-            effectfulAST' s2 (renameEff tagE nUnw errTagged)
-          (s4, MkCode oDecl oRef _) =
-            effectfulAST' s3 (renameEff tagO nUnw okTagged)
+          envE = IM.insert tagE nUnw env
+          envO = IM.insert tagO nUnw envE
+          (s3, MkCode eDecl eRef _) = effectfulAST' envE s2 errTagged
+          (s4, MkCode oDecl oRef _) = effectfulAST' envO s3 okTagged
           stmt =
             prelude
               $$ letResult resultVar
@@ -3885,11 +3914,11 @@ renderResultCaseE s0 res errF okF =
          in
           (s4, Code stmt (P.pretty resultVar))
 
-emitExprLambda :: CG -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
-emitExprLambda = emitLambdaWith (\s e -> pureAST' s IM.empty e)
+emitExprLambda :: Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
+emitExprLambda env = emitLambdaWith (\s e -> pureAST' s env e)
 
-emitEffectLambda :: CG -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
-emitEffectLambda = emitLambdaWith effectfulAST'
+emitEffectLambda :: Env -> CG -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
+emitEffectLambda env = emitLambdaWith (effectfulAST' env)
 
 emitLambdaWith ::
   (CG -> t -> (CG, Code ann))
@@ -3904,49 +3933,50 @@ emitLambdaWith walker s0 f =
     (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
 
 renderBinaryFn ::
-  CG
+  Env
+  -> CG
   -> (Stamp a -> Stamp b -> Expr Stamp c)
   -> (CG, Doc ann)
-renderBinaryFn s0 f =
+renderBinaryFn env s0 f =
   let
-    (s1, Code _ cb) = renderFn s0 (JfCons $ \a -> JfCons $ \b -> JfNil (f a b))
+    (s1, Code _ cb) = renderFn env s0 (JfCons $ \a -> JfCons $ \b -> JfNil (f a b))
    in
     (s1, cb)
 
-renderStd :: CG -> Std Stamp u -> (CG, Code ann)
-renderStd s0 = \case
-  Fixed op args -> renderFixed s0 op args
-  Method m -> renderMethod s0 m
-  Kernel k -> renderKernel s0 k
+renderStd :: Env -> CG -> Std Stamp u -> (CG, Code ann)
+renderStd env s0 = \case
+  Fixed op args -> renderFixed env s0 op args
+  Method m -> renderMethod env s0 m
+  Kernel k -> renderKernel env s0 k
 
-renderKernel :: CG -> Kernel Stamp u -> (CG, Code ann)
-renderKernel s0 = \case
-  KConcat x y -> renderBin "+" s0 x y
-  KPlus x y -> renderBin "+" s0 x y
-  KMinus x y -> renderBin "-" s0 x y
-  KTimes x y -> renderBin "*" s0 x y
-  KFracDiv x y -> renderBin "/" s0 x y
-  KRem x y -> renderBin "%" s0 x y
-  KBitAnd x y -> renderBin "&" s0 x y
-  KBitOr x y -> renderBin "|" s0 x y
-  KBitXor x y -> renderBin "^" s0 x y
-  KShl x y -> renderBin "<<" s0 x y
-  KShr x y -> renderBin ">>" s0 x y
-  KUShr x y -> renderBin ">>>" s0 x y
-  KBig op x y -> renderBin (bigOpJS op) s0 x y
+renderKernel :: Env -> CG -> Kernel Stamp u -> (CG, Code ann)
+renderKernel env s0 = \case
+  KConcat x y -> renderBin env "+" s0 x y
+  KPlus x y -> renderBin env "+" s0 x y
+  KMinus x y -> renderBin env "-" s0 x y
+  KTimes x y -> renderBin env "*" s0 x y
+  KFracDiv x y -> renderBin env "/" s0 x y
+  KRem x y -> renderBin env "%" s0 x y
+  KBitAnd x y -> renderBin env "&" s0 x y
+  KBitOr x y -> renderBin env "|" s0 x y
+  KBitXor x y -> renderBin env "^" s0 x y
+  KShl x y -> renderBin env "<<" s0 x y
+  KShr x y -> renderBin env ">>" s0 x y
+  KUShr x y -> renderBin env ">>>" s0 x y
+  KBig op x y -> renderBin env (bigOpJS op) s0 x y
   KBigNeg x ->
     let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 IM.empty x
+      (s1, Code x1Decl x1Ref) = pureAST' s0 env x
      in
       (s1, Code x1Decl $ "-" <> parens x1Ref)
   KShow x ->
     let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 IM.empty x
+      (s1, Code x1Decl x1Ref) = pureAST' s0 env x
      in
       (s1, Code x1Decl $ "String" <> parens x1Ref)
   KTypeOf x ->
     let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 IM.empty x
+      (s1, Code x1Decl x1Ref) = pureAST' s0 env x
       wrapped = case x of
         FrozenLit {} -> parens x1Ref
         _ -> x1Ref
@@ -3954,76 +3984,78 @@ renderKernel s0 = \case
       (s1, Code x1Decl $ "typeof" <+> wrapped)
   KNegate x ->
     let
-      (s1, Code x1Decl x1Ref) = pureAST' s0 IM.empty x
+      (s1, Code x1Decl x1Ref) = pureAST' s0 env x
      in
       (s1, Code x1Decl $ "-" <> parens x1Ref)
-  KAnd x y -> renderBin "&&" s0 x y
-  KOr x y -> renderBin "||" s0 x y
+  KAnd x y -> renderBin env "&&" s0 x y
+  KOr x y -> renderBin env "||" s0 x y
   KEq structural x y
     | structural ->
-        renderBinApp jsValueEq (useEqHelpers s0) x y
+        renderBinApp env jsValueEq (useEqHelpers s0) x y
     | otherwise ->
-        renderBin "===" s0 x y
+        renderBin env "===" s0 x y
   KNEq structural x y
     | structural ->
-        renderBinApp jsValueNEq (useEqHelpers s0) x y
+        renderBinApp env jsValueNEq (useEqHelpers s0) x y
     | otherwise ->
-        renderBin "!==" s0 x y
-  KGTh x y -> renderBin ">" s0 x y
-  KLTh x y -> renderBin "<" s0 x y
-  KGTEq x y -> renderBin ">=" s0 x y
-  KLTEq x y -> renderBin "<=" s0 x y
+        renderBin env "!==" s0 x y
+  KGTh x y -> renderBin env ">" s0 x y
+  KLTh x y -> renderBin env "<" s0 x y
+  KGTEq x y -> renderBin env ">=" s0 x y
+  KLTEq x y -> renderBin env "<=" s0 x y
 
-renderMethod :: CG -> Method Stamp u -> (CG, Code ann)
-renderMethod s0 = \case
-  MethMap recv f -> renderCallbackMethod "map" s0 recv f
-  MethFilter recv f -> renderCallbackMethod "filter" s0 recv f
-  MethReduce recv z f -> renderFold ".reduce" s0 recv z f
-  MethReduceRight recv z f -> renderFold ".reduceRight" s0 recv z f
+renderMethod :: Env -> CG -> Method Stamp u -> (CG, Code ann)
+renderMethod env s0 = \case
+  MethMap recv f -> renderCallbackMethod env "map" s0 recv f
+  MethFilter recv f -> renderCallbackMethod env "filter" s0 recv f
+  MethReduce recv z f -> renderFold env ".reduce" s0 recv z f
+  MethReduceRight recv z f -> renderFold env ".reduceRight" s0 recv z f
   MethToSorted recv f ->
     let
-      (s1, Code rDecl rRef) = pureAST' s0 IM.empty recv
-      (s2, cb) = renderBinaryFn s1 f
+      (s1, Code rDecl rRef) = pureAST' s0 env recv
+      (s2, cb) = renderBinaryFn env s1 f
       call = wrapOperand recv rRef <> ".toSorted" <> parens cb
      in
       (s2, Code rDecl call)
   MethFrom n f ->
     let
-      (s1, Code nDecl nRef) = pureAST' s0 IM.empty n
+      (s1, Code nDecl nRef) = pureAST' s0 env n
       (nHole, s2) = allocIdent s1
       (nI, s3) = allocIdent s2
-      (s4, Code exDecl exRef) = pureAST' s3 IM.empty (f (Name nI))
+      (s4, Code exDecl exRef) = pureAST' s3 env (f (Name nI))
       cb = jsCallback [nDoc nHole, nDoc nI] exDecl exRef
      in
       (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
 
 renderFold ::
-  String
+  Env
+  -> String
   -> CG
   -> Expr Stamp ('Array u)
   -> Expr Stamp v
   -> (Stamp v -> Stamp u -> Expr Stamp v)
   -> (CG, Code ann)
-renderFold method s0 recv z f =
+renderFold env method s0 recv z f =
   let
-    (s1, Code rDecl rRef) = pureAST' s0 IM.empty recv
-    (s2, Code zDecl zRef) = pureAST' s1 IM.empty z
-    (s3, cb) = renderBinaryFn s2 f
+    (s1, Code rDecl rRef) = pureAST' s0 env recv
+    (s2, Code zDecl zRef) = pureAST' s1 env z
+    (s3, cb) = renderBinaryFn env s2 f
     call = wrapOperand recv rRef <> P.pretty method <> parens (cb <> ", " <> zRef)
    in
     (s3, Code (rDecl $$ zDecl) call)
 
 renderCallbackMethod ::
-  String
+  Env
+  -> String
   -> CG
   -> Expr Stamp a
   -> (Stamp b -> Expr Stamp c)
   -> (CG, Code ann)
-renderCallbackMethod name s0 recv f =
+renderCallbackMethod env name s0 recv f =
   let
-    (s1, Code rDecl rRef) = pureAST' s0 IM.empty recv
+    (s1, Code rDecl rRef) = pureAST' s0 env recv
     (nParam, s2) = allocIdent s1
-    (s3, Code exDecl exRef) = pureAST' s2 IM.empty (f (Name nParam))
+    (s3, Code exDecl exRef) = pureAST' s2 env (f (Name nParam))
     call =
       wrapOperand recv rRef
         <> "."
@@ -4032,32 +4064,38 @@ renderCallbackMethod name s0 recv f =
    in
     (s3, Code rDecl call)
 
-renderBin :: Text -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code ann)
-renderBin op s0 x y =
+renderBin :: Env -> Text -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code ann)
+renderBin env op s0 x y =
   renderBinApp
+    env
     (\l r -> wrapOperand x l <+> P.pretty op <+> wrapOperand y r)
     s0
     x
     y
 
 renderBinApp ::
-  (Doc ann -> Doc ann -> Doc ann) -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code ann)
-renderBinApp join s0 x y =
+  Env
+  -> (Doc ann -> Doc ann -> Doc ann)
+  -> CG
+  -> Expr Stamp a
+  -> Expr Stamp b
+  -> (CG, Code ann)
+renderBinApp env join s0 x y =
   let
-    (s1, Code xDecl xRef) = pureAST' s0 IM.empty x
-    (s2, Code yDecl yRef) = pureAST' s1 IM.empty y
+    (s1, Code xDecl xRef) = pureAST' s0 env x
+    (s2, Code yDecl yRef) = pureAST' s1 env y
    in
     (s2, Code (xDecl $$ yDecl) (join xRef yRef))
 
-argAST :: CG -> Arg Stamp u -> (CG, Code ann)
-argAST s (ArgExpr e) = pureAST' s IM.empty e
-argAST s (ArgEffect e) = effectfulAST' s e
+argAST :: Env -> CG -> Arg Stamp u -> (CG, Code ann)
+argAST env s (ArgExpr e) = pureAST' s env e
+argAST env s (ArgEffect e) = effectfulAST' env s e
 
 renderArgList ::
-  (forall x. CG -> f x -> (CG, Code ann)) -> CG -> Rec f us -> (CG, Doc ann, Doc ann)
-renderArgList f s0 args =
+  Env -> CG -> Rec (Arg Stamp) us -> (CG, Doc ann, Doc ann)
+renderArgList env s0 args =
   let
-    (s1, cs) = recCodes f s0 args
+    (s1, cs) = recCodes (argAST env) s0 args
     (decls, refs) = partitionCode cs
    in
     (s1, P.vcat (catMaybes decls), hcat (punctuate ", " (map arrayElemRef refs)))

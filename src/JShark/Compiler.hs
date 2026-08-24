@@ -63,6 +63,8 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Lazy.Builder as TB
+import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Encoding as TE
 import Data.Word (Word64)
 import JShark
@@ -242,6 +244,10 @@ insertBounded k v m =
     if Map.size m' > memoryCacheMaxEntries
       then Map.deleteMin m'
       else m'
+{-# NOINLINE insertBounded #-}
+
+memoryLookupKey :: CompilerConfig -> Text -> Text
+memoryLookupKey cfg source = T.pack (hashText (cacheKey cfg source))
 
 -- | Minify raw JavaScript using 'defaultCompilerConfig'.
 --
@@ -279,7 +285,7 @@ tryCompileWith cfg0 source =
       NoCache -> tryRunCompile cfg source
       MemoryCache -> do
         let
-          key = cacheKey cfg source
+          key = memoryLookupKey cfg source
         hit <- Map.lookup key <$> readIORef globalMemoryCache
         case hit of
           Just cached -> pure (Right cached)
@@ -390,73 +396,89 @@ compileTerser =
 -- not @/re/@ literals, so those are not treated as strings. Not a general
 -- JS parser.
 prettyJS :: Text -> Text
-prettyJS = T.pack . formatJS . T.unpack . T.strip
+prettyJS = formatJS . T.strip
 
-formatJS :: String -> String
-formatJS = go 0
+formatJS :: Text -> Text
+formatJS = TL.toStrict . TB.toLazyText . go 0
  where
-  indent n = replicate (n * 2) ' '
+  indent n = TB.fromString (replicate (n * 2) ' ')
 
-  go :: Int -> String -> String
-  go _ [] = []
-  go n ('"' : xs) = '"' : string '"' xs (go n)
-  go n ('\'' : xs) = '\'' : string '\'' xs (go n)
-  go n ('{' : xs) =
-    let
-      xs' = dropWhile isSpace xs
-     in
-      case xs' of
-        '}' : rest -> "{}" ++ afterClose n rest
-        _ -> '{' : '\n' : indent (n + 1) ++ go (n + 1) xs'
-  go n ('}' : xs) =
-    let
-      n' = max 0 (n - 1)
-     in
-      '\n' : indent n' ++ '}' : afterClose n' (dropWhile isSpace xs)
-  go n (';' : xs) =
-    let
-      xs' = dropWhile isSpace xs
-     in
-      ';' : case xs' of
-        '}' : _ -> go n xs'
-        [] -> []
-        _ -> '\n' : indent n ++ go n xs'
-  go n (c : xs)
-    | isSpace c =
+  go :: Int -> Text -> TB.Builder
+  go _ t | T.null t = mempty
+  go n t =
+    case T.uncons t of
+      Nothing -> mempty
+      Just ('"', xs) -> TB.singleton '"' <> string '"' xs (go n)
+      Just ('\'', xs) -> TB.singleton '\'' <> string '\'' xs (go n)
+      Just ('{', xs) ->
         let
-          xs' = dropWhile isSpace xs
+          xs' = T.dropWhile isSpace xs
          in
-          case xs' of
-            [] -> []
-            '}' : _ -> go n xs'
-            _ -> ' ' : go n xs'
-    | otherwise = c : go n xs
+          case T.uncons xs' of
+            Just ('}', rest) -> "{}" <> afterClose n rest
+            _ -> TB.singleton '{' <> TB.singleton '\n' <> indent (n + 1) <> go (n + 1) xs'
+      Just ('}', xs) ->
+        let
+          n' = max 0 (n - 1)
+         in
+          TB.singleton '\n' <> indent n' <> TB.singleton '}' <> afterClose n' (T.dropWhile isSpace xs)
+      Just (';', xs) ->
+        let
+          xs' = T.dropWhile isSpace xs
+         in
+          TB.singleton ';' <> case T.uncons xs' of
+            Just ('}', _) -> go n xs'
+            Nothing -> mempty
+            _ -> TB.singleton '\n' <> indent n <> go n xs'
+      Just (c, xs) ->
+        if isSpace c
+          then
+            let
+              xs' = T.dropWhile isSpace xs
+             in
+              case T.uncons xs' of
+                Nothing -> mempty
+                Just ('}', _) -> go n xs'
+                _ -> TB.singleton ' ' <> go n xs'
+          else TB.singleton c <> go n xs
 
   afterClose n s =
-    case dropWhile isSpace s of
-      s'
-        | Just rest <- keyword "else" s' -> ' ' : go n ("else" ++ rest)
-        | Just rest <- keyword "catch" s' -> ' ' : go n ("catch" ++ rest)
-      -- Stay on this line for expression tails (`})`, `}()`, `},`, `};`).
-      c : _ | c `elem` (");,.}(" :: String) -> go n (dropWhile isSpace s)
-      [] -> []
-      s' -> '\n' : indent n ++ go n s'
+    let
+      t' = T.dropWhile isSpace s
+     in
+      case keyword "else" t' of
+        Just rest -> TB.singleton ' ' <> go n ("else" <> rest)
+        Nothing ->
+          case keyword "catch" t' of
+            Just rest -> TB.singleton ' ' <> go n ("catch" <> rest)
+            Nothing ->
+              case T.uncons t' of
+                Nothing -> mempty
+                Just (c, _) | c `elem` (");,.}(" :: String) -> go n t'
+                Just _ -> TB.singleton '\n' <> indent n <> go n t'
 
-  keyword kw s = case splitAt (length kw) s of
-    (pre, rest)
-      | pre == kw, not (startsIdent rest) -> Just rest
-    _ -> Nothing
+  keyword kw s =
+    let
+      (pre, rest) = T.splitAt (T.length kw) s
+     in
+      if pre == kw && not (startsIdent rest)
+        then Just rest
+        else Nothing
 
-  startsIdent (c : _) = isAlphaNum c || c == '_' || c == '$'
-  startsIdent [] = False
+  startsIdent t = case T.uncons t of
+    Just (c, _) -> isAlphaNum c || c == '_' || c == '$'
+    Nothing -> False
 
-  string _ [] _ = []
-  string q (c : cs) k
-    | c == '\\' = case cs of
-        d : ds -> c : d : string q ds k
-        [] -> [c]
-    | c == q = c : k cs
-    | otherwise = c : string q cs k
+  string q t k = case T.uncons t of
+    Nothing -> mempty
+    Just (c, cs) ->
+      if c == '\\'
+        then case T.uncons cs of
+          Just (d, ds) -> TB.singleton c <> TB.singleton d <> string q ds k
+          Nothing -> TB.singleton c
+        else if c == q
+          then TB.singleton c <> k cs
+          else TB.singleton c <> string q cs k
 
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.

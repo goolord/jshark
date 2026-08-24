@@ -335,6 +335,8 @@ benchmark jshark-synthetic
     Synthetic.hs
   hs-source-dirs:
     bench
+  other-modules:
+    Stages
   build-depends:
     , jshark
 
