@@ -1,0 +1,31 @@
+# JShark
+
+## Stack
+- Haskell GHC 9.14+, Cabal 3.x, optional Nix (`flake.nix`)
+- Typed JS EDSL; codegen to JavaScript. Dev server: Scotty (`cabal run examples`)
+- Lucid DOM: `jshark-lucid`. Tests need Bun on PATH for JS-vs-interpreter checks
+- Ancillary: JS in `examples/Life/js/`, Zig WASM in `examples/Life/wasm/`
+- Format: Fourmolu (`fourmolu.yaml`). Test: Tasty + HUnit. Bench: tasty-bench
+
+## Architecture
+- PHOAS EDSL: closed terms `forall f`; substitution = Haskell function application
+- `Expr` = pure kernel + `Std` stdlib; `Effect` = statements, FFI, DOM, mutation, I/O
+- `Arg`/`Rec` join Expr and Effect at FFI; emit via `JShark.Compiler`
+- Pure optimizer/codegen paths; push IO (filesystem, network, Scotty) to edges
+- `newtype` wrappers for domain primitives; no `head`/`tail`/`fromJust`/`read` in prod
+- Recoverable errors: `Either`/`ExceptT`; `error` only for impossible invariants
+
+## Layout
+- `src/JShark/` — core library (Api, Compiler, Prim, Dom, Canvas, …)
+- `jshark-lucid/` — Lucid integration
+- `examples/{Breakout,Life,Synth,TodoMvc,server,static}/`
+- `test/`, `bench/`
+
+## Formatting (Fourmolu — strict)
+- 2-space indent, 80 cols, leading commas & import/export style
+- Leading function arrows; `single-constraint-parens: never`; `unicode: never`
+- `scripts/format.sh` or `fourmolu -i ./src ./examples ./test ./jshark-lucid`
+
+## Build
+- `cabal build` | `cabal test` | `cabal run examples` (http://localhost:3000)
+- Library: `-Wall -Wextra -Werror`; match existing extensions and module conventions

@@ -1,0 +1,74 @@
+# === Haskell / Cabal ===
+.stack-work/
+dist/
+dist-newstyle/
+dist*/
+.cabal/
+.ghc/
+.ghc.environment.*
+cabal-dev/
+cabal.project.local*
+cabal.sandbox.config
+.cabal-sandbox/
+.HTF/
+*.o
+*.hi
+*.hie
+*.chi
+*.chs.h
+*.dyn_o
+*.dyn_hi
+*.prof
+*.hp
+*.eventlog
+.hpc
+.hsenv
+
+# === Nix ===
+result
+result-*
+
+# === JavaScript / Bun ===
+node_modules/
+.bun-cache/
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# === Zig (Life WASM) ===
+**/zig-cache/
+**/.zig-cache/
+**/zig-out/
+
+# === Agent skills (not project source) ===
+.agents/
+
+# === Vendored / minified front-end ===
+**/*.min.js
+**/*.min.css
+
+# === Build outputs & site ===
+_site/
+tools/
+*.exe
+*.dll
+*.so
+*.dylib
+*.wasm
+*.log
+
+# === Heavy assets ===
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.pdf
+*.csv
+
+# === Editor / OS ===
+.git/
+.vscode/
+.DS_Store

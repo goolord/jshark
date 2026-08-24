@@ -11,7 +11,7 @@
       "source": "JuliusBrussee/caveman",
       "sourceType": "github",
       "skillPath": "skills/caveman/SKILL.md",
-      "computedHash": "48646eeec87b27067502d8bd450484faf08af588df783706b1571ee72f2d918c"
+      "computedHash": "2bc96f7c5d3c82f76714d9ec5027ef72518ede527b009a4cab6afd6db339ada9"
     },
     "caveman-commit": {
       "source": "JuliusBrussee/caveman",
@@ -53,7 +53,7 @@
       "source": "JuliusBrussee/caveman",
       "sourceType": "github",
       "skillPath": "skills/caveman-learn/SKILL.md",
-      "computedHash": "41a82e4905672a99cd496d4221ebb7ca433bcac1044dbe3340f9258db323ed7e"
+      "computedHash": "1f27235fab30d24587a91d0ce65d3b25a2fa482baf5c1e763b9824b532ede74d"
     },
     "caveman-manage": {
       "source": "JuliusBrussee/caveman",
