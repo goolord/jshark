@@ -256,7 +256,9 @@ test-suite jshark-test
   ghc-options:
     -Wno-deprecations
     -threaded
+    -rtsopts
     -with-rtsopts=-N
+    -with-rtsopts=-M10G
 
 common bench
   import: warnings
@@ -266,6 +268,7 @@ common bench
     -threaded
     -rtsopts
     -with-rtsopts=-N
+    -with-rtsopts=-M10G
     -Wno-unused-do-bind
   build-depends:
     , base
