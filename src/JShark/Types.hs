@@ -120,6 +120,7 @@ import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified GHC.Exts as Exts
 import GHC.TypeLits
@@ -185,8 +186,8 @@ data Value :: Universe -> Type where
 
 -- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen.
 data FFIForm
-  = FFICall String
-  | FFILambda String
+  = FFICall Text
+  | FFILambda Text
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift ::
@@ -199,11 +200,11 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -> Effect f u
     -- ^ Foreign call. Args are 'Arg' so an effect need not pass through 'Expr'.
   UnsafeObject :: Text -> Effect f ('MutableObject x)
-  UnsafeObjectGet :: Effect f object -> String -> Effect f u
+  UnsafeObjectGet :: Effect f object -> Text -> Effect f u
   UnsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
   CallMethod ::
     Effect f object
-    -> String
+    -> Text
     -> Rec (Arg f) us
     -> Effect f u
     -- ^ @recv.method(args…)@
@@ -331,11 +332,11 @@ data FieldLit (f :: Universe -> Type) (r :: Type) where
     (KnownSymbol k, Typeable u) =>
     Effect f u -> FieldLit f r
 
-fieldKey :: FieldLit f r -> String
-fieldKey (FieldLit @k _) = symbolVal (Proxy :: Proxy k)
-fieldKey (FieldLitEffect @k _) = symbolVal (Proxy :: Proxy k)
-fieldKey (FieldLitExtra @k _) = symbolVal (Proxy :: Proxy k)
-fieldKey (FieldLitExtraEffect @k _) = symbolVal (Proxy :: Proxy k)
+fieldKey :: FieldLit f r -> Text
+fieldKey (FieldLit @k _) = T.pack (symbolVal (Proxy :: Proxy k))
+fieldKey (FieldLitEffect @k _) = T.pack (symbolVal (Proxy :: Proxy k))
+fieldKey (FieldLitExtra @k _) = T.pack (symbolVal (Proxy :: Proxy k))
+fieldKey (FieldLitExtraEffect @k _) = T.pack (symbolVal (Proxy :: Proxy k))
 
 -- | PHOAS spine for @'Fn'@: @JfCons@ binders, @JfNil@ body.
 data FnBody (f :: Universe -> Type) (us :: [Universe]) (r :: Universe) where
@@ -1057,31 +1058,31 @@ fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
 -- | Codegen helpers for the kernel 'Eq' operator. '$valueEq' dispatches;
 -- '$arrayEq', '$deepEqual', and '$uint8ArrayEq' are the structural walks.
 -- Not stdlib names on 'Expr'.
-jsHelperValueEq :: (String, String)
+jsHelperValueEq :: (Text, Text)
 jsHelperValueEq =
   ( "$valueEq"
   , "function(a,b){if(a===b)return true;if(a===null||b===null||typeof a!==\"object\"||typeof b!==\"object\")return false;if(Array.isArray(a)&&Array.isArray(b))return $arrayEq(a,b);if(a instanceof Uint8Array&&b instanceof Uint8Array)return $uint8ArrayEq(a,b);if(a.constructor===Object&&b.constructor===Object)return $deepEqual(a,b);return false}"
   )
 
-jsHelperArrayEq :: (String, String)
+jsHelperArrayEq :: (Text, Text)
 jsHelperArrayEq =
   ( "$arrayEq"
   , "function(a,b){if(a===b)return true;if(!Array.isArray(b))return false;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$valueEq(a[i],b[i]))return false;return true}"
   )
 
-jsHelperDeepEqual :: (String, String)
+jsHelperDeepEqual :: (Text, Text)
 jsHelperDeepEqual =
   ( "$deepEqual"
   , "function(a,b){if(a===b)return true;if(a instanceof Date&&b instanceof Date)return a.getTime()===b.getTime();if(a instanceof RegExp&&b instanceof RegExp)return a.toString()===b.toString();var ka=Object.keys(a),kb=Object.keys(b);if(ka.length!==kb.length)return false;for(var i=0;i<ka.length;i++){var k=ka[i];if(!Object.prototype.hasOwnProperty.call(b,k))return false;var v1=a[k],v2=b[k],o=v1&&v2&&typeof v1==='object'&&typeof v2==='object';if(o){if(Array.isArray(v1)){if(!$arrayEq(v1,v2))return false}else if(v1 instanceof Uint8Array){if(!$uint8ArrayEq(v1,v2))return false}else if(!$deepEqual(v1,v2))return false}else if(v1!==v2&&!(Number.isNaN(v1)&&Number.isNaN(v2)))return false}return true}"
   )
 
-jsHelperUint8ArrayEq :: (String, String)
+jsHelperUint8ArrayEq :: (Text, Text)
 jsHelperUint8ArrayEq =
   ( "$uint8ArrayEq"
   , "function(a,b){if(a===b)return true;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true}"
   )
 
-jsEqHelpers :: [(String, String)]
+jsEqHelpers :: [(Text, Text)]
 jsEqHelpers =
   [ jsHelperValueEq
   , jsHelperArrayEq

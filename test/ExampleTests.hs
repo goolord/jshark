@@ -58,7 +58,7 @@ acquireExampleJs = do
     <*> wait lifeA
 
 renderExample :: ClosedEffect 'Unit -> IO String
-renderExample eff = pure (renderJSCompact (effectfulProgram eff))
+renderExample eff = pure (T.unpack (renderJSCompact (effectfulProgram eff)))
 
 parseCachedCase :: String -> IO String -> TestTree
 parseCachedCase name getJs = testCase name $ do

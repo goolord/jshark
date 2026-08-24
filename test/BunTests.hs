@@ -268,7 +268,7 @@ bunEvalTests =
                       ("document is not defined" `T.isInfixOf` T.pack (show e))
             , testCase "a non-terminating program hits the timeout" $ do
                 let
-                  spin = renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp))
+                  spin = T.unpack (renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)
@@ -445,7 +445,7 @@ assertBunAgrees :: (forall f. Expr f u) -> IO ()
 assertBunAgrees e = do
   let
     expected = encodeJSValue (evaluate e)
-    program = renderJS (pureProgram e)
+    program = T.unpack (renderJS (pureProgram e))
   got <- T.unpack <$> runJS program
   assertEqual
     ("evaluate JSON: " <> expected <> "\nbun JSON: " <> got <> "\njs:\n" <> program)

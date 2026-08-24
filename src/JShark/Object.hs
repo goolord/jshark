@@ -32,6 +32,7 @@ where
 
 import Data.Proxy
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Records (HasField (..))
 import GHC.TypeLits
 import JShark.Rec (Rec (..), (<:))
@@ -46,7 +47,7 @@ get ::
   forall k r f.
   KnownSymbol k =>
   Effect f ('MutableObject r) -> EffectSyntax f (Expr f (Field r k))
-get x = bindExpr $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
+get x = bindExpr $ UnsafeObjectGet x (T.pack (symbolVal (Proxy :: Proxy k)))
 
 instance
   (KnownSymbol k, u ~ Field r k) =>
@@ -73,7 +74,7 @@ set ::
   Effect f ('MutableObject r) -> Expr f (Field r k) -> EffectSyntax f (f 'Unit)
 set o v =
   toSyntax $
-    UnsafeObjectAssign (UnsafeObjectGet o (symbolVal (Proxy :: Proxy k))) (Lift v)
+    UnsafeObjectAssign (UnsafeObjectGet o (T.pack (symbolVal (Proxy :: Proxy k)))) (Lift v)
 
 -- | Empty object of a known record type.
 newObject :: Effect f ('MutableObject r)
@@ -115,7 +116,7 @@ unsafeObject :: Text -> Effect f ('MutableObject a)
 unsafeObject = UnsafeObject
 
 unsafeObjectGet :: Effect f object -> String -> Effect f u
-unsafeObjectGet = UnsafeObjectGet
+unsafeObjectGet o k = UnsafeObjectGet o (T.pack k)
 
 unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
 unsafeObjectAssign = UnsafeObjectAssign

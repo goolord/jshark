@@ -91,7 +91,7 @@ library
   build-depends:
     , base >= 4.17 && < 5
     , text >= 1.2 && < 3
-    , pretty >= 1.1 && < 2
+    , prettyprinter >= 1.7 && < 2
     , http-types >= 0.8 && < 1
     , bytestring >= 0.10.8 && < 1
     , containers >= 0.5 && < 1
@@ -308,3 +308,43 @@ benchmark jshark-compiler-examples
     , life
     , synth
     , todo-mvc
+
+executable print-size
+  import: bench
+  main-is:
+    PrintSize.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+benchmark jshark-forced
+  import: bench
+  type: exitcode-stdio-1.0
+  main-is:
+    Forced.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+benchmark jshark-synthetic
+  import: bench
+  type: exitcode-stdio-1.0
+  main-is:
+    Synthetic.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , jshark
+
+benchmark jshark-lucid-bench
+  import: bench, lucid-dep
+  type: exitcode-stdio-1.0
+  main-is:
+    LucidBench.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , jshark
+    , jshark-lucid

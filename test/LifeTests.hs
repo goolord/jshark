@@ -99,7 +99,7 @@ lifeJsCase :: String -> (forall f. Effect f 'Unit) -> TestTree
 lifeJsCase name eff = testCase name $ do
   prelude <- loadLifeJsPrelude
   let
-    js = renderJSCompact (effectfulProgram eff)
+    js = T.unpack (renderJSCompact (effectfulProgram eff))
     prog =
       JSProgram
         { jsFlags = []

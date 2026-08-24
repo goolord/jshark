@@ -223,10 +223,10 @@ ffi :: String -> Rec (Arg f) us -> Effect f v
 ffi s = FFI (classifyFFI s)
 
 classifyFFI :: String -> FFIForm
-classifyFFI s@('(' : _) = FFICall s
+classifyFFI s@('(' : _) = FFICall (T.pack s)
 classifyFFI s
-  | isUnparenthesizedArrow s = FFILambda s
-  | otherwise = FFICall s
+  | isUnparenthesizedArrow s = FFILambda (T.pack s)
+  | otherwise = FFICall (T.pack s)
 
 isUnparenthesizedArrow :: String -> Bool
 isUnparenthesizedArrow s =
@@ -235,7 +235,7 @@ isUnparenthesizedArrow s =
     _ -> False
 
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
-callMethod = CallMethod
+callMethod o n = CallMethod o (T.pack n)
 
 -- | @Object.assign(dst, src)@. In-place copy; @dst@ keeps its identity
 -- (needed when a closure already captured @dst@).
@@ -401,7 +401,7 @@ seedSoupRegion ::
   -> Effect f 'Unit
 seedSoupRegion alive seedOx seedOy seedW seedH gridW rng0 =
   FFI
-    (FFILambda (T.unpack soupSeedJs))
+    (FFILambda soupSeedJs)
     ( arg alive
         <: arg seedOx
         <: arg seedOy

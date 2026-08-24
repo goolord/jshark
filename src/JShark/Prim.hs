@@ -26,8 +26,7 @@ where
 
 import Data.Text (Text)
 import JShark.Types
-import Text.PrettyPrint (Doc)
-import qualified Text.PrettyPrint as P
+import Prettyprinter (Doc, parens)
 
 -- | Witness that a 'FixedOp' is a unary @Math@ op (refines kind indices).
 data MathUnary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where
@@ -207,7 +206,7 @@ isPureFixed :: FixedOp a b c u -> Bool
 isPureFixed FixStringify = False
 isPureFixed _ = True
 
-fixedUnaryJS :: FixedOp a b c u -> Doc -> Doc
+fixedUnaryJS :: FixedOp a b c u -> Doc ann -> Doc ann
 fixedUnaryJS n r = case n of
   FixToUpper -> r <> ".toUpperCase()"
   FixToLower -> r <> ".toLowerCase()"
@@ -215,30 +214,30 @@ fixedUnaryJS n r = case n of
   FixArrLen -> dotLength
   FixU8Len -> dotLength
   FixStrLen -> dotLength
-  FixStringify -> "JSON.stringify" <> P.parens r
-  FixToBigInt -> "BigInt" <> P.parens r
-  FixFromBigInt -> "Number" <> P.parens r
-  FixParseBigInt -> "BigInt" <> P.parens r
+  FixStringify -> "JSON.stringify" <> parens r
+  FixToBigInt -> "BigInt" <> parens r
+  FixFromBigInt -> "Number" <> parens r
+  FixParseBigInt -> "BigInt" <> parens r
   _ -> error "JShark.Prim.fixedUnaryJS: not a std unary op"
  where
   dotLength = r <> ".length"
 
-fixedBinaryJS :: FixedOp a b c u -> Doc -> Doc -> Doc
+fixedBinaryJS :: FixedOp a b c u -> Doc ann -> Doc ann -> Doc ann
 fixedBinaryJS n r a = case n of
-  FixIndexOf -> r <> ".indexOf" <> P.parens a
-  FixSplit -> r <> ".split" <> P.parens a
-  FixIncludes -> r <> ".includes" <> P.parens a
-  FixConcat -> r <> ".concat" <> P.parens a
-  FixJoin -> r <> ".join" <> P.parens a
-  FixTest -> r <> ".test" <> P.parens a
-  FixParseInt -> "parseInt" <> P.parens (r <> ", " <> a)
+  FixIndexOf -> r <> ".indexOf" <> parens a
+  FixSplit -> r <> ".split" <> parens a
+  FixIncludes -> r <> ".includes" <> parens a
+  FixConcat -> r <> ".concat" <> parens a
+  FixJoin -> r <> ".join" <> parens a
+  FixTest -> r <> ".test" <> parens a
+  FixParseInt -> "parseInt" <> parens (r <> ", " <> a)
   _ -> error "JShark.Prim.fixedBinaryJS: not a std binary op"
 
-fixedTernaryJS :: FixedOp a b c u -> Doc -> Doc -> Doc -> Doc
+fixedTernaryJS :: FixedOp a b c u -> Doc ann -> Doc ann -> Doc ann -> Doc ann
 fixedTernaryJS n r a b = case n of
   FixSlice -> slice
   FixArrSlice -> slice
-  FixReplace -> r <> ".replace" <> P.parens (a <> ", " <> b)
+  FixReplace -> r <> ".replace" <> parens (a <> ", " <> b)
   _ -> error "JShark.Prim.fixedTernaryJS: not a std ternary op"
  where
-  slice = r <> ".slice" <> P.parens (a <> ", " <> b)
+  slice = r <> ".slice" <> parens (a <> ", " <> b)

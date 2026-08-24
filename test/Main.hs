@@ -168,8 +168,7 @@ evaluatorTests =
           ValueBool b -> b @?= True
         T.isInfixOf
           "$deepEqual"
-          ( T.pack
-              ( renderJS
+          ( ( renderJS
                   (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
               )
           )
@@ -299,8 +298,7 @@ codegenTests =
     , testCase "whenSomeE binds then option-cases" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( fromSyntax
                         ( whenSomeE (ffi "opt" RecNil :: Effect f ('Option 'String)) $ \x ->
@@ -313,8 +311,7 @@ codegenTests =
     , testCase "loop0 is a recursive zero-arg function" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( fromSyntax
                         ( loop0
@@ -329,7 +326,7 @@ codegenTests =
     , testCase "foreverFrame reschedules requestAnimationFrame" $
         T.count
           "requestAnimationFrame"
-          (T.pack $ renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
+          (renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
           @?= 2
     ]
 
@@ -392,8 +389,7 @@ controlFlowTests =
     , testCase "discarded do keeps the last assignment" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( when_
                         condE
@@ -456,8 +452,7 @@ controlFlowTests =
     , testCase "stringCaseE of Unit arms is a switch statement" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( fromSyntax $ do
                         k <- toSyntax (ffi "key" RecNil)
@@ -481,8 +476,7 @@ controlFlowTests =
     , testCase "stringCaseE of values keeps the result bind" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( fromSyntax $ do
                         k <- toSyntax (ffi "key" RecNil)
@@ -504,8 +498,7 @@ controlFlowTests =
     , testCase "stringCaseE switches on the scrutinee ref" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( fromSyntax $ do
                         x <- toSyntax (ffi "val" RecNil)
@@ -548,8 +541,7 @@ stdlibTests =
     , testCase "Array.index truncates and throws out of bounds" $ do
         let
           js =
-            T.pack $
-              renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
+            renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
         T.isInfixOf "Math.trunc" js @?= True
         T.isInfixOf "throw" js @?= True
     , testCase "Array.map evaluates" $
@@ -578,13 +570,13 @@ stdlibTests =
         evaluateNumber (Array.length firstItems) @?= 2
     , testCase "Array.groupBy is map/filter/reduce, not a helper" $ do
         let
-          js = T.pack (renderJS (pureAST (Array.groupBy numArray (\_ -> string "k"))))
+          js = renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))
         T.isInfixOf "$groupBy" js @?= False
         T.isInfixOf ".reduce" js @?= True
         T.isInfixOf "\"key\"" js @?= True
     , testCase "Array.zipWith is Array.from, not a helper" $ do
         let
-          js = T.pack (renderJS (pureAST (Array.zipWith (+) numArray numArray)))
+          js = renderJS (pureAST (Array.zipWith (+) numArray numArray))
         T.isInfixOf "$zipWith" js @?= False
         T.isInfixOf "Array.from" js @?= True
     , testCase "Classes.fmap Array" $
@@ -674,7 +666,7 @@ stdlibTests =
         evaluateNumber (C.foldl (-) (number 0) numArray) @?= -3
         T.isInfixOf
           ".reduceRight"
-          (T.pack (renderJS (pureAST (C.foldr (+) (number 0) numArray))))
+          (renderJS (pureAST (C.foldr (+) (number 0) numArray)))
           @?= True
     , testCase "LetRec value rhs evaluates" $
         evaluateNumber (letRec (\_ -> number 1 + number 2) (\n -> n)) @?= 3
@@ -697,7 +689,7 @@ stdlibTests =
           ValueBool b -> b @?= True
     , testCase "Array.singleton is a one-element array" $ do
         evaluateNumber (Array.length (Array.singleton (number 7))) @?= 1
-        T.isInfixOf "[]" (T.pack (renderJS (pureAST (Array.singleton (number 7)))))
+        T.isInfixOf "[]" (renderJS (pureAST (Array.singleton (number 7))))
           @?= False
     , testCase "unit array literal keeps its slots" $
         renderJS (pureAST (Literal (ValueArray [ValueUnit, ValueUnit])))
@@ -716,8 +708,7 @@ stdlibTests =
     , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
           js =
-            T.pack
-              ( renderJS
+            ( renderJS
                   ( pureProgram
                       ( toLambda
                           (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a))
@@ -844,8 +835,7 @@ stdlibTests =
           let
             people = [Person ("p" <> T.pack (show i)) (fromIntegral i) | i <- [1 .. 15 :: Int]]
             js =
-              T.pack $
-                renderJS
+              renderJS
                   ( effectfulAST
                       ( fromSyntax $ do
                           c <- Dom.lookupId (string "c")
@@ -1054,7 +1044,7 @@ stdlibTests =
           @?= "const n0 = new Uint8Array(2);\nfill(n0);\nread(n0);"
     , testCase "locationHash is window.location.hash, not a bracket key" $ do
         let
-          js = T.pack $ renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
+          js = renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
         T.isInfixOf "window.location.hash" js @?= True
         T.isInfixOf "[\"location.hash\"]" js @?= False
     , testCase "forEach param name matches body uses" $
@@ -1082,8 +1072,7 @@ stdlibTests =
     , testCase "onClick assigns the DOM onclick property" $
         T.isInfixOf
           ".onclick ="
-          ( T.pack $
-              renderJS
+          ( renderJS
                 ( effectfulAST
                     ( fromSyntax
                         ( do
@@ -1102,8 +1091,7 @@ stdlibTests =
     , testCase ".== on number exprs uses === without eq helpers" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( pureAST
                     (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b)))
                 )
@@ -1112,8 +1100,7 @@ stdlibTests =
     , testCase "bound Number .== uses === (not $valueEq)" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( pureAST
                     (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1))
                 )
@@ -1122,24 +1109,23 @@ stdlibTests =
     , testCase "$valueEq helper includes null/object fast-path" $ do
         let
           (_, body) = jsHelperValueEq
-        T.isInfixOf "typeof" (T.pack body) @?= True
-        T.isInfixOf "null" (T.pack body) @?= True
+        T.isInfixOf "typeof" body @?= True
+        T.isInfixOf "null" body @?= True
     , testCase "frozen Number literals fold to === in .==" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 (pureAST (number 1 .== number 1))
         T.isInfixOf "true" js @?= True
         T.isInfixOf "$valueEq" js @?= False
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
         let
-          js = T.pack $ renderJS (effectfulAST (with2 fooE barE structuralEq))
+          js = renderJS (effectfulAST (with2 fooE barE structuralEq))
         T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf " == " js @?= False
     , testCase ".!= is !$valueEq" $ do
         let
-          js = T.pack $ renderJS (effectfulAST (with2 fooE barE structuralNEq))
+          js = renderJS (effectfulAST (with2 fooE barE structuralNEq))
         T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf "!($valueEq(" js @?= True
     , testCase "ffi takes an effectful function via ArgEffect" $
@@ -1205,8 +1191,8 @@ goodPartsTests =
               )
          in
           do
-            T.isInfixOf ".ok" (T.pack js) @?= True
-            T.isInfixOf ".value" (T.pack js) @?= True
+            T.isInfixOf ".ok" js @?= True
+            T.isInfixOf ".value" js @?= True
     , testCase "orElse on none" $
         evaluateNumber (orElse (none :: Expr f ('Option 'Number)) (number 3)) @?= 3
     , testCase "reduce evaluates" $
@@ -1282,7 +1268,7 @@ goodPartsTests =
     , testCase "hasOwn uses Object.prototype.hasOwnProperty.call" $
         T.isInfixOf
           "Object.prototype.hasOwnProperty.call"
-          (T.pack $ renderJS (effectfulAST (Object.hasOwn (UnsafeObject "o") (string "k"))))
+          (renderJS (effectfulAST (Object.hasOwn (UnsafeObject "o") (string "k"))))
           @?= True
     , testCase "create is Object.create" $
         renderJS
@@ -1440,13 +1426,12 @@ genericTests =
     , testCase "record field of a sum uses toSum" $
         T.isInfixOf
           "\"Red\""
-          (T.pack $ renderJS (effectfulAST (G.toObject (Badge Red))))
+          (renderJS (effectfulAST (G.toObject (Badge Red))))
           @?= True
     , testCase "whenTag on a nullary ctor compares .tag" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))
                 )
@@ -1457,8 +1442,7 @@ genericTests =
     , testCase "whenTag unary payload is the value" $
         T.isInfixOf
           ".payload"
-          ( T.pack $
-              renderJS
+          ( renderJS
                 ( effectfulAST
                     (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))
                 )
@@ -1467,8 +1451,7 @@ genericTests =
     , testCase "whenTag n-ary payload fields are gettable" $
         T.isInfixOf
           "[\"0\"]"
-          ( T.pack $
-              renderJS
+          ( renderJS
                 ( effectfulAST
                     ( fromSyntax $ do
                         s <- hold (G.toSum (Rect 2 3))
@@ -1487,8 +1470,7 @@ genericTests =
     , testCase "caseSum nullary checks every named tag" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( G.caseSum @Color (ffi "color" RecNil)
                         $ G.on @"Red" (\_ -> expr (string "r"))
@@ -1507,8 +1489,7 @@ genericTests =
     , testCase "caseSum Case_ is a suffix wildcard" $ do
         let
           js =
-            T.pack $
-              renderJS
+            renderJS
                 ( effectfulAST
                     ( G.caseSum @Color (ffi "color" RecNil)
                         $ G.on @"Red" (\_ -> expr (string "r"))
@@ -1521,8 +1502,7 @@ genericTests =
     , testCase "caseSum unary payload is the value" $
         T.isInfixOf
           ".payload"
-          ( T.pack $
-              renderJS
+          ( renderJS
                 ( effectfulAST
                     ( G.caseSum @Shape (ffi "shape" RecNil)
                         $ G.on @"Circle" (\r -> expr r)
@@ -1535,8 +1515,7 @@ genericTests =
     , testCase "caseSum n-ary payload fields are gettable" $
         T.isInfixOf
           "[\"0\"]"
-          ( T.pack $
-              renderJS
+          ( renderJS
                 ( effectfulAST
                     ( fromSyntax $ do
                         s <- hold (ffi "shape" RecNil)
@@ -1736,7 +1715,7 @@ compilerTests =
     , testCase "compilePure passthrough emits an IIFE" $ do
         clearCompilerCache
         out <- compilePure passthroughConfig (number 1 + number 2)
-        out @?= T.pack (renderJSCompact (pureProgram (number 1 + number 2)))
+        out @?= renderJSCompact (pureProgram (number 1 + number 2))
         assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
         assertBool
           "result is returned so minifiers cannot DCE it"
@@ -1783,7 +1762,7 @@ compilerTests =
             -- unless Compiler re-anchors via export default and strips it.
             let
               snippet = number 1 + number 2
-              raw = T.pack (renderJS (pureProgram snippet))
+              raw = renderJS (pureProgram snippet)
               cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified
             out <- compilePure cfg snippet
             assertBool "non-empty" (not (T.null out))

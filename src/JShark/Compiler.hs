@@ -87,7 +87,7 @@ import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
-import Text.PrettyPrint (Doc)
+import Prettyprinter (Doc)
 import Text.Read (readMaybe)
 
 -- | Compilation level for Google Closure Compiler.
@@ -460,13 +460,13 @@ formatJS = go 0
 
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
-compileTree :: CompilerConfig -> (OutputStyle -> Doc) -> IO Text
+compileTree :: CompilerConfig -> (OutputStyle -> Doc ann) -> IO Text
 compileTree cfg doc =
   forceCompiled
     =<< finishStyle (configStyle cfg)
       <$> compileWith
         cfg
-        (T.pack (renderJSCompact (doc (configStyle cfg))))
+        (renderJSCompact (doc (configStyle cfg)))
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff = compileTree cfg (`effectDoc` eff)
@@ -488,11 +488,11 @@ styleConfig cfg = case configStyle cfg of
   Readable -> cfg {configBackend = Passthrough}
   Minified -> cfg
 
-pureDoc :: OutputStyle -> ClosedExpr u -> Doc
+pureDoc :: OutputStyle -> ClosedExpr u -> Doc ann
 pureDoc Readable e = pureAST e
 pureDoc Minified e = pureProgram e
 
-effectDoc :: OutputStyle -> ClosedEffect u -> Doc
+effectDoc :: OutputStyle -> ClosedEffect u -> Doc ann
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
 

@@ -29,3 +29,5 @@ cabal.project.local~
 .ghc.environment.*
 _site/
 tools/
+.aider*
+*.csv

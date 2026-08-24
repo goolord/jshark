@@ -120,7 +120,7 @@ evaluateEffectJSONWith :: BunConfig -> ClosedEffect u -> IO Text
 evaluateEffectJSONWith cfg e =
   runProgram (bunTimeout cfg) (envProgram (bunEnv cfg) js)
  where
-  js = renderJSCompact (effectfulProgram e)
+  js = T.unpack (renderJSCompact (effectfulProgram e))
 
 envProgram :: BunEnv -> String -> JSProgram
 envProgram Sandbox js = plainProgram js
