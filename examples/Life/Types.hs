@@ -264,10 +264,6 @@ data LifeState = LifeState
   , nextChangedList :: [Int]
   , birthCounts :: ByteArray
   , birthTouched :: ByteArray
-  , dirtyCx0 :: Int
-  , dirtyCy0 :: Int
-  , dirtyCx1 :: Int
-  , dirtyCy1 :: Int
   , sceneDirty :: Bool
   }
   deriving Generic

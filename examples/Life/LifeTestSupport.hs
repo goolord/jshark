@@ -28,8 +28,8 @@ module LifeTestSupport
 where
 
 import Grid
-  ( BoundScratch (..)
-  , StepScratch (..)
+  ( StepScratch (..)
+  , StepCtx (..)
   , cellIdx
   , processCell
   , rebuildPackedCounts
@@ -199,9 +199,7 @@ runProcessCellAt ::
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number)
 runProcessCellAt alive species nextAlive nextSpecies w h x y = do
-  popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-  cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-  boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   counts <- bindExpr (newByteArray (number 256))
   touchedBuf <- bindExpr (newByteArray (number 8))
   liveList <- bindExpr $ Array.fromEffects []
@@ -215,9 +213,7 @@ runProcessCellAt alive species nextAlive nextSpecies w h x y = do
     nextSpecies
     liveList
     changedList
-    popScratch
-    cellScratch
-    boundScratch
+    stepCtx
     counts
     touchedBuf
     w
@@ -245,11 +241,9 @@ runStepGridOnce alive species nextAlive nextSpecies w h x0 y0 x1 y1 = do
   nextLiveList <- bindExpr $ Array.fromEffects []
   nextChangedList <- bindExpr $ Array.fromEffects []
   stepStamp <- bindExpr (newByteArray (w * h))
-  popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-  cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   counts <- bindExpr (newByteArray (number 256))
   touchedBuf <- bindExpr (newByteArray (number 8))
-  boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
   stepGrid
     alive
     species
@@ -267,8 +261,6 @@ runStepGridOnce alive species nextAlive nextSpecies w h x0 y0 x1 y1 = do
     stepStamp
     (number 1)
     (number 0)
-    popScratch
-    cellScratch
+    stepCtx
     counts
     touchedBuf
-    boundScratch

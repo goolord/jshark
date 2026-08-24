@@ -21,12 +21,12 @@ import Discover
   )
 import Engine
 import GHC.Generics (Generic)
-import Grid (cellIdx, packedIsAlive, u8Get)
+import Grid (StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
-import JShark.Generic (MutableObjectOf)
+import JShark.Generic (MutableObjectOf, toObject)
 import qualified JShark.Generic as G
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
@@ -92,6 +92,7 @@ boot canvas ctx = do
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
   viewport <- initViewport
   state <- initLife ctxH viewport
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   registry <- initRegistry
   indexTracker <- initIndexTracker
   seenSpecies <- initSeenSpecies
@@ -125,7 +126,8 @@ boot canvas ctx = do
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
-    whenS (not_ paused) (stepLifeBudget state registry now)
+    whenS (not_ paused) $
+      stepLifeBudget state registry stepCtx now
     tickIndex state registry indexTracker seenSpecies typesList now
     renderStart <- performanceNow
     renderLife ctxH viewport state
@@ -773,18 +775,19 @@ tickFps meter now = do
 stepLifeBudget ::
   Effect f (MutableObjectOf LifeState)
   -> Effect f ('MutableObject Registry)
+  -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-stepLifeBudget state registry frameStart = do
+stepLifeBudget state registry stepCtx frameStart = do
   let
     budget = number (fromIntegral simBudgetMs)
-  stepLife state registry
+  stepLife state registry stepCtx
   t1 <- performanceNow
   whenS (t1 - frameStart .< budget) $ do
-    stepLife state registry
+    stepLife state registry stepCtx
     t2 <- performanceNow
     whenS (t2 - frameStart .< budget) $
-      stepLife state registry
+      stepLife state registry stepCtx
 
 tickIndex ::
   Effect f (MutableObjectOf LifeState)

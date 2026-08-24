@@ -239,14 +239,30 @@
     const counts = E._speciesCounts;
     const touched = E._speciesTouched;
 
-    for (let i = 0; i < n; i++) E.gridA[i] = alive[i] & 1;
-    E.stepMainLUT();
-    const grid = E.gridA;
-
     const xStart = Math.max(0, Math.floor(x0) - 1);
     const yStart = Math.max(0, Math.floor(y0) - 1);
     const xStop = Math.min(w, Math.floor(x1) + 2);
     const yStop = Math.min(h, Math.floor(y1) + 2);
+    const regionRows = yStop - yStart;
+    const copyFull = regionRows * w * 2 >= n;
+
+    if (copyFull) {
+      for (let i = 0; i < n; i++) E.gridA[i] = alive[i] & 1;
+      E.stepMainLUT();
+    } else {
+      const copyY0 = Math.max(0, yStart - 1);
+      const copyYStop = Math.min(h, yStop + 1);
+      for (let y = copyY0; y < copyYStop; y++) {
+        const row = y * w;
+        for (let x = 0; x < w; x++) E.gridA[row + x] = alive[row + x] & 1;
+      }
+      // Pass yStart/yStop so stepRegionLUT applies row-0 / row-h-1 edge copies.
+      LifeLUT.stepRegionLUT(E.LUT, E.gridA, E.gridB, w, h, yStart, yStop);
+      const tmp = E.gridA;
+      E.gridA = E.gridB;
+      E.gridB = tmp;
+    }
+    const grid = E.gridA;
 
     let pop = 0;
     let bx0 = 1e9;

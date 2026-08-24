@@ -23,8 +23,7 @@ where
 import Discover (Registry, discoverLife)
 import Grid
   ( BoundScratch (..)
-  , CanvasDirty (..)
-  , StepScratch (..)
+  , StepCtx (..)
   , cellIdx
   , drawGridViewport
   , expandBoundsForLive
@@ -166,9 +165,10 @@ initLife ctx viewport = do
 stepLife ::
   Effect f (MutableObjectOf LifeState)
   -> Effect f ('MutableObject Registry)
+  -> Effect f (MutableObjectOf StepCtx)
   -> EffectSyntax f (f 'Unit)
-stepLife state registry = do
-  stepGeneration state
+stepLife state registry stepCtx = do
+  stepGeneration state stepCtx
   maybeDiscover state registry
 
 maybeDiscover ::
@@ -213,8 +213,10 @@ maybeDiscover state registry = do
       set @"recentDiscover" state nm
 
 stepGeneration ::
-  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
-stepGeneration state = do
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f (MutableObjectOf StepCtx)
+  -> EffectSyntax f (f 'Unit)
+stepGeneration state stepCtx = do
   w <- pure (number (fromIntegral gridW))
   h <- pure (number (fromIntegral gridH))
   x0 <- state.boundX0
@@ -231,17 +233,31 @@ stepGeneration state = do
   stepStamp <- state.stepStamp
   prevPop <- state.pop
   gen <- state.gen
+  _ <- set @"touchedLen" stepCtx (number 0)
+  _ <- set @"best" stepCtx (number 0)
+  _ <- set @"bestCount" stepCtx (number 0)
   let
     -- Tags 1/2 alternate; stamps start at 0. Dense scans skip stamps;
     -- sparse dedup requires the active tag never be 0.
     stepTagVal = rem_ gen (number 2) + number 1
   Array.clear_ nextLiveList
   Array.clear_ nextChangedList
-  expanded <- expandBoundsForLive alive w h x0 y0 x1 y1
-  x0e <- expanded.bx0
-  y0e <- expanded.by0
-  x1e <- expanded.bx1
-  y1e <- expanded.by1
+  _ <-
+    expandBoundsForLive
+      alive
+      w
+      h
+      x0
+      y0
+      x1
+      y1
+      prevLiveList
+      prevPop
+      stepCtx
+  x0e <- stepCtx.bx0
+  y0e <- stepCtx.by0
+  x1e <- stepCtx.bx1
+  y1e <- stepCtx.by1
   ifS
     (x1 .< x0)
     ( do
@@ -253,10 +269,6 @@ stepGeneration state = do
         done
     )
     ( do
-        boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
-        popHolder <- hold (toObject (StepScratch 0 0 0 0 0))
-        popScratch <- hold (toObject (StepScratch 0 0 0 0 0))
-        cellScratch <- hold (toObject (StepScratch 0 0 0 0 0))
         birthCounts <- state.birthCounts
         birthTouched <- state.birthTouched
         canEngine <- engineCanStep
@@ -278,9 +290,8 @@ stepGeneration state = do
                   y1e
                   nextLiveList
                   nextChangedList
-                  boundScratch
-              set @"pop" popHolder v
-              done
+                  stepCtx
+              set @"pop" stepCtx v
           )
           ( do
               v <-
@@ -301,19 +312,16 @@ stepGeneration state = do
                   stepStamp
                   stepTagVal
                   prevPop
-                  popScratch
-                  cellScratch
+                  stepCtx
                   birthCounts
                   birthTouched
-                  boundScratch
-              set @"pop" popHolder v
-              done
+              set @"pop" stepCtx v
           )
-        p <- popHolder.pop
-        bx0n <- boundScratch.bx0
-        by0n <- boundScratch.by0
-        bx1n <- boundScratch.bx1
-        by1n <- boundScratch.by1
+        p <- stepCtx.pop
+        bx0n <- stepCtx.bx0
+        by0n <- stepCtx.by0
+        bx1n <- stepCtx.bx1
+        by1n <- stepCtx.by1
         ifS
           (bx1n .< bx0n)
           ( do
@@ -403,7 +411,6 @@ renderLife ctx viewport state = do
   renderValid <- getProp viewport "renderPanValid"
   viewportDirty <- pure (not_ renderValid)
   fullRedraw <- pure (sceneDirty .|| viewportDirty)
-  dirtyScratch <- hold (toObject (CanvasDirty 0 0 (-1) (-1)))
   drawGridViewport
     ctx
     img
@@ -422,7 +429,6 @@ renderLife ctx viewport state = do
     panX
     panY
     zoom
-    dirtyScratch
   Array.clear_ changedList
   set @"sceneDirty" state false_
   _ <- setProp viewport "renderPanX" panX

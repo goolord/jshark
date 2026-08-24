@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -13,6 +14,7 @@ module Grid
   ( BoundScratch (..)
   , CanvasDirty (..)
   , StepScratch (..)
+  , StepCtx (..)
   , u8Get
   , setU8
   , stepGrid
@@ -37,7 +39,7 @@ import GHC.Generics (Generic)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
-import JShark.Generic (MutableObjectOf, toObject)
+import JShark.Generic (MutableObjectOf)
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
 
@@ -63,6 +65,20 @@ data BoundScratch = BoundScratch
   , by0 :: Double
   , bx1 :: Double
   , by1 :: Double
+  }
+  deriving Generic
+
+-- | Reused per-frame step scratch: bounds, population, birth-tie tallies.
+data StepCtx = StepCtx
+  { bx0 :: Double
+  , by0 :: Double
+  , bx1 :: Double
+  , by1 :: Double
+  , pop :: Double
+  , touchedLen :: Double
+  , best :: Double
+  , bestCount :: Double
+  , n :: Double
   }
   deriving Generic
 
@@ -264,11 +280,9 @@ stepGrid ::
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f (MutableObjectOf StepScratch)
-  -> Effect f (MutableObjectOf StepScratch)
+  -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
-  -> Effect f (MutableObjectOf BoundScratch)
   -> EffectSyntax f (Expr f 'Number)
 stepGrid
   alive
@@ -287,11 +301,9 @@ stepGrid
   stepStamp
   stepTag
   prevPop
-  popScratch
-  cellScratch
+  stepCtx
   birthCounts
-  birthTouched
-  boundScratch = do
+  birthTouched = do
   let
     (xStart, yStart, xStop, yStop) =
       clampLiveBounds w h x0 y0 x1 y1 (number 1)
@@ -318,11 +330,11 @@ stepGrid
           (u8FillRegion nextSpecies w xStart yStart xStop yStop (number 0))
         done
     )
-  set @"bx0" boundScratch (number 1e9)
-  set @"by0" boundScratch (number 1e9)
-  set @"bx1" boundScratch (number (-1))
-  set @"by1" boundScratch (number (-1))
-  set @"pop" popScratch 0
+  set @"bx0" stepCtx (number 1e9)
+  set @"by0" stepCtx (number 1e9)
+  set @"bx1" stepCtx (number (-1))
+  set @"by1" stepCtx (number (-1))
+  set @"pop" stepCtx 0
   let
     runCell x y =
       processCell
@@ -332,9 +344,7 @@ stepGrid
         nextSpecies
         nextLiveList
         nextChangedList
-        popScratch
-        cellScratch
-        boundScratch
+        stepCtx
         birthCounts
         birthTouched
         w
@@ -377,7 +387,7 @@ stepGrid
         forRange_ xStart xStop $ \x ->
           runCell x y
     )
-  popScratch.pop
+  stepCtx.pop
 
 processCell ::
   Expr f 'Uint8Array
@@ -386,9 +396,7 @@ processCell ::
   -> Expr f 'Uint8Array
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf StepScratch)
-  -> Effect f (MutableObjectOf StepScratch)
-  -> Effect f (MutableObjectOf BoundScratch)
+  -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Number
@@ -403,9 +411,7 @@ processCell
   nextSpecies
   nextLiveList
   nextChangedList
-  popScratch
-  cellScratch
-  boundScratch
+  stepCtx
   counts
   touchedBuf
   w
@@ -419,22 +425,22 @@ processCell
     alive0 = bitAnd b (number 1)
     nCount = packedCount b
   sp <- u8Get species i
-  set @"touchedLen" cellScratch 0
-  set @"best" cellScratch 0
-  set @"bestCount" cellScratch 0
+  set @"touchedLen" stepCtx 0
+  set @"best" stepCtx 0
+  set @"bestCount" stepCtx 0
   whenS (alive0 .== 0 .&& nCount .== 3) $
     forRange_ (number (-1)) (number 2) $ \dy ->
       forRange_ (number (-1)) (number 2) $ \dx ->
         whenS (not_ (dx .== 0 .&& dy .== 0)) $
-          countBirthSpecies alive species counts touchedBuf cellScratch w h x y dx dy
-  bestSp <- cellScratch.best
+          countBirthSpecies alive species counts touchedBuf stepCtx w h x y dx dy
+  bestSp <- stepCtx.best
   whenS
     (alive0 .== 1 .&& (nCount .== 2 .|| nCount .== 3))
     ( do
         setU8 nextSpecies i sp
         Array.push_ nextLiveList i
-        bumpPop popScratch
-        bumpBounds boundScratch x y
+        bumpPop stepCtx
+        bumpBounds stepCtx x y
     )
   whenS
     (alive0 .== 1 .&& not_ (nCount .== 2 .|| nCount .== 3))
@@ -456,8 +462,7 @@ processCell
         nextSpecies
         nextLiveList
         nextChangedList
-        popScratch
-        boundScratch
+        stepCtx
         w
         h
         x
@@ -466,15 +471,14 @@ processCell
         bestSp
     )
   whenS (alive0 .== 0 .&& nCount .!= 3) (setU8 nextSpecies i (number 0))
-  resetBirthCounts counts touchedBuf cellScratch
+  resetBirthCounts counts touchedBuf stepCtx
 
 markBorn ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf StepScratch)
-  -> Effect f (MutableObjectOf BoundScratch)
+  -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -482,14 +486,14 @@ markBorn ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-markBorn nextAlive nextSpecies nextLiveList nextChangedList popScratch boundScratch w h x y i sp = do
+markBorn nextAlive nextSpecies nextLiveList nextChangedList stepCtx w h x y i sp = do
   setPackedAlive nextAlive i (number 1)
   bumpPackedNeighbors nextAlive w h x y (number 2)
   setU8 nextSpecies i sp
   Array.push_ nextLiveList i
   Array.push_ nextChangedList i
-  bumpPop popScratch
-  bumpBounds boundScratch x y
+  bumpPop stepCtx
+  bumpBounds stepCtx x y
 
 markDead ::
   Expr f 'Uint8Array
@@ -509,7 +513,7 @@ markDead nextAlive nextSpecies _nextLiveList nextChangedList w h x y i = do
   Array.push_ nextChangedList i
 
 bumpBounds ::
-  Effect f (MutableObjectOf BoundScratch)
+  Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
@@ -528,7 +532,7 @@ countBirthSpecies ::
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
-  -> Effect f (MutableObjectOf StepScratch)
+  -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -565,7 +569,7 @@ countBirthSpecies alive species counts touchedBuf scratch w h x y dx dy = do
 resetBirthCounts ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
-  -> Effect f (MutableObjectOf StepScratch)
+  -> Effect f (MutableObjectOf StepCtx)
   -> EffectSyntax f (f 'Unit)
 resetBirthCounts counts touchedBuf scratch = do
   len <- scratch.touchedLen
@@ -573,7 +577,7 @@ resetBirthCounts counts touchedBuf scratch = do
     sp <- u8Get touchedBuf j
     setU8 counts sp 0
 
-bumpPop :: Effect f (MutableObjectOf StepScratch) -> EffectSyntax f (f 'Unit)
+bumpPop :: Effect f (MutableObjectOf StepCtx) -> EffectSyntax f (f 'Unit)
 bumpPop scratch = do
   p <- scratch.pop
   set @"pop" scratch (p + 1)
@@ -586,104 +590,42 @@ expandBoundsForLive ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> EffectSyntax f (Effect f (MutableObjectOf BoundScratch))
-expandBoundsForLive alive w h x0 y0 x1 y1 = do
-  scratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
-  set @"bx0" scratch x0
-  set @"by0" scratch y0
-  set @"bx1" scratch x1
-  set @"by1" scratch y1
+  -> Expr f ('Array 'Number)
+  -> Expr f 'Number
+  -> Effect f (MutableObjectOf StepCtx)
+  -> EffectSyntax f (f 'Unit)
+expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
+  set @"bx0" stepCtx x0
+  set @"by0" stepCtx y0
+  set @"bx1" stepCtx x1
+  set @"by1" stepCtx y1
   let
     xa = Math.max (number 0) (x0 - number 1)
     ya = Math.max (number 0) (y0 - number 1)
     xb = Math.min (w - number 1) (x1 + number 1)
     yb = Math.min (h - number 1) (y1 + number 1)
-  forRange_ ya (yb + number 1) $ \y ->
-    forRange_ xa (xb + number 1) $ \x -> do
-      let
-        i = cellIdx w x y
-      whenS (packedIsAlive alive i) (bumpBounds scratch x y)
-  pure scratch
-
-bumpCanvasDirty ::
-  Effect f (MutableObjectOf CanvasDirty)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-bumpCanvasDirty scratch x0 y0 x1 y1 = do
-  curCx0 <- scratch.cx0
-  curCy0 <- scratch.cy0
-  curCx1 <- scratch.cx1
-  curCy1 <- scratch.cy1
-  _ <- set @"cx0" scratch (Math.min curCx0 x0)
-  _ <- set @"cy0" scratch (Math.min curCy0 y0)
-  _ <- set @"cx1" scratch (Math.max curCx1 x1)
-  set @"cy1" scratch (Math.max curCy1 y1)
-
-paintGridCell ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Effect f (MutableObjectOf CanvasDirty)
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-paintGridCell pixels cw ch paletteRgba alive species w scale panX panY bg dirtyScratch gi = do
-  let
-    x = rem_ gi w
-    y = Math.floor (gi / w)
-    sx0 = Math.floor (x * scale + panX)
-    sx1 = Math.ceil ((x + number 1) * scale + panX)
-    sy0 = Math.floor (y * scale + panY)
-    sy1 = Math.ceil ((y + number 1) * scale + panY)
-    cellW = sx1 - sx0
-    cellH = sy1 - sy0
-  whenS
-    ( cellW .> 0
-        .&& cellH .> 0
-        .&& sx1 .> 0
-        .&& sy1 .> 0
-        .&& sx0 .< cw
-        .&& sy0 .< ch
+    regionCells = (xb - xa + number 1) * (yb - ya + number 1)
+  ifS
+    ( prevPop .> 0
+        .&& Array.length liveList .> 0
+        .&& Array.length liveList .< regionCells / number 4
     )
-    ( do
-        sp <- u8Get species gi
+    ( forRange_ (number 0) (Array.length liveList) $ \k -> do
         let
-          base = sp * number 4
-        r <- u8Get paletteRgba base
-        g <- u8Get paletteRgba (base + number 1)
-        b <- u8Get paletteRgba (base + number 2)
-        a <- u8Get paletteRgba (base + number 3)
-        let
-          liveColor = r + shl g (number 8) + shl b (number 16) + shl a (number 24)
-          dx0 = Math.max (number 0) sx0
-          dy0 = Math.max (number 0) sy0
-          dx1 = Math.min cw sx1
-          dy1 = Math.min ch sy1
-        ifS
-          (packedIsAlive alive gi)
-          ( do
-              toSyntax_ (rgbaFillRect pixels cw ch sx0 sy0 cellW cellH liveColor)
-              done
-          )
-          ( do
-              toSyntax_ (rgbaFillRect pixels cw ch sx0 sy0 cellW cellH bg)
-              done
-          )
-        bumpCanvasDirty dirtyScratch dx0 dy0 dx1 dy1
-        done
+          i = Array.index liveList k
+          x = rem_ i w
+          y = Math.floor (i / w)
+        whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
     )
+    ( forRange_ ya (yb + number 1) $ \y ->
+        forRange_ xa (xb + number 1) $ \x -> do
+          let
+            i = cellIdx w x y
+          whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
+    )
+  done
 
--- | RGBA buffer draw: no @fillRect@ loop; dirty @putImageData@ blit only.
+-- | RGBA buffer draw: batched cell paint + dirty @putImageData@ blit.
 drawGridViewport ::
   Effect f ('MutableObject Canvas.Context2D)
   -> Expr f ('MutableObject Canvas.ImageData)
@@ -702,7 +644,6 @@ drawGridViewport ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f (MutableObjectOf CanvasDirty)
   -> EffectSyntax f (f 'Unit)
 drawGridViewport
   ctx
@@ -721,8 +662,7 @@ drawGridViewport
   ch
   panX
   panY
-  zoomLevel
-  dirtyScratch = do
+  zoomLevel = do
   let
     scale = px * zoomLevel
     visX0 = Math.max (number 0) (Math.floor ((number 0 - panX) / scale) - number 1)
@@ -734,80 +674,46 @@ drawGridViewport
         + shl (number 23) (number 8)
         + shl (number 42) (number 16)
         + shl (number 255) (number 24)
-  set @"cx0" dirtyScratch (number 1e9)
-  set @"cy0" dirtyScratch (number 1e9)
-  set @"cx1" dirtyScratch (number (-1))
-  set @"cy1" dirtyScratch (number (-1))
+  dirty <-
+    bindExpr $
+      paintGridCells
+        pixels
+        cw
+        ch
+        paletteRgba
+        alive
+        species
+        w
+        scale
+        panX
+        panY
+        bg
+        liveList
+        changedList
+        fullRedraw
+        visX0
+        visX1
+        visY0
+        visY1
+  isFull <- bindExpr $ ffi "d=>d.full" (arg dirty <: RecNil)
   ifS
-    fullRedraw
-    ( do
-        toSyntax_
-          ( fillRgbaImageData
-              pixels
-              (number 15)
-              (number 23)
-              (number 42)
-              (number 255)
-          )
-        forRange_ (number 0) (Array.length liveList) $ \k -> do
-          let
-            gi = Array.index liveList k
-            x = rem_ gi w
-            y = Math.floor (gi / w)
-          whenS
-            (x .>= visX0 .&& x .< visX1 .&& y .>= visY0 .&& y .< visY1)
-            ( paintGridCell
-                pixels
-                cw
-                ch
-                paletteRgba
-                alive
-                species
-                w
-                scale
-                panX
-                panY
-                bg
-                dirtyScratch
-                gi
-            )
-        Canvas.putImageData ctx img (number 0) (number 0)
-    )
+    isFull
+    (Canvas.putImageData ctx img (number 0) (number 0))
     ( whenS (Array.length changedList .> 0) $
         do
-          forRange_ (number 0) (Array.length changedList) $ \k -> do
-            let
-              gi = Array.index changedList k
-              x = rem_ gi w
-              y = Math.floor (gi / w)
-            whenS
-              (x .>= visX0 .&& x .< visX1 .&& y .>= visY0 .&& y .< visY1)
-              ( paintGridCell
-                  pixels
-                  cw
-                  ch
-                  paletteRgba
-                  alive
-                  species
-                  w
-                  scale
-                  panX
-                  panY
-                  bg
-                  dirtyScratch
-                  gi
-              )
-          dirtyCx0 <- dirtyScratch.cx0
-          dirtyCy0 <- dirtyScratch.cy0
-          dirtyCx1 <- dirtyScratch.cx1
-          dirtyCy1 <- dirtyScratch.cy1
+          painted <- bindExpr $ ffi "d=>d.painted" (arg dirty <: RecNil)
+          ix0 <- bindExpr $ ffi "d=>Math.floor(d.cx0)" (arg dirty <: RecNil)
+          iy0 <- bindExpr $ ffi "d=>Math.floor(d.cy0)" (arg dirty <: RecNil)
+          ix1 <- bindExpr $ ffi "d=>Math.ceil(d.cx1)" (arg dirty <: RecNil)
+          iy1 <- bindExpr $ ffi "d=>Math.ceil(d.cy1)" (arg dirty <: RecNil)
           let
-            ix0 = Math.floor dirtyCx0
-            iy0 = Math.floor dirtyCy0
-            ix1 = Math.ceil dirtyCx1
-            iy1 = Math.ceil dirtyCy1
             dw = ix1 - ix0
             dh = iy1 - iy0
+          whenS (not_ painted) $
+            toSyntax $
+              ffi
+                "(()=>{console.warn('[Life] changed cells produced no visible dirty rect');})"
+                RecNil
           whenS (dw .> 0 .&& dh .> 0) $
             Canvas.putImageDataRegion ctx img (number 0) (number 0) ix0 iy0 dw dh
     )

@@ -8,7 +8,7 @@
 
 module LifeTests (lifeTests) where
 
-import Grid (BoundScratch (..), rebuildPackedCounts)
+import Grid (StepCtx (StepCtx), rebuildPackedCounts)
 import LifeTestSupport
   ( beehiveCoords
   , blockCoords
@@ -222,8 +222,8 @@ patternGrid seed coords expectedPop = do
     done
   cells <- coords
   coordsMatch alive w cells
-  pop <- gridPop alive w h
-  LifeAssert.assertEqual expectedPop pop
+  popN <- gridPop alive w h
+  LifeAssert.assertEqual expectedPop popN
   done
 
 testBlockStable :: forall f. Effect f 'Unit
@@ -417,8 +417,8 @@ testEngineStepGeneration = fromSyntax $ do
   seedBlock alive w h
   nextLiveList <- bindExpr $ Array.fromEffects []
   nextChangedList <- bindExpr $ Array.fromEffects []
-  boundScratch <- hold (toObject (BoundScratch 0 0 (-1) (-1)))
-  pop <-
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
+  popN <-
     engineStepGeneration
       alive
       species
@@ -432,8 +432,8 @@ testEngineStepGeneration = fromSyntax $ do
       (number 2)
       nextLiveList
       nextChangedList
-      boundScratch
-  LifeAssert.assertEqual (number 4) pop
+      stepCtx
+  LifeAssert.assertEqual (number 4) popN
   cells <- blockCoords
   coordsMatch nextAlive w cells
   done

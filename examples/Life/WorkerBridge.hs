@@ -16,7 +16,7 @@ module WorkerBridge
   )
 where
 
-import Grid (BoundScratch (..))
+import Grid (StepCtx)
 import JShark.Api
 import qualified JShark.Array as Array
 import JShark.Generic (MutableObjectOf)
@@ -82,7 +82,7 @@ engineStepGeneration ::
   -> Expr f 'Number
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf BoundScratch)
+  -> Effect f (MutableObjectOf StepCtx)
   -> EffectSyntax f (Expr f 'Number)
 engineStepGeneration
   alive
@@ -97,7 +97,7 @@ engineStepGeneration
   y1
   nextLiveList
   nextChangedList
-  boundScratch = do
+  stepCtx = do
   Array.clear_ nextLiveList
   Array.clear_ nextChangedList
   result <-
@@ -122,13 +122,13 @@ engineStepGeneration
             <: arg nextChangedList
             <: RecNil
         )
-  pop <- bindExpr $ ffi "r=>r.pop" (arg result <: RecNil)
+  popOut <- bindExpr $ ffi "r=>r.pop" (arg result <: RecNil)
   bx0n <- bindExpr $ ffi "r=>r.bx0" (arg result <: RecNil)
   by0n <- bindExpr $ ffi "r=>r.by0" (arg result <: RecNil)
   bx1n <- bindExpr $ ffi "r=>r.bx1" (arg result <: RecNil)
   by1n <- bindExpr $ ffi "r=>r.by1" (arg result <: RecNil)
-  set @"bx0" boundScratch bx0n
-  set @"by0" boundScratch by0n
-  set @"bx1" boundScratch bx1n
-  set @"by1" boundScratch by1n
-  pure pop
+  set @"bx0" stepCtx bx0n
+  set @"by0" stepCtx by0n
+  set @"bx1" stepCtx bx1n
+  set @"by1" stepCtx by1n
+  pure popOut
