@@ -2,9 +2,9 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
@@ -105,6 +105,9 @@ module JShark
   -- Optimization
   , optimize
   , optimizeEffect
+  , nodeCountExpr
+  , nodeCountEff
+  , closedEffectNodes
   , optimizedExprSize
   , optimizedEffectSize
   -- Codegen
@@ -160,7 +163,18 @@ import qualified JShark.Prim as Prim
 import JShark.Rec
 import JShark.Types
 import Numeric (readInt, showFFloat, showHex)
-import Prettyprinter (Doc, (<+>), braces, parens, punctuate, hcat, nest, semi, colon, dquotes)
+import Prettyprinter
+  ( Doc
+  , braces
+  , colon
+  , dquotes
+  , hcat
+  , nest
+  , parens
+  , punctuate
+  , semi
+  , (<+>)
+  )
 import qualified Prettyprinter as P
 import Prettyprinter.Internal (Doc (Annotated, Cat, Empty, Nest))
 import qualified Prettyprinter.Render.Text as PRT
@@ -413,7 +427,8 @@ numberToBigInt :: Double -> Integer
 numberToBigInt d
   | isFiniteDouble d && d == fromInteger n = n
   | otherwise =
-      error "evaluate: Number cannot be converted to BigInt because it is not an integer"
+      error
+        "evaluate: Number cannot be converted to BigInt because it is not an integer"
  where
   n = truncate d
 
@@ -565,7 +580,9 @@ jsUint8ArrayLit ba =
         "new Uint8Array"
           <> P.parens
             ( P.brackets
-                (P.hcat (P.punctuate ", " (map (P.pretty . (fromIntegral :: Word8 -> Int)) elems)))
+                ( P.hcat
+                    (P.punctuate ", " (map (P.pretty . (fromIntegral :: Word8 -> Int)) elems))
+                )
             )
 
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
@@ -908,26 +925,16 @@ foldFixed _ se _ = \case
 
 data Metadata = Metadata
   { mdSize :: !Int
-  , mdFreeVars :: !(IM.IntMap Int)
   , mdIsPure :: !Bool
   , mdIsCheap :: !Bool
   }
 
 instance Semigroup Metadata where
-  (<>) = mergeMetadata
+  Metadata s1 p1 c1 <> Metadata s2 p2 c2 =
+    Metadata (s1 + s2) (p1 && p2) (c1 && c2)
 
 instance Monoid Metadata where
-  mempty = Metadata 0 IM.empty True True
-
-mergeMetadata :: Metadata -> Metadata -> Metadata
-mergeMetadata (Metadata s1 f1 p1 c1) (Metadata s2 f2 p2 c2) =
-  Metadata (s1 + s2) (unionFreeVars f1 f2) (p1 && p2) (c1 && c2)
-
-unionFreeVars :: IM.IntMap Int -> IM.IntMap Int -> IM.IntMap Int
-unionFreeVars f1 f2
-  | IM.null f1 = f2
-  | IM.null f2 = f1
-  | otherwise = IM.unionWith (+) f1 f2
+  mempty = Metadata 0 True True
 
 -- | 'evaluate' in 'IO'. Same semantics as 'evaluate'.
 evaluateCached :: ClosedExpr u -> IO (Value u)
@@ -936,6 +943,7 @@ evaluateCached e = pure (evaluate e)
 -- | Vertical separation of documents, equivalent to HughesPJ's $$.
 -- Empty documents are skipped, so @mempty $$ x = x@.
 infixl 5 $$
+
 ($$) :: Doc ann -> Doc ann -> Doc ann
 a $$ b
   | isEmptyDoc a = b
@@ -1169,18 +1177,70 @@ varStampDoc :: Env -> Stamp u -> Doc ann
 varStampDoc env s =
   let
     i = stampId s
-  in
+   in
     if i < 0
       then maybe mempty nDoc (IM.lookup i env)
       else nDoc i
 
 -- | Optimizer tag for a PHOAS continuation probed with a fresh 'allocTag'
 -- stamp (see 'probeContEff' / 'probeContExpr').
-binderTagOf :: Metadata -> Int
-binderTagOf md =
-  case IM.lookupMin (mdFreeVars md) of
-    Just (k, _) -> k
+binderTagOf :: StampProbe -> Int
+binderTagOf sp =
+  case spMinNeg sp of
+    Just t -> t
     Nothing -> nestedDummyId
+
+data StampProbe = StampProbe
+  { spMinNeg :: Maybe Int
+  , spCounts :: !(IM.IntMap Int)
+  }
+
+instance Semigroup StampProbe where
+  StampProbe mn c <> StampProbe mn' c' =
+    StampProbe (minMaybe mn mn') (IM.unionWith (+) c c')
+
+instance Monoid StampProbe where
+  mempty = StampProbe Nothing IM.empty
+
+stampProbeVar :: Int -> StampProbe
+stampProbeVar i =
+  StampProbe
+    (if i < 0 then Just i else Nothing)
+    (IM.singleton i 1)
+
+stampProbeExpr :: Expr Stamp u -> StampProbe
+stampProbeExpr = \case
+  Var (Embed e') -> stampProbeExpr e'
+  Var (EmbedEff e') -> stampProbeEff e'
+  Var (Stamp i) -> stampProbeVar i
+  e -> foldExpr nestedDummy stampProbeExpr (const mempty) stampProbeEff e
+
+stampProbeEff :: Effect Stamp u -> StampProbe
+stampProbeEff e =
+  foldEff nestedDummy stampProbeExpr stampProbeEff (const mempty) e
+
+bindProbeTag :: Int -> Effect Stamp u -> (Int, Int)
+bindProbeTag probeTag _ = (probeTag, 1)
+
+letProbeTag :: Int -> Expr Stamp u -> (Int, Int)
+letProbeTag probeTag _ = (probeTag, 1)
+
+elimExprUses :: Int -> Expr Stamp v -> Metadata -> Int
+elimExprUses tag body mdBody =
+  if mdSize mdBody > optSmall
+    then 2
+    else IM.findWithDefault 0 tag (spCounts (stampProbeExpr body))
+
+elimEffUses :: Int -> Effect Stamp v -> Metadata -> Int
+elimEffUses tag body mdBody =
+  if mdSize mdBody > optSmall
+    then 2
+    else IM.findWithDefault 0 tag (spCounts (stampProbeEff body))
+
+minMaybe :: Maybe Int -> Maybe Int -> Maybe Int
+minMaybe Nothing y = y
+minMaybe x Nothing = x
+minMaybe (Just a) (Just b) = Just (min a b)
 
 probeContEff ::
   CG -> (Stamp u -> Effect Stamp v) -> (CG, Effect Stamp v, Int)
@@ -1346,6 +1406,10 @@ nodeCountEff e =
           e
       )
 
+closedEffectNodes :: ClosedEffect u -> Int
+closedEffectNodes (e :: ClosedEffect u) = nodeCountEff (e :: Effect Stamp u)
+{-# NOINLINE closedEffectNodes #-}
+
 cheapExpr :: Expr Stamp u -> Bool
 cheapExpr = \case
   Literal v -> isCheapValue v
@@ -1353,34 +1417,38 @@ cheapExpr = \case
   Var (EmbedEff e') -> cheapEffect e'
   Var _ -> True
   e ->
-    let here = case e of
-          UnsafeNullable {} -> True
-          GetField {} -> True
-          _ -> False
-     in here
-          && getAll
-            ( foldExpr
-                nestedDummy
-                (All . cheapExpr)
-                (const mempty)
-                (All . cheapEffect)
-                e
-            )
+    let
+      here = case e of
+        UnsafeNullable {} -> True
+        GetField {} -> True
+        _ -> False
+     in
+      here
+        && getAll
+          ( foldExpr
+              nestedDummy
+              (All . cheapExpr)
+              (const mempty)
+              (All . cheapEffect)
+              e
+          )
 
 cheapEffect :: Effect Stamp u -> Bool
 cheapEffect e =
-  let here = case e of
-        Lift {} -> True
-        _ -> False
-   in here
-        && getAll
-          ( foldEff
-              nestedDummy
-              (All . cheapExpr)
-              (All . cheapEffect)
-              (const mempty)
-              e
-          )
+  let
+    here = case e of
+      Lift {} -> True
+      _ -> False
+   in
+    here
+      && getAll
+        ( foldEff
+            nestedDummy
+            (All . cheapExpr)
+            (All . cheapEffect)
+            (const mempty)
+            e
+        )
 
 pureExpr :: Expr Stamp u -> Bool
 pureExpr = \case
@@ -1389,94 +1457,53 @@ pureExpr = \case
   Var (EmbedEff e') -> pureEffect e'
   Var _ -> True
   e ->
-    let here = case e of
-          Std (Fixed op _) -> Prim.isPureFixed op
-          _ -> True
-     in here
-          && getAll
-            ( foldExpr
-                nestedDummy
-                (All . pureExpr)
-                (const mempty)
-                (All . pureEffect)
-                e
-            )
-
-pureEffect :: Effect Stamp u -> Bool
-pureEffect e =
-  let here = case e of
-        FFI {} -> False
-        UnsafeObjectGet {} -> False
-        UnsafeObjectAssign {} -> False
-        CallMethod {} -> False
-        ApplyE {} -> False
-        While {} -> False
-        ForRange {} -> False
-        U8Set {} -> False
-        U8Fill {} -> False
-        Throw {} -> False
-        Try {} -> False
-        DeleteProp {} -> False
+    let
+      here = case e of
+        Std (Fixed op _) -> Prim.isPureFixed op
         _ -> True
-   in here
+     in
+      here
         && getAll
-          ( foldEff
+          ( foldExpr
               nestedDummy
               (All . pureExpr)
-              (All . pureEffect)
               (const mempty)
+              (All . pureEffect)
               e
           )
 
-newtype MinNeg = MinNeg {getMinNeg :: Maybe Int}
-
-instance Semigroup MinNeg where
-  MinNeg Nothing <> x = x
-  x <> MinNeg Nothing = x
-  MinNeg (Just a) <> MinNeg (Just b) = MinNeg (Just (min a b))
-
-instance Monoid MinNeg where
-  mempty = MinNeg Nothing
-
-minNegStampExpr :: Expr Stamp u -> MinNeg
-minNegStampExpr = \case
-  Var (Stamp i) | i < 0 -> MinNeg (Just i)
-  Var (Embed e') -> minNegStampExpr e'
-  Var (EmbedEff e') -> minNegStampEff e'
-  e ->
-    foldExpr
-      nestedDummy
-      minNegStampExpr
-      (const mempty)
-      minNegStampEff
-      e
-
-minNegStampEff :: Effect Stamp u -> MinNeg
-minNegStampEff =
-  foldEff
-    nestedDummy
-    minNegStampExpr
-    minNegStampEff
-    (const mempty)
-
--- | Negative binder stamp in a probed continuation. Optimizer tags and
--- codegen probe tags can differ when 'rebindEff' skips a rename.
-binderStampIn :: Effect Stamp u -> Int -> Int
-binderStampIn tagged probeTag =
-  case getMinNeg (minNegStampEff tagged) of
-    Just t -> t
-    Nothing -> probeTag
+pureEffect :: Effect Stamp u -> Bool
+pureEffect e =
+  let
+    here = case e of
+      FFI {} -> False
+      UnsafeObjectGet {} -> False
+      UnsafeObjectAssign {} -> False
+      CallMethod {} -> False
+      ApplyE {} -> False
+      While {} -> False
+      ForRange {} -> False
+      U8Set {} -> False
+      U8Fill {} -> False
+      Throw {} -> False
+      Try {} -> False
+      DeleteProp {} -> False
+      _ -> True
+   in
+    here
+      && getAll
+        ( foldEff
+            nestedDummy
+            (All . pureExpr)
+            (All . pureEffect)
+            (const mempty)
+            e
+        )
 
 -- Re-opt only small trees. A second walk of a @bindRec@ / do-chain
 -- paint body is what hung todo-mvc and breakout.
 optSmall :: Int
 optSmall = 16
-
-sizeExpr :: Expr Stamp u -> Int
-sizeExpr e = nodeCountExpr e
-
-sizeEffect :: Effect Stamp u -> Int
-sizeEffect e = nodeCountEff e
 
 -- | First-order reopen: rename the tag allocated by 'optUnder'. Never
 -- re-applies the original PHOAS @f@. Same tag is identity. The fold dummy
@@ -1503,22 +1530,24 @@ keepExprCont ::
   Int
   -> Int
   -> Expr Stamp v
+  -> Metadata
   -> (Stamp u -> Expr Stamp v)
   -> Stamp u
   -> Expr Stamp v
-keepExprCont t tag body f
-  | sizeExpr body <= optSmall = reoptExpr t f
+keepExprCont t tag body mdBody f
+  | mdSize mdBody <= optSmall = reoptExpr t f
   | otherwise = rebindExpr tag body
 
 keepEffCont ::
   Int
   -> Int
   -> Effect Stamp v
+  -> Metadata
   -> (Stamp u -> Effect Stamp v)
   -> Stamp u
   -> Effect Stamp v
-keepEffCont t tag body f
-  | sizeEffect body <= optSmall = reoptEff t f
+keepEffCont t tag body mdBody f
+  | mdSize mdBody <= optSmall = reoptEff t f
   | otherwise = rebindEff tag body
 
 keepExprCont2 ::
@@ -1526,12 +1555,13 @@ keepExprCont2 ::
   -> Int
   -> Int
   -> Expr Stamp v
+  -> Metadata
   -> (Stamp a -> Stamp b -> Expr Stamp v)
   -> Stamp a
   -> Stamp b
   -> Expr Stamp v
-keepExprCont2 t tA tB body f a b
-  | sizeExpr body <= optSmall = reoptExpr2 t f a b
+keepExprCont2 t tA tB body mdBody f a b
+  | mdSize mdBody <= optSmall = reoptExpr2 t f a b
   | otherwise = rebindExpr2 tA tB body a b
 
 mapFnBody ::
@@ -1587,7 +1617,9 @@ allocFnTags t0 body =
     (tags, tEnd)
 
 optUnderFn ::
-  Int -> FnBody Stamp us v -> (Int, [Int], Expr Stamp v, Metadata, FnBody Stamp us v)
+  Int
+  -> FnBody Stamp us v
+  -> (Int, [Int], Expr Stamp v, Metadata, FnBody Stamp us v)
 optUnderFn t0 body =
   let
     (tags, tEnd) = allocFnTags t0 body
@@ -2013,20 +2045,26 @@ lowerArg = \case
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
 lowerArgAt t0 = \case
   ArgExpr e ->
-    let (t1, e') = lowerExprAt t0 e
-     in (t1, Ir.IrArgExpr e')
+    let
+      (t1, e') = lowerExprAt t0 e
+     in
+      (t1, Ir.IrArgExpr e')
   ArgEffect e ->
-    let (t1, e') = lowerEffectAt t0 e
-     in (t1, Ir.IrArgEffect e')
+    let
+      (t1, e') = lowerEffectAt t0 e
+     in
+      (t1, Ir.IrArgEffect e')
 
 lowerRecArgsAt ::
   Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us)
 lowerRecArgsAt t0 = \case
   RecNil -> (t0, RecNil)
   RecCons x xs ->
-    let (t1, x') = lowerArgAt t0 x
-        (t2, xs') = lowerRecArgsAt t1 xs
-     in (t2, RecCons x' xs')
+    let
+      (t1, x') = lowerArgAt t0 x
+      (t2, xs') = lowerRecArgsAt t1 xs
+     in
+      (t2, RecCons x' xs')
 
 lowerArgsAt ::
   Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us)
@@ -2036,116 +2074,172 @@ lowerFixedArgsAt ::
   Int -> FixedArgs Stamp a b c -> (Int, Ir.IrFixedArgs a b c)
 lowerFixedArgsAt t0 = \case
   ArgsU x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.IrArgsU x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.IrArgsU x')
   ArgsB x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.IrArgsB x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.IrArgsB x' y')
   ArgsT x y z ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-        (t3, z') = lowerExprAt t2 z
-     in (t3, Ir.IrArgsT x' y' z')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+      (t3, z') = lowerExprAt t2 z
+     in
+      (t3, Ir.IrArgsT x' y' z')
 
 lowerKernelKAt :: Int -> Kernel Stamp u -> (Int, Ir.IrKernel u)
 lowerKernelKAt t0 = \case
   KPlus x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KPlus x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KPlus x' y')
   KTimes x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KTimes x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KTimes x' y')
   KMinus x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KMinus x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KMinus x' y')
   KNegate x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.KNegate x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.KNegate x')
   KFracDiv x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KFracDiv x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KFracDiv x' y')
   KRem x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KRem x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KRem x' y')
   KBitAnd x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KBitAnd x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KBitAnd x' y')
   KBitOr x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KBitOr x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KBitOr x' y')
   KBitXor x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KBitXor x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KBitXor x' y')
   KShl x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KShl x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KShl x' y')
   KShr x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KShr x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KShr x' y')
   KUShr x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KUShr x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KUShr x' y')
   KBig op x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KBig op x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KBig op x' y')
   KBigNeg x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.KBigNeg x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.KBigNeg x')
   KConcat x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KConcat x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KConcat x' y')
   KShow x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.KShow x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.KShow x')
   KTypeOf x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.KTypeOf x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.KTypeOf x')
   KAnd x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KAnd x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KAnd x' y')
   KOr x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KOr x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KOr x' y')
   KEq s x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KEq s x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KEq s x' y')
   KNEq s x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KNEq s x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KNEq s x' y')
   KGTh x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KGTh x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KGTh x' y')
   KLTh x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KLTh x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KLTh x' y')
   KGTEq x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KGTEq x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KGTEq x' y')
   KLTEq x y ->
-    let (t1, x') = lowerExprAt t0 x
-        (t2, y') = lowerExprAt t1 y
-     in (t2, Ir.KLTEq x' y')
+    let
+      (t1, x') = lowerExprAt t0 x
+      (t2, y') = lowerExprAt t1 y
+     in
+      (t2, Ir.KLTEq x' y')
 
 reifyFixedArgs ::
   Ir.IrFixedArgs a b c -> FixedArgs Stamp a b c
@@ -2265,24 +2359,34 @@ reifyStdMethod = \case
       (reifyExpr z)
       (\a b -> rebindExpr2 tagA tagB (reifyExpr body) a b)
   Ir.IrMethToSorted arr tagA tagB body ->
-    MethToSorted (reifyExpr arr) (\a b -> rebindExpr2 tagA tagB (reifyExpr body) a b)
+    MethToSorted
+      (reifyExpr arr)
+      (\a b -> rebindExpr2 tagA tagB (reifyExpr body) a b)
   Ir.IrMethFrom n tag body ->
     MethFrom (reifyExpr n) (\s -> rebindExpr tag (reifyExpr body) s)
 
 lowerFieldLitAt :: Int -> FieldLit Stamp r -> (Int, Ir.IrFieldLit r)
 lowerFieldLitAt t0 = \case
   FieldLit @k e ->
-    let (t1, e') = lowerExprAt t0 e
-     in (t1, Ir.IrFieldLit @k e')
+    let
+      (t1, e') = lowerExprAt t0 e
+     in
+      (t1, Ir.IrFieldLit @k e')
   FieldLitEffect @k e ->
-    let (t1, e') = lowerEffectAt t0 e
-     in (t1, Ir.IrFieldLitEffect @k e')
+    let
+      (t1, e') = lowerEffectAt t0 e
+     in
+      (t1, Ir.IrFieldLitEffect @k e')
   FieldLitExtra @k e ->
-    let (t1, e') = lowerExprAt t0 e
-     in (t1, Ir.IrFieldLitExtra @k e')
+    let
+      (t1, e') = lowerExprAt t0 e
+     in
+      (t1, Ir.IrFieldLitExtra @k e')
   FieldLitExtraEffect @k e ->
-    let (t1, e') = lowerEffectAt t0 e
-     in (t1, Ir.IrFieldLitExtraEffect @k e')
+    let
+      (t1, e') = lowerEffectAt t0 e
+     in
+      (t1, Ir.IrFieldLitExtraEffect @k e')
 
 lowerFieldLitsAt ::
   Int -> [FieldLit Stamp r] -> (Int, [Ir.IrFieldLit r])
@@ -2290,16 +2394,20 @@ lowerFieldLitsAt t0 fs = goFieldLits t0 fs []
  where
   goFieldLits t [] acc = (t, reverse acc)
   goFieldLits t (fl : rest) acc =
-    let (t1, fl') = lowerFieldLitAt t fl
-     in goFieldLits t1 rest (fl' : acc)
+    let
+      (t1, fl') = lowerFieldLitAt t fl
+     in
+      goFieldLits t1 rest (fl' : acc)
 
 lowerEffectsAt :: Int -> [Effect Stamp u] -> (Int, [Ir.IrEffect u])
 lowerEffectsAt t0 es = goEffects t0 es []
  where
   goEffects t [] acc = (t, reverse acc)
   goEffects t (e : rest) acc =
-    let (t1, e') = lowerEffectAt t e
-     in goEffects t1 rest (e' : acc)
+    let
+      (t1, e') = lowerEffectAt t e
+     in
+      goEffects t1 rest (e' : acc)
 
 lowerEffectArmsAt ::
   Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Ir.IrEffect u)])
@@ -2307,8 +2415,10 @@ lowerEffectArmsAt t0 arms = goArms t0 arms []
  where
   goArms t [] acc = (t, reverse acc)
   goArms t ((k, e) : rest) acc =
-    let (t1, e') = lowerEffectAt t e
-     in goArms t1 rest ((k, e') : acc)
+    let
+      (t1, e') = lowerEffectAt t e
+     in
+      goArms t1 rest ((k, e') : acc)
 
 reifyFieldLitExtra ::
   forall u k r. (KnownSymbol k, Typeable u) => Ir.IrExpr u -> FieldLit Stamp r
@@ -2346,8 +2456,10 @@ lowerFnBody body = snd (lowerFnBodyAt (-2) body)
 
 lowerFnBodyAt :: Int -> FnBody Stamp us r -> (Int, Ir.IrFnBody us r)
 lowerFnBodyAt t0 body =
-  let (tags, tEnd) = allocFnTags t0 body
-   in (tEnd, lowerFnBodyTags tags body)
+  let
+    (tags, tEnd) = allocFnTags t0 body
+   in
+    (tEnd, lowerFnBodyTags tags body)
 
 lowerFnBodyTags :: [Int] -> FnBody Stamp us r -> Ir.IrFnBody us r
 lowerFnBodyTags tags = \case
@@ -2369,11 +2481,15 @@ lowerExprAt t0 = \case
   Literal v -> (t0, Ir.IrLiteral v)
   Var (Stamp i) -> (t0, Ir.IrVar i)
   Var (Embed e) ->
-    let (t1, e') = lowerExprAt t0 (flattenExpr e)
-     in (t1, e')
+    let
+      (t1, e') = lowerExprAt t0 (flattenExpr e)
+     in
+      (t1, e')
   Var (EmbedEff e) ->
-    let (t1, e') = lowerEffectAt t0 (flattenEff e)
-     in (t1, Ir.IrEmbedEff e')
+    let
+      (t1, e') = lowerEffectAt t0 (flattenEff e)
+     in
+      (t1, Ir.IrEmbedEff e')
   Let x g ->
     let
       tag = t0
@@ -2398,14 +2514,18 @@ lowerExprAt t0 = \case
      in
       (t1, Ir.IrLambda tag body')
   Apply f x ->
-    let (t1, f') = lowerExprAt t0 f
-        (t2, x') = lowerExprAt t1 x
-     in (t2, Ir.IrApply f' x')
+    let
+      (t1, f') = lowerExprAt t0 f
+      (t2, x') = lowerExprAt t1 x
+     in
+      (t2, Ir.IrApply f' x')
   If c t e ->
-    let (t1, c') = lowerExprAt t0 c
-        (t2, t') = lowerExprAt t1 t
-        (t3, e') = lowerExprAt t2 e
-     in (t3, Ir.IrIf c' t' e')
+    let
+      (t1, c') = lowerExprAt t0 c
+      (t2, t') = lowerExprAt t1 t
+      (t3, e') = lowerExprAt t2 e
+     in
+      (t3, Ir.IrIf c' t' e')
   OptionCase o n s ->
     let
       tag = t0
@@ -2416,11 +2536,15 @@ lowerExprAt t0 = \case
      in
       (t3, Ir.IrOptionCase o' n' tag s')
   ResultOk x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.IrResultOk x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.IrResultOk x')
   ResultErr x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.IrResultErr x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.IrResultErr x')
   ResultCase o er ok ->
     let
       tagE = t0
@@ -2433,37 +2557,57 @@ lowerExprAt t0 = \case
      in
       (t4, Ir.IrResultCase o' tagE er' tagO ok')
   Index arr idx ->
-    let (t1, arr') = lowerExprAt t0 arr
-        (t2, idx') = lowerExprAt t1 idx
-     in (t2, Ir.IrIndex arr' idx')
+    let
+      (t1, arr') = lowerExprAt t0 arr
+      (t2, idx') = lowerExprAt t1 idx
+     in
+      (t2, Ir.IrIndex arr' idx')
   U8Index buf idx ->
-    let (t1, buf') = lowerExprAt t0 buf
-        (t2, idx') = lowerExprAt t1 idx
-     in (t2, Ir.IrU8Index buf' idx')
+    let
+      (t1, buf') = lowerExprAt t0 buf
+      (t2, idx') = lowerExprAt t1 idx
+     in
+      (t2, Ir.IrU8Index buf' idx')
   Error msg ->
-    let (t1, msg') = lowerExprAt t0 msg
-     in (t1, Ir.IrError msg')
+    let
+      (t1, msg') = lowerExprAt t0 msg
+     in
+      (t1, Ir.IrError msg')
   Std (Fixed op args) ->
-    let (t1, args') = lowerFixedArgsAt t0 args
-     in (t1, Ir.IrFixed op args')
+    let
+      (t1, args') = lowerFixedArgsAt t0 args
+     in
+      (t1, Ir.IrFixed op args')
   Std (Kernel k) ->
-    let (t1, k') = lowerKernelKAt t0 k
-     in (t1, Ir.IrKernelK k')
+    let
+      (t1, k') = lowerKernelKAt t0 k
+     in
+      (t1, Ir.IrKernelK k')
   Std (Method m) ->
-    let (t1, m') = lowerStdMethodAt t0 m
-     in (t1, Ir.IrMethod m')
+    let
+      (t1, m') = lowerStdMethodAt t0 m
+     in
+      (t1, Ir.IrMethod m')
   FnLit body ->
-    let (t1, body') = lowerFnBodyAt t0 body
-     in (t1, Ir.IrFnLit body')
+    let
+      (t1, body') = lowerFnBodyAt t0 body
+     in
+      (t1, Ir.IrFnLit body')
   UnsafeNullable x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.IrUnsafeNullable x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.IrUnsafeNullable x')
   FrozenLit fs ->
-    let (t1, fs') = lowerFieldLitsAt t0 fs
-     in (t1, Ir.IrFrozenLit fs')
+    let
+      (t1, fs') = lowerFieldLitsAt t0 fs
+     in
+      (t1, Ir.IrFrozenLit fs')
   GetField @k o ->
-    let (t1, o') = lowerExprAt t0 o
-     in (t1, Ir.IrGetField @k o')
+    let
+      (t1, o') = lowerExprAt t0 o
+     in
+      (t1, Ir.IrGetField @k o')
 
 reifyExpr :: Ir.IrExpr u -> Expr Stamp u
 reifyExpr = \case
@@ -2473,7 +2617,9 @@ reifyExpr = \case
   Ir.IrLet tag x body ->
     Let (reifyExpr x) (\s -> rebindExpr tag (reifyExpr body) s)
   Ir.IrLetRec tag r b ->
-    LetRec (\s -> rebindExpr tag (reifyExpr r) s) (\s -> rebindExpr tag (reifyExpr b) s)
+    LetRec
+      (\s -> rebindExpr tag (reifyExpr r) s)
+      (\s -> rebindExpr tag (reifyExpr b) s)
   Ir.IrLambda tag body ->
     Lambda (\s -> rebindExpr tag (reifyExpr body) s)
   Ir.IrApply f x -> Apply (reifyExpr f) (reifyExpr x)
@@ -2504,23 +2650,33 @@ lowerEffect e = snd (lowerEffectAt (-2) e)
 lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u)
 lowerEffectAt t0 = \case
   Lift x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.IrLift x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.IrLift x')
   FFI n args ->
-    let (t1, args') = lowerArgsAt t0 args
-     in (t1, Ir.IrFFI n args')
+    let
+      (t1, args') = lowerArgsAt t0 args
+     in
+      (t1, Ir.IrFFI n args')
   UnsafeObject o -> (t0, Ir.IrUnsafeObject o)
   UnsafeObjectGet x s ->
-    let (t1, x') = lowerEffectAt t0 x
-     in (t1, Ir.IrUnsafeObjectGet x' s)
+    let
+      (t1, x') = lowerEffectAt t0 x
+     in
+      (t1, Ir.IrUnsafeObjectGet x' s)
   UnsafeObjectAssign x y ->
-    let (t1, x') = lowerEffectAt t0 x
-        (t2, y') = lowerEffectAt t1 y
-     in (t2, Ir.IrUnsafeObjectAssign x' y')
+    let
+      (t1, x') = lowerEffectAt t0 x
+      (t2, y') = lowerEffectAt t1 y
+     in
+      (t2, Ir.IrUnsafeObjectAssign x' y')
   CallMethod x n args ->
-    let (t1, x') = lowerEffectAt t0 x
-        (t2, args') = lowerArgsAt t1 args
-     in (t2, Ir.IrCallMethod x' n args')
+    let
+      (t1, x') = lowerEffectAt t0 x
+      (t2, args') = lowerArgsAt t1 args
+     in
+      (t2, Ir.IrCallMethod x' n args')
   Bind x f ->
     let
       tag = t0
@@ -2530,9 +2686,11 @@ lowerEffectAt t0 = \case
      in
       (t2, Ir.IrBind tag x' body')
   ThenE x y ->
-    let (t1, x') = lowerEffectAt t0 x
-        (t2, y') = lowerEffectAt t1 y
-     in (t2, Ir.IrThenE x' y')
+    let
+      (t1, x') = lowerEffectAt t0 x
+      (t2, y') = lowerEffectAt t1 y
+     in
+      (t2, Ir.IrThenE x' y')
   BindRec rhs body ->
     let
       tag = t0
@@ -2549,18 +2707,24 @@ lowerEffectAt t0 = \case
      in
       (t1, Ir.IrLambdaE tag body')
   ApplyE f x ->
-    let (t1, f') = lowerEffectAt t0 f
-        (t2, x') = lowerEffectAt t1 x
-     in (t2, Ir.IrApplyE f' x')
+    let
+      (t1, f') = lowerEffectAt t0 f
+      (t2, x') = lowerEffectAt t1 x
+     in
+      (t2, Ir.IrApplyE f' x')
   IfE c t e ->
-    let (t1, c') = lowerEffectAt t0 c
-        (t2, t') = lowerEffectAt t1 t
-        (t3, e') = lowerEffectAt t2 e
-     in (t3, Ir.IrIfE c' t' e')
+    let
+      (t1, c') = lowerEffectAt t0 c
+      (t2, t') = lowerEffectAt t1 t
+      (t3, e') = lowerEffectAt t2 e
+     in
+      (t3, Ir.IrIfE c' t' e')
   While c b ->
-    let (t1, c') = lowerEffectAt t0 c
-        (t2, b') = lowerEffectAt t1 b
-     in (t2, Ir.IrWhile c' b')
+    let
+      (t1, c') = lowerEffectAt t0 c
+      (t2, b') = lowerEffectAt t1 b
+     in
+      (t2, Ir.IrWhile c' b')
   ForRange s e f ->
     let
       tag = t0
@@ -2571,14 +2735,18 @@ lowerEffectAt t0 = \case
      in
       (t3, Ir.IrForRange s' e' tag body')
   U8Set b i v ->
-    let (t1, b') = lowerExprAt t0 b
-        (t2, i') = lowerExprAt t1 i
-        (t3, v') = lowerExprAt t2 v
-     in (t3, Ir.IrU8Set b' i' v')
+    let
+      (t1, b') = lowerExprAt t0 b
+      (t2, i') = lowerExprAt t1 i
+      (t3, v') = lowerExprAt t2 v
+     in
+      (t3, Ir.IrU8Set b' i' v')
   U8Fill b v ->
-    let (t1, b') = lowerExprAt t0 b
-        (t2, v') = lowerExprAt t1 v
-     in (t2, Ir.IrU8Fill b' v')
+    let
+      (t1, b') = lowerExprAt t0 b
+      (t2, v') = lowerExprAt t1 v
+     in
+      (t2, Ir.IrU8Fill b' v')
   OptionCaseE o n s ->
     let
       tag = t0
@@ -2600,13 +2768,17 @@ lowerEffectAt t0 = \case
      in
       (t4, Ir.IrResultCaseE o' tagE er' tagO ok')
   StringCaseE s arms d ->
-    let (t1, s') = lowerExprAt t0 s
-        (t2, arms') = lowerEffectArmsAt t1 arms
-        (t3, d') = lowerEffectAt t2 d
-     in (t3, Ir.IrStringCaseE s' arms' d')
+    let
+      (t1, s') = lowerExprAt t0 s
+      (t2, arms') = lowerEffectArmsAt t1 arms
+      (t3, d') = lowerEffectAt t2 d
+     in
+      (t3, Ir.IrStringCaseE s' arms' d')
   Throw x ->
-    let (t1, x') = lowerExprAt t0 x
-     in (t1, Ir.IrThrow x')
+    let
+      (t1, x') = lowerExprAt t0 x
+     in
+      (t1, Ir.IrThrow x')
   Try a k ->
     let
       tag = t0
@@ -2616,15 +2788,21 @@ lowerEffectAt t0 = \case
      in
       (t2, Ir.IrTry a' tag k')
   ObjectLit fs ->
-    let (t1, fs') = lowerFieldLitsAt t0 fs
-     in (t1, Ir.IrObjectLit fs')
+    let
+      (t1, fs') = lowerFieldLitsAt t0 fs
+     in
+      (t1, Ir.IrObjectLit fs')
   DeleteProp o k ->
-    let (t1, o') = lowerEffectAt t0 o
-        (t2, k') = lowerExprAt t1 k
-     in (t2, Ir.IrDeleteProp o' k')
+    let
+      (t1, o') = lowerEffectAt t0 o
+      (t2, k') = lowerExprAt t1 k
+     in
+      (t2, Ir.IrDeleteProp o' k')
   ArrayLit es ->
-    let (t1, es') = lowerEffectsAt t0 es
-     in (t1, Ir.IrArrayLit es')
+    let
+      (t1, es') = lowerEffectsAt t0 es
+     in
+      (t1, Ir.IrArrayLit es')
 
 reifyEffect :: Ir.IrEffect u -> Effect Stamp u
 reifyEffect = \case
@@ -2638,7 +2816,9 @@ reifyEffect = \case
     Bind (reifyEffect x) (\s -> rebindEff tag (reifyEffect body) s)
   Ir.IrThenE x y -> ThenE (reifyEffect x) (reifyEffect y)
   Ir.IrBindRec tag r b ->
-    BindRec (\s -> rebindEff tag (reifyEffect r) s) (\s -> rebindEff tag (reifyEffect b) s)
+    BindRec
+      (\s -> rebindEff tag (reifyEffect r) s)
+      (\s -> rebindEff tag (reifyEffect b) s)
   Ir.IrLambdaE tag body ->
     LambdaE (\s -> rebindEff tag (reifyEffect body) s)
   Ir.IrApplyE f x -> ApplyE (reifyEffect f) (reifyEffect x)
@@ -2649,7 +2829,10 @@ reifyEffect = \case
   Ir.IrU8Set b i v -> U8Set (reifyExpr b) (reifyExpr i) (reifyExpr v)
   Ir.IrU8Fill b v -> U8Fill (reifyExpr b) (reifyExpr v)
   Ir.IrOptionCaseE o n tag s ->
-    OptionCaseE (reifyExpr o) (reifyEffect n) (\x -> rebindEff tag (reifyEffect s) x)
+    OptionCaseE
+      (reifyExpr o)
+      (reifyEffect n)
+      (\x -> rebindEff tag (reifyEffect s) x)
   Ir.IrResultCaseE o tagE er tagO ok ->
     ResultCaseE
       (reifyExpr o)
@@ -2676,8 +2859,7 @@ reifyArg = \case
 optimize :: ClosedExpr u -> Expr Stamp u
 optimize (e :: ClosedExpr u) =
   let
-    flat = flattenExpr (e :: Expr Stamp u)
-    (_, final, _) = optExpr (-2) flat
+    (_, final, _) = optExpr (-2) (e :: Expr Stamp u)
    in
     flattenExpr final
 {-# NOINLINE optimize #-}
@@ -2685,8 +2867,7 @@ optimize (e :: ClosedExpr u) =
 optimizeEffectTree :: ClosedEffect u -> Effect Stamp u
 optimizeEffectTree (e :: ClosedEffect u) =
   let
-    flat = flattenEff (e :: Effect Stamp u)
-    (_, final, _) = optEffect (-2) flat
+    (_, final, _) = optEffect (-2) (e :: Effect Stamp u)
    in
     flattenEff final
 
@@ -2716,7 +2897,8 @@ optimizedEffectSize (e :: ClosedEffect u) =
 optStep :: Int
 optStep = 2
 
-optUnder :: Int -> (Stamp u -> Expr Stamp v) -> (Int, Int, Expr Stamp v, Metadata)
+optUnder ::
+  Int -> (Stamp u -> Expr Stamp v) -> (Int, Int, Expr Stamp v, Metadata)
 optUnder t0 f =
   let
     tag = t0
@@ -2724,7 +2906,8 @@ optUnder t0 f =
    in
     (t1, tag, body, md)
 
-optUnderE :: Int -> (Stamp u -> Effect Stamp v) -> (Int, Int, Effect Stamp v, Metadata)
+optUnderE ::
+  Int -> (Stamp u -> Effect Stamp v) -> (Int, Int, Effect Stamp v, Metadata)
 optUnderE t0 f =
   let
     tag = t0
@@ -2733,7 +2916,9 @@ optUnderE t0 f =
     (t1, tag, body, md)
 
 optUnder2 ::
-  Int -> (Stamp a -> Stamp b -> Expr Stamp v) -> (Int, Int, Int, Expr Stamp v, Metadata)
+  Int
+  -> (Stamp a -> Stamp b -> Expr Stamp v)
+  -> (Int, Int, Int, Expr Stamp v, Metadata)
 optUnder2 t0 f =
   let
     tA = t0
@@ -2799,17 +2984,23 @@ isPureEffect = pureEffect
 optArgs :: Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us, Metadata)
 optArgs t0 RecNil = (t0, RecNil, mempty)
 optArgs t0 (RecCons x xs) =
-  let (t1, x', mdX) = optArg t0 x
-      (t2, xs', mdXS) = optArgs t1 xs
-   in (t2, RecCons x' xs', mdX <> mdXS)
+  let
+    (t1, x', mdX) = optArg t0 x
+    (t2, xs', mdXS) = optArgs t1 xs
+   in
+    (t2, RecCons x' xs', mdX <> mdXS)
 
 optArg :: Int -> Arg Stamp u -> (Int, Arg Stamp u, Metadata)
 optArg t (ArgExpr e) =
-  let (t', e', md) = optExpr t e
-   in (t', ArgExpr e', md)
+  let
+    (t', e', md) = optExpr t e
+   in
+    (t', ArgExpr e', md)
 optArg t (ArgEffect e) =
-  let (t', e', md) = optEffect t e
-   in (t', ArgEffect e', md)
+  let
+    (t', e', md) = optEffect t e
+   in
+    (t', ArgEffect e', md)
 
 foldNum1 ::
   (Double -> Double)
@@ -2959,7 +3150,8 @@ foldToBigInt :: Expr Stamp 'Number -> Expr Stamp 'BigInt
 foldToBigInt x = case x of
   Literal (ValueNumber d)
     | isFiniteDouble d
-    , let n = truncate d
+    , let
+        n = truncate d
     , d == fromInteger n ->
         Literal (ValueBigInt n)
   _ -> expr1 FixToBigInt x
@@ -3003,7 +3195,7 @@ optFixed t0 op args = case (op, args) of
         let
           (t1, x', mdX) = optExpr t0 x
           res = foldFixedUnary n' x'
-          md = Metadata 1 IM.empty True (isCheap res) <> mdX
+          md = Metadata 1 True (isCheap res) <> mdX
          in
           (t1, res, md)
   (n, ArgsB x y)
@@ -3012,42 +3204,42 @@ optFixed t0 op args = case (op, args) of
           (t1, x', mdX) = optExpr t0 x
           (t2, y', mdY) = optExpr t1 y
           res = foldFixedBinary n' x' y'
-          md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY
+          md = Metadata 1 True (isCheap res) <> mdX <> mdY
          in
           (t2, res, md)
   (FixArrLen, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldArrLen x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   (FixToBigInt, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldToBigInt x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   (FixFromBigInt, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldFromBigInt x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   (FixParseBigInt, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldParseBigInt x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   (n, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = expr1 n x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   (n, ArgsB x y) ->
@@ -3055,7 +3247,7 @@ optFixed t0 op args = case (op, args) of
       (t1, x', mdX) = optExpr t0 x
       (t2, y', mdY) = optExpr t1 y
       res = expr2 n x' y'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY
+      md = Metadata 1 True (isCheap res) <> mdX <> mdY
      in
       (t2, res, md)
   (n, ArgsT x y z) ->
@@ -3064,12 +3256,15 @@ optFixed t0 op args = case (op, args) of
       (t2, y', mdY) = optExpr t1 y
       (t3, z', mdZ) = optExpr t2 z
       res = expr3 n x' y' z'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY <> mdZ
+      md = Metadata 1 True (isCheap res) <> mdX <> mdY <> mdZ
      in
       (t3, res, md)
 
 optLet ::
-  Int -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (Int, Expr Stamp v, Metadata)
+  Int
+  -> Expr Stamp u
+  -> (Stamp u -> Expr Stamp v)
+  -> (Int, Expr Stamp v, Metadata)
 optLet t0 x f =
   let
     (t1, x', mdX) = optExpr t0 x
@@ -3081,7 +3276,7 @@ optLet t0 x f =
 -- body (rename-only reopen). Small @f@ may still be applied once more
 -- so nested lets / optionCase peel fold.
 data ElimOps src body = ElimOps
-  { elimCount :: Int -> Metadata -> Int
+  { elimCount :: Int -> body -> Metadata -> Int
   , elimPure :: Metadata -> Bool
   , elimCheap :: Metadata -> Bool
   , elimSize :: Metadata -> Int
@@ -3090,10 +3285,17 @@ data ElimOps src body = ElimOps
   , elimDropUnused :: Metadata -> Bool
   }
 
-elimFrom :: ElimOps src body -> Int -> Metadata -> Int -> body -> Metadata -> (Int, body, Metadata)
+elimFrom ::
+  ElimOps src body
+  -> Int
+  -> Metadata
+  -> Int
+  -> body
+  -> Metadata
+  -> (Int, body, Metadata)
 elimFrom ops t mdX tag body mdBody =
   let
-    uses = elimCount ops tag mdBody
+    uses = elimCount ops tag body mdBody
     kept = elimRebuild ops body
     inlined
       | elimSize ops mdBody > optSmall = (t, kept, mdBody)
@@ -3118,7 +3320,7 @@ elimLetFrom ::
 elimLetFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = \t' md -> IM.findWithDefault 0 t' (mdFreeVars md)
+      { elimCount = elimExprUses
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
       , elimSize = mdSize
@@ -3133,15 +3335,17 @@ elimLetFrom t x mdX f tag body mdBody =
     mdBody
 
 optBind ::
-  Int -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (Int, Effect Stamp v, Metadata)
+  Int
+  -> Effect Stamp u
+  -> (Stamp u -> Effect Stamp v)
+  -> (Int, Effect Stamp v, Metadata)
 optBind t0 x f =
   let
     (t1, x', mdX) = optEffect t0 x
     (t2, tag, body, mdBody) = optUnderE t1 f
    in
-    if
-      IM.findWithDefault 0 tag (mdFreeVars mdBody) == 0
-        && isUnitBoundEffect x'
+    if elimEffUses tag body mdBody == 0
+      && isUnitBoundEffect x'
       then (t2, ThenE x' body, mdX <> mdBody)
       else elimBindFrom t2 x' mdX f tag body mdBody
 
@@ -3157,7 +3361,7 @@ elimBindFrom ::
 elimBindFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = \t' _ -> IM.findWithDefault 0 t' (mdFreeVars mdBody)
+      { elimCount = elimEffUses
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
       , elimSize = mdSize
@@ -3182,7 +3386,7 @@ optBin t0 k x y =
     (t1, x', mdX) = optExpr t0 x
     (t2, y', mdY) = optExpr t1 y
    in
-    (t2, k x' y', Metadata 1 IM.empty True False <> mdX <> mdY)
+    (t2, k x' y', Metadata 1 True False <> mdX <> mdY)
 
 optBinNum ::
   Int
@@ -3197,7 +3401,7 @@ optBinNum t0 f k x y =
     (t2, y', mdY) = optExpr t1 y
     res = foldNum2 f k x' y'
    in
-    (t2, res, Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY)
+    (t2, res, Metadata 1 True (isCheap res) <> mdX <> mdY)
 
 optUnNum ::
   Int
@@ -3210,11 +3414,11 @@ optUnNum t0 f k x =
     (t1, x', mdX) = optExpr t0 x
     res = foldNum1 f k x'
    in
-    (t1, res, Metadata 1 IM.empty True (isCheap res) <> mdX)
+    (t1, res, Metadata 1 True (isCheap res) <> mdX)
 
 optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u, Metadata)
 optExpr t0 = \case
-  Literal v -> (t0, Literal v, Metadata 1 IM.empty True (isCheapValue v))
+  Literal v -> (t0, Literal v, Metadata 1 True (isCheapValue v))
   Var (Embed e) -> optExpr t0 (flattenExpr e)
   Var (EmbedEff (Lift e)) -> optExpr t0 (flattenExpr e)
   Var (EmbedEff e) ->
@@ -3224,22 +3428,22 @@ optExpr t0 = \case
       case e' of
         Lift x -> (t1, x, md)
         _ -> (t1, Var (EmbedEff e'), md)
-  Var (Stamp i) -> (t0, Var (Stamp i), Metadata 1 (IM.singleton i 1) True False)
+  Var (Stamp i) -> (t0, Var (Stamp i), Metadata 1 True False)
   Let x f -> optLet t0 x f
   LetRec r b ->
     let
       tag = t0
       (t1, r', mdR) = optExpr (t0 - optStep) (r (Stamp tag))
       (t2, b', mdB) = optExpr t1 (b (Stamp tag))
-      res = LetRec (keepExprCont t2 tag r' r) (keepExprCont t2 tag b' b)
-      md = Metadata 1 IM.empty True False <> mdR <> mdB
+      res = LetRec (keepExprCont t2 tag r' mdR r) (keepExprCont t2 tag b' mdB b)
+      md = Metadata 1 True False <> mdR <> mdB
      in
       (t2, res, md)
   Lambda f ->
     let
       (t1, tag, body, mdBody) = optUnder t0 f
-      res = Lambda (keepExprCont t1 tag body f)
-      md = Metadata 1 IM.empty True False <> mdBody
+      res = Lambda (keepExprCont t1 tag body mdBody f)
+      md = Metadata 1 True False <> mdBody
      in
       (t1, res, md)
   Apply f x ->
@@ -3249,7 +3453,7 @@ optExpr t0 = \case
      in
       case f' of
         Lambda g -> optLet t2 x' g
-        _ -> (t2, Apply f' x', Metadata 1 IM.empty True False <> mdF <> mdX)
+        _ -> (t2, Apply f' x', Metadata 1 True False <> mdF <> mdX)
   If c t e ->
     let
       (t1, c', mdC) = optExpr t0 c
@@ -3261,7 +3465,7 @@ optExpr t0 = \case
           let
             (t2, t', mdT) = optExpr t1 t
             (t3, e', mdE) = optExpr t2 e
-            md = Metadata 1 IM.empty True False <> mdC <> mdT <> mdE
+            md = Metadata 1 True False <> mdC <> mdT <> mdE
            in
             (t3, If c' t' e', md)
   OptionCase o n s ->
@@ -3279,15 +3483,19 @@ optExpr t0 = \case
           let
             (t2, n', mdN) = optExpr t1 n
             (t3, tag, body, mdBody) = optUnder t2 s
-            md = Metadata 1 IM.empty True False <> mdO <> mdN <> mdBody
+            md = Metadata 1 True False <> mdO <> mdN <> mdBody
            in
-            (t3, OptionCase o' n' (keepExprCont t3 tag body s), md)
+            (t3, OptionCase o' n' (keepExprCont t3 tag body mdBody s), md)
   ResultOk x ->
-    let (t1, x', mdX) = optExpr t0 x
-     in (t1, ResultOk x', Metadata 1 IM.empty True False <> mdX)
+    let
+      (t1, x', mdX) = optExpr t0 x
+     in
+      (t1, ResultOk x', Metadata 1 True False <> mdX)
   ResultErr x ->
-    let (t1, x', mdX) = optExpr t0 x
-     in (t1, ResultErr x', Metadata 1 IM.empty True False <> mdX)
+    let
+      (t1, x', mdX) = optExpr t0 x
+     in
+      (t1, ResultErr x', Metadata 1 True False <> mdX)
   ResultCase o e s ->
     let
       (t1, o', mdO) = optExpr t0 o
@@ -3307,50 +3515,57 @@ optExpr t0 = \case
           let
             (t2, tE, e', mdE) = optUnder t1 e
             (t3, tS, s', mdS) = optUnder t2 s
-            md = Metadata 1 IM.empty True False <> mdO <> mdE <> mdS
+            md = Metadata 1 True False <> mdO <> mdE <> mdS
            in
-            (t3, ResultCase o' (keepExprCont t3 tE e' e) (keepExprCont t3 tS s' s), md)
+            ( t3
+            , ResultCase o' (keepExprCont t3 tE e' mdE e) (keepExprCont t3 tS s' mdS s)
+            , md
+            )
   Index arr idx ->
     let
       (t1, arr', mdA) = optExpr t0 arr
       (t2, idx', mdI) = optExpr t1 idx
       res = foldIndex arr' idx'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdA <> mdI
+      md = Metadata 1 True (isCheap res) <> mdA <> mdI
      in
       (t2, res, md)
   U8Index buf idx ->
     let
       (t1, buf', mdB) = optExpr t0 buf
       (t2, idx', mdI) = optExpr t1 idx
-      md = Metadata 1 IM.empty True False <> mdB <> mdI
+      md = Metadata 1 True False <> mdB <> mdI
      in
       (t2, U8Index buf' idx', md)
   Error x ->
-    let (t1, x', mdX) = optExpr t0 x
-     in (t1, Error x', Metadata 1 IM.empty True False <> mdX)
+    let
+      (t1, x', mdX) = optExpr t0 x
+     in
+      (t1, Error x', Metadata 1 True False <> mdX)
   Std s -> optStd t0 s
   FnLit body ->
     let
       (t1, tags, expr', mdExpr, body0) = optUnderFn t0 body
       res = FnLit (keepFnCont tags expr' body0)
-      md = Metadata 1 IM.empty True False <> mdExpr
+      md = Metadata 1 True False <> mdExpr
      in
       (t1, res, md)
   UnsafeNullable x ->
-    let (t1, x', mdX) = optExpr t0 x
-     in (t1, UnsafeNullable x', Metadata 1 IM.empty True (isCheap x') <> mdX)
+    let
+      (t1, x', mdX) = optExpr t0 x
+     in
+      (t1, UnsafeNullable x', Metadata 1 True (isCheap x') <> mdX)
   FrozenLit fs ->
     let
       (t1, fs', mdFS) = mapAccumField t0 fs
      in
-      (t1, FrozenLit fs', Metadata 1 IM.empty True False <> mdFS)
+      (t1, FrozenLit fs', Metadata 1 True False <> mdFS)
   GetField @k o ->
     let
       (t1, o', mdO) = optExpr t0 o
      in
       case foldGetField @k o' of
         Just e -> optExpr t1 e
-        Nothing -> (t1, GetField @k o', Metadata 1 IM.empty True False <> mdO)
+        Nothing -> (t1, GetField @k o', Metadata 1 True False <> mdO)
 
 optMapped ::
   ( Expr Stamp ('Array u)
@@ -3365,9 +3580,9 @@ optMapped k t0 x f =
   let
     (t1, x', mdX) = optExpr t0 x
     (t2, tag, body, mdBody) = optUnder t1 f
-    md = Metadata 1 IM.empty True False <> mdX <> mdBody
+    md = Metadata 1 True False <> mdX <> mdBody
    in
-    (t2, k x' (keepExprCont t2 tag body f), md)
+    (t2, k x' (keepExprCont t2 tag body mdBody f), md)
 
 optReduced ::
   ( Expr Stamp ('Array u)
@@ -3385,9 +3600,9 @@ optReduced k t0 x z f =
     (t1, x', mdX) = optExpr t0 x
     (t2, z', mdZ) = optExpr t1 z
     (t3, tA, tB, body, mdBody) = optUnder2 t2 f
-    md = Metadata 1 IM.empty True False <> mdX <> mdZ <> mdBody
+    md = Metadata 1 True False <> mdX <> mdZ <> mdBody
    in
-    (t3, k x' z' (keepExprCont2 t3 tA tB body f), md)
+    (t3, k x' z' (keepExprCont2 t3 tA tB body mdBody f), md)
 
 optToSorted ::
   ( Expr Stamp ('Array u)
@@ -3402,9 +3617,9 @@ optToSorted k t0 x f =
   let
     (t1, x', mdX) = optExpr t0 x
     (t2, tA, tB, body, mdBody) = optUnder2 t1 f
-    md = Metadata 1 IM.empty True False <> mdX <> mdBody
+    md = Metadata 1 True False <> mdX <> mdBody
    in
-    (t2, k x' (keepExprCont2 t2 tA tB body f), md)
+    (t2, k x' (keepExprCont2 t2 tA tB body mdBody f), md)
 
 optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u, Metadata)
 optStd t0 = \case
@@ -3431,14 +3646,14 @@ optKernel t0 = \case
       (t1, x', mdX) = optExpr t0 x
       (t2, y', mdY) = optExpr t1 y
       res = foldBig op x' y'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY
+      md = Metadata 1 True (isCheap res) <> mdX <> mdY
      in
       (t2, res, md)
   KBigNeg x ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldBigNeg x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   KConcat x y ->
@@ -3446,21 +3661,21 @@ optKernel t0 = \case
       (t1, x', mdX) = optExpr t0 x
       (t2, y', mdY) = optExpr t1 y
       res = foldConcat x' y'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY
+      md = Metadata 1 True (isCheap res) <> mdX <> mdY
      in
       (t2, res, md)
   KShow x ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldShow x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   KTypeOf x ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldTypeOf x'
-      md = Metadata 1 IM.empty True (isCheap res) <> mdX
+      md = Metadata 1 True (isCheap res) <> mdX
      in
       (t1, res, md)
   KAnd x y ->
@@ -3468,13 +3683,13 @@ optKernel t0 = \case
       (t1, x', mdX) = optExpr t0 x
      in
       case x' of
-        Literal (ValueBool False) -> (t1, Literal (ValueBool False), Metadata 1 IM.empty True True <> mdX)
+        Literal (ValueBool False) -> (t1, Literal (ValueBool False), Metadata 1 True True <> mdX)
         Literal (ValueBool True) -> optExpr t1 y
         _ ->
           let
             (t2, y', mdY) = optExpr t1 y
             res = foldAnd x' y'
-            md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY
+            md = Metadata 1 True (isCheap res) <> mdX <> mdY
            in
             (t2, res, md)
   KOr x y ->
@@ -3482,13 +3697,13 @@ optKernel t0 = \case
       (t1, x', mdX) = optExpr t0 x
      in
       case x' of
-        Literal (ValueBool True) -> (t1, Literal (ValueBool True), Metadata 1 IM.empty True True <> mdX)
+        Literal (ValueBool True) -> (t1, Literal (ValueBool True), Metadata 1 True True <> mdX)
         Literal (ValueBool False) -> optExpr t1 y
         _ ->
           let
             (t2, y', mdY) = optExpr t1 y
             res = foldOr x' y'
-            md = Metadata 1 IM.empty True (isCheap res) <> mdX <> mdY
+            md = Metadata 1 True (isCheap res) <> mdX <> mdY
            in
             (t2, res, md)
   KEq structural x y ->
@@ -3518,9 +3733,9 @@ optMethod t0 = \case
     let
       (t1, n', mdN) = optExpr t0 n
       (t2, tag, body, mdBody) = optUnder t1 f
-      md = Metadata 1 IM.empty True False <> mdN <> mdBody
+      md = Metadata 1 True False <> mdN <> mdBody
      in
-      (t2, Std (Method (MethFrom n' (keepExprCont t2 tag body f))), md)
+      (t2, Std (Method (MethFrom n' (keepExprCont t2 tag body mdBody f))), md)
 
 optEffect :: Int -> Effect Stamp u -> (Int, Effect Stamp u, Metadata)
 optEffect t0 = \case
@@ -3530,49 +3745,51 @@ optEffect t0 = \case
      in
       case x' of
         Var (EmbedEff e) -> optEffect t1 e
-        _ -> (t1, Lift x', Metadata 1 IM.empty True (isCheap x') <> mdX)
+        _ -> (t1, Lift x', Metadata 1 True (isCheap x') <> mdX)
   FFI n args ->
-    let (t1, args', md) = optArgs t0 args
-     in (t1, FFI n args', Metadata 1 IM.empty False False <> md)
-  UnsafeObject o -> (t0, UnsafeObject o, Metadata 1 IM.empty False False)
+    let
+      (t1, args', md) = optArgs t0 args
+     in
+      (t1, FFI n args', Metadata 1 False False <> md)
+  UnsafeObject o -> (t0, UnsafeObject o, Metadata 1 False False)
   UnsafeObjectGet x s ->
     let
       (t1, x', mdX) = optEffect t0 x
      in
-      (t1, UnsafeObjectGet x' s, Metadata 1 IM.empty False False <> mdX)
+      (t1, UnsafeObjectGet x' s, Metadata 1 False False <> mdX)
   UnsafeObjectAssign x y ->
     let
       (t1, x', mdX) = optEffect t0 x
       (t2, y', mdY) = optEffect t1 y
      in
-      (t2, UnsafeObjectAssign x' y', Metadata 1 IM.empty False False <> mdX <> mdY)
+      (t2, UnsafeObjectAssign x' y', Metadata 1 False False <> mdX <> mdY)
   CallMethod x n args ->
     let
       (t1, x', mdX) = optEffect t0 x
       (t2, args', mdA) = optArgs t1 args
      in
-      (t2, CallMethod x' n args', Metadata 1 IM.empty False False <> mdX <> mdA)
+      (t2, CallMethod x' n args', Metadata 1 False False <> mdX <> mdA)
   Bind x f -> optBind t0 x f
   ThenE x y ->
     let
       (t1, x', mdX) = optEffect t0 x
       (t2, y', mdY) = optEffect t1 y
      in
-      (t2, ThenE x' y', Metadata 1 IM.empty (mdIsPure mdX && mdIsPure mdY) False <> mdX <> mdY)
+      (t2, ThenE x' y', Metadata 1 (mdIsPure mdX && mdIsPure mdY) False <> mdX <> mdY)
   BindRec r b ->
     let
       tag = t0
       (t1, r', mdR) = optEffect (t0 - optStep) (r (Stamp tag))
       (t2, b', mdB) = optEffect t1 (b (Stamp tag))
-      res = BindRec (keepEffCont t2 tag r' r) (keepEffCont t2 tag b' b)
-      md = Metadata 1 IM.empty False False <> mdR <> mdB
+      res = BindRec (keepEffCont t2 tag r' mdR r) (keepEffCont t2 tag b' mdB b)
+      md = Metadata 1 False False <> mdR <> mdB
      in
       (t2, res, md)
   LambdaE f ->
     let
       (t1, tag, body, mdBody) = optUnderE t0 f
-      res = LambdaE (keepEffCont t1 tag body f)
-      md = Metadata 1 IM.empty True False <> mdBody
+      res = LambdaE (keepEffCont t1 tag body mdBody f)
+      md = Metadata 1 True False <> mdBody
      in
       (t1, res, md)
   ApplyE f x ->
@@ -3582,7 +3799,7 @@ optEffect t0 = \case
      in
       case f' of
         LambdaE g -> optBind t2 x' g
-        _ -> (t2, ApplyE f' x', Metadata 1 IM.empty False False <> mdF <> mdX)
+        _ -> (t2, ApplyE f' x', Metadata 1 False False <> mdF <> mdX)
   IfE c t e ->
     let
       (t1, c', mdC) = optEffect t0 c
@@ -3594,7 +3811,11 @@ optEffect t0 = \case
           let
             (t2, t', mdT) = optEffect t1 t
             (t3, e', mdE) = optEffect t2 e
-            md = Metadata 1 IM.empty (mdIsPure mdC && mdIsPure mdT && mdIsPure mdE) False <> mdC <> mdT <> mdE
+            md =
+              Metadata 1 (mdIsPure mdC && mdIsPure mdT && mdIsPure mdE) False
+                <> mdC
+                <> mdT
+                <> mdE
            in
             (t3, IfE c' t' e', md)
   While c b ->
@@ -3602,11 +3823,11 @@ optEffect t0 = \case
       (t1, c', mdC) = optEffect t0 c
      in
       case peelBoolEffect c' of
-        Just False -> (t1, Lift (Literal ValueUnit), Metadata 1 IM.empty True True <> mdC)
+        Just False -> (t1, Lift (Literal ValueUnit), Metadata 1 True True <> mdC)
         _ ->
           let
             (t2, b', mdB) = optEffect t1 b
-            md = Metadata 1 IM.empty False False <> mdC <> mdB
+            md = Metadata 1 False False <> mdC <> mdB
            in
             (t2, While c' b', md)
   ForRange s e b ->
@@ -3614,22 +3835,22 @@ optEffect t0 = \case
       (t1, s', mdS) = optExpr t0 s
       (t2, e', mdE) = optExpr t1 e
       (t3, tag, body, mdBody) = optUnderE t2 b
-      md = Metadata 1 IM.empty False False <> mdS <> mdE <> mdBody
+      md = Metadata 1 False False <> mdS <> mdE <> mdBody
      in
-      (t3, ForRange s' e' (keepEffCont t3 tag body b), md)
+      (t3, ForRange s' e' (keepEffCont t3 tag body mdBody b), md)
   U8Set b i v ->
     let
       (t1, b', mdB) = optExpr t0 b
       (t2, i', mdI) = optExpr t1 i
       (t3, v', mdV) = optExpr t2 v
-      md = Metadata 1 IM.empty False False <> mdB <> mdI <> mdV
+      md = Metadata 1 False False <> mdB <> mdI <> mdV
      in
       (t3, U8Set b' i' v', md)
   U8Fill b v ->
     let
       (t1, b', mdB) = optExpr t0 b
       (t2, v', mdV) = optExpr t1 v
-      md = Metadata 1 IM.empty False False <> mdB <> mdV
+      md = Metadata 1 False False <> mdB <> mdV
      in
       (t2, U8Fill b' v', md)
   OptionCaseE o n s ->
@@ -3647,9 +3868,13 @@ optEffect t0 = \case
           let
             (t2, n', mdN) = optEffect t1 n
             (t3, tag, body, mdBody) = optUnderE t2 s
-            md = Metadata 1 IM.empty (mdIsPure mdO && mdIsPure mdN && mdIsPure mdBody) False <> mdO <> mdN <> mdBody
+            md =
+              Metadata 1 (mdIsPure mdO && mdIsPure mdN && mdIsPure mdBody) False
+                <> mdO
+                <> mdN
+                <> mdBody
            in
-            (t3, OptionCaseE o' n' (keepEffCont t3 tag body s), md)
+            (t3, OptionCaseE o' n' (keepEffCont t3 tag body mdBody s), md)
   ResultCaseE o e s ->
     let
       (t1, o', mdO) = optExpr t0 o
@@ -3669,9 +3894,16 @@ optEffect t0 = \case
           let
             (t2, tE, e', mdE) = optUnderE t1 e
             (t3, tS, s', mdS) = optUnderE t2 s
-            md = Metadata 1 IM.empty (mdIsPure mdO && mdIsPure mdE && mdIsPure mdS) False <> mdO <> mdE <> mdS
+            md =
+              Metadata 1 (mdIsPure mdO && mdIsPure mdE && mdIsPure mdS) False
+                <> mdO
+                <> mdE
+                <> mdS
            in
-            (t3, ResultCaseE o' (keepEffCont t3 tE e' e) (keepEffCont t3 tS s' s), md)
+            ( t3
+            , ResultCaseE o' (keepEffCont t3 tE e' mdE e) (keepEffCont t3 tS s' mdS s)
+            , md
+            )
   StringCaseE o arms d ->
     let
       (t1, o', mdO) = optExpr t0 o
@@ -3682,43 +3914,46 @@ optEffect t0 = \case
           let
             (t2, arms', mdArms) = mapAccumArms t1 arms
             (t3, d', mdD) = optEffect t2 d
-            md = Metadata 1 IM.empty False False <> mdO <> mdArms <> mdD
+            md = Metadata 1 False False <> mdO <> mdArms <> mdD
            in
             (t3, StringCaseE o' arms' d', md)
   Throw x ->
     let
       (t1, x', mdX) = optExpr t0 x
      in
-      (t1, Throw x', Metadata 1 IM.empty False False <> mdX)
+      (t1, Throw x', Metadata 1 False False <> mdX)
   Try a k ->
     let
       (t1, a', mdA) = optEffect t0 a
       (t2, tag, body, mdBody) = optUnderE t1 k
-      md = Metadata 1 IM.empty False False <> mdA <> mdBody
+      md = Metadata 1 False False <> mdA <> mdBody
      in
-      (t2, Try a' (keepEffCont t2 tag body k), md)
+      (t2, Try a' (keepEffCont t2 tag body mdBody k), md)
   ObjectLit fs ->
     let
       (t1, fs', mdFS) = mapAccumField t0 fs
      in
-      (t1, ObjectLit fs', Metadata 1 IM.empty False False <> mdFS)
+      (t1, ObjectLit fs', Metadata 1 False False <> mdFS)
   DeleteProp o k ->
     let
       (t1, o', mdO) = optEffect t0 o
       (t2, k', mdK) = optExpr t1 k
-      md = Metadata 1 IM.empty False False <> mdO <> mdK
+      md = Metadata 1 False False <> mdO <> mdK
      in
       (t2, DeleteProp o' k', md)
   ArrayLit es ->
     let
       (t1, es', mdEs) = mapAccumEffs t0 es
      in
-      (t1, ArrayLit es', Metadata 1 IM.empty False False <> mdEs)
+      (t1, ArrayLit es', Metadata 1 False False <> mdEs)
 
-mapAccumField :: forall r. Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r], Metadata)
+mapAccumField ::
+  forall r. Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r], Metadata)
 mapAccumField t0 fs =
-  let (t1, res) = mapAccumL step t0 fs
-   in (t1, map fst res, mconcat (map snd res))
+  let
+    (t1, res) = mapAccumL step t0 fs
+   in
+    (t1, map fst res, mconcat (map snd res))
  where
   step :: Int -> FieldLit Stamp r -> (Int, (FieldLit Stamp r, Metadata))
   step t = \case
@@ -3733,16 +3968,20 @@ mapAccumField t0 fs =
 
 mapAccumEffs :: Int -> [Effect Stamp u] -> (Int, [Effect Stamp u], Metadata)
 mapAccumEffs t0 es =
-  let (t1, res) = mapAccumL step t0 es
-   in (t1, map fst res, mconcat (map snd res))
+  let
+    (t1, res) = mapAccumL step t0 es
+   in
+    (t1, map fst res, mconcat (map snd res))
  where
   step t e = let (t', e', md) = optEffect t e in (t', (e', md))
 
 mapAccumArms ::
   Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Effect Stamp u)], Metadata)
 mapAccumArms t0 arms =
-  let (t1, res) = mapAccumL step t0 arms
-   in (t1, map fst res, mconcat (map snd res))
+  let
+    (t1, res) = mapAccumL step t0 arms
+   in
+    (t1, map fst res, mconcat (map snd res))
  where
   step t (k, e) = let (t', e', md) = optEffect t e in (t', ((k, e'), md))
 
@@ -3773,8 +4012,7 @@ bindEffectCode ::
 bindEffectCode env s0 x f =
   let
     (sProbe, tagged, probeTag) = probeContEff s0 f
-    bTag = binderStampIn tagged probeTag
-    uses = countEffect bTag tagged
+    (bTag, uses) = bindProbeTag probeTag tagged
     (s1, MkCode xDecl xRef xFX) = effectfulAST' env sProbe x
     stmtX
       | isNothing xRef = fromMaybe mempty xDecl
@@ -3782,7 +4020,7 @@ bindEffectCode env s0 x f =
       | otherwise = asStmt xDecl xRef
     insertBinder env0 n =
       IM.insert bTag n $ if bTag == probeTag then env0 else IM.insert probeTag n env0
-  in
+   in
     case xRef of
       Nothing ->
         case uses of
@@ -3798,8 +4036,10 @@ bindEffectCode env s0 x f =
                 if n /= nestedDummyId
                   then (insertBinder env n, s1, mempty)
                   else
-                    let (nBind, s2) = allocIdent s1
-                     in (insertBinder env nBind, s2, mempty)
+                    let
+                      (nBind, s2) = allocIdent s1
+                     in
+                      (insertBinder env nBind, s2, mempty)
               (s3, MkCode yDecl yRef yFX) = effectfulAST' env' sBind tagged
              in
               ( s3
@@ -3825,7 +4065,9 @@ bindEffectCode env s0 x f =
 
 effectfulAST :: ClosedEffect u -> Doc ann
 effectfulAST e =
-  uncurry renderWithHelpers (effectfulAST' IM.empty startCG (optimizeEffectTree e))
+  uncurry
+    renderWithHelpers
+    (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
 -- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
 -- materializes continuations (@f nestedDummy@).
@@ -3850,13 +4092,22 @@ asStmt mDecl mRef = case mRef of
 bracesNest :: Doc ann -> Doc ann
 bracesNest = braces . nest 2
 
-ifElseStmt :: Doc ann -> Maybe (Doc ann) -> Maybe (Doc ann) -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
+ifElseStmt ::
+  Doc ann
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Doc ann
 ifElseStmt cRef tDecl tRef eDecl eRef
   | isNothing eDecl && isNothing eRef =
       "if" <+> parens cRef <+> bracesNest (asStmt tDecl tRef)
   | otherwise =
-      "if" <+> parens cRef <+> bracesNest (asStmt tDecl tRef)
-        $$ "else" <+> bracesNest (asStmt eDecl eRef)
+      "if"
+        <+> parens cRef
+        <+> bracesNest (asStmt tDecl tRef)
+          $$ "else"
+        <+> bracesNest (asStmt eDecl eRef)
 
 assignResult :: Text -> Maybe (Doc ann) -> Doc ann
 assignResult resultVar mRef = case mRef of
@@ -3868,7 +4119,9 @@ letResult resultVar = ("let" <+> P.pretty resultVar) <> semi
 
 recBindStmt :: Doc ann -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
 recBindStmt n rDecl rRef =
-  ("let" <+> n) <> semi $$ fromMaybe mempty rDecl $$ (n <+> "=" <+> fromMaybe mempty rRef) <> semi
+  ("let" <+> n)
+    <> semi $$ fromMaybe mempty rDecl $$ (n <+> "=" <+> fromMaybe mempty rRef)
+    <> semi
 
 resultCasePrelude ::
   Env
@@ -3881,7 +4134,10 @@ resultCasePrelude env s0 res =
     (nObj, s2) = allocIdent s1
     (nUnw, s3) = allocIdent s2
     obj = nName nObj
-    prelude = fromMaybe mempty rDecl $$ constBind nObj (fromMaybe mempty rRef) $$ constBind nUnw (P.pretty obj <> ".value")
+    prelude =
+      fromMaybe mempty rDecl
+        $$ constBind nObj (fromMaybe mempty rRef)
+        $$ constBind nUnw (P.pretty obj <> ".value")
    in
     (s3, prelude, obj, nUnw)
 
@@ -3909,24 +4165,43 @@ emitBranching unit s0 prelude k
        in
         (s3, MkCode (Just (pre $$ letResult rv $$ stmt)) (Just (P.pretty rv)) False)
 
-ifAssignOrStmt :: Maybe Text -> Doc ann -> Maybe (Doc ann) -> Maybe (Doc ann) -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
+ifAssignOrStmt ::
+  Maybe Text
+  -> Doc ann
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Doc ann
 ifAssignOrStmt Nothing c tD tR eD eR = ifElseStmt c tD tR eD eR
 ifAssignOrStmt (Just rv) c tD tR eD eR =
-  "if" <+> parens c <+> bracesNest (fromMaybe mempty tD $$ assignResult rv tR)
-    $$ "else" <+> bracesNest (fromMaybe mempty eD $$ assignResult rv eR)
+  "if"
+    <+> parens c
+    <+> bracesNest (fromMaybe mempty tD $$ assignResult rv tR)
+      $$ "else"
+    <+> bracesNest (fromMaybe mempty eD $$ assignResult rv eR)
 
-tryCatchStmt :: Maybe Text -> Int -> Maybe (Doc ann) -> Maybe (Doc ann) -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
+tryCatchStmt ::
+  Maybe Text
+  -> Int
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Maybe (Doc ann)
+  -> Doc ann
 tryCatchStmt mRes catchN aDecl aRef bDecl bRef =
   let
     catchHead = "catch" <+> parens (nDoc catchN)
    in
     case mRes of
       Nothing ->
-        "try" <+> bracesNest (asStmt aDecl aRef)
-          $$ (catchHead <+> bracesNest (asStmt bDecl bRef))
+        "try"
+          <+> bracesNest (asStmt aDecl aRef)
+            $$ (catchHead <+> bracesNest (asStmt bDecl bRef))
       Just rv ->
-        "try" <+> braces (nest 2 (fromMaybe mempty aDecl $$ assignResult rv aRef))
-          $$ (catchHead <+> braces (nest 2 (fromMaybe mempty bDecl $$ assignResult rv bRef)))
+        "try"
+          <+> braces (nest 2 (fromMaybe mempty aDecl $$ assignResult rv aRef))
+            $$ (catchHead <+> braces (nest 2 (fromMaybe mempty bDecl $$ assignResult rv bRef)))
 
 renderFunction :: Int -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
 renderFunction nParam decl ref =
@@ -4010,7 +4285,12 @@ effectfulAST' !env !s0 = \case
           <+> "++"
       forStmt = "for" <+> parens forHead <+> braces (nest 2 bodyStmt)
      in
-      (s4, MkCode (Just (fromMaybe mempty startDecl $$ fromMaybe mempty endDecl $$ forStmt)) Nothing False)
+      ( s4
+      , MkCode
+          (Just (fromMaybe mempty startDecl $$ fromMaybe mempty endDecl $$ forStmt))
+          Nothing
+          False
+      )
   U8Set buf idx val ->
     let
       (s1, Code bDecl bRef) = pureAST' s0 env buf
@@ -4029,7 +4309,7 @@ effectfulAST' !env !s0 = \case
   OptionCaseE opt noneE someF ->
     let
       (sProbe, tagged, binderTag) = probeContEff s0 someF
-    in
+     in
       emitBranching
         False
         sProbe
@@ -4052,7 +4332,7 @@ effectfulAST' !env !s0 = \case
   Try a k ->
     let
       (sProbe, tagged, binderTag) = probeContEff s0 k
-    in
+     in
       emitBranching
         False
         sProbe
@@ -4075,7 +4355,9 @@ effectfulAST' !env !s0 = \case
       (s2, MkCode rDecl rRef _) = effectfulAST' env s1 (r (Name nBind))
       (s3, MkCode bDecl bRef bFX) = effectfulAST' env s2 (b (Name nBind))
      in
-      (s3, MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX)
+      ( s3
+      , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
+      )
   Throw x ->
     let
       (s1, Code xDecl xRef) = pureAST' s0 env x
@@ -4121,10 +4403,10 @@ letCode ::
   Env -> CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
 letCode env s0 x g =
   let
-    (sProbe, tagged, binderTag) = probeContExpr s0 g
-    uses = countExpr binderTag tagged
+    (sProbe, tagged, probeTag) = probeContExpr s0 g
+    (binderTag, uses) = letProbeTag probeTag tagged
     (s1, MkCode xDecl xRef _) = pureAST' sProbe env x
-  in
+   in
     case uses of
       0 ->
         let
@@ -4140,7 +4422,14 @@ letCode env s0 x g =
           env' = IM.insert binderTag nBind env
           (s3, y) = pureAST' s2 env' tagged
          in
-          (s3, keepRef (fromMaybe mempty xDecl $$ constBind nBind (fromMaybe mempty xRef) $$ fromMaybe mempty (codeDecl y)) y)
+          ( s3
+          , keepRef
+              ( fromMaybe mempty xDecl
+                  $$ constBind nBind (fromMaybe mempty xRef)
+                  $$ fromMaybe mempty (codeDecl y)
+              )
+              y
+          )
 
 pureAST :: ClosedExpr u -> Doc ann
 pureAST e = uncurry renderWithHelpers (pureAST' startCG IM.empty (optimize e))
@@ -4188,7 +4477,9 @@ pureAST' !s0 env = \case
       (s2, MkCode rDecl rRef _) = pureAST' s1 env (r (Name nBind))
       (s3, bCode) = pureAST' s2 env (b (Name nBind))
      in
-      (s3, keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode)
+      ( s3
+      , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
+      )
   Apply fex ex ->
     let
       (s1, Code exprXDecl exprXRef) = pureAST' s0 env fex
@@ -4355,7 +4646,11 @@ renderArrayLit env s0 es =
     (s1, cs) = mapAccumL (\s e -> effectfulAST' env s e) s0 es
     (decls, refs) = partitionCode cs
    in
-    (s1, Code (P.vcat (catMaybes decls)) (P.brackets (hcat (punctuate ", " (map arrayElemRef refs)))))
+    ( s1
+    , Code
+        (P.vcat (catMaybes decls))
+        (P.brackets (hcat (punctuate ", " (map arrayElemRef refs))))
+    )
 
 renderObjectLit :: Env -> CG -> [FieldLit Stamp r] -> (CG, Code ann)
 renderObjectLit env s0 fs =
@@ -4378,12 +4673,22 @@ renderObjectLit env s0 fs =
                 let
                   (s', MkCode d r _) = effectfulAST' env s e
                  in
-                  (s', (fromMaybe mempty d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r))
+                  ( s'
+                  ,
+                    ( fromMaybe mempty d
+                    , (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r
+                    )
+                  )
               FieldLitExtraEffect e ->
                 let
                   (s', MkCode d r _) = effectfulAST' env s e
                  in
-                  (s', (fromMaybe mempty d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r))
+                  ( s'
+                  ,
+                    ( fromMaybe mempty d
+                    , (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r
+                    )
+                  )
         )
         s0
         fs

@@ -314,6 +314,53 @@ benchmark jshark-compiler-examples
     , synth
     , todo-mvc
 
+executable jshark-life-phases
+  import: bench
+  main-is:
+    LifePhases.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+executable jshark-life-metrics
+  import: bench
+  main-is:
+    LifeMetrics.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+executable jshark-life-full-emit
+  import: bench
+  main-is:
+    LifeFullEmit.hs
+  other-modules:
+    Stages
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+executable jshark-life-emit
+  import: bench
+  main-is:
+    LifeEmit.hs
+  other-modules:
+    Stages
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+executable jshark-probe
+  import: bench
+  main-is:
+    Probe.hs
+  hs-source-dirs:
+    bench
+
 executable print-size
   import: bench
   main-is:
