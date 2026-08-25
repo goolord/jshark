@@ -18,6 +18,7 @@ module JShark.Flat
   , FlatArg (..)
   , FlatField (..)
   , FlatFixed (..)
+  , FlatLit (FLit)
   , packExpr
   , packEffect
   , packEffectProgram

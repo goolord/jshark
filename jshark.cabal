@@ -90,6 +90,7 @@ library
     JShark.Bun.Internal
   other-modules:
     JShark.Flat
+    JShark.FlatSoA
     JShark.Ir
   build-depends:
     , async >= 2.2 && < 2.4

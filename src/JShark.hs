@@ -158,6 +158,7 @@ import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
 import qualified Data.Vector as V
 import qualified JShark.Flat as Flat
+import qualified JShark.FlatSoA as FlatSoA
 import qualified JShark.Ir as Ir
 import JShark.Prim
   ( MathBinary (..)
@@ -5122,7 +5123,9 @@ flatEffectfulCodegen (e :: ClosedEffect u) =
   let
     (_, ir) = lowerEffectAt (-2) (flattenEff e)
     (_, irOpt, _) = Ir.optIrEffect (-2) ir
-    prog = Flat.packEffectProgram irOpt
+    prog =
+      FlatSoA.toProgram
+        (FlatSoA.optimizeSoA (FlatSoA.fromProgram (Flat.packEffectProgram irOpt)))
     root = Flat.fpRootEffect prog
    in
     if root < 0 || root >= flatProgramNodeCount prog
