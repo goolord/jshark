@@ -115,6 +115,7 @@ module JShark
   -- Codegen
   , pureAST
   , effectfulAST
+  , effectfulASTFromFlat
   , effectfulASTIr
   , pureProgram
   , effectfulProgram
@@ -155,6 +156,8 @@ import Data.Word (Word32)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
+import qualified Data.Vector as V
+import qualified JShark.Flat as Flat
 import qualified JShark.Ir as Ir
 import JShark.Prim
   ( MathBinary (..)
@@ -1123,8 +1126,11 @@ pureProgram e = uncurry renderIIFE (pureAST' startCG IM.empty (optimize e))
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: ClosedEffect u -> Doc ann
-effectfulProgram e =
-  uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffectTree e))
+effectfulProgram e
+  | closedEffectNodes e >= optIrLargeThreshold =
+      uncurry renderIIFE (flatEffectfulCodegen e)
+  | otherwise =
+      uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
 codesDecls :: [Code ann] -> Doc ann
 codesDecls cs = P.vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
@@ -2906,6 +2912,9 @@ optimize (e :: ClosedExpr u) =
     flattenExpr final
 {-# NOINLINE optimize #-}
 
+-- | Legacy PHOAS round-trip: optimize via IR, then 'reifyEffect' back to
+-- 'Effect Stamp'. 'effectfulASTIr' uses 'effectfulASTFromFlat' instead;
+-- keep this for callers that still need an optimized 'Effect' tree.
 optimizeEffectIr :: Effect Stamp u -> Effect Stamp u
 optimizeEffectIr e =
   let
@@ -4129,21 +4138,1015 @@ bindEffectCode env s0 x f =
                   yFX
               )
 
+flatRenderLiteral ::
+  Env -> CG -> Value u -> (CG, Code ann)
+flatRenderLiteral env s0 = \case
+  ValueNumber d -> (s0, Code mempty (P.pretty $ showFFloat Nothing d ""))
+  ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
+  ValueArray xs ->
+    let
+      (s1, exprs) =
+        mapAccumL (\s x -> flatRenderLiteral env s x) s0 xs
+     in
+      ( s1
+      , Code
+          (codesDecls exprs)
+          (P.brackets (hcat (punctuate ", " (codesRefs exprs))))
+      )
+  ValueString s -> (s0, Code mempty (jsQuote s))
+  ValueFunction _ -> error "JShark.flatPureAST: ValueFunction is eval-only"
+  ValueUnit -> (s0, mempty)
+  ValueOption (Just x) -> flatRenderLiteral env s0 x
+  ValueOption Nothing -> (s0, Code mempty "null")
+  ValueResult (Right x) -> renderResultLit True s0 x
+  ValueResult (Left x) -> renderResultLit False s0 x
+  ValueRegex s ->
+    (s0, Code mempty ("new RegExp" <> parens (jsQuote s)))
+  ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))
+  ValueBool True -> (s0, Code mempty "true")
+  ValueBool False -> (s0, Code mempty "false")
+  ValueFrozen {} -> error "JShark.flatPureAST: ValueFrozen is eval-only"
+
+flatIsUnitExpr :: Flat.FlatProgram -> Flat.NodeId -> Bool
+flatIsUnitExpr prog nid = case Flat.flatNode prog nid of
+  Flat.FE_Literal li ->
+    case Flat.flatLitValue prog li of
+      ValueUnit -> True
+      _ -> False
+  Flat.FE_Var{} -> False
+  _ -> False
+
+flatIsUnitEffect :: Flat.FlatProgram -> Flat.NodeId -> Bool
+flatIsUnitEffect prog nid = case Flat.flatNode prog nid of
+  Flat.FX_Lift eid -> flatIsUnitExpr prog eid
+  Flat.FX_While _ _ -> True
+  Flat.FX_ForRange _ _ _ _ -> True
+  Flat.FX_Throw _ -> True
+  Flat.FX_ThenE x y ->
+    flatIsUnitEffect prog x && flatIsUnitEffect prog y
+  Flat.FX_Bind _ _ y -> flatIsUnitEffect prog y
+  Flat.FX_BindRec _ _ y -> flatIsUnitEffect prog y
+  Flat.FX_IfE _ t e -> flatIsUnitEffect prog t && flatIsUnitEffect prog e
+  Flat.FX_OptionCaseE _ n _ s ->
+    flatIsUnitEffect prog n && flatIsUnitEffect prog s
+  Flat.FX_ResultCaseE _ _ er _ ok ->
+    flatIsUnitEffect prog er && flatIsUnitEffect prog ok
+  Flat.FX_StringCaseE _ ai d ->
+    all (flatIsUnitEffect prog . snd) (Flat.flatStrCases prog ai)
+      && flatIsUnitEffect prog d
+  Flat.FX_Try a _ k -> flatIsUnitEffect prog a && flatIsUnitEffect prog k
+  _ -> False
+
+flatIsSimpleEffectNode :: Flat.FlatProgram -> Flat.NodeId -> Bool
+flatIsSimpleEffectNode prog nid = case Flat.flatNode prog nid of
+  Flat.FX_Lift eid -> flatIsSimpleNode prog eid
+  Flat.FX_FFI{} -> True
+  Flat.FX_CallMethod{} -> True
+  Flat.FX_UnsafeObject{} -> True
+  Flat.FX_UnsafeObjectGet{} -> True
+  Flat.FX_ArrayLit es -> all (flatIsSimpleEffectNode prog) es
+  _ -> False
+
+flatIsSimpleNode :: Flat.FlatProgram -> Flat.NodeId -> Bool
+flatIsSimpleNode prog nid = case Flat.flatNode prog nid of
+  Flat.FE_Literal _ -> True
+  Flat.FE_Var _ -> True
+  Flat.FE_EmbedEff eid -> flatIsSimpleEffectNode prog eid
+  Flat.FE_KShow _ -> True
+  Flat.FE_KTypeOf _ -> True
+  Flat.FE_KNegate _ -> True
+  Flat.FE_KBigNeg _ -> True
+  Flat.FE_KConcat{} -> False
+  Flat.FE_KPlus{} -> False
+  Flat.FE_KTimes{} -> False
+  Flat.FE_KMinus{} -> False
+  Flat.FE_KFracDiv{} -> False
+  Flat.FE_KRem{} -> False
+  Flat.FE_KBitAnd{} -> False
+  Flat.FE_KBitOr{} -> False
+  Flat.FE_KBitXor{} -> False
+  Flat.FE_KShl{} -> False
+  Flat.FE_KShr{} -> False
+  Flat.FE_KUShr{} -> False
+  Flat.FE_KBig{} -> False
+  Flat.FE_KAnd{} -> False
+  Flat.FE_KOr{} -> False
+  Flat.FE_KEq{} -> False
+  Flat.FE_KNEq{} -> False
+  Flat.FE_KGTh{} -> False
+  Flat.FE_KLTh{} -> False
+  Flat.FE_KGTEq{} -> False
+  Flat.FE_KLTEq{} -> False
+  Flat.FE_Fixed{} -> True
+  Flat.FE_MethMap{} -> False
+  Flat.FE_MethFilter{} -> False
+  Flat.FE_MethReduce{} -> False
+  Flat.FE_MethReduceRight{} -> False
+  Flat.FE_MethToSorted{} -> False
+  Flat.FE_MethFrom{} -> False
+  Flat.FE_FnLit{} -> True
+  Flat.FE_Index{} -> True
+  Flat.FE_U8Index{} -> True
+  Flat.FE_Error{} -> False
+  Flat.FE_UnsafeNullable x -> flatIsSimpleNode prog x
+  Flat.FE_FrozenLit{} -> True
+  Flat.FE_GetField{} -> True
+  _ -> False
+
+flatWrapOperand :: Flat.FlatProgram -> Flat.NodeId -> Doc ann -> Doc ann
+flatWrapOperand prog nid d =
+  if flatIsSimpleNode prog nid then d else parens d
+
+flatRenderBin ::
+  Env
+  -> Text
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatRenderBin env op s0 prog xId yId =
+  let
+    (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
+    (s2, Code yDecl yRef) = flatPureAST' env s1 prog yId
+   in
+    ( s2
+    , Code
+        (xDecl $$ yDecl)
+        ( flatWrapOperand prog xId xRef
+            <+> P.pretty op
+            <+> flatWrapOperand prog yId yRef
+        )
+    )
+
+flatRenderArgList ::
+  Env -> CG -> Flat.FlatProgram -> Int -> (CG, Doc ann, Doc ann)
+flatRenderArgList env s0 prog ai =
+  let
+    args = Flat.flatArgGroup prog ai
+    go s = \case
+      [] -> (s, [])
+      Flat.FlatArgExpr eid : rest ->
+        let
+          (s', c) = flatPureAST' env s prog eid
+          (s'', cs') = go s' rest
+         in
+          (s'', c : cs')
+      Flat.FlatArgEffect eid : rest ->
+        let
+          (s', c) = flatEffectfulAST' env s prog eid
+          (s'', cs') = go s' rest
+         in
+          (s'', c : cs')
+    (s1, cs) = go s0 args
+   in
+    (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+
+flatRenderField ::
+  Env -> Flat.FlatProgram -> CG -> Flat.FlatField -> (CG, (Doc ann, Doc ann))
+flatRenderField env prog s = \case
+  Flat.FlatField k eid ->
+    let
+      (s', Code d r) = flatPureAST' env s prog eid
+     in
+      (s', (d, (dquotes (P.pretty k) <> ":") <+> r))
+  Flat.FlatFieldExtra k eid ->
+    let
+      (s', Code d r) = flatPureAST' env s prog eid
+     in
+      (s', (d, (dquotes (P.pretty k) <> ":") <+> r))
+  Flat.FlatFieldEff k eid ->
+    let
+      (s', MkCode d r _) = flatEffectfulAST' env s prog eid
+     in
+      ( s'
+      , ( fromMaybe mempty d
+        , (dquotes (P.pretty k) <> ":") <+> fromMaybe mempty r
+        )
+      )
+  Flat.FlatFieldExtraEff k eid ->
+    let
+      (s', MkCode d r _) = flatEffectfulAST' env s prog eid
+     in
+      ( s'
+      , ( fromMaybe mempty d
+        , (dquotes (P.pretty k) <> ":") <+> fromMaybe mempty r
+        )
+      )
+
+flatRenderObjectLit ::
+  Env -> CG -> Flat.FlatProgram -> Int -> (CG, Code ann)
+flatRenderObjectLit env s0 prog gi =
+  let
+    fs = Flat.flatFieldGroup prog gi
+    (s1, parts) = mapAccumL (flatRenderField env prog) s0 fs
+    (declList, pairs) = unzip parts
+   in
+    (s1, Code (vcatNonEmpty declList) (braces (hcat (punctuate ", " pairs))))
+
+flatRenderArrayLit ::
+  Env -> CG -> Flat.FlatProgram -> [Flat.NodeId] -> (CG, Code ann)
+flatRenderArrayLit env s0 prog es =
+  let
+    (s1, cs) = mapAccumL (\s e -> flatEffectfulAST' env s prog e) s0 es
+   in
+    ( s1
+    , Code
+        (codesDecls cs)
+        (P.brackets (hcat (punctuate ", " (codesRefs cs))))
+    )
+
+flatRenderFixed ::
+  Env -> CG -> Flat.FlatProgram -> Flat.FlatFixed -> (CG, Code ann)
+flatRenderFixed env s0 prog = \case
+  Flat.FlatFixedU op xId
+    | Just name <- Prim.math1Name op ->
+        let
+          (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
+         in
+          (s1, Code xDecl ("Math." <> P.pretty (T.unpack name) <> parens xRef))
+  Flat.FlatFixedB op xId yId
+    | Just name <- Prim.math2Name op ->
+        let
+          (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
+          (s2, Code yDecl yRef) = flatPureAST' env s1 prog yId
+         in
+          ( s2
+          , Code
+              (xDecl $$ yDecl)
+              ( "Math."
+                  <> P.pretty (T.unpack name)
+                  <> parens (xRef <> ", " <> yRef)
+              )
+          )
+  Flat.FlatFixedU op xId ->
+    let
+      (s1, Code rDecl rRef) = flatPureAST' env s0 prog xId
+     in
+      (s1, Code rDecl (Prim.fixedUnaryJS op (flatWrapOperand prog xId rRef)))
+  Flat.FlatFixedB op xId yId ->
+    let
+      (s1, Code rDecl rRef) = flatPureAST' env s0 prog xId
+      (s2, Code aDecl aRef) = flatPureAST' env s1 prog yId
+     in
+      ( s2
+      , Code
+          (rDecl $$ aDecl)
+          (Prim.fixedBinaryJS op (flatWrapOperand prog xId rRef) aRef)
+      )
+  Flat.FlatFixedT op xId yId zId ->
+    let
+      (s1, Code rDecl rRef) = flatPureAST' env s0 prog xId
+      (s2, Code aDecl aRef) = flatPureAST' env s1 prog yId
+      (s3, Code bDecl bRef) = flatPureAST' env s2 prog zId
+     in
+      ( s3
+      , Code
+          (rDecl $$ aDecl $$ bDecl)
+          ( Prim.fixedTernaryJS
+              op
+              (flatWrapOperand prog xId rRef)
+              aRef
+              bRef
+          )
+      )
+
+flatRenderKernel ::
+  Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code ann)
+flatRenderKernel env s0 prog = \case
+  Flat.FE_KConcat x y -> flatRenderBin env "+" s0 prog x y
+  Flat.FE_KPlus x y -> flatRenderBin env "+" s0 prog x y
+  Flat.FE_KMinus x y -> flatRenderBin env "-" s0 prog x y
+  Flat.FE_KTimes x y -> flatRenderBin env "*" s0 prog x y
+  Flat.FE_KFracDiv x y -> flatRenderBin env "/" s0 prog x y
+  Flat.FE_KRem x y -> flatRenderBin env "%" s0 prog x y
+  Flat.FE_KBitAnd x y -> flatRenderBin env "&" s0 prog x y
+  Flat.FE_KBitOr x y -> flatRenderBin env "|" s0 prog x y
+  Flat.FE_KBitXor x y -> flatRenderBin env "^" s0 prog x y
+  Flat.FE_KShl x y -> flatRenderBin env "<<" s0 prog x y
+  Flat.FE_KShr x y -> flatRenderBin env ">>" s0 prog x y
+  Flat.FE_KUShr x y -> flatRenderBin env ">>>" s0 prog x y
+  Flat.FE_KBig op x y -> flatRenderBin env (bigOpJS op) s0 prog x y
+  Flat.FE_KBigNeg x ->
+    let
+      (s1, Code xDecl xRef) = flatPureAST' env s0 prog x
+     in
+      (s1, Code xDecl $ "-" <> parens xRef)
+  Flat.FE_KShow x ->
+    let
+      (s1, Code xDecl xRef) = flatPureAST' env s0 prog x
+     in
+      (s1, Code xDecl $ "String" <> parens xRef)
+  Flat.FE_KTypeOf x ->
+    let
+      (s1, Code xDecl xRef) = flatPureAST' env s0 prog x
+     in
+      (s1, Code xDecl $ "typeof" <+> xRef)
+  Flat.FE_KNegate x ->
+    let
+      (s1, Code xDecl xRef) = flatPureAST' env s0 prog x
+     in
+      (s1, Code xDecl $ "-" <> parens xRef)
+  Flat.FE_KAnd x y -> flatRenderBin env "&&" s0 prog x y
+  Flat.FE_KOr x y -> flatRenderBin env "||" s0 prog x y
+  Flat.FE_KEq structural x y
+    | structural ->
+        let
+          s1 = useEqHelpers s0
+          (s2, Code xDecl xRef) = flatPureAST' env s1 prog x
+          (s3, Code yDecl yRef) = flatPureAST' env s2 prog y
+         in
+          (s3, Code (xDecl $$ yDecl) (jsValueEq (flatWrapOperand prog x xRef) (flatWrapOperand prog y yRef)))
+    | otherwise ->
+        flatRenderBin env "===" s0 prog x y
+  Flat.FE_KNEq structural x y
+    | structural ->
+        let
+          s1 = useEqHelpers s0
+          (s2, Code xDecl xRef) = flatPureAST' env s1 prog x
+          (s3, Code yDecl yRef) = flatPureAST' env s2 prog y
+         in
+          (s3, Code (xDecl $$ yDecl) (jsValueNEq (flatWrapOperand prog x xRef) (flatWrapOperand prog y yRef)))
+    | otherwise ->
+        flatRenderBin env "!==" s0 prog x y
+  Flat.FE_KGTh x y -> flatRenderBin env ">" s0 prog x y
+  Flat.FE_KLTh x y -> flatRenderBin env "<" s0 prog x y
+  Flat.FE_KGTEq x y -> flatRenderBin env ">=" s0 prog x y
+  Flat.FE_KLTEq x y -> flatRenderBin env "<=" s0 prog x y
+  _ -> error "JShark.flatRenderKernel: unexpected node"
+
+flatRenderCallbackMethod ::
+  Env
+  -> String
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatRenderCallbackMethod env name s0 prog arrId tag bodyId =
+  let
+    (s1, Code rDecl rRef) = flatPureAST' env s0 prog arrId
+    (nParam, s2) = allocIdent s1
+    env' = IM.insert tag nParam env
+    (s3, Code exDecl exRef) = flatPureAST' env' s2 prog bodyId
+    call =
+      flatWrapOperand prog arrId rRef
+        <> "."
+        <> P.pretty name
+        <> parens (jsCallback [nDoc nParam] exDecl exRef)
+   in
+    (s3, Code rDecl call)
+
+flatRenderFold ::
+  Env
+  -> String
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Flat.NodeId
+  -> Int
+  -> Int
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatRenderFold env method s0 prog arrId zId tagA tagB bodyId =
+  let
+    (s1, Code rDecl rRef) = flatPureAST' env s0 prog arrId
+    (s2, Code zDecl zRef) = flatPureAST' env s1 prog zId
+    (nAcc, s3) = allocIdent s2
+    (nElem, s4) = allocIdent s3
+    env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
+    (s5, Code exDecl exRef) = flatPureAST' env' s4 prog bodyId
+    cb = jsCallback [nDoc nAcc, nDoc nElem] exDecl exRef
+    call = flatWrapOperand prog arrId rRef <> P.pretty method <> parens (cb <> ", " <> zRef)
+   in
+    (s5, Code (rDecl $$ zDecl) call)
+
+flatRenderMethod ::
+  Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code ann)
+flatRenderMethod env s0 prog = \case
+  Flat.FE_MethMap arr tag body ->
+    flatRenderCallbackMethod env "map" s0 prog arr tag body
+  Flat.FE_MethFilter arr tag body ->
+    flatRenderCallbackMethod env "filter" s0 prog arr tag body
+  Flat.FE_MethReduce arr z tagA tagB body ->
+    flatRenderFold env ".reduce" s0 prog arr z tagA tagB body
+  Flat.FE_MethReduceRight arr z tagA tagB body ->
+    flatRenderFold env ".reduceRight" s0 prog arr z tagA tagB body
+  Flat.FE_MethToSorted arr tagA tagB body ->
+    let
+      (s1, Code rDecl rRef) = flatPureAST' env s0 prog arr
+      (nA, s2) = allocIdent s1
+      (nB, s3) = allocIdent s2
+      env' = IM.insert tagA nA $ IM.insert tagB nB env
+      (s4, Code exDecl exRef) = flatPureAST' env' s3 prog body
+      cb = jsCallback [nDoc nA, nDoc nB] exDecl exRef
+     in
+      (s4, Code rDecl (flatWrapOperand prog arr rRef <> ".toSorted" <> parens cb))
+  Flat.FE_MethFrom n tag body ->
+    let
+      (s1, Code nDecl nRef) = flatPureAST' env s0 prog n
+      (nHole, s2) = allocIdent s1
+      (nI, s3) = allocIdent s2
+      env' = IM.insert tag nI env
+      (s4, Code exDecl exRef) = flatPureAST' env' s3 prog body
+      cb = jsCallback [nDoc nHole, nDoc nI] exDecl exRef
+     in
+      (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
+  _ -> error "JShark.flatRenderMethod: unexpected node"
+
+flatRenderFnLit ::
+  Env -> CG -> Flat.FlatProgram -> [Int] -> Flat.NodeId -> (CG, Code ann)
+flatRenderFnLit env s0 prog tags bodyId =
+  let
+    (ids, s1) = allocNIdents s0 (length tags)
+    env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
+    (s2, Code d r) = flatPureAST' env' s1 prog bodyId
+   in
+    (s2, Code mempty (jsCallback (map nDoc ids) d r))
+
+flatRenderResultCase ::
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatRenderResultCase env s0 prog resId tagE errId tagO okId =
+  let
+    (s1, MkCode rDecl rRef _) = flatPureAST' env s0 prog resId
+    (nObj, s2) = allocIdent s1
+    (nUnw, s3) = allocIdent s2
+    obj = nName nObj
+    prelude =
+      fromMaybe mempty rDecl
+        $$ constBind nObj (fromMaybe mempty rRef)
+        $$ constBind nUnw (P.pretty obj <> ".value")
+    envE = IM.insert tagE nUnw env
+    envO = IM.insert tagO nUnw envE
+    (s4, Code eDecl eRef) = flatPureAST' envE s3 prog errId
+    (s5, Code oDecl oRef) = flatPureAST' envO s4 prog okId
+   in
+    ( s5
+    , Code
+        (prelude $$ eDecl $$ oDecl)
+        (parens ((P.pretty obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
+    )
+
+flatSeqEffect ::
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatSeqEffect env s0 prog xId yId =
+  let
+    (s1, MkCode xDecl xRef xFX) = flatEffectfulAST' env s0 prog xId
+    (s2, MkCode yDecl yRef yFX) = flatEffectfulAST' env s1 prog yId
+    stmt
+      | isNothing xRef = fromMaybe mempty xDecl
+      | not xFX && isJust xDecl = fromMaybe mempty xDecl
+      | otherwise = asStmt xDecl xRef
+   in
+    (s2, MkCode (Just (stmt $$ fromMaybe mempty yDecl)) yRef yFX)
+
+flatBindEffect ::
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Int
+  -> Flat.NodeId
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatBindEffect env s0 prog tag xId bodyId =
+  let
+    (s1, MkCode xDecl xRef xFX) = flatEffectfulAST' env s0 prog xId
+    (nBind, s2) = allocIdent s1
+    env' = IM.insert tag nBind env
+    (s3, MkCode yDecl yRef yFX) = flatEffectfulAST' env' s2 prog bodyId
+    stmtX
+      | isNothing xRef = fromMaybe mempty xDecl
+      | not xFX && isJust xDecl = fromMaybe mempty xDecl
+      | otherwise = asStmt xDecl xRef
+   in
+    case xRef of
+      Nothing ->
+        (s3, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
+      Just _ ->
+        ( s3
+        , MkCode
+            ( Just
+                ( fromMaybe mempty xDecl
+                    $$ constBind nBind (fromMaybe mempty xRef)
+                    $$ fromMaybe mempty yDecl
+                )
+            )
+            yRef
+            yFX
+        )
+
+flatRenderResultCaseE ::
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatRenderResultCaseE env s0 prog resId tagE errId tagO okId =
+  if flatIsUnitEffect prog errId && flatIsUnitEffect prog okId
+    then
+      let
+        (s1, MkCode rDecl rRef _) = flatPureAST' env s0 prog resId
+        (nObj, s2) = allocIdent s1
+        (nUnw, s3) = allocIdent s2
+        obj = nName nObj
+        prelude =
+          fromMaybe mempty rDecl
+            $$ constBind nObj (fromMaybe mempty rRef)
+            $$ constBind nUnw (P.pretty obj <> ".value")
+        envE = IM.insert tagE nUnw env
+        envO = IM.insert tagO nUnw envE
+        (s4, MkCode eDecl eRef _) = flatEffectfulAST' envE s3 prog errId
+        (s5, MkCode oDecl oRef _) = flatEffectfulAST' envO s4 prog okId
+       in
+        ( s5
+        , Code
+            (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef)
+            mempty
+        )
+    else
+      let
+        (s1, MkCode rDecl rRef _) = flatPureAST' env s0 prog resId
+        (nObj, s2) = allocIdent s1
+        (nUnw, s3) = allocIdent s2
+        obj = nName nObj
+        prelude =
+          fromMaybe mempty rDecl
+            $$ constBind nObj (fromMaybe mempty rRef)
+            $$ constBind nUnw (P.pretty obj <> ".value")
+        (resultN, s4) = allocIdent s3
+        resultVar = nName resultN
+        envE = IM.insert tagE nUnw env
+        envO = IM.insert tagO nUnw envE
+        (s5, MkCode eDecl eRef _) = flatEffectfulAST' envE s4 prog errId
+        (s6, MkCode oDecl oRef _) = flatEffectfulAST' envO s5 prog okId
+        stmt =
+          prelude
+            $$ letResult resultVar
+            $$ ifElseStmt
+              (P.pretty obj <> ".ok")
+              (Just (fromMaybe mempty oDecl $$ assignResult resultVar oRef))
+              Nothing
+              (Just (fromMaybe mempty eDecl $$ assignResult resultVar eRef))
+              Nothing
+       in
+        (s6, Code stmt (P.pretty resultVar))
+
+flatRenderStringCaseE ::
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatRenderStringCaseE env s0 prog scrutId ai defId =
+  let
+    arms = Flat.flatStrCases prog ai
+    unit =
+      all (flatIsUnitEffect prog . snd) arms
+        && flatIsUnitEffect prog defId
+    (s1, Code oDecl oRef) = flatPureAST' env s0 prog scrutId
+    (resultN, s2) =
+      if unit then (0, s1) else allocIdent s1
+    resultVar = nName resultN
+    renderArm s e =
+      let
+        (s', MkCode mDecl mRef _) = flatEffectfulAST' env s prog e
+        body =
+          if unit
+            then asStmt mDecl mRef
+            else fromMaybe mempty mDecl $$ assignResult resultVar mRef
+       in
+        (s', body)
+    (s3, caseDocs) =
+      mapAccumL
+        ( \s (k, e) ->
+            let
+              (s', body) = renderArm s e
+              line =
+                "case"
+                  <+> (jsQuote k <> colon)
+                  <+> bracesNest (body <+> ("break" <> semi))
+             in
+              (s', line)
+        )
+        s2
+        arms
+    (s4, defBody) = renderArm s3 defId
+    defDoc = "default:" <+> bracesNest defBody
+    switchStmt = "switch" <+> parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
+    prelude =
+      if unit then oDecl else oDecl $$ letResult resultVar
+    ref = if unit then Nothing else Just (P.pretty resultVar)
+   in
+    (s4, MkCode (Just (prelude $$ switchStmt)) ref False)
+
+flatPureAST' ::
+  forall ann.
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatPureAST' !env !s0 prog nid =
+  case Flat.flatNode prog nid of
+    Flat.FE_Literal li ->
+      flatRenderLiteral env s0 (Flat.flatLitValue prog li)
+    Flat.FE_Var i ->
+      (s0, Code mempty (varStampDoc env (Name i)))
+    Flat.FE_Let tag xId bodyId ->
+      let
+        (nBind, s1) = allocIdent s0
+        (s2, MkCode xDecl xRef _) = flatPureAST' env s1 prog xId
+        env' = IM.insert tag nBind env
+        (s3, yCode) = flatPureAST' env' s2 prog bodyId
+       in
+        ( s3
+        , keepRef
+            ( fromMaybe mempty xDecl
+                $$ constBind nBind (fromMaybe mempty xRef)
+                $$ fromMaybe mempty (codeDecl yCode)
+            )
+            yCode
+        )
+    Flat.FE_LetRec tag rId bId ->
+      let
+        (nBind, s1) = allocIdent s0
+        n = nDoc nBind
+        env' = IM.insert tag nBind env
+        (s2, MkCode rDecl rRef _) = flatPureAST' env' s1 prog rId
+        (s3, bCode) = flatPureAST' env' s2 prog bId
+       in
+        ( s3
+        , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
+        )
+    Flat.FE_Lambda tag bodyId ->
+      let
+        (nParam, s1) = allocIdent s0
+        env' = IM.insert tag nParam env
+        (s2, MkCode exprXDecl exprXRef _) = flatPureAST' env' s1 prog bodyId
+       in
+        (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+    Flat.FE_Apply fId xId ->
+      let
+        (s1, Code fDecl fRef) = flatPureAST' env s0 prog fId
+        (s2, Code xDecl xRef) = flatPureAST' env s1 prog xId
+       in
+        (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+    Flat.FE_EmbedEff eId -> flatEffectfulAST' env s0 prog eId
+    Flat.FE_If cId tId eId ->
+      let
+        (s1, Code cDecl cRef) = flatPureAST' env s0 prog cId
+        (s2, Code tDecl tRef) = flatPureAST' env s1 prog tId
+        (s3, Code eDecl eRef) = flatPureAST' env s2 prog eId
+       in
+        ( s3
+        , Code
+            (cDecl $$ tDecl $$ eDecl)
+            (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
+        )
+    Flat.FE_OptionCase oId nId tag sId ->
+      let
+        (s1, Code optDecl optRef) = flatPureAST' env s0 prog oId
+        (nBind, s2) = allocIdent s1
+        optVar = nName nBind
+        env' = IM.insert tag nBind env
+        (s3, Code noneDecl noneRef) = flatPureAST' env s2 prog nId
+        (s4, Code someDecl someRef) = flatPureAST' env' s3 prog sId
+       in
+        ( s4
+        , Code
+            (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
+            ( parens
+                (P.pretty optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+            )
+        )
+    Flat.FE_ResultOk xId ->
+      let
+        (s1, MkCode d r _) = flatPureAST' env s0 prog xId
+       in
+        (s1, MkCode d (Just (resultObject True r)) False)
+    Flat.FE_ResultErr xId ->
+      let
+        (s1, MkCode d r _) = flatPureAST' env s0 prog xId
+       in
+        (s1, MkCode d (Just (resultObject False r)) False)
+    Flat.FE_ResultCase resId tagE errId tagO okId ->
+      flatRenderResultCase env s0 prog resId tagE errId tagO okId
+    Flat.FE_Index arrId idxId ->
+      let
+        s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
+        (s2, Code aDecl aRef) = flatPureAST' env s1 prog arrId
+        (s3, Code iDecl iRef) = flatPureAST' env s2 prog idxId
+       in
+        (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+    Flat.FE_U8Index bufId idxId ->
+      let
+        (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
+        (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
+       in
+        (s2, Code (bDecl $$ iDecl) (bRef <> P.brackets iRef))
+    Flat.FE_Error msgId ->
+      let
+        (s1, Code d r) = flatPureAST' env s0 prog msgId
+       in
+        (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
+    Flat.FE_Fixed fixed -> flatRenderFixed env s0 prog fixed
+    Flat.FE_FnLit tags bodyId -> flatRenderFnLit env s0 prog tags bodyId
+    Flat.FE_UnsafeNullable xId -> flatPureAST' env s0 prog xId
+    Flat.FE_FrozenLit gi -> flatRenderObjectLit env s0 prog gi
+    Flat.FE_GetField ti oId ->
+      let
+        (s1, Code d r) = flatPureAST' env s0 prog oId
+       in
+        (s1, Code d (jsDotOrBracket r (Flat.flatText prog ti)))
+    knode ->
+      case knode of
+        Flat.FE_KConcat{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KPlus{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KTimes{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KMinus{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KNegate{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KFracDiv{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KRem{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBitAnd{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBitOr{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBitXor{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KShl{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KShr{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KUShr{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBig{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBigNeg{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KAnd{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KOr{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KEq{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KNEq{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KGTh{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KLTh{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KGTEq{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KLTEq{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KShow{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KTypeOf{} -> flatRenderKernel env s0 prog knode
+        Flat.FE_MethMap{} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethFilter{} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethReduce{} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethReduceRight{} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethToSorted{} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethFrom{} -> flatRenderMethod env s0 prog knode
+        _ -> error "JShark.flatPureAST': unexpected node"
+
+flatEffectfulAST' ::
+  forall ann.
+  Env
+  -> CG
+  -> Flat.FlatProgram
+  -> Flat.NodeId
+  -> (CG, Code ann)
+flatEffectfulAST' !env !s0 prog nid =
+  case Flat.flatNode prog nid of
+    Flat.FX_Lift eId -> flatPureAST' env s0 prog eId
+    Flat.FX_FFI fi ai ->
+      let
+        (s1, argDecl, argRefs) = flatRenderArgList env s0 prog ai
+       in
+        (s1, fxCode argDecl (renderFFIForm (Flat.flatFFI prog fi) <> P.parens argRefs))
+    Flat.FX_UnsafeObject ti ->
+      (s0, Code mempty (P.pretty (Flat.flatText prog ti)))
+    Flat.FX_UnsafeObjectGet xId sId ->
+      let
+        (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
+       in
+        (s1, Code xDecl $ jsDotOrBracket xRef (Flat.flatText prog sId))
+    Flat.FX_UnsafeObjectAssign xId yId ->
+      let
+        (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
+        (s2, Code yDecl yRef) = flatEffectfulAST' env s1 prog yId
+       in
+        (s2, fxCode (xDecl $$ yDecl) $ xRef <> " = " <> yRef)
+    Flat.FX_CallMethod recvId methodIdx ai ->
+      let
+        method = Flat.flatText prog methodIdx
+        (s1, Code rDecl rRef) = flatEffectfulAST' env s0 prog recvId
+        (s2, argDecl, argRefs) = flatRenderArgList env s1 prog ai
+       in
+        ( s2
+        , fxCode
+            (rDecl $$ argDecl)
+            (rRef <> "." <> P.pretty method <> parens argRefs)
+        )
+    Flat.FX_Bind tag xId bodyId ->
+      flatBindEffect env s0 prog tag xId bodyId
+    Flat.FX_ThenE xId yId -> flatSeqEffect env s0 prog xId yId
+    Flat.FX_BindRec tag rId bId ->
+      let
+        (nBind, s1) = allocIdent s0
+        n = nDoc nBind
+        env' = IM.insert tag nBind env
+        (s2, MkCode rDecl rRef _) = flatEffectfulAST' env' s1 prog rId
+        (s3, MkCode bDecl bRef bFX) = flatEffectfulAST' env' s2 prog bId
+       in
+        ( s3
+        , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
+        )
+    Flat.FX_LambdaE tag bodyId ->
+      let
+        (nParam, s1) = allocIdent s0
+        env' = IM.insert tag nParam env
+        (s2, MkCode exprXDecl exprXRef _) = flatEffectfulAST' env' s1 prog bodyId
+       in
+        (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+    Flat.FX_ApplyE fId xId ->
+      let
+        (s1, Code fDecl fRef) = flatEffectfulAST' env s0 prog fId
+        (s2, Code xDecl xRef) = flatEffectfulAST' env s1 prog xId
+       in
+        (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+    Flat.FX_IfE cId tId eId ->
+      emitBranching
+        ( flatIsUnitEffect prog tId
+            && flatIsUnitEffect prog eId
+        )
+        s0
+        ( \s ->
+            let
+              (s1, Code cDecl cRef) = flatEffectfulAST' env s prog cId
+             in
+              (s1, cDecl, cRef)
+        )
+        ( \mRes cRef s ->
+            let
+              (s1, MkCode tDecl tRef _) = flatEffectfulAST' env s prog tId
+              (s2, MkCode eDecl eRef _) = flatEffectfulAST' env s1 prog eId
+             in
+              (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
+        )
+    Flat.FX_While cId bId ->
+      let
+        (s1, MkCode condDecl condRef _) = flatEffectfulAST' env s0 prog cId
+        (s2, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env s1 prog bId
+        bodyStmt = asStmt bodyDecl bodyRef
+        whileStmt =
+          "while"
+            <+> parens (fromMaybe mempty condRef)
+            <+> braces (nest 2 bodyStmt)
+       in
+        (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
+    Flat.FX_ForRange startId endId tag bodyId ->
+      let
+        (s1, MkCode startDecl startRef _) = flatPureAST' env s0 prog startId
+        (s2, MkCode endDecl endRef _) = flatPureAST' env s1 prog endId
+        (loopN, s3) = allocIdent s2
+        loopVar = nDoc loopN
+        env' = IM.insert tag loopN env
+        (s4, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env' s3 prog bodyId
+        bodyStmt = asStmt bodyDecl bodyRef
+        forHead =
+          "let"
+            <+> loopVar
+            <+> "="
+            <+> fromMaybe mempty startRef
+            <+> ";"
+            <+> loopVar
+            <+> "<"
+            <+> fromMaybe mempty endRef
+            <+> ";"
+            <+> loopVar
+            <+> "++"
+        forStmt = "for" <+> parens forHead <+> braces (nest 2 bodyStmt)
+       in
+        ( s4
+        , MkCode
+            ( Just
+                ( fromMaybe mempty startDecl
+                    $$ fromMaybe mempty endDecl
+                    $$ forStmt
+                )
+            )
+            Nothing
+            False
+        )
+    Flat.FX_U8Set bufId idxId valId ->
+      let
+        (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
+        (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
+        (s3, Code vDecl vRef) = flatPureAST' env s2 prog valId
+        stmt = (bRef <> P.brackets iRef) <+> "=" <+> vRef
+       in
+        (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
+    Flat.FX_U8Fill bufId valId ->
+      let
+        (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
+        (s2, Code vDecl vRef) = flatPureAST' env s1 prog valId
+        stmt = bRef <> ".fill" <> parens vRef
+       in
+        (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
+    Flat.FX_OptionCaseE oId nId tag sId ->
+      emitBranching
+        ( flatIsUnitEffect prog nId
+            && flatIsUnitEffect prog sId
+        )
+        s0
+        ( \s ->
+            let
+              (s1, Code oDecl oRef) = flatPureAST' env s prog oId
+              (nBind, s2) = allocIdent s1
+             in
+              (s2, oDecl $$ constBind nBind oRef, nBind)
+        )
+        ( \mRes nBind s ->
+            let
+              env' = IM.insert tag nBind env
+              (s1, MkCode nDecl nRef _) = flatEffectfulAST' env s prog nId
+              (s2, MkCode sDecl sRef _) = flatEffectfulAST' env' s1 prog sId
+              cond = nDoc nBind <+> "===" <+> "null"
+             in
+              (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
+        )
+    Flat.FX_ResultCaseE resId tagE errId tagO okId ->
+      flatRenderResultCaseE env s0 prog resId tagE errId tagO okId
+    Flat.FX_StringCaseE scrutId ai defId ->
+      flatRenderStringCaseE env s0 prog scrutId ai defId
+    Flat.FX_Throw xId ->
+      let
+        (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
+       in
+        (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
+    Flat.FX_Try aId tag kId ->
+      emitBranching
+        (flatIsUnitEffect prog aId && flatIsUnitEffect prog kId)
+        s0
+        (\s -> (s, mempty, ()))
+        ( \mRes () s ->
+            let
+              (s1, MkCode aDecl aRef _) = flatEffectfulAST' env s prog aId
+              (catchN, s2) = allocIdent s1
+              env' = IM.insert tag catchN env
+              (s3, MkCode bDecl bRef _) = flatEffectfulAST' env' s2 prog kId
+             in
+              (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
+        )
+    Flat.FX_ObjectLit gi -> flatRenderObjectLit env s0 prog gi
+    Flat.FX_DeleteProp oId kId ->
+      let
+        (s1, Code oDecl oRef) = flatEffectfulAST' env s0 prog oId
+        (s2, Code kDecl kRef) = flatPureAST' env s1 prog kId
+       in
+        (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
+    Flat.FX_ArrayLit es -> flatRenderArrayLit env s0 prog es
+    _ -> error "JShark.flatEffectfulAST': unexpected node"
+
+flatProgramNodeCount :: Flat.FlatProgram -> Int
+flatProgramNodeCount p = V.length (Flat.fpNodes p)
+
+flatEffectfulCodegen ::
+  ClosedEffect u -> (CG, Code ann)
+flatEffectfulCodegen (e :: ClosedEffect u) =
+  let
+    (_, ir) = lowerEffectAt (-2) (flattenEff e)
+    (_, irOpt, _) = Ir.optIrEffect (-2) ir
+    prog = Flat.packEffectProgram irOpt
+    root = Flat.fpRootEffect prog
+   in
+    if root < 0 || root >= flatProgramNodeCount prog
+      then error "JShark.flatEffectfulCodegen: invalid root node"
+      else flatEffectfulAST' IM.empty startCG prog root
+
+effectfulASTFromFlat :: ClosedEffect u -> Doc ann
+effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
+
 effectfulAST :: ClosedEffect u -> Doc ann
-effectfulAST e =
-  uncurry
-    renderWithHelpers
-    (effectfulAST' IM.empty startCG (optimizeEffectTree e))
+effectfulAST e
+  | closedEffectNodes e >= optIrLargeThreshold =
+      effectfulASTFromFlat e
+  | otherwise =
+      uncurry
+        renderWithHelpers
+        (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
 -- | 'effectfulAST' forced through the first-order IR optimizer, whatever
 -- the size of the term. Same output as 'effectfulAST'; exposed so the
 -- two optimizer paths can be diffed on programs below the routing
 -- threshold.
 effectfulASTIr :: ClosedEffect u -> Doc ann
-effectfulASTIr (e :: ClosedEffect u) =
-  uncurry
-    renderWithHelpers
-    (effectfulAST' IM.empty startCG (optimizeEffectIr (e :: Effect Stamp u)))
+effectfulASTIr = effectfulASTFromFlat
 
 -- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
 -- materializes continuations (@f nestedDummy@).
