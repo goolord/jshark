@@ -982,21 +982,21 @@ tickEraserGhost toolRef tipRef state viewport ghost = do
                 (glLost .== 0)
                 ( do
                     clearEraserGhostStm ghost
-                    Pixi.drawEraserGhost app alive w h gx gy radius panX panY zoom px
+                    Pixi.drawEraserGhost app viewport alive w h gx gy radius panX panY zoom px
                 )
                 ( do
-                    Pixi.clearEraserGhost app
+                    Pixi.clearEraserGhost app viewport
                     drawEraserGhostStm ghost alive w h gx gy radius panX panY zoom px
                 )
           )
           ( do
               clearEraserGhostStm ghost
-              Pixi.clearEraserGhost app
+              Pixi.clearEraserGhost app viewport
           )
     )
     ( do
         clearEraserGhostStm ghost
-        Pixi.clearEraserGhost app
+        Pixi.clearEraserGhost app viewport
     )
 
 eraserCursor :: Expr f 'String

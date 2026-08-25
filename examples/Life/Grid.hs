@@ -791,25 +791,13 @@ drawGridViewport
               visY0
               visY1
               renderDirty
-          isFull <- renderDirty.dirtyFull
-          ifS
-            (not_ isFull)
-            ( do
-                painted <- renderDirty.dirtyPainted
-                whenS (not_ painted) $
-                  toSyntax $
-                    ffi
-                      ( "(()=>{console.warn('[Life] changed cells produced no visible dirty rect');})"
-                      )
-                      RecNil
-            )
-            done
+          done
       sprH <- hold (expr sprite)
       gridTex <- hold (expr texture)
       Pixi.setSpriteViewport sprH panX panY zoomLevel px
       ifS
         needsPaint
-        (Pixi.uploadAndRender app gridTex pixels)
+        (Pixi.uploadAndRender app gridTex)
         (Pixi.render app)
   done
 

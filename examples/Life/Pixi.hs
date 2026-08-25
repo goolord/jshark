@@ -14,8 +14,6 @@ module Pixi
   , tickGlRecovery
   , textureFromBuffer
   , setTextureNearest
-  , uploadTextureFull
-  , uploadTextureRegion
   , uploadAndRender
   , newSprite
   , mountSprite
@@ -46,6 +44,20 @@ pixiAvailable :: EffectSyntax f (Expr f 'Bool)
 pixiAvailable =
   fmap var (toSyntax (ffi "(() => typeof PIXI !== 'undefined')" RecNil))
 
+-- | Shared @new PIXI.Application@ construction. Expects @view@, @width@,
+--   @height@ and @backgroundColor@ in scope; binds @app@ and caches it on
+--   the canvas for 'tickGlRecovery'.
+newAppJs :: String
+newAppJs =
+  " const power = matchMedia('(prefers-reduced-motion: reduce)').matches"
+    <> "   ? 'default' : 'high-performance';"
+    <> " const app = new PIXI.Application({"
+    <> "   view, width, height, backgroundColor,"
+    <> "   antialias: false, autoStart: false, resolution: 1, hello: false,"
+    <> "   powerPreference: power"
+    <> " });"
+    <> " view.__lifePixiApp = app;"
+
 -- | @new PIXI.Application({ view, width, height, … })@.
 --
 -- @autoStart@ is off so the game loop calls 'render' after each sim step.
@@ -61,20 +73,7 @@ newApplication canvas w h bg =
     ( toSyntax
         ( ffi
             ( "(view, width, height, backgroundColor) => {"
-                <> " if (view.__lifePixiApp) {"
-                <> "   const gl = view.__lifePixiApp.renderer?.gl;"
-                <> "   if (!gl?.isContextLost?.()) return view.__lifePixiApp;"
-                <> "   try { view.__lifePixiApp.destroy(true); } catch (_) {}"
-                <> "   view.__lifePixiApp = null;"
-                <> " }"
-                <> " const power = matchMedia('(prefers-reduced-motion: reduce)').matches"
-                <> "   ? 'default' : 'high-performance';"
-                <> " const app = new PIXI.Application({"
-                <> " view, width, height, backgroundColor,"
-                <> " antialias: false, autoStart: false, resolution: 1, hello: false,"
-                <> " powerPreference: power, preserveDrawingBuffer: true"
-                <> " });"
-                <> " view.__lifePixiApp = app;"
+                <> newAppJs
                 <> " return app;"
                 <> " }"
             )
@@ -92,7 +91,7 @@ wireContextRecovery canvas viewport state = do
   toSyntax_
     $ discard
     $ ffi
-        ( "(view, viewport, state, texW, texH, canvasW, canvasH, bg, cellPx) => {"
+        ( "(view, viewport, state, texW, texH, width, height, backgroundColor, cellPx) => {"
             <> " const rebuild = () => {"
             <> "   const oldApp = view.__lifePixiApp;"
             <> "   if (oldApp?.destroy) {"
@@ -100,14 +99,7 @@ wireContextRecovery canvas viewport state = do
             <> "     catch (_) {}"
             <> "   }"
             <> "   view.__lifePixiApp = null;"
-            <> "   const power = matchMedia('(prefers-reduced-motion: reduce)').matches"
-            <> "     ? 'default' : 'high-performance';"
-            <> "   const app = new PIXI.Application({"
-            <> "     view, width: canvasW, height: canvasH, backgroundColor: bg,"
-            <> "     antialias: false, autoStart: false, resolution: 1, hello: false,"
-            <> "     powerPreference: power, preserveDrawingBuffer: true"
-            <> "   });"
-            <> "   view.__lifePixiApp = app;"
+            <> newAppJs
             <> "   viewport.app = app;"
             <> "   const buf = state.rgbaPixels;"
             <> "   if (!buf) throw new Error('missing rgba buffer');"
@@ -120,27 +112,10 @@ wireContextRecovery canvas viewport state = do
             <> "   app.stage.addChild(sprite);"
             <> "   viewport.texture = tex;"
             <> "   viewport.sprite = sprite;"
-            <> "   const panX = viewport.panX || 0;"
-            <> "   const panY = viewport.panY || 0;"
             <> "   const zoom = viewport.zoom || 1;"
             <> "   sprite.scale.set(zoom * cellPx, zoom * cellPx);"
-            <> "   sprite.position.set(panX, panY);"
-            <> "   if (tex.baseTexture.resource) {"
-            <> "     tex.baseTexture.resource.data = buf;"
-            <> "     if (tex.baseTexture.resource.source) tex.baseTexture.resource.source = buf;"
-            <> "   }"
-            <> "   const bt = tex.baseTexture;"
-            <> "   const gl = app.renderer.gl;"
-            <> "   try {"
-            <> "     if (bt.resource?.update) bt.resource.update();"
-            <> "     const bound = app.renderer.texture.bind(bt, 0);"
-            <> "     if (bound?.texture) {"
-            <> "       gl.bindTexture(gl.TEXTURE_2D, bound.texture);"
-            <> "       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);"
-            <> "       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, texW | 0, texH | 0,"
-            <> "         0, gl.RGBA, gl.UNSIGNED_BYTE, buf);"
-            <> "     } else bt.update();"
-            <> "   } catch (_) { bt.update(); }"
+            <> "   sprite.position.set(viewport.panX || 0, viewport.panY || 0);"
+            <> "   tex.baseTexture.update();"
             <> "   app.render();"
             <> "   viewport.renderPanValid = false;"
             <> " };"
@@ -251,111 +226,26 @@ setTextureNearest tex = do
       (ArgEffect tex <: RecNil)
   done
 
--- | Push @buf@ to GPU via @texImage2D@ (Pixi @update@ alone misses on some GPUs).
-syncTextureBuffer ::
-  Expr f ('MutableObject Application)
-  -> Effect f ('MutableObject Texture)
-  -> Expr f 'Uint8Array
-  -> EffectSyntax f (f 'Unit)
-syncTextureBuffer app tex buf = do
-  toSyntax_
-    $ discard
-    $ ffi
-        ( "(app, t, buf) => {"
-            <> " const live = app?.stage?.children?.[0]?.texture ?? t;"
-            <> " const bt = live?.baseTexture;"
-            <> " const renderer = app?.renderer;"
-            <> " if (!bt || !renderer) return;"
-            <> " const gl = renderer.gl;"
-            <> " if (gl?.isContextLost?.()) return;"
-            <> " const res = bt.resource;"
-            <> " if (res && buf) {"
-            <> "   if (res.data !== buf) res.data = buf;"
-            <> "   if (res.source && res.source !== buf) res.source = buf;"
-            <> " }"
-            <> " const data = res?.data ?? buf;"
-            <> " if (!data) { bt.update(); return; }"
-            <> " try {"
-            <> "   if (res?.update) res.update();"
-            <> "   const bound = renderer.texture.bind(bt, 0);"
-            <> "   if (bound?.texture) {"
-            <> "     gl.bindTexture(gl.TEXTURE_2D, bound.texture);"
-            <> "     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);"
-            <> "     gl.texImage2D("
-            <> "       gl.TEXTURE_2D, 0, gl.RGBA, bt.width | 0, bt.height | 0,"
-            <> "       0, gl.RGBA, gl.UNSIGNED_BYTE, data"
-            <> "     );"
-            <> "   } else bt.update();"
-            <> " } catch (_) { bt.update(); }"
-            <> " }"
-        )
-        (arg app <: ArgEffect tex <: arg buf <: RecNil)
-  done
-
--- | Sync CPU @rgbaPixels@ buffer to the GPU (@resource.update@ + @baseTexture.update@).
-uploadTextureFull ::
-  Expr f ('MutableObject Application)
-  -> Effect f ('MutableObject Texture)
-  -> Expr f 'Uint8Array
-  -> EffectSyntax f (f 'Unit)
-uploadTextureFull app tex buf =
-  uploadTextureRegion app tex buf (number 0) (number 0) (number 0) (number 0) (number 0)
-
--- | Full atlas upload (region args ignored).
-uploadTextureRegion ::
-  Expr f ('MutableObject Application)
-  -> Effect f ('MutableObject Texture)
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-uploadTextureRegion app tex buf _x0 _y0 _x1 _y1 _gridTexW =
-  syncTextureBuffer app tex buf
-
--- | Upload painted @buf@ and draw the stage (same turn — avoids stale framebuffer).
+-- | Upload the painted atlas and draw the stage in the same turn. The
+--   texture's @BufferResource@ already points at @rgbaPixels@, so
+--   @baseTexture.update()@ re-uploads it when the renderer binds it.
 uploadAndRender ::
   Expr f ('MutableObject Application)
   -> Effect f ('MutableObject Texture)
-  -> Expr f 'Uint8Array
   -> EffectSyntax f (f 'Unit)
-uploadAndRender app tex buf = do
+uploadAndRender app tex = do
   toSyntax_
     $ discard
     $ ffi
-        ( "(app, t, buf) => {"
-            <> " const live = app?.stage?.children?.[0]?.texture ?? t;"
-            <> " const bt = live?.baseTexture;"
-            <> " const renderer = app?.renderer;"
-            <> " if (!bt || !renderer) return;"
-            <> " const gl = renderer.gl;"
-            <> " if (gl?.isContextLost?.()) return;"
-            <> " const res = bt.resource;"
-            <> " if (res && buf) {"
-            <> "   if (res.data !== buf) res.data = buf;"
-            <> "   if (res.source && res.source !== buf) res.source = buf;"
-            <> " }"
-            <> " const data = res?.data ?? buf;"
-            <> " if (data) {"
-            <> "   try {"
-            <> "     if (res?.update) res.update();"
-            <> "     const bound = renderer.texture.bind(bt, 0);"
-            <> "     if (bound?.texture) {"
-            <> "       gl.bindTexture(gl.TEXTURE_2D, bound.texture);"
-            <> "       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);"
-            <> "       gl.texImage2D("
-            <> "         gl.TEXTURE_2D, 0, gl.RGBA, bt.width | 0, bt.height | 0,"
-            <> "         0, gl.RGBA, gl.UNSIGNED_BYTE, data"
-            <> "       );"
-            <> "     } else bt.update();"
-            <> "   } catch (_) { bt.update(); }"
-            <> " }"
-            <> " renderer.render(app.stage);"
+        ( "(app, t) => {"
+            <> " const bt = t?.baseTexture;"
+            <> " if (!bt || !app?.renderer) return;"
+            <> " if (app.renderer.gl?.isContextLost?.()) return;"
+            <> " bt.update();"
+            <> " app.renderer.render(app.stage);"
             <> " }"
         )
-        (arg app <: ArgEffect tex <: arg buf <: RecNil)
+        (arg app <: ArgEffect tex <: RecNil)
   done
 
 -- | @new PIXI.Sprite(texture)@.
@@ -425,6 +315,7 @@ render app = do
 -- embedded/software-composited browsers).
 drawEraserGhost ::
   Expr f ('MutableObject Application)
+  -> Effect f ('MutableObject ())
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
@@ -436,11 +327,11 @@ drawEraserGhost ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-drawEraserGhost app alive w h gx gy radius panX panY zoom px = do
+drawEraserGhost app viewport alive w h gx gy radius panX panY zoom px = do
   toSyntax_
     $ discard
     $ ffi
-        ( "((app,alive,w,h,gx,gy,r,panX,panY,zoom,cellPx) => {"
+        ( "((app,viewport,alive,w,h,gx,gy,r,panX,panY,zoom,cellPx) => {"
             <> " if (!app?.stage) return;"
             <> " const gl = app.renderer?.gl;"
             <> " if (gl?.isContextLost?.()) return;"
@@ -470,10 +361,11 @@ drawEraserGhost app alive w h gx gy radius panX panY zoom px = do
             <> "   panX + (gx + 0.5) * scale, panY + (gy + 0.5) * scale,"
             <> "   (ri + 0.5) * scale);"
             <> " app.__eraserGhostOn = true;"
-            <> " app.render();"
+            <> " viewport.renderPanValid = false;"
             <> " })"
         )
         ( arg app
+            <: ArgEffect viewport
             <: arg alive
             <: arg w
             <: arg h
@@ -488,22 +380,23 @@ drawEraserGhost app alive w h gx gy radius panX panY zoom px = do
         )
   done
 
--- | Hide the eraser preview; re-renders once so it disappears immediately.
+-- | Hide the eraser preview; invalidates the viewport so the next frame's
+--   render drops it from the scene.
 clearEraserGhost ::
-  Expr f ('MutableObject Application) -> EffectSyntax f (f 'Unit)
-clearEraserGhost app = do
+  Expr f ('MutableObject Application)
+  -> Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+clearEraserGhost app viewport = do
   toSyntax_
     $ discard
     $ ffi
-        ( "((app) => {"
+        ( "((app, viewport) => {"
             <> " if (!app || !app.__eraserGhostOn) return;"
             <> " const gfx = app.__eraserGhostGfx;"
             <> " if (gfx && !gfx.destroyed) { gfx.clear(); gfx.visible = false; }"
             <> " app.__eraserGhostOn = false;"
-            <> " const gl = app.renderer?.gl;"
-            <> " if (gl?.isContextLost?.()) return;"
-            <> " app.render();"
+            <> " viewport.renderPanValid = false;"
             <> " })"
         )
-        (arg app <: RecNil)
+        (arg app <: ArgEffect viewport <: RecNil)
   done
