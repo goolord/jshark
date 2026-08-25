@@ -1710,9 +1710,11 @@ optimizeTests =
                 toSyntax_ $ ffi "sink" (arg x <: RecNil)
                 done
           js = renderJS (effectfulAST eff)
-        T.isInfixOf "sink(2.0)" js @?= True
-        T.isInfixOf "sink(1.0)" js @?= True
-        T.count "sink(1.0)" js @?= 1
+        -- Row index must depend on the loop counter (not constant-folded to
+        -- the first coordinate); column index 0 is expected to stay literal.
+        T.isInfixOf "sink(" js @?= True
+        T.isInfixOf "sink(1.0)" js @?= False
+        T.isInfixOf "Math.trunc(n1)" js @?= True
     ]
 
 -- | The IR optimizer runs instead of the PHOAS one above

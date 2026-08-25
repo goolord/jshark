@@ -3166,6 +3166,7 @@ foldTypeOf x = case x of
 
 foldIndex :: Expr Stamp ('Array u) -> Expr Stamp 'Number -> Expr Stamp u
 foldIndex arr idx = case (arr, idx) of
+  (Index {}, _) -> Index arr idx
   (Literal (ValueArray vs), Literal (ValueNumber d))
     | isFiniteDouble d
     , let
@@ -3376,7 +3377,7 @@ elimLetFrom ::
 elimLetFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = \tag' body' _ -> countExpr tag' body'
+      { elimCount = elimExprUses
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
       , elimSize = \_ -> nodeCountExpr body
@@ -3415,8 +3416,8 @@ elimBindFrom ::
 elimBindFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = \tag' body' _ -> countEffect tag' body'
-      , elimPure = mdIsPure
+      { elimCount = elimEffUses
+      , elimPure = const (isPureEffect x)
       , elimCheap = mdIsCheap
       , elimSize = \_ -> nodeCountEff body
       , elimRebuild = Bind x . rebindEff tag
