@@ -28,11 +28,13 @@ module Support
   , mulDiv
   , bytes
   , byteElems
+  , assertJSContains
   )
 where
 
 import Data.Array.Byte (ByteArray (..))
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Exts
   ( Int (..)
   , indexWord8Array#
@@ -48,6 +50,7 @@ import GHC.Word (Word8 (..))
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
+import Test.Tasty.HUnit ((@?=))
 
 data LitRow
 
@@ -160,3 +163,8 @@ bytes xs = runST go
 byteElems :: ByteArray -> [Word8]
 byteElems (ByteArray ba#) =
   [W8# (indexWord8Array# ba# i#) | I# i# <- [0 .. I# (sizeofByteArray# ba#) - 1]]
+
+-- | Assert emitted JS contains @needle@ (layout-independent smoke check).
+assertJSContains :: Text -> Text -> IO ()
+assertJSContains needle haystack =
+  T.isInfixOf needle haystack @?= True

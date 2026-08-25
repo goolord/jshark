@@ -26,7 +26,7 @@ where
 
 import Data.Text (Text)
 import JShark.Types
-import Prettyprinter (Doc, parens)
+import JShark.Emit (JS, parens)
 
 -- | Witness that a 'FixedOp' is a unary @Math@ op (refines kind indices).
 data MathUnary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where
@@ -206,7 +206,7 @@ isPureFixed :: FixedOp a b c u -> Bool
 isPureFixed FixStringify = False
 isPureFixed _ = True
 
-fixedUnaryJS :: FixedOp a b c u -> Doc ann -> Doc ann
+fixedUnaryJS :: FixedOp a b c u -> JS -> JS
 fixedUnaryJS n r = case n of
   FixToUpper -> r <> ".toUpperCase()"
   FixToLower -> r <> ".toLowerCase()"
@@ -222,7 +222,7 @@ fixedUnaryJS n r = case n of
  where
   dotLength = r <> ".length"
 
-fixedBinaryJS :: FixedOp a b c u -> Doc ann -> Doc ann -> Doc ann
+fixedBinaryJS :: FixedOp a b c u -> JS -> JS -> JS
 fixedBinaryJS n r a = case n of
   FixIndexOf -> r <> ".indexOf" <> parens a
   FixSplit -> r <> ".split" <> parens a
@@ -233,7 +233,7 @@ fixedBinaryJS n r a = case n of
   FixParseInt -> "parseInt" <> parens (r <> ", " <> a)
   _ -> error "JShark.Prim.fixedBinaryJS: not a std binary op"
 
-fixedTernaryJS :: FixedOp a b c u -> Doc ann -> Doc ann -> Doc ann -> Doc ann
+fixedTernaryJS :: FixedOp a b c u -> JS -> JS -> JS -> JS
 fixedTernaryJS n r a b = case n of
   FixSlice -> slice
   FixArrSlice -> slice

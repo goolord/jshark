@@ -64,10 +64,10 @@ import Data.Char (isAlphaNum, isSpace)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Lazy.Builder as TB
-import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Encoding as TE
 import Data.Word (Word64)
+import JShark.Emit (JS, renderJS)
+import qualified TextBuilder as TB
 import JShark
   ( effectfulAST
   , effectfulProgram
@@ -89,7 +89,6 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 import System.Process (readProcessWithExitCode)
-import Prettyprinter (Doc)
 import Text.Read (readMaybe)
 
 -- | Compilation level for Google Closure Compiler.
@@ -365,43 +364,43 @@ compileTerser =
 -- not @/re/@ literals, so those are not treated as strings. Not a general
 -- JS parser.
 prettyJS :: Text -> Text
-prettyJS = formatJS . T.strip
+prettyJS = renderJS . formatJS . T.strip
 
-formatJS :: Text -> Text
-formatJS = TL.toStrict . TB.toLazyText . go 0
+formatJS :: Text -> JS
+formatJS = go 0
  where
-  indentLevels :: [TB.Builder]
+  indentLevels :: [JS]
   indentLevels = take 128 $ iterate (<> "  ") mempty
 
   indent n = indentLevels !! min n (length indentLevels - 1)
 
-  go :: Int -> Text -> TB.Builder
+  go :: Int -> Text -> JS
   go _ t | T.null t = mempty
   go n t =
     case T.uncons t of
       Nothing -> mempty
-      Just ('"', xs) -> TB.singleton '"' <> string '"' xs (go n)
-      Just ('\'', xs) -> TB.singleton '\'' <> string '\'' xs (go n)
+      Just ('"', xs) -> TB.char '"' <> string '"' xs (go n)
+      Just ('\'', xs) -> TB.char '\'' <> string '\'' xs (go n)
       Just ('{', xs) ->
         let
           xs' = T.dropWhile isSpace xs
          in
           case T.uncons xs' of
             Just ('}', rest) -> "{}" <> afterClose n rest
-            _ -> TB.singleton '{' <> TB.singleton '\n' <> indent (n + 1) <> go (n + 1) xs'
+            _ -> TB.char '{' <> TB.char '\n' <> indent (n + 1) <> go (n + 1) xs'
       Just ('}', xs) ->
         let
           n' = max 0 (n - 1)
          in
-          TB.singleton '\n' <> indent n' <> TB.singleton '}' <> afterClose n' (T.dropWhile isSpace xs)
+          TB.char '\n' <> indent n' <> TB.char '}' <> afterClose n' (T.dropWhile isSpace xs)
       Just (';', xs) ->
         let
           xs' = T.dropWhile isSpace xs
          in
-          TB.singleton ';' <> case T.uncons xs' of
+          TB.char ';' <> case T.uncons xs' of
             Just ('}', _) -> go n xs'
             Nothing -> mempty
-            _ -> TB.singleton '\n' <> indent n <> go n xs'
+            _ -> TB.char '\n' <> indent n <> go n xs'
       Just (c, xs) ->
         if isSpace c
           then
@@ -411,23 +410,23 @@ formatJS = TL.toStrict . TB.toLazyText . go 0
               case T.uncons xs' of
                 Nothing -> mempty
                 Just ('}', _) -> go n xs'
-                _ -> TB.singleton ' ' <> go n xs'
-          else TB.singleton c <> go n xs
+                _ -> TB.char ' ' <> go n xs'
+          else TB.char c <> go n xs
 
   afterClose n s =
     let
       t' = T.dropWhile isSpace s
      in
       case keyword "else" t' of
-        Just rest -> TB.singleton ' ' <> go n ("else" <> rest)
+        Just rest -> TB.char ' ' <> go n ("else" <> rest)
         Nothing ->
           case keyword "catch" t' of
-            Just rest -> TB.singleton ' ' <> go n ("catch" <> rest)
+            Just rest -> TB.char ' ' <> go n ("catch" <> rest)
             Nothing ->
               case T.uncons t' of
                 Nothing -> mempty
                 Just (c, _) | c `elem` (");,.}(" :: String) -> go n t'
-                Just _ -> TB.singleton '\n' <> indent n <> go n t'
+                Just _ -> TB.char '\n' <> indent n <> go n t'
 
   keyword kw s =
     let
@@ -446,15 +445,15 @@ formatJS = TL.toStrict . TB.toLazyText . go 0
     Just (c, cs) ->
       if c == '\\'
         then case T.uncons cs of
-          Just (d, ds) -> TB.singleton c <> TB.singleton d <> string q ds k
-          Nothing -> TB.singleton c
+          Just (d, ds) -> TB.char c <> TB.char d <> string q ds k
+          Nothing -> TB.char c
         else if c == q
-          then TB.singleton c <> k cs
-          else TB.singleton c <> string q cs k
+          then TB.char c <> k cs
+          else TB.char c <> string q cs k
 
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
-compileTree :: CompilerConfig -> (OutputStyle -> Doc ann) -> IO Text
+compileTree :: CompilerConfig -> (OutputStyle -> JS) -> IO Text
 compileTree cfg doc = do
   let
     !style = configStyle cfg
@@ -491,11 +490,11 @@ styleConfig cfg = case configStyle cfg of
   Readable -> cfg {configBackend = Passthrough}
   Minified -> cfg
 
-pureDoc :: OutputStyle -> ClosedExpr u -> Doc ann
+pureDoc :: OutputStyle -> ClosedExpr u -> JS
 pureDoc Readable e = pureAST e
 pureDoc Minified e = pureProgram e
 
-effectDoc :: OutputStyle -> ClosedEffect u -> Doc ann
+effectDoc :: OutputStyle -> ClosedEffect u -> JS
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
 

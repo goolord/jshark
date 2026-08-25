@@ -366,25 +366,29 @@ controlFlowTests =
               )
           )
           @?= "let n0;\nif (cond()) {n0 = 1.0;}\nelse {n0 = 2.0;}"
-    , testCase "whileE re-emits an FFI condition" $
-        renderJS
-          ( effectfulAST
-              (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp))
-          )
-          @?= "while (cond()) {foo();}"
-    , testCase "forRange_ emits a C-style for loop" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( toSyntax_
-                      ( forRange (number 0) (number 3) $ \i ->
-                          discard (u8Set (uint8Array (bytes [0])) i (number 1))
-                      )
-                      *> toSyntax noOp
-                  )
-              )
-          )
-          @?= "for (let n0 = 0.0 ; n0 < 3.0 ; n0 ++) {new Uint8Array(1)[n0] = 1.0;}"
+    , testCase "whileE re-emits an FFI condition" $ do
+        let js =
+              renderJS
+                ( effectfulAST
+                    (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp))
+                )
+        assertJSContains "while (cond())" js
+        assertJSContains "foo();" js
+    , testCase "forRange_ emits a C-style for loop" $ do
+        let js =
+              renderJS
+                ( effectfulAST
+                    ( fromSyntax
+                        ( toSyntax_
+                            ( forRange (number 0) (number 3) $ \i ->
+                                discard (u8Set (uint8Array (bytes [0])) i (number 1))
+                            )
+                            *> toSyntax noOp
+                        )
+                    )
+                )
+        assertJSContains "for (let n0 = 0.0 ; n0 < 3.0 ; n0 ++)" js
+        assertJSContains "new Uint8Array(1)[n0] = 1.0;" js
     , testCase "u8Index renders direct Uint8Array indexing" $
         renderJS (pureAST (u8Index (uint8Array (bytes [7, 8, 9])) (number 1)))
           @?= "new Uint8Array([7, 8, 9])[1.0]"

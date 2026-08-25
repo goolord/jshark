@@ -171,22 +171,31 @@ import JShark.Prim
 import qualified JShark.Prim as Prim
 import JShark.Rec
 import JShark.Types
-import Numeric (readInt, showFFloat, showHex)
-import Prettyprinter
-  ( Doc
+import JShark.Emit
+  ( JS
+  , ($$)
+  , (<+>)
   , braces
+  , blockBody
+  , brackets
   , colon
   , dquotes
   , hcat
-  , nest
+  , jsDecimal
+  , jsDouble
+  , jsString
+  , jsText
+  , iifeBody
+  , nonEmpty
   , parens
   , punctuate
+  , renderJS
+  , renderJSCompact
   , semi
-  , (<+>)
+  , vcat
+  , vcatNonEmpty
   )
-import qualified Prettyprinter as P
-import Prettyprinter.Internal (Doc (Annotated, Cat, Empty, Nest))
-import qualified Prettyprinter.Render.Text as PRT
+import Numeric (readInt, showHex)
 import Unsafe.Coerce (unsafeCoerce)
 
 unNumber :: Value 'Number -> Double
@@ -511,10 +520,10 @@ bigShr a b
   | b < 0 = error "evaluate: BigInt shift count is negative"
   | otherwise = shiftR a (fromInteger b)
 
-jsBigIntLit :: Integer -> Doc ann
+jsBigIntLit :: Integer -> JS
 jsBigIntLit n
-  | n >= 0 = P.pretty (shows n "n")
-  | otherwise = P.parens (P.pretty (shows n "n"))
+  | n >= 0 = jsString (shows n "n")
+  | otherwise = parens (jsString (shows n "n"))
 
 bigOpJS :: BigBinOp -> Text
 bigOpJS = \case
@@ -550,8 +559,8 @@ jsSliceClamp len x
        in
         if n < 0 then max 0 (len + n) else min n len
 
-jsQuote :: Text -> Doc ann
-jsQuote s = P.dquotes (P.pretty (escapeJsString (T.unpack s)))
+jsQuote :: Text -> JS
+jsQuote s = dquotes (jsString (escapeJsString (T.unpack s)))
 
 escapeJsString :: String -> String
 escapeJsString = concatMap esc
@@ -577,20 +586,20 @@ uint8Elems (ByteArray ba#) =
 jsShowUint8Array :: ByteArray -> Text
 jsShowUint8Array = T.intercalate "," . map (T.pack . show) . uint8Elems
 
-jsUint8ArrayLit :: ByteArray -> Doc ann
+jsUint8ArrayLit :: ByteArray -> JS
 jsUint8ArrayLit ba =
   let
     elems = uint8Elems ba
     n = length elems
    in
     if all (== 0) elems
-      then "new Uint8Array" <> P.parens (P.pretty n)
+      then "new Uint8Array" <> parens (jsDecimal n)
       else
         "new Uint8Array"
-          <> P.parens
-            ( P.brackets
-                ( P.hcat
-                    (P.punctuate ", " (map (P.pretty . (fromIntegral :: Word8 -> Int)) elems))
+          <> parens
+            ( brackets
+                ( hcat
+                    (punctuate ", " (map (jsDecimal . (fromIntegral :: Word8 -> Int)) elems))
                 )
             )
 
@@ -949,55 +958,21 @@ instance Monoid Metadata where
 evaluateCached :: ClosedExpr u -> IO (Value u)
 evaluateCached e = pure (evaluate e)
 
--- | Vertical separation of documents, equivalent to HughesPJ's $$.
--- Empty documents are skipped, so @mempty $$ x = x@.
-infixl 5 $$
-
-($$) :: Doc ann -> Doc ann -> Doc ann
-a $$ b
-  | isEmptyDoc a = b
-  | isEmptyDoc b = a
-  | otherwise = a <> P.hardline <> b
-
-isEmptyDoc :: Doc ann -> Bool
-isEmptyDoc Empty = True
-isEmptyDoc (Cat x y) = isEmptyDoc x && isEmptyDoc y
-isEmptyDoc (Nest _ d) = isEmptyDoc d
-isEmptyDoc (Annotated _ d) = isEmptyDoc d
-isEmptyDoc _ = False
-
-nonEmptyDoc :: Doc ann -> Maybe (Doc ann)
-nonEmptyDoc d = if isEmptyDoc d then Nothing else Just d
-
-vcatNonEmpty :: [Doc ann] -> Doc ann
-vcatNonEmpty = mconcat . mapMaybe nonEmptyDoc
-
-renderJS :: Doc ann -> Text
-renderJS doc = PRT.renderStrict (P.layoutPretty P.defaultLayoutOptions doc)
-
--- | Linear dump. 'compileEffect' uses this, then 'prettyJS' for 'Readable'.
-renderJSCompact :: Doc ann -> Text
-renderJSCompact doc = PRT.renderStrict (P.layoutCompact doc)
-
-printComputation :: Doc ann -> IO ()
+printComputation :: JS -> IO ()
 printComputation computation = T.putStrLn (renderJSCompact computation)
 
--- | Runtime helpers emitted once per program as @const name = source@.
--- Recording the use in 'CG' keeps a second call site from repeating the
--- definition. A named @function@ declaration would become a global in a
--- classic script.
-helperDecls :: CG -> Doc ann
+helperDecls :: CG -> JS
 helperDecls s =
-  P.vcat
-    [ ("const" <+> P.pretty name <+> "=" <+> P.pretty src) <> P.pretty ';'
+  vcat
+    [ ("const" <+> jsText name <+> "=" <+> jsText src) <> semi
     | (name, src) <- M.toAscList (cgHelpers s)
     ]
 
-jsValueEq :: Doc ann -> Doc ann -> Doc ann
-jsValueEq a b = "$valueEq" <> P.parens (a <> ("," <+> b))
+jsValueEq :: JS -> JS -> JS
+jsValueEq a b = "$valueEq" <> parens (a <> ("," <+> b))
 
-jsValueNEq :: Doc ann -> Doc ann -> Doc ann
-jsValueNEq a b = "!" <> P.parens (jsValueEq a b)
+jsValueNEq :: JS -> JS -> JS
+jsValueNEq a b = "!" <> parens (jsValueEq a b)
 
 useEqHelpers :: CG -> CG
 useEqHelpers s0 = foldr (uncurry useHelperSrc) s0 jsEqHelpers
@@ -1005,14 +980,14 @@ useEqHelpers s0 = foldr (uncurry useHelperSrc) s0 jsEqHelpers
 -- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
 -- (@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
 -- Emitted once as @$checkedIndex@; inlining the lambda at every index
--- site blows up Life-sized programs (Doc render never finishes).
+-- site blows up Life-sized programs (materializing huge emit trees never finishes).
 jsCheckedIndexSrc :: Text
 jsCheckedIndexSrc =
   "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
 
-jsCheckedIndex :: Doc ann -> Doc ann -> Doc ann
+jsCheckedIndex :: JS -> JS -> JS
 jsCheckedIndex arr idx =
-  "$checkedIndex" <> P.parens (arr <> ("," <+> idx))
+  "$checkedIndex" <> parens (arr <> ("," <+> idx))
 
 valueNeedsStructuralEq :: Value u -> Bool
 valueNeedsStructuralEq = \case
@@ -1059,14 +1034,14 @@ needsStructuralEq e = case e of
 -- path ('location.hash'); @o["0"]@ otherwise. A single key that is
 -- not an ident must stay bracketed — @window["location.hash"]@ is
 -- @undefined@, which made TodoMVC hash filters a no-op.
-jsDotOrBracket :: Doc ann -> Text -> Doc ann
+jsDotOrBracket :: JS -> Text -> JS
 jsDotOrBracket obj key
-  | jsIdent key = obj <> "." <> P.pretty key
+  | jsIdent key = obj <> "." <> jsText key
   | (seg, rest) <- T.break (== '.') key
   , not (T.null rest)
   , jsIdent seg =
       jsDotOrBracket (jsDotOrBracket obj seg) (T.drop 1 rest)
-  | otherwise = obj <> "[" <> P.dquotes (P.pretty key) <> "]"
+  | otherwise = obj <> "[" <> dquotes (jsText key) <> "]"
 
 jsIdent :: Text -> Bool
 jsIdent t = case T.uncons t of
@@ -1076,39 +1051,39 @@ jsIdent t = case T.uncons t of
   jsIdStart x = Char.isAscii x && (Char.isLetter x || x == '_' || x == '$')
   jsIdPart x = jsIdStart x || Char.isDigit x
 
-data Code ann = MkCode
-  { codeDecl :: !(Maybe (Doc ann))
-  , codeRef :: !(Maybe (Doc ann))
+data Code = MkCode
+  { codeDecl :: !(Maybe (JS))
+  , codeRef :: !(Maybe (JS))
   , codeRefFX :: !Bool
   }
 
 -- | Two-field sugar for a non-effectful leftover ref.
-pattern Code :: Doc ann -> Doc ann -> Code ann
+pattern Code :: JS -> JS -> Code
 pattern Code d r <- MkCode (fromMaybe mempty -> d) (fromMaybe mempty -> r) _
  where
-  Code d r = MkCode (nonEmptyDoc d) (nonEmptyDoc r) False
+  Code d r = MkCode (nonEmpty d) (nonEmpty r) False
 
 {-# COMPLETE Code #-}
 
-fxCode :: Doc ann -> Doc ann -> Code ann
-fxCode d r = MkCode (nonEmptyDoc d) (nonEmptyDoc r) True
+fxCode :: JS -> JS -> Code
+fxCode d r = MkCode (nonEmpty d) (nonEmpty r) True
 
 -- | New decls, same ref and effectfulness as the source 'Code'.
-keepRef :: Doc ann -> Code ann -> Code ann
-keepRef d (MkCode _ r f) = MkCode (nonEmptyDoc d) r f
+keepRef :: JS -> Code -> Code
+keepRef d (MkCode _ r f) = MkCode (nonEmpty d) r f
 
-instance Semigroup (Code ann) where
+instance Semigroup (Code) where
   MkCode a b f <> MkCode x y g = MkCode (a <> x) (b <> y) (f || g)
 
-instance Monoid (Code ann) where
+instance Monoid (Code) where
   mempty = MkCode Nothing Nothing False
 
-renderCode :: Code ann -> Doc ann
+renderCode :: Code -> JS
 renderCode (MkCode a b _) = fromMaybe mempty a $$ fromMaybe mempty b
 
 -- | Wrap helpers + generated decls + result in an IIFE so a minifier treats
 -- the result as live (plain expression statements get DCE'd).
-renderIIFE :: CG -> Code ann -> Doc ann
+renderIIFE :: CG -> Code -> JS
 renderIIFE s (MkCode decls ref _) =
   let
     stmts = helperDecls s $$ fromMaybe mempty decls
@@ -1116,34 +1091,34 @@ renderIIFE s (MkCode decls ref _) =
       Nothing -> stmts
       Just r -> stmts $$ (("return" <+> r) <> semi)
    in
-    "(() => {" <> P.nest 2 (P.hardline <> body) $$ "})()"
+    "(() => {" <> iifeBody body <> "})()"
 
 -- | Helper definitions ahead of a snippet's own declarations.
-renderWithHelpers :: CG -> Code ann -> Doc ann
+renderWithHelpers :: CG -> Code -> JS
 renderWithHelpers s code = helperDecls s $$ renderCode code
 
 -- | Pure expression compiled to a self-contained JS program (IIFE).
-pureProgram :: ClosedExpr u -> Doc ann
+pureProgram :: ClosedExpr u -> JS
 pureProgram e = uncurry renderIIFE (pureAST' startCG IM.empty (optimize e))
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
-effectfulProgram :: ClosedEffect u -> Doc ann
+effectfulProgram :: ClosedEffect u -> JS
 effectfulProgram e
   | closedEffectNodes e >= optIrLargeThreshold =
       uncurry renderIIFE (flatEffectfulCodegen e)
   | otherwise =
       uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
-codesDecls :: [Code ann] -> Doc ann
-codesDecls cs = P.vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
+codesDecls :: [Code] -> JS
+codesDecls cs = vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
 
-codesRefs :: [Code ann] -> [Doc ann]
+codesRefs :: [Code] -> [JS]
 codesRefs = map (\(MkCode _ b _) -> arrayElemRef b)
 
 -- | 'ValueUnit' renders as nothing, since a unit statement emits nothing.
 -- As an array element it still occupies a slot, so it has to print — a
 -- dropped ref would shorten the literal.
-arrayElemRef :: Maybe (Doc ann) -> Doc ann
+arrayElemRef :: Maybe (JS) -> JS
 arrayElemRef = fromMaybe "undefined"
 
 -- Codegen counters: `cgIdent` is the next emitted JS name (`n0`, `n1`, …);
@@ -1182,23 +1157,23 @@ nestedDummy = Name nestedDummyId
 nName :: Int -> Text
 nName n = "n" <> T.pack (show n)
 
-nDoc :: Int -> Doc ann
-nDoc n = P.pretty (nName n)
+nJS :: Int -> JS
+nJS n = jsText (nName n)
 
-constBind :: Int -> Doc ann -> Doc ann
-constBind n ref = ("const" <+> nDoc n <+> "=" <+> ref) <> P.pretty ';'
+constBind :: Int -> JS -> JS
+constBind n ref = ("const" <+> nJS n <+> "=" <+> ref) <> semi
 
 -- | Optimizer tags (negative) map to emitted `n*` ids during codegen.
 type Env = IM.IntMap Int
 
-varStampDoc :: Env -> Stamp u -> Doc ann
-varStampDoc env s =
+varStampJS :: Env -> Stamp u -> JS
+varStampJS env s =
   let
     i = stampId s
    in
     if i < 0
-      then maybe mempty nDoc (IM.lookup i env)
-      else nDoc i
+      then maybe mempty nJS (IM.lookup i env)
+      else nJS i
 
 -- | Single-pass binder probe for codegen and elim (no per-node 'IntMap').
 data BinderScan = BinderScan
@@ -1310,8 +1285,8 @@ isAliasBind (Lift (Var _)) = True
 isAliasBind (Lift (UnsafeNullable (Var _))) = True
 isAliasBind _ = False
 
-jsCall :: Doc ann -> Doc ann -> Doc ann
-jsCall f a = P.parens f <> P.parens a
+jsCall :: JS -> JS -> JS
+jsCall f a = parens f <> parens a
 
 -- | Needs no parentheses as an operand: already a primary JS expression.
 isSimple :: Expr Stamp u -> Bool
@@ -1344,8 +1319,8 @@ isSimpleEffect = \case
   ArrayLit es -> all isSimpleEffect es
   _ -> False
 
-wrapOperand :: Expr Stamp u -> Doc ann -> Doc ann
-wrapOperand e d = if isSimple e then d else P.parens d
+wrapOperand :: Expr Stamp u -> JS -> JS
+wrapOperand e d = if isSimple e then d else parens d
 
 -- A use under a lambda, loop, `&&`/`||` RHS, or `?:` branch is not a
 -- candidate for inlining: the binder would be re-run or skipped.
@@ -1686,14 +1661,14 @@ allocNIdents s n =
 fnArity :: FnBody Stamp us r -> Int
 fnArity = fnDepthStamp
 
-renderFn :: forall us r ann. Env -> CG -> FnBody Stamp us r -> (CG, Code ann)
+renderFn :: forall us r. Env -> CG -> FnBody Stamp us r -> (CG, Code)
 renderFn env s0 body =
   let
     n = fnArity body
     (ids, s1) = allocNIdents s0 n
     (s2, Code d r) = pureAST' s1 env (evalFnBody body ids)
    in
-    (s2, Code mempty (jsCallback (map nDoc ids) d r))
+    (s2, Code mempty (jsCallback (map nJS ids) d r))
 
 mapFieldLit ::
   (forall u. Expr f u -> Expr f u)
@@ -4066,7 +4041,7 @@ mapAccumArms t0 arms =
 
 -- | Sequencing without a binder ('ThenE' / discarded bind).
 seqEffectCode ::
-  Env -> CG -> Effect Stamp u -> Effect Stamp v -> (CG, Code ann)
+  Env -> CG -> Effect Stamp u -> Effect Stamp v -> (CG, Code)
 seqEffectCode env s0 x y =
   let
     (s1, MkCode xDecl xRef xFX) = effectfulAST' env s0 x
@@ -4087,7 +4062,7 @@ seqEffectCode env s0 x y =
 -- Apply `f` once at the optimizer tag; map that tag to the emitted ident
 -- via `env` instead of `renameEff` (which copied the whole continuation).
 bindEffectCode ::
-  Env -> CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
+  Env -> CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code)
 bindEffectCode env s0 x f =
   let
     (sProbe, tagged, probeTag) = probeContEff s0 f
@@ -4111,7 +4086,7 @@ bindEffectCode env s0 x f =
           else
             let
               n = fromMaybe nestedDummyId (liveBinder x)
-              (env', sBind, bindDoc) =
+              (env', sBind, bindJS) =
                 if n /= nestedDummyId
                   then (insertBinder env n, s1, mempty)
                   else
@@ -4122,7 +4097,7 @@ bindEffectCode env s0 x f =
               (s3, MkCode yDecl yRef yFX) = effectfulAST' env' sBind tagged
              in
               ( s3
-              , MkCode (Just (stmtX $$ bindDoc $$ fromMaybe mempty yDecl)) yRef yFX
+              , MkCode (Just (stmtX $$ bindJS $$ fromMaybe mempty yDecl)) yRef yFX
               )
       Just _ ->
         if not used
@@ -4152,9 +4127,9 @@ bindEffectCode env s0 x f =
 -- Flat codegen ('flatPureAST'' / 'flatEffectfulAST'') mirrors the PHOAS
 -- emitters above; keep in sync — 'irParityTests' diff the two paths.
 flatRenderLiteral ::
-  Env -> CG -> Value u -> (CG, Code ann)
+  Env -> CG -> Value u -> (CG, Code)
 flatRenderLiteral env s0 = \case
-  ValueNumber d -> (s0, Code mempty (P.pretty $ showFFloat Nothing d ""))
+  ValueNumber d -> (s0, Code mempty (jsDouble d))
   ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
   ValueArray xs ->
     let
@@ -4164,7 +4139,7 @@ flatRenderLiteral env s0 = \case
       ( s1
       , Code
           (codesDecls exprs)
-          (P.brackets (hcat (punctuate ", " (codesRefs exprs))))
+          (brackets (hcat (punctuate ", " (codesRefs exprs))))
       )
   ValueString s -> (s0, Code mempty (jsQuote s))
   ValueFunction _ -> error "JShark.flatPureAST: ValueFunction is eval-only"
@@ -4266,7 +4241,7 @@ flatIsSimpleNode prog nid = case Flat.flatNode prog nid of
   Flat.FE_GetField{} -> True
   _ -> False
 
-flatWrapOperand :: Flat.FlatProgram -> Flat.NodeId -> Doc ann -> Doc ann
+flatWrapOperand :: Flat.FlatProgram -> Flat.NodeId -> JS -> JS
 flatWrapOperand prog nid d =
   if flatIsSimpleNode prog nid then d else parens d
 
@@ -4277,7 +4252,7 @@ flatRenderBin ::
   -> Flat.FlatProgram
   -> Flat.NodeId
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatRenderBin env op s0 prog xId yId =
   let
     (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
@@ -4287,13 +4262,13 @@ flatRenderBin env op s0 prog xId yId =
     , Code
         (xDecl $$ yDecl)
         ( flatWrapOperand prog xId xRef
-            <+> P.pretty op
+            <+> jsText op
             <+> flatWrapOperand prog yId yRef
         )
     )
 
 flatRenderArgList ::
-  Env -> CG -> Flat.FlatProgram -> Int -> (CG, Doc ann, Doc ann)
+  Env -> CG -> Flat.FlatProgram -> Int -> (CG, JS, JS)
 flatRenderArgList env s0 prog ai =
   let
     args = Flat.flatArgGroup prog ai
@@ -4316,25 +4291,25 @@ flatRenderArgList env s0 prog ai =
     (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
 
 flatRenderField ::
-  Env -> Flat.FlatProgram -> CG -> Flat.FlatField -> (CG, (Doc ann, Doc ann))
+  Env -> Flat.FlatProgram -> CG -> Flat.FlatField -> (CG, (JS, JS))
 flatRenderField env prog s = \case
   Flat.FlatField k eid ->
     let
       (s', Code d r) = flatPureAST' env s prog eid
      in
-      (s', (d, (dquotes (P.pretty k) <> ":") <+> r))
+      (s', (d, (dquotes (jsText k) <> ":") <+> r))
   Flat.FlatFieldExtra k eid ->
     let
       (s', Code d r) = flatPureAST' env s prog eid
      in
-      (s', (d, (dquotes (P.pretty k) <> ":") <+> r))
+      (s', (d, (dquotes (jsText k) <> ":") <+> r))
   Flat.FlatFieldEff k eid ->
     let
       (s', MkCode d r _) = flatEffectfulAST' env s prog eid
      in
       ( s'
       , ( fromMaybe mempty d
-        , (dquotes (P.pretty k) <> ":") <+> fromMaybe mempty r
+        , (dquotes (jsText k) <> ":") <+> fromMaybe mempty r
         )
       )
   Flat.FlatFieldExtraEff k eid ->
@@ -4343,12 +4318,12 @@ flatRenderField env prog s = \case
      in
       ( s'
       , ( fromMaybe mempty d
-        , (dquotes (P.pretty k) <> ":") <+> fromMaybe mempty r
+        , (dquotes (jsText k) <> ":") <+> fromMaybe mempty r
         )
       )
 
 flatRenderObjectLit ::
-  Env -> CG -> Flat.FlatProgram -> Int -> (CG, Code ann)
+  Env -> CG -> Flat.FlatProgram -> Int -> (CG, Code)
 flatRenderObjectLit env s0 prog gi =
   let
     fs = Flat.flatFieldGroup prog gi
@@ -4358,7 +4333,7 @@ flatRenderObjectLit env s0 prog gi =
     (s1, Code (vcatNonEmpty declList) (braces (hcat (punctuate ", " pairs))))
 
 flatRenderArrayLit ::
-  Env -> CG -> Flat.FlatProgram -> [Flat.NodeId] -> (CG, Code ann)
+  Env -> CG -> Flat.FlatProgram -> [Flat.NodeId] -> (CG, Code)
 flatRenderArrayLit env s0 prog es =
   let
     (s1, cs) = mapAccumL (\s e -> flatEffectfulAST' env s prog e) s0 es
@@ -4366,18 +4341,18 @@ flatRenderArrayLit env s0 prog es =
     ( s1
     , Code
         (codesDecls cs)
-        (P.brackets (hcat (punctuate ", " (codesRefs cs))))
+        (brackets (hcat (punctuate ", " (codesRefs cs))))
     )
 
 flatRenderFixed ::
-  Env -> CG -> Flat.FlatProgram -> Flat.FlatFixed -> (CG, Code ann)
+  Env -> CG -> Flat.FlatProgram -> Flat.FlatFixed -> (CG, Code)
 flatRenderFixed env s0 prog = \case
   Flat.FlatFixedU op xId
     | Just name <- Prim.math1Name op ->
         let
           (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
          in
-          (s1, Code xDecl ("Math." <> P.pretty (T.unpack name) <> parens xRef))
+          (s1, Code xDecl ("Math." <> jsText name <> parens xRef))
   Flat.FlatFixedB op xId yId
     | Just name <- Prim.math2Name op ->
         let
@@ -4388,7 +4363,7 @@ flatRenderFixed env s0 prog = \case
           , Code
               (xDecl $$ yDecl)
               ( "Math."
-                  <> P.pretty (T.unpack name)
+                  <> jsText name
                   <> parens (xRef <> ", " <> yRef)
               )
           )
@@ -4425,7 +4400,7 @@ flatRenderFixed env s0 prog = \case
       )
 
 flatRenderKernel ::
-  Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code ann)
+  Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code)
 flatRenderKernel env s0 prog = \case
   Flat.FE_KConcat x y -> flatRenderBin env "+" s0 prog x y
   Flat.FE_KPlus x y -> flatRenderBin env "+" s0 prog x y
@@ -4496,7 +4471,7 @@ flatRenderCallbackMethod ::
   -> Flat.NodeId
   -> Int
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatRenderCallbackMethod env name s0 prog arrId tag bodyId =
   let
     (s1, Code rDecl rRef) = flatPureAST' env s0 prog arrId
@@ -4506,8 +4481,8 @@ flatRenderCallbackMethod env name s0 prog arrId tag bodyId =
     call =
       flatWrapOperand prog arrId rRef
         <> "."
-        <> P.pretty name
-        <> parens (jsCallback [nDoc nParam] exDecl exRef)
+        <> jsString name
+        <> parens (jsCallback [nJS nParam] exDecl exRef)
    in
     (s3, Code rDecl call)
 
@@ -4521,7 +4496,7 @@ flatRenderFold ::
   -> Int
   -> Int
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatRenderFold env method s0 prog arrId zId tagA tagB bodyId =
   let
     (s1, Code rDecl rRef) = flatPureAST' env s0 prog arrId
@@ -4530,13 +4505,13 @@ flatRenderFold env method s0 prog arrId zId tagA tagB bodyId =
     (nElem, s4) = allocIdent s3
     env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
     (s5, Code exDecl exRef) = flatPureAST' env' s4 prog bodyId
-    cb = jsCallback [nDoc nAcc, nDoc nElem] exDecl exRef
-    call = flatWrapOperand prog arrId rRef <> P.pretty method <> parens (cb <> ", " <> zRef)
+    cb = jsCallback [nJS nAcc, nJS nElem] exDecl exRef
+    call = flatWrapOperand prog arrId rRef <> jsString method <> parens (cb <> ", " <> zRef)
    in
     (s5, Code (rDecl $$ zDecl) call)
 
 flatRenderMethod ::
-  Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code ann)
+  Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code)
 flatRenderMethod env s0 prog = \case
   Flat.FE_MethMap arr tag body ->
     flatRenderCallbackMethod env "map" s0 prog arr tag body
@@ -4553,7 +4528,7 @@ flatRenderMethod env s0 prog = \case
       (nB, s3) = allocIdent s2
       env' = IM.insert tagA nA $ IM.insert tagB nB env
       (s4, Code exDecl exRef) = flatPureAST' env' s3 prog body
-      cb = jsCallback [nDoc nA, nDoc nB] exDecl exRef
+      cb = jsCallback [nJS nA, nJS nB] exDecl exRef
      in
       (s4, Code rDecl (flatWrapOperand prog arr rRef <> ".toSorted" <> parens cb))
   Flat.FE_MethFrom n tag body ->
@@ -4563,20 +4538,20 @@ flatRenderMethod env s0 prog = \case
       (nI, s3) = allocIdent s2
       env' = IM.insert tag nI env
       (s4, Code exDecl exRef) = flatPureAST' env' s3 prog body
-      cb = jsCallback [nDoc nHole, nDoc nI] exDecl exRef
+      cb = jsCallback [nJS nHole, nJS nI] exDecl exRef
      in
       (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
   _ -> error "JShark.flatRenderMethod: unexpected node"
 
 flatRenderFnLit ::
-  Env -> CG -> Flat.FlatProgram -> [Int] -> Flat.NodeId -> (CG, Code ann)
+  Env -> CG -> Flat.FlatProgram -> [Int] -> Flat.NodeId -> (CG, Code)
 flatRenderFnLit env s0 prog tags bodyId =
   let
     (ids, s1) = allocNIdents s0 (length tags)
     env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
     (s2, Code d r) = flatPureAST' env' s1 prog bodyId
    in
-    (s2, Code mempty (jsCallback (map nDoc ids) d r))
+    (s2, Code mempty (jsCallback (map nJS ids) d r))
 
 flatRenderResultCase ::
   Env
@@ -4587,7 +4562,7 @@ flatRenderResultCase ::
   -> Flat.NodeId
   -> Int
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatRenderResultCase env s0 prog resId tagE errId tagO okId =
   let
     (s1, MkCode rDecl rRef _) = flatPureAST' env s0 prog resId
@@ -4597,7 +4572,7 @@ flatRenderResultCase env s0 prog resId tagE errId tagO okId =
     prelude =
       fromMaybe mempty rDecl
         $$ constBind nObj (fromMaybe mempty rRef)
-        $$ constBind nUnw (P.pretty obj <> ".value")
+        $$ constBind nUnw (jsText obj <> ".value")
     envE = IM.insert tagE nUnw env
     envO = IM.insert tagO nUnw envE
     (s4, Code eDecl eRef) = flatPureAST' envE s3 prog errId
@@ -4606,7 +4581,7 @@ flatRenderResultCase env s0 prog resId tagE errId tagO okId =
     ( s5
     , Code
         (prelude $$ eDecl $$ oDecl)
-        (parens ((P.pretty obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
+        (parens ((jsText obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
     )
 
 flatSeqEffect ::
@@ -4615,7 +4590,7 @@ flatSeqEffect ::
   -> Flat.FlatProgram
   -> Flat.NodeId
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatSeqEffect env s0 prog xId yId =
   let
     (s1, MkCode xDecl xRef xFX) = flatEffectfulAST' env s0 prog xId
@@ -4634,7 +4609,7 @@ flatBindEffect ::
   -> Int
   -> Flat.NodeId
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatBindEffect env s0 prog tag xId bodyId =
   let
     (s1, MkCode xDecl xRef xFX) = flatEffectfulAST' env s0 prog xId
@@ -4671,7 +4646,7 @@ flatRenderResultCaseE ::
   -> Flat.NodeId
   -> Int
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatRenderResultCaseE env s0 prog resId tagE errId tagO okId =
   if flatIsUnitEffect prog errId && flatIsUnitEffect prog okId
     then
@@ -4683,7 +4658,7 @@ flatRenderResultCaseE env s0 prog resId tagE errId tagO okId =
         prelude =
           fromMaybe mempty rDecl
             $$ constBind nObj (fromMaybe mempty rRef)
-            $$ constBind nUnw (P.pretty obj <> ".value")
+            $$ constBind nUnw (jsText obj <> ".value")
         envE = IM.insert tagE nUnw env
         envO = IM.insert tagO nUnw envE
         (s4, MkCode eDecl eRef _) = flatEffectfulAST' envE s3 prog errId
@@ -4691,7 +4666,7 @@ flatRenderResultCaseE env s0 prog resId tagE errId tagO okId =
        in
         ( s5
         , Code
-            (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef)
+            (prelude $$ ifElseStmt (jsText obj <> ".ok") oDecl oRef eDecl eRef)
             mempty
         )
     else
@@ -4703,7 +4678,7 @@ flatRenderResultCaseE env s0 prog resId tagE errId tagO okId =
         prelude =
           fromMaybe mempty rDecl
             $$ constBind nObj (fromMaybe mempty rRef)
-            $$ constBind nUnw (P.pretty obj <> ".value")
+            $$ constBind nUnw (jsText obj <> ".value")
         (resultN, s4) = allocIdent s3
         resultVar = nName resultN
         envE = IM.insert tagE nUnw env
@@ -4714,13 +4689,13 @@ flatRenderResultCaseE env s0 prog resId tagE errId tagO okId =
           prelude
             $$ letResult resultVar
             $$ ifElseStmt
-              (P.pretty obj <> ".ok")
+              (jsText obj <> ".ok")
               (Just (fromMaybe mempty oDecl $$ assignResult resultVar oRef))
               Nothing
               (Just (fromMaybe mempty eDecl $$ assignResult resultVar eRef))
               Nothing
        in
-        (s6, Code stmt (P.pretty resultVar))
+        (s6, Code stmt (jsText resultVar))
 
 flatRenderStringCaseE ::
   Env
@@ -4729,7 +4704,7 @@ flatRenderStringCaseE ::
   -> Flat.NodeId
   -> Int
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatRenderStringCaseE env s0 prog scrutId ai defId =
   let
     arms = Flat.flatStrCases prog ai
@@ -4749,7 +4724,7 @@ flatRenderStringCaseE env s0 prog scrutId ai defId =
             else fromMaybe mempty mDecl $$ assignResult resultVar mRef
        in
         (s', body)
-    (s3, caseDocs) =
+    (s3, caseJSs) =
       mapAccumL
         ( \s (k, e) ->
             let
@@ -4757,34 +4732,33 @@ flatRenderStringCaseE env s0 prog scrutId ai defId =
               line =
                 "case"
                   <+> (jsQuote k <> colon)
-                  <+> bracesNest (body <+> ("break" <> semi))
+                  <+> blockBody (body <+> ("break" <> semi))
              in
               (s', line)
         )
         s2
         arms
     (s4, defBody) = renderArm s3 defId
-    defDoc = "default:" <+> bracesNest defBody
-    switchStmt = "switch" <+> parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
+    defJS = "default:" <+> blockBody defBody
+    switchStmt = "switch" <+> parens oRef <+> blockBody (vcat (caseJSs ++ [defJS]))
     prelude =
       if unit then oDecl else oDecl $$ letResult resultVar
-    ref = if unit then Nothing else Just (P.pretty resultVar)
+    ref = if unit then Nothing else Just (jsText resultVar)
    in
     (s4, MkCode (Just (prelude $$ switchStmt)) ref False)
 
 flatPureAST' ::
-  forall ann.
   Env
   -> CG
   -> Flat.FlatProgram
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatPureAST' !env !s0 prog nid =
   case Flat.flatNode prog nid of
     Flat.FE_Literal li ->
       flatRenderLiteral env s0 (Flat.flatLitValue prog li)
     Flat.FE_Var i ->
-      (s0, Code mempty (varStampDoc env (Name i)))
+      (s0, Code mempty (varStampJS env (Name i)))
     Flat.FE_Let tag xId bodyId ->
       let
         (nBind, s1) = allocIdent s0
@@ -4803,7 +4777,7 @@ flatPureAST' !env !s0 prog nid =
     Flat.FE_LetRec tag rId bId ->
       let
         (nBind, s1) = allocIdent s0
-        n = nDoc nBind
+        n = nJS nBind
         env' = IM.insert tag nBind env
         (s2, MkCode rDecl rRef _) = flatPureAST' env' s1 prog rId
         (s3, bCode) = flatPureAST' env' s2 prog bId
@@ -4849,7 +4823,7 @@ flatPureAST' !env !s0 prog nid =
         , Code
             (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
             ( parens
-                (P.pretty optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+                (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
             )
         )
     Flat.FE_ResultOk xId ->
@@ -4876,7 +4850,7 @@ flatPureAST' !env !s0 prog nid =
         (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
         (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
        in
-        (s2, Code (bDecl $$ iDecl) (bRef <> P.brackets iRef))
+        (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
     Flat.FE_Error msgId ->
       let
         (s1, Code d r) = flatPureAST' env s0 prog msgId
@@ -4927,12 +4901,11 @@ flatPureAST' !env !s0 prog nid =
         _ -> error "JShark.flatPureAST': unexpected node"
 
 flatEffectfulAST' ::
-  forall ann.
   Env
   -> CG
   -> Flat.FlatProgram
   -> Flat.NodeId
-  -> (CG, Code ann)
+  -> (CG, Code)
 flatEffectfulAST' !env !s0 prog nid =
   case Flat.flatNode prog nid of
     Flat.FX_Lift eId -> flatPureAST' env s0 prog eId
@@ -4940,9 +4913,9 @@ flatEffectfulAST' !env !s0 prog nid =
       let
         (s1, argDecl, argRefs) = flatRenderArgList env s0 prog ai
        in
-        (s1, fxCode argDecl (renderFFIForm (Flat.flatFFI prog fi) <> P.parens argRefs))
+        (s1, fxCode argDecl (renderFFIForm (Flat.flatFFI prog fi) <> parens argRefs))
     Flat.FX_UnsafeObject ti ->
-      (s0, Code mempty (P.pretty (Flat.flatText prog ti)))
+      (s0, Code mempty (jsText (Flat.flatText prog ti)))
     Flat.FX_UnsafeObjectGet xId sId ->
       let
         (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
@@ -4963,7 +4936,7 @@ flatEffectfulAST' !env !s0 prog nid =
         ( s2
         , fxCode
             (rDecl $$ argDecl)
-            (rRef <> "." <> P.pretty method <> parens argRefs)
+            (rRef <> "." <> jsText method <> parens argRefs)
         )
     Flat.FX_Bind tag xId bodyId ->
       flatBindEffect env s0 prog tag xId bodyId
@@ -4971,7 +4944,7 @@ flatEffectfulAST' !env !s0 prog nid =
     Flat.FX_BindRec tag rId bId ->
       let
         (nBind, s1) = allocIdent s0
-        n = nDoc nBind
+        n = nJS nBind
         env' = IM.insert tag nBind env
         (s2, MkCode rDecl rRef _) = flatEffectfulAST' env' s1 prog rId
         (s3, MkCode bDecl bRef bFX) = flatEffectfulAST' env' s2 prog bId
@@ -5019,7 +4992,7 @@ flatEffectfulAST' !env !s0 prog nid =
         whileStmt =
           "while"
             <+> parens (fromMaybe mempty condRef)
-            <+> braces (nest 2 bodyStmt)
+            <+> blockBody bodyStmt
        in
         (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
     Flat.FX_ForRange startId endId tag bodyId ->
@@ -5027,7 +5000,7 @@ flatEffectfulAST' !env !s0 prog nid =
         (s1, MkCode startDecl startRef _) = flatPureAST' env s0 prog startId
         (s2, MkCode endDecl endRef _) = flatPureAST' env s1 prog endId
         (loopN, s3) = allocIdent s2
-        loopVar = nDoc loopN
+        loopVar = nJS loopN
         env' = IM.insert tag loopN env
         (s4, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env' s3 prog bodyId
         bodyStmt = asStmt bodyDecl bodyRef
@@ -5043,7 +5016,7 @@ flatEffectfulAST' !env !s0 prog nid =
             <+> ";"
             <+> loopVar
             <+> "++"
-        forStmt = "for" <+> parens forHead <+> braces (nest 2 bodyStmt)
+        forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
        in
         ( s4
         , MkCode
@@ -5061,7 +5034,7 @@ flatEffectfulAST' !env !s0 prog nid =
         (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
         (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
         (s3, Code vDecl vRef) = flatPureAST' env s2 prog valId
-        stmt = (bRef <> P.brackets iRef) <+> "=" <+> vRef
+        stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
        in
         (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
     Flat.FX_U8Fill bufId valId ->
@@ -5089,7 +5062,7 @@ flatEffectfulAST' !env !s0 prog nid =
               env' = IM.insert tag nBind env
               (s1, MkCode nDecl nRef _) = flatEffectfulAST' env s prog nId
               (s2, MkCode sDecl sRef _) = flatEffectfulAST' env' s1 prog sId
-              cond = nDoc nBind <+> "===" <+> "null"
+              cond = nJS nBind <+> "===" <+> "null"
              in
               (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
         )
@@ -5122,7 +5095,7 @@ flatEffectfulAST' !env !s0 prog nid =
         (s1, Code oDecl oRef) = flatEffectfulAST' env s0 prog oId
         (s2, Code kDecl kRef) = flatPureAST' env s1 prog kId
        in
-        (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
+        (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
     Flat.FX_ArrayLit es -> flatRenderArrayLit env s0 prog es
     _ -> error "JShark.flatEffectfulAST': unexpected node"
 
@@ -5130,7 +5103,7 @@ flatProgramNodeCount :: Flat.FlatProgram -> Int
 flatProgramNodeCount p = V.length (Flat.fpNodes p)
 
 flatEffectfulCodegen ::
-  ClosedEffect u -> (CG, Code ann)
+  ClosedEffect u -> (CG, Code)
 flatEffectfulCodegen (e :: ClosedEffect u) =
   let
     prog =
@@ -5141,10 +5114,10 @@ flatEffectfulCodegen (e :: ClosedEffect u) =
       then error "JShark.flatEffectfulCodegen: invalid root node"
       else flatEffectfulAST' IM.empty startCG prog root
 
-effectfulASTFromFlat :: ClosedEffect u -> Doc ann
+effectfulASTFromFlat :: ClosedEffect u -> JS
 effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
 
-effectfulAST :: ClosedEffect u -> Doc ann
+effectfulAST :: ClosedEffect u -> JS
 effectfulAST e
   | closedEffectNodes e >= optIrLargeThreshold =
       effectfulASTFromFlat e
@@ -5156,7 +5129,7 @@ effectfulAST e
 -- | Flat IR codegen after 'Ir.optIrEffect'. Below 'optIrLargeThreshold',
 -- 'effectfulAST' still uses the PHOAS pipeline; this always uses flat
 -- pack + SoA opts. Output matches 'effectfulAST' on 'irParityTests'.
-effectfulASTIr :: ClosedEffect u -> Doc ann
+effectfulASTIr :: ClosedEffect u -> JS
 effectfulASTIr = effectfulASTFromFlat
 
 -- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
@@ -5194,40 +5167,37 @@ isUnitWitness = \case
 -- | Turn a rendered effect into a statement. Unit values may still have a
 -- non-empty ref (@el.x = v@, @foo()@); those become statements, not
 -- @let n = …@.
-asStmt :: Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
+asStmt :: Maybe (JS) -> Maybe (JS) -> JS
 asStmt mDecl mRef = case mRef of
   Nothing -> fromMaybe mempty mDecl
   Just r -> fromMaybe mempty mDecl $$ (r <> semi)
 
-bracesNest :: Doc ann -> Doc ann
-bracesNest = braces . nest 2
-
 ifElseStmt ::
-  Doc ann
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Doc ann
+  JS
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> JS
 ifElseStmt cRef tDecl tRef eDecl eRef
   | isNothing eDecl && isNothing eRef =
-      "if" <+> parens cRef <+> bracesNest (asStmt tDecl tRef)
+      "if" <+> parens cRef <+> blockBody (asStmt tDecl tRef)
   | otherwise =
       "if"
         <+> parens cRef
-        <+> bracesNest (asStmt tDecl tRef)
+        <+> blockBody (asStmt tDecl tRef)
           $$ "else"
-        <+> bracesNest (asStmt eDecl eRef)
+        <+> blockBody (asStmt eDecl eRef)
 
-assignResult :: Text -> Maybe (Doc ann) -> Doc ann
+assignResult :: Text -> Maybe (JS) -> JS
 assignResult resultVar mRef = case mRef of
   Nothing -> mempty
-  Just r -> (P.pretty resultVar <+> "=" <+> r) <> semi
+  Just r -> (jsText resultVar <+> "=" <+> r) <> semi
 
-letResult :: Text -> Doc ann
-letResult resultVar = ("let" <+> P.pretty resultVar) <> semi
+letResult :: Text -> JS
+letResult resultVar = ("let" <+> jsText resultVar) <> semi
 
-recBindStmt :: Doc ann -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
+recBindStmt :: JS -> Maybe (JS) -> Maybe (JS) -> JS
 recBindStmt n rDecl rRef =
   ("let" <+> n)
     <> semi $$ fromMaybe mempty rDecl $$ (n <+> "=" <+> fromMaybe mempty rRef)
@@ -5237,7 +5207,7 @@ resultCasePrelude ::
   Env
   -> CG
   -> Expr Stamp ('Result e a)
-  -> (CG, Doc ann, Text, Int)
+  -> (CG, JS, Text, Int)
 resultCasePrelude env s0 res =
   let
     (s1, MkCode rDecl rRef _) = pureAST' s0 env res
@@ -5247,7 +5217,7 @@ resultCasePrelude env s0 res =
     prelude =
       fromMaybe mempty rDecl
         $$ constBind nObj (fromMaybe mempty rRef)
-        $$ constBind nUnw (P.pretty obj <> ".value")
+        $$ constBind nUnw (jsText obj <> ".value")
    in
     (s3, prelude, obj, nUnw)
 
@@ -5256,9 +5226,9 @@ resultCasePrelude env s0 res =
 emitBranching ::
   Bool
   -> CG
-  -> (CG -> (CG, Doc ann, extra))
-  -> (Maybe Text -> extra -> CG -> (CG, Doc ann))
-  -> (CG, Code ann)
+  -> (CG -> (CG, JS, extra))
+  -> (Maybe Text -> extra -> CG -> (CG, JS))
+  -> (CG, Code)
 emitBranching unit s0 prelude k
   | unit =
       let
@@ -5273,51 +5243,51 @@ emitBranching unit s0 prelude k
         rv = nName n
         (s3, stmt) = k (Just rv) extra s2
        in
-        (s3, MkCode (Just (pre $$ letResult rv $$ stmt)) (Just (P.pretty rv)) False)
+        (s3, MkCode (Just (pre $$ letResult rv $$ stmt)) (Just (jsText rv)) False)
 
 ifAssignOrStmt ::
   Maybe Text
-  -> Doc ann
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Doc ann
+  -> JS
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> JS
 ifAssignOrStmt Nothing c tD tR eD eR = ifElseStmt c tD tR eD eR
 ifAssignOrStmt (Just rv) c tD tR eD eR =
   "if"
     <+> parens c
-    <+> bracesNest (fromMaybe mempty tD $$ assignResult rv tR)
+    <+> blockBody (fromMaybe mempty tD $$ assignResult rv tR)
       $$ "else"
-    <+> bracesNest (fromMaybe mempty eD $$ assignResult rv eR)
+    <+> blockBody (fromMaybe mempty eD $$ assignResult rv eR)
 
 tryCatchStmt ::
   Maybe Text
   -> Int
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Maybe (Doc ann)
-  -> Doc ann
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> Maybe (JS)
+  -> JS
 tryCatchStmt mRes catchN aDecl aRef bDecl bRef =
   let
-    catchHead = "catch" <+> parens (nDoc catchN)
+    catchHead = "catch" <+> parens (nJS catchN)
    in
     case mRes of
       Nothing ->
         "try"
-          <+> bracesNest (asStmt aDecl aRef)
-            $$ (catchHead <+> bracesNest (asStmt bDecl bRef))
+          <+> blockBody (asStmt aDecl aRef)
+            $$ (catchHead <+> blockBody (asStmt bDecl bRef))
       Just rv ->
         "try"
-          <+> braces (nest 2 (fromMaybe mempty aDecl $$ assignResult rv aRef))
-            $$ (catchHead <+> braces (nest 2 (fromMaybe mempty bDecl $$ assignResult rv bRef)))
+          <+> blockBody (fromMaybe mempty aDecl $$ assignResult rv aRef)
+            $$ (catchHead <+> blockBody (fromMaybe mempty bDecl $$ assignResult rv bRef))
 
-renderFunction :: Int -> Maybe (Doc ann) -> Maybe (Doc ann) -> Doc ann
+renderFunction :: Int -> Maybe (JS) -> Maybe (JS) -> JS
 renderFunction nParam decl ref =
   "function"
-    <+> parens (nDoc nParam)
-    <+> braces (fromMaybe mempty decl $$ ret)
+    <+> parens (nJS nParam)
+    <+> blockBody (fromMaybe mempty decl $$ ret)
  where
   -- Empty ref is Unit (event handlers, forEach of noOp). `return ()`
   -- is a SyntaxError; HughesPJ `parens` of empty is `()`.
@@ -5326,25 +5296,25 @@ renderFunction nParam decl ref =
     Just r -> "return" <+> parens r
 
 -- | @function (n0, n1) { decls return ref }@ — callback style (bare return).
-jsCallback :: [Doc ann] -> Doc ann -> Doc ann -> Doc ann
+jsCallback :: [JS] -> JS -> JS -> JS
 jsCallback params decl ref =
   "function"
     <+> parens (hcat (punctuate ", " params))
-    <+> braces (decl $$ "return" <+> ref)
+    <+> blockBody (decl $$ "return" <+> ref)
 
-renderFFIForm :: FFIForm -> Doc ann
+renderFFIForm :: FFIForm -> JS
 renderFFIForm = \case
-  FFICall s -> P.pretty s
-  FFILambda s -> parens (P.pretty s)
+  FFICall s -> jsText s
+  FFILambda s -> parens (jsText s)
 
-effectfulAST' :: forall v ann. Env -> CG -> Effect Stamp v -> (CG, Code ann)
+effectfulAST' :: forall v. Env -> CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !env !s0 = \case
   Lift x -> pureAST' s0 env x
   FFI fn args ->
     let
       (s1, argDecl, argRefs) = renderArgList env s0 args
      in
-      (s1, fxCode argDecl (renderFFIForm fn <> P.parens argRefs))
+      (s1, fxCode argDecl (renderFFIForm fn <> parens argRefs))
   IfE c t e ->
     -- Value-producing @if@: a shared result var is assigned in both
     -- arms. Do not use emptiness to pick a ternary — a Unit leftover
@@ -5370,7 +5340,7 @@ effectfulAST' !env !s0 = \case
       (s1, MkCode condDecl condRef _) = effectfulAST' env s0 cond
       (s2, MkCode bodyDecl bodyRef _) = effectfulAST' env s1 body
       bodyStmt = asStmt bodyDecl bodyRef
-      whileStmt = "while" <+> parens (fromMaybe mempty condRef) <+> braces (nest 2 bodyStmt)
+      whileStmt = "while" <+> parens (fromMaybe mempty condRef) <+> blockBody bodyStmt
      in
       (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
   ForRange start end body ->
@@ -5378,7 +5348,7 @@ effectfulAST' !env !s0 = \case
       (s1, MkCode startDecl startRef _) = pureAST' s0 env start
       (s2, MkCode endDecl endRef _) = pureAST' s1 env end
       (loopN, s3) = allocIdent s2
-      loopVar = nDoc loopN
+      loopVar = nJS loopN
       (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
       bodyStmt = asStmt bodyDecl bodyRef
       forHead =
@@ -5393,7 +5363,7 @@ effectfulAST' !env !s0 = \case
           <+> ";"
           <+> loopVar
           <+> "++"
-      forStmt = "for" <+> parens forHead <+> braces (nest 2 bodyStmt)
+      forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
      in
       ( s4
       , MkCode
@@ -5406,7 +5376,7 @@ effectfulAST' !env !s0 = \case
       (s1, Code bDecl bRef) = pureAST' s0 env buf
       (s2, Code iDecl iRef) = pureAST' s1 env idx
       (s3, Code vDecl vRef) = pureAST' s2 env val
-      stmt = (bRef <> P.brackets iRef) <+> "=" <+> vRef
+      stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
      in
       (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
   U8Fill buf val ->
@@ -5435,7 +5405,7 @@ effectfulAST' !env !s0 = \case
               env' = IM.insert binderTag nBind env
               (s1, MkCode nDecl nRef _) = effectfulAST' env s noneE
               (s2, MkCode sDecl sRef _) = effectfulAST' env' s1 tagged
-              cond = nDoc nBind <+> "===" <+> "null"
+              cond = nJS nBind <+> "===" <+> "null"
              in
               (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
         )
@@ -5461,7 +5431,7 @@ effectfulAST' !env !s0 = \case
   BindRec r b ->
     let
       (nBind, s1) = allocIdent s0
-      n = nDoc nBind
+      n = nJS nBind
       (s2, MkCode rDecl rRef _) = effectfulAST' env s1 (r (Name nBind))
       (s3, MkCode bDecl bRef bFX) = effectfulAST' env s2 (b (Name nBind))
      in
@@ -5480,10 +5450,10 @@ effectfulAST' !env !s0 = \case
       (s1, Code oDecl oRef) = effectfulAST' env s0 o
       (s2, Code kDecl kRef) = pureAST' s1 env k
      in
-      (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> P.brackets kRef))
+      (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
   ResultCaseE res errF okF -> renderResultCaseE env s0 res errF okF
   StringCaseE scrut arms def -> renderStringCaseE env s0 scrut arms def
-  UnsafeObject obj -> (s0, Code mempty (P.pretty obj))
+  UnsafeObject obj -> (s0, Code mempty (jsText obj))
   UnsafeObjectGet x string ->
     let
       (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
@@ -5500,7 +5470,7 @@ effectfulAST' !env !s0 = \case
       (s1, Code rDecl rRef) = effectfulAST' env s0 recv
       (s2, argDecl, argRefs) = renderArgList env s1 args
      in
-      (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> P.pretty name <> parens argRefs))
+      (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> jsText name <> parens argRefs))
   LambdaE f -> emitEffectLambda env s0 f
   ApplyE fex ex ->
     let
@@ -5510,7 +5480,7 @@ effectfulAST' !env !s0 = \case
       (s2, fxCode (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
 
 letCode ::
-  Env -> CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
+  Env -> CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code)
 letCode env s0 x g =
   let
     (sProbe, tagged, probeTag) = probeContExpr s0 g
@@ -5541,18 +5511,18 @@ letCode env s0 x g =
               y
           )
 
-pureAST :: ClosedExpr u -> Doc ann
+pureAST :: ClosedExpr u -> JS
 pureAST e = uncurry renderWithHelpers (pureAST' startCG IM.empty (optimize e))
 
 pureAST' ::
-  forall v ann.
+  forall v.
   CG
   -> Env
   -> Expr Stamp v
-  -> (CG, Code ann)
+  -> (CG, Code)
 pureAST' !s0 env = \case
   Literal v -> case v of
-    ValueNumber d -> (s0, Code mempty (P.pretty $ showFFloat Nothing d ""))
+    ValueNumber d -> (s0, Code mempty (jsDouble d))
     ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
     ValueArray xs ->
       let
@@ -5561,7 +5531,7 @@ pureAST' !s0 env = \case
         ( s1
         , Code
             (codesDecls exprs)
-            (P.brackets (hcat (punctuate ", " (codesRefs exprs))))
+            (brackets (hcat (punctuate ", " (codesRefs exprs))))
         )
     ValueString s -> (s0, Code mempty (jsQuote s))
     ValueFunction _ -> error "JShark.pureAST: ValueFunction is eval-only"
@@ -5582,7 +5552,7 @@ pureAST' !s0 env = \case
   LetRec r b ->
     let
       (nBind, s1) = allocIdent s0
-      n = nDoc nBind
+      n = nJS nBind
       (s2, MkCode rDecl rRef _) = pureAST' s1 env (r (Name nBind))
       (s3, bCode) = pureAST' s2 env (b (Name nBind))
      in
@@ -5599,7 +5569,7 @@ pureAST' !s0 env = \case
   Var (EmbedEff e) -> effectfulAST' env s0 e
   Var s ->
     -- Tags and the unused-binder dummy are negative; map via `env`.
-    (s0, Code mempty (varStampDoc env s))
+    (s0, Code mempty (varStampJS env s))
   If c t e ->
     let
       (s1, Code cDecl cRef) = pureAST' s0 env c
@@ -5625,7 +5595,7 @@ pureAST' !s0 env = \case
           , Code
               (noneDecl $$ someDecl)
               ( parens
-                  (P.pretty optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
               )
           )
       _ ->
@@ -5640,7 +5610,7 @@ pureAST' !s0 env = \case
           , Code
               (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
               ( parens
-                  (P.pretty optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
               )
           )
   ResultOk x ->
@@ -5666,7 +5636,7 @@ pureAST' !s0 env = \case
       (s1, Code bDecl bRef) = pureAST' s0 env buf
       (s2, Code iDecl iRef) = pureAST' s1 env idx
      in
-      (s2, Code (bDecl $$ iDecl) (bRef <> P.brackets iRef))
+      (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
   Error msg ->
     let
       (s1, Code d r) = pureAST' s0 env msg
@@ -5687,14 +5657,14 @@ renderFixed ::
   -> CG
   -> FixedOp a b c u
   -> FixedArgs Stamp a b c
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderFixed env s0 op args = case (op, args) of
   (n, ArgsU x)
     | Just name <- Prim.math1Name n ->
         let
           (s1, Code xDecl xRef) = pureAST' s0 env x
          in
-          (s1, Code xDecl ("Math." <> P.pretty (T.unpack name) <> parens xRef))
+          (s1, Code xDecl ("Math." <> jsText name <> parens xRef))
   (n, ArgsB x y)
     | Just name <- Prim.math2Name n ->
         let
@@ -5705,7 +5675,7 @@ renderFixed env s0 op args = case (op, args) of
           , Code
               (xDecl $$ yDecl)
               ( "Math."
-                  <> P.pretty (T.unpack name)
+                  <> jsText name
                   <> parens (xRef <> ", " <> yRef)
               )
           )
@@ -5732,24 +5702,24 @@ renderFixed env s0 op args = case (op, args) of
           (Prim.fixedTernaryJS n (wrapOperand recv rRef) aRef bRef)
       )
 
-resultPayloadRef :: Maybe (Doc ann) -> Doc ann
+resultPayloadRef :: Maybe (JS) -> JS
 resultPayloadRef = fromMaybe "undefined"
 
-resultObject :: Bool -> Maybe (Doc ann) -> Doc ann
+resultObject :: Bool -> Maybe (JS) -> JS
 resultObject isOk payload =
   let
     flag = if isOk then "true" else "false"
    in
     braces ((("ok:" <+> flag) <> ",") <+> ("value:" <+> resultPayloadRef payload))
 
-renderResultLit :: Bool -> CG -> Value u -> (CG, Code ann)
+renderResultLit :: Bool -> CG -> Value u -> (CG, Code)
 renderResultLit isOk s0 x =
   let
     (s1, MkCode d r _) = pureAST' s0 IM.empty (Literal x)
    in
     (s1, MkCode d (Just (resultObject isOk r)) False)
 
-renderArrayLit :: Env -> CG -> [Effect Stamp u] -> (CG, Code ann)
+renderArrayLit :: Env -> CG -> [Effect Stamp u] -> (CG, Code)
 renderArrayLit env s0 es =
   let
     (s1, cs) = mapAccumL (\s e -> effectfulAST' env s e) s0 es
@@ -5757,10 +5727,10 @@ renderArrayLit env s0 es =
     ( s1
     , Code
         (codesDecls cs)
-        (P.brackets (hcat (punctuate ", " (codesRefs cs))))
+        (brackets (hcat (punctuate ", " (codesRefs cs))))
     )
 
-renderObjectLit :: Env -> CG -> [FieldLit Stamp r] -> (CG, Code ann)
+renderObjectLit :: Env -> CG -> [FieldLit Stamp r] -> (CG, Code)
 renderObjectLit env s0 fs =
   let
     (s1, parts) =
@@ -5771,12 +5741,12 @@ renderObjectLit env s0 fs =
                 let
                   (s', Code d r) = pureAST' s env e
                  in
-                  (s', (d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> r))
+                  (s', (d, (dquotes (jsText (fieldKey fl)) <> ":") <+> r))
               FieldLitExtra e ->
                 let
                   (s', Code d r) = pureAST' s env e
                  in
-                  (s', (d, (dquotes (P.pretty (fieldKey fl)) <> ":") <+> r))
+                  (s', (d, (dquotes (jsText (fieldKey fl)) <> ":") <+> r))
               FieldLitEffect e ->
                 let
                   (s', MkCode d r _) = effectfulAST' env s e
@@ -5784,7 +5754,7 @@ renderObjectLit env s0 fs =
                   ( s'
                   ,
                     ( fromMaybe mempty d
-                    , (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r
+                    , (dquotes (jsText (fieldKey fl)) <> ":") <+> fromMaybe mempty r
                     )
                   )
               FieldLitExtraEffect e ->
@@ -5794,7 +5764,7 @@ renderObjectLit env s0 fs =
                   ( s'
                   ,
                     ( fromMaybe mempty d
-                    , (dquotes (P.pretty (fieldKey fl)) <> ":") <+> fromMaybe mempty r
+                    , (dquotes (jsText (fieldKey fl)) <> ":") <+> fromMaybe mempty r
                     )
                   )
         )
@@ -5810,7 +5780,7 @@ renderResultCase ::
   -> Expr Stamp ('Result e a)
   -> (Stamp e -> Expr Stamp v)
   -> (Stamp a -> Expr Stamp v)
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderResultCase env s0 res errF okF =
   let
     (s1, prelude, obj, nUnw) = resultCasePrelude env s0 res
@@ -5820,7 +5790,7 @@ renderResultCase env s0 res errF okF =
     ( s3
     , Code
         (prelude $$ eDecl $$ oDecl)
-        (parens ((P.pretty obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
+        (parens ((jsText obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
     )
 
 renderStringCaseE ::
@@ -5829,7 +5799,7 @@ renderStringCaseE ::
   -> Expr Stamp 'String
   -> [(Text, Effect Stamp v)]
   -> Effect Stamp v
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderStringCaseE env s0 scrut arms def =
   let
     unit = all (isUnitWitness . snd) arms && isUnitWitness def
@@ -5846,24 +5816,24 @@ renderStringCaseE env s0 scrut arms def =
             else fromMaybe mempty mDecl $$ assignResult resultVar mRef
        in
         (s', body)
-    (s3, caseDocs) =
+    (s3, caseJSs) =
       mapAccumL
         ( \s (k, e) ->
             let
               (s', body) = renderArm s e
               line =
-                "case" <+> (jsQuote k <> colon) <+> bracesNest (body <+> ("break" <> semi))
+                "case" <+> (jsQuote k <> colon) <+> blockBody (body <+> ("break" <> semi))
              in
               (s', line)
         )
         s2
         arms
     (s4, defBody) = renderArm s3 def
-    defDoc = "default:" <+> bracesNest defBody
-    switchStmt = "switch" <+> parens oRef <+> bracesNest (P.vcat (caseDocs ++ [defDoc]))
+    defJS = "default:" <+> blockBody defBody
+    switchStmt = "switch" <+> parens oRef <+> blockBody (vcat (caseJSs ++ [defJS]))
     prelude =
       if unit then oDecl else oDecl $$ letResult resultVar
-    ref = if unit then Nothing else Just (P.pretty resultVar)
+    ref = if unit then Nothing else Just (jsText resultVar)
    in
     (s4, MkCode (Just (prelude $$ switchStmt)) ref False)
 
@@ -5873,7 +5843,7 @@ renderResultCaseE ::
   -> Expr Stamp ('Result e a)
   -> (Stamp e -> Effect Stamp v)
   -> (Stamp a -> Effect Stamp v)
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderResultCaseE env s0 res errF okF =
   let
     (s1, errTagged, tagE) = probeContEff s0 errF
@@ -5888,7 +5858,7 @@ renderResultCaseE env s0 res errF okF =
          in
           ( s5
           , Code
-              (prelude $$ ifElseStmt (P.pretty obj <> ".ok") oDecl oRef eDecl eRef)
+              (prelude $$ ifElseStmt (jsText obj <> ".ok") oDecl oRef eDecl eRef)
               mempty
           )
       else
@@ -5904,25 +5874,25 @@ renderResultCaseE env s0 res errF okF =
             prelude
               $$ letResult resultVar
               $$ ifElseStmt
-                (P.pretty obj <> ".ok")
+                (jsText obj <> ".ok")
                 (Just (fromMaybe mempty oDecl $$ assignResult resultVar oRef))
                 Nothing
                 (Just (fromMaybe mempty eDecl $$ assignResult resultVar eRef))
                 Nothing
          in
-          (s6, Code stmt (P.pretty resultVar))
+          (s6, Code stmt (jsText resultVar))
 
-emitExprLambda :: Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code ann)
+emitExprLambda :: Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code)
 emitExprLambda env = emitLambdaWith (\s e -> pureAST' s env e)
 
-emitEffectLambda :: Env -> CG -> (Stamp u -> Effect Stamp v) -> (CG, Code ann)
+emitEffectLambda :: Env -> CG -> (Stamp u -> Effect Stamp v) -> (CG, Code)
 emitEffectLambda env = emitLambdaWith (effectfulAST' env)
 
 emitLambdaWith ::
-  (CG -> t -> (CG, Code ann))
+  (CG -> t -> (CG, Code))
   -> CG
   -> (Stamp u -> t)
-  -> (CG, Code ann)
+  -> (CG, Code)
 emitLambdaWith walker s0 f =
   let
     (nParam, s1) = allocIdent s0
@@ -5934,20 +5904,20 @@ renderBinaryFn ::
   Env
   -> CG
   -> (Stamp a -> Stamp b -> Expr Stamp c)
-  -> (CG, Doc ann)
+  -> (CG, JS)
 renderBinaryFn env s0 f =
   let
     (s1, Code _ cb) = renderFn env s0 (JfCons $ \a -> JfCons $ \b -> JfNil (f a b))
    in
     (s1, cb)
 
-renderStd :: Env -> CG -> Std Stamp u -> (CG, Code ann)
+renderStd :: Env -> CG -> Std Stamp u -> (CG, Code)
 renderStd env s0 = \case
   Fixed op args -> renderFixed env s0 op args
   Method m -> renderMethod env s0 m
   Kernel k -> renderKernel env s0 k
 
-renderKernel :: Env -> CG -> Kernel Stamp u -> (CG, Code ann)
+renderKernel :: Env -> CG -> Kernel Stamp u -> (CG, Code)
 renderKernel env s0 = \case
   KConcat x y -> renderBin env "+" s0 x y
   KPlus x y -> renderBin env "+" s0 x y
@@ -6002,7 +5972,7 @@ renderKernel env s0 = \case
   KGTEq x y -> renderBin env ">=" s0 x y
   KLTEq x y -> renderBin env "<=" s0 x y
 
-renderMethod :: Env -> CG -> Method Stamp u -> (CG, Code ann)
+renderMethod :: Env -> CG -> Method Stamp u -> (CG, Code)
 renderMethod env s0 = \case
   MethMap recv f -> renderCallbackMethod env "map" s0 recv f
   MethFilter recv f -> renderCallbackMethod env "filter" s0 recv f
@@ -6021,7 +5991,7 @@ renderMethod env s0 = \case
       (nHole, s2) = allocIdent s1
       (nI, s3) = allocIdent s2
       (s4, Code exDecl exRef) = pureAST' s3 env (f (Name nI))
-      cb = jsCallback [nDoc nHole, nDoc nI] exDecl exRef
+      cb = jsCallback [nJS nHole, nJS nI] exDecl exRef
      in
       (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
 
@@ -6032,13 +6002,13 @@ renderFold ::
   -> Expr Stamp ('Array u)
   -> Expr Stamp v
   -> (Stamp v -> Stamp u -> Expr Stamp v)
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderFold env method s0 recv z f =
   let
     (s1, Code rDecl rRef) = pureAST' s0 env recv
     (s2, Code zDecl zRef) = pureAST' s1 env z
     (s3, cb) = renderBinaryFn env s2 f
-    call = wrapOperand recv rRef <> P.pretty method <> parens (cb <> ", " <> zRef)
+    call = wrapOperand recv rRef <> jsString method <> parens (cb <> ", " <> zRef)
    in
     (s3, Code (rDecl $$ zDecl) call)
 
@@ -6048,7 +6018,7 @@ renderCallbackMethod ::
   -> CG
   -> Expr Stamp a
   -> (Stamp b -> Expr Stamp c)
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderCallbackMethod env name s0 recv f =
   let
     (s1, Code rDecl rRef) = pureAST' s0 env recv
@@ -6057,27 +6027,27 @@ renderCallbackMethod env name s0 recv f =
     call =
       wrapOperand recv rRef
         <> "."
-        <> P.pretty name
-        <> parens (jsCallback [nDoc nParam] exDecl exRef)
+        <> jsString name
+        <> parens (jsCallback [nJS nParam] exDecl exRef)
    in
     (s3, Code rDecl call)
 
-renderBin :: Env -> Text -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code ann)
+renderBin :: Env -> Text -> CG -> Expr Stamp a -> Expr Stamp b -> (CG, Code)
 renderBin env op s0 x y =
   renderBinApp
     env
-    (\l r -> wrapOperand x l <+> P.pretty op <+> wrapOperand y r)
+    (\l r -> wrapOperand x l <+> jsText op <+> wrapOperand y r)
     s0
     x
     y
 
 renderBinApp ::
   Env
-  -> (Doc ann -> Doc ann -> Doc ann)
+  -> (JS -> JS -> JS)
   -> CG
   -> Expr Stamp a
   -> Expr Stamp b
-  -> (CG, Code ann)
+  -> (CG, Code)
 renderBinApp env join s0 x y =
   let
     (s1, Code xDecl xRef) = pureAST' s0 env x
@@ -6085,12 +6055,12 @@ renderBinApp env join s0 x y =
    in
     (s2, Code (xDecl $$ yDecl) (join xRef yRef))
 
-argAST :: Env -> CG -> Arg Stamp u -> (CG, Code ann)
+argAST :: Env -> CG -> Arg Stamp u -> (CG, Code)
 argAST env s (ArgExpr e) = pureAST' s env e
 argAST env s (ArgEffect e) = effectfulAST' env s e
 
 renderArgList ::
-  Env -> CG -> Rec (Arg Stamp) us -> (CG, Doc ann, Doc ann)
+  Env -> CG -> Rec (Arg Stamp) us -> (CG, JS, JS)
 renderArgList env s0 args =
   let
     (s1, cs) = recCodes (argAST env) s0 args

@@ -90,6 +90,7 @@ library
     JShark.Bun.Internal
     JShark.FlatTest
   other-modules:
+    JShark.Emit
     JShark.Flat
     JShark.FlatSoA
     JShark.Ir
@@ -98,7 +99,8 @@ library
     , base >= 4.17 && < 5
     , vector >= 0.12 && < 0.14
     , text >= 1.2 && < 3
-    , prettyprinter >= 1.7 && < 2
+    -- 1.x required for GHC 9.14; 0.6.x pulls text-builder-dev (broken on 9.14).
+    , text-builder >= 1.0 && < 1.1
     , http-types >= 0.8 && < 1
     , bytestring >= 0.10.8 && < 1
     , containers >= 0.5 && < 1
