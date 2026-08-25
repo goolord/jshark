@@ -144,7 +144,7 @@ import Data.Int (Int32)
 import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import qualified Data.Map.Strict as M
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, mapMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Monoid (All (..), Any (..), Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -1126,8 +1126,11 @@ effectfulProgram :: ClosedEffect u -> Doc ann
 effectfulProgram e =
   uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
-partitionCode :: [Code ann] -> ([Maybe (Doc ann)], [Maybe (Doc ann)])
-partitionCode = unzip . map (\(MkCode a b _) -> (a, b))
+codesDecls :: [Code ann] -> Doc ann
+codesDecls cs = P.vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
+
+codesRefs :: [Code ann] -> [Doc ann]
+codesRefs = map (\(MkCode _ b _) -> arrayElemRef b)
 
 -- | 'ValueUnit' renders as nothing, since a unit statement emits nothing.
 -- As an array element it still occupies a slot, so it has to print — a
@@ -4540,12 +4543,11 @@ pureAST' !s0 env = \case
     ValueArray xs ->
       let
         (s1, exprs) = mapAccumL (\s x -> pureAST' s env (Literal x)) s0 xs
-        (exprDecls, exprRefs) = partitionCode exprs
        in
         ( s1
         , Code
-            (P.vcat (catMaybes exprDecls))
-            (P.brackets (hcat (punctuate ", " (map arrayElemRef exprRefs))))
+            (codesDecls exprs)
+            (P.brackets (hcat (punctuate ", " (codesRefs exprs))))
         )
     ValueString s -> (s0, Code mempty (jsQuote s))
     ValueFunction _ -> error "JShark.pureAST: ValueFunction is eval-only"
@@ -4737,12 +4739,11 @@ renderArrayLit :: Env -> CG -> [Effect Stamp u] -> (CG, Code ann)
 renderArrayLit env s0 es =
   let
     (s1, cs) = mapAccumL (\s e -> effectfulAST' env s e) s0 es
-    (decls, refs) = partitionCode cs
    in
     ( s1
     , Code
-        (P.vcat (catMaybes decls))
-        (P.brackets (hcat (punctuate ", " (map arrayElemRef refs))))
+        (codesDecls cs)
+        (P.brackets (hcat (punctuate ", " (codesRefs cs))))
     )
 
 renderObjectLit :: Env -> CG -> [FieldLit Stamp r] -> (CG, Code ann)
@@ -5079,6 +5080,5 @@ renderArgList ::
 renderArgList env s0 args =
   let
     (s1, cs) = recCodes (argAST env) s0 args
-    (decls, refs) = partitionCode cs
    in
-    (s1, P.vcat (catMaybes decls), hcat (punctuate ", " (map arrayElemRef refs)))
+    (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
