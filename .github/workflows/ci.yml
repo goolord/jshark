@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-9.14.1-
+
+      - run: cabal update
+
+      - name: Rebuild vendored WASM
+        run: ./scripts/check-wasm.sh --build-only
+
+      - name: Verify WASM checksums
+        run: sha256sum -c wasm/checksums.sha256
+
+      - uses: haskell-actions/run-fourmolu@v12
+        with:
+          version: "0.20.1.0"
+          pattern: |
+            src
+            examples
+            test
+            jshark-lucid
+
+      - name: Test
+        run: |
+          cabal test jshark-test --test-show-details=direct \
+            --test-options='+RTS -N1 -M4G -RTS -t120'
+
+  pages-build:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-9.14.1-
+
+      - run: cabal update
+
+      - name: Export static site
+        run: cabal run examples -- export _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  pages-deploy:
+    needs: pages-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

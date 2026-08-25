@@ -3,7 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | PixiJS 7.4.2 WebGL for Life ('examples/Life/js/pixi.min.js'). All Pixi /
--- GL calls live here via 'ffi', including the cell persist + SDF shader.
+-- GL calls live here via 'ffi', including two-frame onion skin + glow SDF.
 module Pixi
   ( Application
   , Texture
@@ -15,6 +15,9 @@ module Pixi
   , textureFromBuffer
   , setTextureNearest
   , installLifeShader
+  , prefetchLifeShader
+  , lifeCellShaderUrl
+  , replaceGridTexture
   , presentGrid
   , newSprite
   , mountSprite
@@ -28,8 +31,24 @@ where
 import JShark.Api
 import JShark.Dom (DomElement)
 import JShark.Generic (MutableObjectOf)
+import JShark.Promise (Promise)
 import JShark.Rec (Rec (..), (<:))
+import qualified Data.Text as T
 import Types (LifeState, canvasBgPixi, canvasH, canvasW, cellPx, texH, texW)
+
+-- | Fragment shader served beside @js/@ in the Life frame.
+lifeCellShaderUrl :: T.Text
+lifeCellShaderUrl = "js/shaders/cell.frag.glsl"
+
+-- | Fetch @cell.frag.glsl@ once; cached on @viewport.cellFragSrc@.
+prefetchLifeShaderJs :: String
+prefetchLifeShaderJs =
+  "(viewport, url) => (async () => {"
+    <> " if (viewport.cellFragSrc) return;"
+    <> " const r = await fetch(url);"
+    <> " if (!r.ok) throw new Error('Life shader fetch failed: ' + url);"
+    <> " viewport.cellFragSrc = await r.text();"
+    <> " })()"
 
 -- | @PIXI.Application@.
 data Application
@@ -37,10 +56,10 @@ data Application
 -- | @PIXI.Texture@ backed by an RGBA byte buffer.
 data Texture
 
--- | @PIXI.Sprite@ — world bitmap positioned on the stage.
+-- | @PIXI.Sprite@: world bitmap positioned on the stage.
 data Sprite
 
--- | @typeof PIXI !== 'undefined'@ — false when the script failed to load.
+-- | @typeof PIXI !== 'undefined'@: false when the script failed to load.
 pixiAvailable :: EffectSyntax f (Expr f 'Bool)
 pixiAvailable =
   fmap var (toSyntax (ffi "(() => typeof PIXI !== 'undefined')" RecNil))
@@ -59,34 +78,30 @@ newAppJs =
     <> " });"
     <> " view.__lifePixiApp = app;"
 
--- | Drop persist RTs while their creating renderer is still alive.
+-- | Drop onion-skin atlas RT while its creating renderer is still alive.
 --   Expects @viewport@.
 destroyPersistJs :: String
 destroyPersistJs =
-  " if (viewport.persistA && viewport.persistA.destroy) {"
-    <> "   try { viewport.persistA.destroy(true); } catch (_) {}"
+  " if (viewport.atlasPrev && viewport.atlasPrev.destroy) {"
+    <> "   try { viewport.atlasPrev.destroy(true); } catch (_) {}"
     <> " }"
-    <> " if (viewport.persistB && viewport.persistB.destroy) {"
-    <> "   try { viewport.persistB.destroy(true); } catch (_) {}"
+    <> " if (viewport.atlasCopySpr && viewport.atlasCopySpr.destroy) {"
+    <> "   try { viewport.atlasCopySpr.destroy(true); } catch (_) {}"
     <> " }"
-    <> " viewport.persistA = null;"
-    <> " viewport.persistB = null;"
-    <> " viewport.persistSrc = null;"
-    <> " viewport.persistDst = null;"
-    <> " viewport.persistMixer = null;"
-    <> " viewport.persistMixFilter = null;"
+    <> " viewport.atlasPrev = null;"
+    <> " viewport.atlasCopySpr = null;"
     <> " viewport.sdfFilter = null;"
     <> " viewport.lifeShader = 0;"
 
--- | Phosphor mix (atlas space) + rounded-cell SDF (screen space).
+-- | Build Pixi filter from @viewport.cellFragSrc@ (see 'prefetchLifeShader').
 --   Expects @app@, @viewport@, @sprite@, @currTex@, @texW@, @texH@, @bgHex@.
 installShaderJs :: String
 installShaderJs =
   " viewport.lifeShader = 0;"
     <> " var prevPrec;"
     <> " try {"
-    <> " const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;"
-    <> " const persistK = reduced ? 1 : 0.22;"
+    <> " const sdfFrag = viewport.cellFragSrc;"
+    <> " if (!sdfFrag) throw new Error('Life cell shader not loaded');"
     <> " const bgR = ((bgHex >> 16) & 255) / 255;"
     <> " const bgG = ((bgHex >> 8) & 255) / 255;"
     <> " const bgB = (bgHex & 255) / 255;"
@@ -95,78 +110,51 @@ installShaderJs =
     <> " PIXI.settings.PRECISION_FRAGMENT = 'highp';"
     <> " const rtOpts = { width: texW, height: texH, resolution: 1,"
     <> "   scaleMode: PIXI.SCALE_MODES.NEAREST };"
-    <> " const persistA = PIXI.RenderTexture.create(rtOpts);"
-    <> " const persistB = PIXI.RenderTexture.create(rtOpts);"
-    <> " persistA.clearColor = [bgR, bgG, bgB, 0];"
-    <> " persistB.clearColor = [bgR, bgG, bgB, 0];"
+    <> " const atlasPrev = PIXI.RenderTexture.create(rtOpts);"
+    <> " atlasPrev.clearColor = [bgR, bgG, bgB, 0];"
     <> " if (app && app.renderer && app.renderer.renderTexture) {"
     <> "   const empty = new PIXI.Container();"
-    <> "   app.renderer.render(empty, { renderTexture: persistA, clear: true });"
-    <> "   app.renderer.render(empty, { renderTexture: persistB, clear: true });"
+    <> "   app.renderer.render(empty, { renderTexture: atlasPrev, clear: true });"
     <> " }"
-    <> " const mixFrag ="
-    <> " 'varying vec2 vTextureCoord;'"
-    <> "+'uniform sampler2D uSampler;'"
-    <> "+'uniform sampler2D uPersist;'"
-    <> "+'uniform float uK;'"
-    <> "+'void main(void){'"
-    <> "+'vec4 curr=texture2D(uSampler,vTextureCoord);'"
-    <> "+'vec4 prev=texture2D(uPersist,vTextureCoord);'"
-    <> "+'gl_FragColor=mix(prev,curr,clamp(uK,0.0,1.0));'"
-    <> "+'}';"
-    <> " const sdfFrag ="
-    <> " 'varying vec2 vTextureCoord;'"
-    <> "+'uniform sampler2D uSampler;'"
-    <> "+'uniform vec2 uTexSize;'"
-    <> "+'uniform vec3 uBg;'"
-    <> "+'uniform float uTime;'"
-    <> "+'uniform float uMotion;'"
-    <> "+'void main(void){'"
-    <> "+'vec2 cell=vTextureCoord*uTexSize;'"
-    <> "+'vec2 id=floor(cell);'"
-    <> "+'vec2 f=fract(cell);'"
-    <> "+'vec2 uv=(id+0.5)/uTexSize;'"
-    <> "+'vec4 col=texture2D(uSampler,uv);'"
-    <> "+'float live=clamp(col.a,0.0,1.0);'"
-    <> "+'vec2 p=f-0.5;'"
-    <> "+'float sq=pow(abs(p.x)*2.05,3.4)+pow(abs(p.y)*2.05,3.4);'"
-    <> "+'float body=smoothstep(1.12,0.42,sq)*live;'"
-    <> "+'float glow=exp(-dot(p,p)*6.4)*0.58*live;'"
-    <> "+'float core=exp(-dot(p,p)*34.0)*0.26*live;'"
-    <> "+'vec2 lp=p-vec2(-0.11,-0.13);'"
-    <> "+'float spec=exp(-dot(lp,lp)*42.0)*0.22*live;'"
-    <> "+'float phase=sin(uTime*1.65+id.x*0.37+id.y*0.53);'"
-    <> "+'float pulse=1.0+uMotion*phase*0.04*live;'"
-    <> "+'vec3 lit=col.rgb*pulse;'"
-    <> "+'vec3 rgb=mix(uBg,lit,clamp(body+glow*0.92,0.0,1.0));'"
-    <> "+'rgb+=lit*core+vec3(1.0,0.97,0.92)*spec;'"
-    <> "+'gl_FragColor=vec4(rgb,1.0);'"
-    <> "+'}';"
-    <> " const mixFilter = new PIXI.Filter(undefined, mixFrag, {"
-    <> "   uPersist: persistA, uK: persistK"
-    <> " });"
-    <> " mixFilter.padding = 0;"
-    <> " const mixer = new PIXI.Sprite(currTex);"
-    <> " mixer.width = texW; mixer.height = texH;"
-    <> " mixer.filters = [mixFilter];"
-    <> " mixer.filterArea = new PIXI.Rectangle(0, 0, texW, texH);"
+    <> " const viewW = (app.renderer && app.renderer.width) || "
+    <> show (round canvasW :: Int)
+    <> ";"
+    <> " const viewH = (app.renderer && app.renderer.height) || "
+    <> show (round canvasH :: Int)
+    <> ";"
+    <> " if (currTex && currTex.baseTexture) {"
+    <> "   currTex.baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;"
+    <> " }"
     <> " const sdfFilter = new PIXI.Filter(undefined, sdfFrag, {"
-    <> "   uTexSize: [texW, texH], uBg: [bgR, bgG, bgB],"
-    <> "   uTime: 0, uMotion: reduced ? 0 : 1"
+    <> "   uTexSize: [texW, texH],"
+    <> "   uPan: [0, 0], uBg: [bgR, bgG, bgB],"
+    <> "   uAtlas: currTex, uPrevAtlas: atlasPrev, uCellPx: 3"
     <> " });"
+    <> " sdfFilter.autoFit = false;"
     <> " sdfFilter.padding = 0;"
     <> " sdfFilter.resolution = 1;"
+    <> " sdfFilter.filterArea = new PIXI.Rectangle(0, 0, viewW, viewH);"
+    <> " const atlasCopySpr = new PIXI.Sprite(currTex);"
+    <> " atlasCopySpr.width = texW;"
+    <> " atlasCopySpr.height = texH;"
     <> " PIXI.settings.PRECISION_FRAGMENT = prevPrec;"
-    <> " sprite.filters = [sdfFilter];"
-    <> " viewport.persistA = persistA;"
-    <> " viewport.persistB = persistB;"
-    <> " viewport.persistSrc = persistA;"
-    <> " viewport.persistDst = persistB;"
-    <> " viewport.persistMixer = mixer;"
-    <> " viewport.persistMixFilter = mixFilter;"
+    <> " sprite.filters = null;"
+    <> " sprite.renderable = false;"
+    <> " sprite.visible = false;"
+    <> " if (viewport.screenQuad && viewport.screenQuad.destroy) {"
+    <> "   try { viewport.screenQuad.destroy(); } catch (_) {}"
+    <> " }"
+    <> " const quad = new PIXI.Graphics();"
+    <> " quad.beginFill(0xffffff, 1);"
+    <> " quad.drawRect(0, 0, viewW, viewH);"
+    <> " quad.endFill();"
+    <> " quad.filters = [sdfFilter];"
+    <> " quad.filterArea = new PIXI.Rectangle(0, 0, viewW, viewH);"
+    <> " app.stage.addChild(quad);"
+    <> " viewport.screenQuad = quad;"
+    <> " viewport.atlasPrev = atlasPrev;"
+    <> " viewport.atlasCopySpr = atlasCopySpr;"
     <> " viewport.sdfFilter = sdfFilter;"
-    <> " viewport.persistK = persistK;"
-    <> " viewport.persistWarm = persistK >= 1 ? 1 : 24;"
     <> " viewport.lifeShader = 1;"
     <> " } catch (err) {"
     <> "   if (prevPrec !== undefined) PIXI.settings.PRECISION_FRAGMENT = prevPrec;"
@@ -174,7 +162,7 @@ installShaderJs =
     <> "   console.error('[Life] cell shader failed', err);"
     <> " }"
 
--- | Hot path: optional persist ping-pong, then stage present.
+-- | Hot path: two-frame onion skin, outside glow SDF, then stage present.
 --   Expects @app@, @viewport@, @currTex@, @now@, @upload@, @stageDirty@.
 presentGridJs :: String
 presentGridJs =
@@ -182,36 +170,44 @@ presentGridJs =
     <> " if (app.renderer.gl && app.renderer.gl.isContextLost"
     <> "   && app.renderer.gl.isContextLost()) return;"
     <> " if (upload && currTex && currTex.baseTexture) currTex.baseTexture.update();"
-    <> " const pMixer = viewport.persistMixer;"
-    <> " const pMixF = viewport.persistMixFilter;"
     <> " const pSdf = viewport.sdfFilter;"
     <> " const pSpr = viewport.sprite;"
-    <> " if (!viewport.lifeShader || !pMixer || !pMixF || !pSdf || !pSpr) {"
+    <> " if (!viewport.lifeShader || !pSdf || !pSpr) {"
     <> "   if (upload || stageDirty) app.renderer.render(app.stage);"
     <> "   return;"
     <> " }"
-    <> " if (upload) viewport.persistWarm = viewport.persistK >= 1 ? 1 : 24;"
-    <> " const doPersist = upload || viewport.persistWarm > 0;"
-    <> " const motion = pSdf.uniforms.uMotion;"
-    <> " if (doPersist) {"
+    <> " const prevTex = viewport.atlasPrev || currTex;"
+    <> " pSdf.uniforms.uAtlas = currTex;"
+    <> " pSdf.uniforms.uPrevAtlas = prevTex;"
+    <> " const viewW = (app.renderer.screen && app.renderer.screen.width) || app.renderer.width || 768;"
+    <> " const viewH = (app.renderer.screen && app.renderer.screen.height) || app.renderer.height || 576;"
+    <> " const quad = viewport.screenQuad;"
+    <> " if (quad && quad.clear && (quad.width !== viewW || quad.height !== viewH)) {"
+    <> "   quad.clear(); quad.beginFill(0xffffff, 1);"
+    <> "   quad.drawRect(0, 0, viewW, viewH); quad.endFill();"
+    <> "   quad.filterArea = new PIXI.Rectangle(0, 0, viewW, viewH);"
+    <> " }"
+    <> " pSdf.autoFit = false;"
+    <> " pSdf.filterArea = new PIXI.Rectangle(0, 0, viewW, viewH);"
+    <> " pSdf.uniforms.uPan = [pSpr.position.x || 0, pSpr.position.y || 0];"
+    <> " pSdf.uniforms.uCellPx = pSpr.scale && pSpr.scale.x ? pSpr.scale.x : 3;"
+    <> " if (currTex && currTex.width) pSdf.uniforms.uTexSize = [currTex.width, currTex.height];"
+    <> " pSpr.renderable = false;"
+    <> " pSpr.visible = false;"
+    <> " if (upload || stageDirty) app.renderer.render(app.stage);"
+    <> " if (upload && viewport.atlasPrev && viewport.atlasCopySpr && currTex) {"
     <> "   try {"
-    <> "     pMixF.uniforms.uPersist = viewport.persistSrc;"
-    <> "     pMixF.uniforms.uK = viewport.persistK;"
-    <> "     pMixer.texture = currTex;"
-    <> "     app.renderer.render(pMixer, {"
-    <> "       renderTexture: viewport.persistDst, clear: true"
+    <> "     const copy = viewport.atlasCopySpr;"
+    <> "     copy.texture = currTex;"
+    <> "     copy.width = currTex.width;"
+    <> "     copy.height = currTex.height;"
+    <> "     app.renderer.render(copy, {"
+    <> "       renderTexture: viewport.atlasPrev, clear: true"
     <> "     });"
-    <> "     const pTmp = viewport.persistSrc;"
-    <> "     viewport.persistSrc = viewport.persistDst;"
-    <> "     viewport.persistDst = pTmp;"
-    <> "     pSpr.texture = viewport.persistSrc;"
-    <> "     if (viewport.persistWarm > 0) viewport.persistWarm--;"
     <> "   } catch (err) {"
-    <> "     console.error('[Life] cell shader present failed', err);"
+    <> "     console.error('[Life] atlas prev copy failed', err);"
     <> "   }"
     <> " }"
-    <> " if (motion) pSdf.uniforms.uTime = now * 0.001;"
-    <> " if (doPersist || motion || stageDirty) app.renderer.render(app.stage);"
 
 -- | @new PIXI.Application({ view, width, height, … })@.
 --
@@ -247,13 +243,15 @@ wireContextRecovery canvas viewport state = do
     $ discard
     $ ffi
       ( "(view, viewport, state, texW, texH, width, height, backgroundColor, cellPx) => {"
-            <> " const rebuild = () => {"
-            <> destroyPersistJs
-            <> "   const oldApp = view.__lifePixiApp;"
-            <> "   if (oldApp?.destroy) {"
-            <> "     try { oldApp.destroy(true, {children:true, texture:true, baseTexture:true}); }"
-            <> "     catch (_) {}"
-            <> "   }"
+          <> " const rebuild = () => {"
+          <> " texW = viewport.worldW || texW;"
+          <> " texH = viewport.worldH || texH;"
+          <> destroyPersistJs
+          <> "   const oldApp = view.__lifePixiApp;"
+          <> "   if (oldApp?.destroy) {"
+          <> "     try { oldApp.destroy(true, {children:true, texture:true, baseTexture:true}); }"
+          <> "     catch (_) {}"
+          <> "   }"
           <> "   view.__lifePixiApp = null;"
           <> newAppJs
           <> "   viewport.app = app;"
@@ -274,8 +272,8 @@ wireContextRecovery canvas viewport state = do
           <> "   const currTex = tex;"
           <> "   const bgHex = backgroundColor;"
           <> installShaderJs
-            <> "   const now = 0, upload = true, stageDirty = true;"
-            <> presentGridJs
+          <> "   const now = 0, upload = true, stageDirty = true;"
+          <> presentGridJs
           <> "   viewport.renderPanValid = false;"
           <> " };"
           <> " viewport._lifeRebuild = rebuild;"
@@ -290,7 +288,7 @@ wireContextRecovery canvas viewport state = do
           <> " glView.addEventListener('webglcontextlost', (e) => {"
           <> "   e.preventDefault();"
           <> "   viewport.glLost = 1;"
-          <> "   console.warn('[Life] WebGL context lost — 2D fallback active');"
+          <> "   console.warn('[Life] WebGL context lost, using 2D fallback');"
           <> " }, false);"
           <> " glView.addEventListener('webglcontextrestored', onRestored, false);"
           <> " }"
@@ -326,7 +324,7 @@ tickGlRecovery canvas viewport state = do
           <> " if (!viewport.glLost) {"
           <> "   if (lost) {"
           <> "     viewport.glLost = 1;"
-          <> "     console.warn('[Life] WebGL unavailable — 2D fallback active');"
+          <> "     console.warn('[Life] WebGL unavailable, using 2D fallback');"
           <> "   }"
           <> "   return;"
           <> " }"
@@ -334,7 +332,7 @@ tickGlRecovery canvas viewport state = do
           <> " if (typeof viewport._lifeRebuild !== 'function') return;"
           <> " if (viewport._glCooldown > 0) { viewport._glCooldown--; return; }"
           <> " viewport.glLost = 0;"
-          <> " console.info('[Life] WebGL recovered — rebuilding GPU renderer');"
+          <> " console.info('[Life] WebGL recovered, rebuilding GPU renderer');"
           <> " try {"
           <> "   viewport._lifeRebuild();"
           <> "   state.sceneDirty = true;"
@@ -348,7 +346,7 @@ tickGlRecovery canvas viewport state = do
       (ArgEffect canvas <: ArgEffect viewport <: ArgEffect state <: RecNil)
   done
 
--- | @PIXI.Texture.fromBuffer@ — one RGBA texel per grid cell; the sprite
+-- | @PIXI.Texture.fromBuffer@: one RGBA texel per grid cell; the sprite
 -- scales it on the GPU (@cellPx@ × zoom).
 textureFromBuffer ::
   Expr f 'Uint8Array
@@ -386,16 +384,17 @@ setTextureNearest tex = do
       (ArgEffect tex <: RecNil)
   done
 
--- | Attach the Life cell shader: atlas-space phosphor persist plus a
---   screen-space rounded-cell SDF. Stored on @viewport@ so rebuild and
---   'presentGrid' share one setup.
+-- | Attach the Life cell shader from @viewport.cellFragSrc@.
+--   Call 'prefetchLifeShader' before the first install.
 installLifeShader ::
   Effect f ('MutableObject Application)
   -> Effect f ('MutableObject ())
   -> Expr f ('MutableObject Sprite)
   -> Expr f ('MutableObject Texture)
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-installLifeShader app viewport sprite tex = do
+installLifeShader app viewport sprite tex w h = do
   toSyntax_
     $ discard
     $ ffi
@@ -407,16 +406,55 @@ installLifeShader app viewport sprite tex = do
           <: ArgEffect viewport
           <: arg sprite
           <: arg tex
-          <: arg (number texW)
-          <: arg (number texH)
+          <: arg w
+          <: arg h
           <: arg (number canvasBgPixi)
           <: RecNil
       )
   done
 
--- | Upload the atlas when it changed, ease persist toward it, then draw
---   the stage through the cell SDF. Persist runs on paint plus a short
---   settle; the stage presents for persist, motion, or a dirty viewport.
+prefetchLifeShader ::
+  Effect f ('MutableObject ())
+  -> Expr f 'String
+  -> Effect f ('MutableObject (Promise 'Unit))
+prefetchLifeShader viewport url =
+  ffi prefetchLifeShaderJs (ArgEffect viewport <: arg url <: RecNil)
+
+replaceGridTexture ::
+  Effect f ('MutableObject ())
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f ('MutableObject Texture))
+replaceGridTexture viewport buf w h =
+  fmap
+    var
+    ( toSyntax
+        ( ffi
+            ( "(viewport, buf, w, h) => {"
+                <> " const old = viewport.texture;"
+                <> " const tex = PIXI.Texture.fromBuffer(buf, w, h, {"
+                <> "   format: PIXI.FORMATS.RGBA,"
+                <> "   type: PIXI.TYPES.UNSIGNED_BYTE"
+                <> " });"
+                <> " tex.baseTexture.scaleMode = PIXI.SCALE_MODES.NEAREST;"
+                <> " tex.baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;"
+                <> " const res = tex.baseTexture.resource;"
+                <> " if (res) { res.data = buf; if (res.source) res.source = buf; }"
+                <> " if (viewport.sprite) viewport.sprite.texture = tex;"
+                <> " viewport.texture = tex;"
+                <> " if (old && old !== tex && old.destroy) {"
+                <> "   try { old.destroy(true); } catch (_) {}"
+                <> " }"
+                <> " return tex;"
+                <> " }"
+            )
+            (ArgEffect viewport <: arg buf <: arg w <: arg h <: RecNil)
+        )
+    )
+
+-- | Upload the atlas when it changed, blend two frames, draw outside glow,
+--   then present the stage when the atlas or viewport changed.
 presentGrid ::
   Expr f ('MutableObject Application)
   -> Effect f ('MutableObject ())

@@ -26,12 +26,12 @@ where
 import Data.Char (ord)
 import Data.List (sort)
 import Data.Text (Text)
-import Numeric (showHex)
 import qualified Data.Text as T
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types (Effect (FFI), FFIForm (FFILambda))
 import Names (patternLabel)
+import Numeric (showHex)
 import Patterns
   ( PatternSpec (..)
   , allPatterns
@@ -135,7 +135,11 @@ catalogJs =
       | (i, w) <- initialCatalogCells
       ]
 
-catalogKnown, catalogNames, catalogDisturb, catalogInitialCells :: forall f u. Effect f u
+catalogKnown
+  , catalogNames
+  , catalogDisturb
+  , catalogInitialCells ::
+    forall f u. Effect f u
 catalogKnown = ffi "(()=>globalThis.__lifeCatalog().known)" RecNil
 catalogNames = ffi "(()=>globalThis.__lifeCatalog().names)" RecNil
 catalogDisturb = ffi "(()=>globalThis.__lifeCatalog().disturb)" RecNil
@@ -153,8 +157,12 @@ stampCatalogCells alive species cells =
     )
     (arg alive <: arg species <: arg cells <: RecNil)
 
-catalogPrefixes, catalogSuffixes, catalogNouns, catalogAdjectives, catalogVerbsIng ::
-  forall f. Effect f ('Array 'String)
+catalogPrefixes
+  , catalogSuffixes
+  , catalogNouns
+  , catalogAdjectives
+  , catalogVerbsIng ::
+    forall f. Effect f ('Array 'String)
 catalogPrefixes = ffi "(()=>globalThis.__lifeCatalog().words.prefixes)" RecNil
 catalogSuffixes = ffi "(()=>globalThis.__lifeCatalog().words.suffixes)" RecNil
 catalogNouns = ffi "(()=>globalThis.__lifeCatalog().words.nouns)" RecNil
@@ -183,7 +191,7 @@ jsonHex4 n =
   let
     h = showHex n ""
     pad = replicate (max 0 (4 - length h)) '0'
-  in
+   in
     pad ++ h
 
 prefixes, suffixes, nouns, adjectives, verbsIng :: [Text]

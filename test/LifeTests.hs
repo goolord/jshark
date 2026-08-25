@@ -8,37 +8,37 @@
 
 module LifeTests (lifeTests) where
 
+import qualified Data.Text as T
 import Grid (StepCtx (StepCtx), rebuildPackedCounts)
+import JShark (effectfulProgram, renderJSCompact)
+import JShark.Api
+import qualified JShark.Array as Array
+import JShark.Bun (evaluateEffectJSON)
+import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
+import JShark.Generic (toObject)
+import qualified JShark.Math as Math
+import JShark.Rec (Rec (..), (<:))
 import LifeTestSupport
   ( beehiveCoords
-  , blockCoords
   , blinkerHorizontalCoords
   , blinkerVerticalCoords
+  , blockCoords
   , coordsMatch
   , gridPop
   , runProcessCellAt
   , runStepGridOnce
   , seedBeehive
-  , seedBlock
   , seedBlinkerHorizontal
+  , seedBlock
   , setAlive
   )
 import qualified LifeTestSupport as LifeAssert
-import JShark (effectfulProgram, renderJSCompact)
-import JShark.Api
-import JShark.Generic (toObject)
-import qualified JShark.Array as Array
-import qualified JShark.Math as Math
-import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
-import JShark.Bun (evaluateEffectJSON)
-import JShark.Rec (Rec (..), (<:))
 import System.Directory (findExecutable, getCurrentDirectory)
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
-import qualified Data.Text as T
-import WorkerBridge (engineStepGeneration)
 import Types (canvasH, canvasW, cellPx, zoomLevelLabels, zoomLevels)
+import WorkerBridge (engineStepGeneration)
 
 lifeTests :: TestTree
 lifeTests =
@@ -85,7 +85,9 @@ lifeTests =
           "js engine"
           [ lifeJsCase "LifeLUT.stepCell matches Conway rules" testJsStepCell
           , lifeJsCase "LifeLUT.stepRegionLUT matches stepCell on blinker" testJsLutRegion
-          , lifeJsCase "LifeLUT.stepRegionLUT matches stepCell for glider on 8-cell seam" testJsLutGliderSeam
+          , lifeJsCase
+              "LifeLUT.stepRegionLUT matches stepCell for glider on 8-cell seam"
+              testJsLutGliderSeam
           , lifeJsCase "LifeEngine.step keeps block stable" testJsEngineBlock
           , lifeJsCase "LifeEngineSync.finishStep rebuilds packed counts" testJsFinishStep
           , lifeJsCase "engineStepGeneration keeps block stable" testEngineStepGeneration
@@ -124,12 +126,13 @@ loadLifeJsPrelude = do
 -- | 7×7 miniature grid helpers shared by rule tests.
 miniGrid ::
   ( Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
+    -> Expr f 'Uint8Array
+    -> Expr f 'Uint8Array
+    -> Expr f 'Uint8Array
+    -> Expr f 'Number
+    -> EffectSyntax f b
+  )
   -> EffectSyntax f b
-  ) -> EffectSyntax f b
 miniGrid k = do
   let
     w = number 7
@@ -147,7 +150,16 @@ testUnderpopulation = fromSyntax $ do
     setAlive alive w (number 3) (number 2)
     setAlive alive w (number 3) (number 3)
     toSyntax_ (rebuildPackedCounts alive w (number 7))
-    next <- runProcessCellAt alive species nextAlive nextSpecies w (number 7) (number 3) (number 3)
+    next <-
+      runProcessCellAt
+        alive
+        species
+        nextAlive
+        nextSpecies
+        w
+        (number 7)
+        (number 3)
+        (number 3)
     LifeAssert.assertEqual (number 0) next
     done
 
@@ -159,7 +171,16 @@ testSurvival = fromSyntax $ do
     setAlive alive w (number 4) (number 3)
     setAlive alive w (number 3) (number 3)
     toSyntax_ (rebuildPackedCounts alive w (number 7))
-    next <- runProcessCellAt alive species nextAlive nextSpecies w (number 7) (number 3) (number 3)
+    next <-
+      runProcessCellAt
+        alive
+        species
+        nextAlive
+        nextSpecies
+        w
+        (number 7)
+        (number 3)
+        (number 3)
     LifeAssert.assertEqual (number 1) next
     done
 
@@ -174,7 +195,16 @@ testOverpopulation = fromSyntax $ do
     setAlive alive w (number 3) (number 3)
     setAlive alive w (number 4) (number 3)
     toSyntax_ (rebuildPackedCounts alive w (number 7))
-    next <- runProcessCellAt alive species nextAlive nextSpecies w (number 7) (number 3) (number 3)
+    next <-
+      runProcessCellAt
+        alive
+        species
+        nextAlive
+        nextSpecies
+        w
+        (number 7)
+        (number 3)
+        (number 3)
     LifeAssert.assertEqual (number 0) next
     done
 
@@ -186,15 +216,24 @@ testReproduction = fromSyntax $ do
     setAlive alive w (number 4) (number 3)
     setAlive alive w (number 2) (number 3)
     toSyntax_ (rebuildPackedCounts alive w (number 7))
-    next <- runProcessCellAt alive species nextAlive nextSpecies w (number 7) (number 3) (number 3)
+    next <-
+      runProcessCellAt
+        alive
+        species
+        nextAlive
+        nextSpecies
+        w
+        (number 7)
+        (number 3)
+        (number 3)
     LifeAssert.assertEqual (number 1) next
     done
 
 patternGrid ::
   ( Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
+    -> Expr f 'Number
+    -> Expr f 'Number
+    -> EffectSyntax f (f 'Unit)
   )
   -> EffectSyntax f (Expr f ('Array ('Array 'Number)))
   -> Expr f 'Number

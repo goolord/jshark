@@ -10,10 +10,10 @@ module Page
   )
 where
 
+import qualified Data.Text as T
 import Kernels (blockPx, canvasH, canvasW, maxIter)
 import Lucid
 import Lucid.Base (makeAttribute)
-import qualified Data.Text as T
 
 boardId, statusId, modeWasmId, modeJsId, benchId :: T.Text
 boardId = "hvm2-canvas"
@@ -57,7 +57,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
                 , class_ "mode"
                 ]
                 "js"
-          button_ [id_ benchId, type_ "button", class_ "bench"] "bench 2k"
+          button_ [id_ benchId, type_ "button", class_ "bench"] "bench 50k"
         div_ [class_ "hvm2-viewport"] $
           canvas_
             [ id_ boardId
@@ -74,7 +74,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
             toHtml (show blockPx)
             " px blocks, "
             toHtml (show maxIter)
-            " iters each. flip js to diff backends."
+            " iters, one grid sample per frame. fps is smoothed. bench times the kernel."
     footer_ [class_ "info"] $
       p_ $ do
         "wasm: "

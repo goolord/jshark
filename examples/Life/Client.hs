@@ -10,6 +10,7 @@
 
 module Client (mainJS) where
 
+import Catalog (catalogDisturb)
 import Discover
   ( IndexTracker
   , Registry
@@ -20,67 +21,79 @@ import Discover
   , stepIndexTracker
   )
 import Engine
-import Catalog (catalogDisturb)
 import GHC.Generics (Generic)
 import Grid (RenderDirty (..), StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, toObject)
-import qualified Pixi
 import qualified JShark.Generic as G
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
+import JShark.Promise (promiseThen)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift), Expr (Literal, Var))
 import qualified JShark.Types as Ts
+import JShark.Worker (performanceNow)
 import Names (lookupDisplayName)
+import qualified Pixi
 import Types
   ( LifeState
   , boardId
-  , lifeBoard2dId
   , canvasBgPixi
   , canvasH
   , canvasW
   , cellPx
+  , eraserDefaultRadius
+  , eraserMaxRadius
+  , eraserMinRadius
+  , eraserToolSid
   , gridH
   , gridW
   , hoverRadius
+  , hudRefreshMs
   , indexRefreshMs
+  , lifeBoard2dId
+  , lifeDebugCollapseId
+  , lifeDebugId
+  , lifeEraserGhostId
+  , lifeEraserRadiusId
+  , lifeEraserRadiusValId
+  , lifeEraserSizeId
+  , lifePauseOverlayId
+  , lifeSettingsCollapseId
+  , lifeSettingsGridId
+  , lifeSettingsId
+  , lifeSettingsResetId
+  , lifeSettingsTickId
+  , lifeSettingsTickValId
+  , lifeSettingsZoomId
+  , lifeSettingsZoomInId
+  , lifeSettingsZoomOutId
   , lifeStatCellsId
   , lifeStatEngineId
   , lifeStatFpsId
   , lifeStatGenId
-  , lifeStatStatusId
   , lifeStatTickId
   , lifeStatZoomId
+  , lifeToolsCollapseId
+  , lifeToolsId
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
-  , lifeToolsId
-  , lifeToolsCollapseId
-  , lifePauseOverlayId
-  , lifeEraserGhostId
-  , lifeEraserSizeId
-  , lifeEraserRadiusId
-  , lifeEraserRadiusValId
-  , eraserDefaultRadius
-  , eraserMinRadius
-  , eraserMaxRadius
-  , toggleToolSid
-  , eraserToolSid
   , seedH
   , seedOx
   , seedOy
   , seedW
+  , simBudgetMs
+  , tickMaxMs
+  , tickMinMs
+  , toggleToolSid
   , zoomLevelLabels
   , zoomLevels
-  , hudRefreshMs
-  , simBudgetMs
   )
-import JShark.Worker (performanceNow)
 import WorkerBridge (engineModeLabel, engineTickMs, setEngineRenderMs)
 
 data Fps = Fps
@@ -104,11 +117,11 @@ mainJS = do
       boot canvas app
   whenS (not_ pixiOk) $
     do
-      toSyntax_ $
-        discard $
-          ffi
-            "(() => { console.error('[Life] PixiJS failed to load — check js/pixi.min.js'); })"
-            RecNil
+      toSyntax_
+        $ discard
+        $ ffi
+          "(() => { console.error('[Life] PixiJS failed to load, check js/pixi.min.js'); })"
+          RecNil
       done
 
 boot ::
@@ -119,6 +132,20 @@ boot canvas app = do
   appH <- hold (expr app)
   viewport <- initViewport
   renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))
+  let
+    shaderP = Pixi.prefetchLifeShader viewport (string Pixi.lifeCellShaderUrl)
+  promiseThen shaderP $ \_ ->
+    stmts (bootLoaded canvas app appH viewport renderDirty)
+  done
+
+bootLoaded ::
+  Effect f ('MutableObject Dom.DomElement)
+  -> Expr f ('MutableObject Pixi.Application)
+  -> Effect f ('MutableObject Pixi.Application)
+  -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject (G.As RenderDirty))
+  -> EffectSyntax f (f 'Unit)
+bootLoaded canvas app appH viewport renderDirty = do
   state <- initLife appH viewport
   _ <- setProp viewport "app" app
   Pixi.wireContextRecovery canvas viewport state
@@ -133,10 +160,10 @@ boot canvas app = do
   statGen <- Dom.lookupId (string lifeStatGenId)
   statCells <- Dom.lookupId (string lifeStatCellsId)
   statFps <- Dom.lookupId (string lifeStatFpsId)
-  statStatus <- Dom.lookupId (string lifeStatStatusId)
   statZoom <- Dom.lookupId (string lifeStatZoomId)
   statTick <- Dom.lookupId (string lifeStatTickId)
   statEngine <- Dom.lookupId (string lifeStatEngineId)
+  settingsZoom <- Dom.lookupId (string lifeSettingsZoomId)
   meter <- hold (G.toObject (Fps (-1) 0))
   tipSym <- toSyntax emptyObject
   let
@@ -151,6 +178,16 @@ boot canvas app = do
   toolBtnsE <- bindExpr toolBtns
   toolsTray <- Dom.lookupId (string lifeToolsId)
   toolsCollapse <- Dom.lookupId (string lifeToolsCollapseId)
+  debugTray <- Dom.lookupId (string lifeDebugId)
+  debugCollapse <- Dom.lookupId (string lifeDebugCollapseId)
+  settingsTray <- Dom.lookupId (string lifeSettingsId)
+  settingsCollapse <- Dom.lookupId (string lifeSettingsCollapseId)
+  settingsZoomIn <- Dom.lookupId (string lifeSettingsZoomInId)
+  settingsZoomOut <- Dom.lookupId (string lifeSettingsZoomOutId)
+  settingsReset <- Dom.lookupId (string lifeSettingsResetId)
+  settingsGrid <- Dom.lookupId (string lifeSettingsGridId)
+  settingsTick <- Dom.lookupId (string lifeSettingsTickId)
+  settingsTickVal <- Dom.lookupId (string lifeSettingsTickValId)
   pauseOverlay <- Dom.lookupId (string lifePauseOverlayId)
   eraserGhost <- Dom.lookupId (string lifeEraserGhostId)
   fallback2d <- Dom.lookupId (string lifeBoard2dId)
@@ -161,13 +198,35 @@ boot canvas app = do
   wireTools toolRef toolBtnsE canvas eraserSize
   wireEraserSize toolRef eraserRadius eraserRadiusVal
   syncEraserUi toolRef canvas eraserSize
-  wireToolsCollapse toolsTray toolsCollapse
+  wireCollapse
+    toolsTray
+    toolsCollapse
+    "Collapse tools"
+    "Expand tools"
+    "−"
+    "+"
+  wireCollapse
+    debugTray
+    debugCollapse
+    "Collapse debug"
+    "Expand debug"
+    "−"
+    "debug"
+  wireCollapse
+    settingsTray
+    settingsCollapse
+    "Collapse settings"
+    "Expand settings"
+    "−"
+    "settings"
+  wireSettings viewport settingsZoomIn settingsZoomOut settingsReset
+  wireSimSettings state viewport settingsGrid settingsTick settingsTickVal
   renderLife viewport renderDirty state fallback2d
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
     whenS (not_ paused) $
-      stepLifeBudget state registry stepCtx now
+      stepLifeBudget state viewport registry stepCtx now
     tickIndex state registry indexTracker seenSpecies typesList now
     Pixi.tickGlRecovery canvas viewport state
     renderStart <- performanceNow
@@ -177,7 +236,17 @@ boot canvas app = do
     syncPauseOverlay state pauseOverlay
     lastHud <- getProp viewport "lastHudMs"
     whenS (now - lastHud .>= number (fromIntegral hudRefreshMs)) $ do
-      updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine
+      updateHud
+        state
+        meter
+        viewport
+        statGen
+        statCells
+        statFps
+        statZoom
+        statTick
+        statEngine
+        settingsZoom
       _ <- setProp viewport "lastHudMs" now
       done
     tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
@@ -217,7 +286,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
         stringCaseE
           code
           [
-            ( "Space"
+            ( "Escape"
             , discard $
                 stmts $ do
                   toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
@@ -283,7 +352,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
           ox <- getProp' e "offsetX"
           oy <- getProp' e "offsetY"
           (gx, gy) <- gridFromPointer canvas viewport ox oy
-          syncPointerTip tipRef cx cy gx gy
+          syncPointerTip viewport tipRef cx cy gx gy
           applyErase state toolRef gx gy
   addEventListener "mouseup" canvas $ \_ -> stmts endDrag
   addEventListener "mouseup" win $ \_ -> stmts endDrag
@@ -333,14 +402,14 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
                 ox <- getProp' e "offsetX"
                 oy <- getProp' e "offsetY"
                 (gx, gy) <- gridFromPointer canvas viewport ox oy
-                syncPointerTip tipRef cx cy gx gy
+                syncPointerTip viewport tipRef cx cy gx gy
                 applyErase state toolRef gx gy
             )
             ( do
                 ox <- getProp' e "offsetX"
                 oy <- getProp' e "offsetY"
                 (gx, gy) <- gridFromPointer canvas viewport ox oy
-                syncPointerTip tipRef cx cy gx gy
+                syncPointerTip viewport tipRef cx cy gx gy
             )
         )
   addEventListener "mouseleave" canvas $ \_ ->
@@ -363,15 +432,15 @@ hideTooltip tipRef tooltip = do
 
 syncPointerTip ::
   Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-syncPointerTip tipRef cx cy gx gy = do
-  let
-    w = number (fromIntegral gridW)
-    h = number (fromIntegral gridH)
+syncPointerTip viewport tipRef cx cy gx gy = do
+  w <- getProp viewport "worldW"
+  h <- getProp viewport "worldH"
   _ <- setProp tipRef "cx" cx
   _ <- setProp tipRef "cy" cy
   _ <- setProp tipRef "gx" gx
@@ -415,17 +484,30 @@ tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
                 _ <- setProp tipRef "shownGy" gy
                 cx <- getProp tipRef "cx"
                 cy <- getProp tipRef "cy"
-                let
-                  w = number (fromIntegral gridW)
-                  h = number (fromIntegral gridH)
-                applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx gy cx cy
+                w <- state.worldW
+                h <- state.worldH
+                applyHover
+                  tipRef
+                  sidsScratch
+                  state
+                  registry
+                  tooltip
+                  swatchEl
+                  nameEl
+                  hits
+                  w
+                  h
+                  gx
+                  gy
+                  cx
+                  cy
           )
     )
 
 -- | Grid index lookup, not a board-wide collision scan. A live cursor
 --   cell is O(1). Empty cells search the Chebyshev square of
 --   'hoverRadius' (25 cells at r=2). DOM writes only when the species
---   set changes — the tooltip does not follow the cursor inside a cell.
+--   set changes: the tooltip does not follow the cursor inside a cell.
 applyHover ::
   Effect f ('MutableObject ())
   -> Expr f ('Array 'Number)
@@ -591,6 +673,9 @@ initViewport = do
   _ <- setProp viewport "panX" (number (canvasW / 2) - cx * px)
   _ <- setProp viewport "panY" (number (canvasH / 2) - cy * px)
   _ <- setProp viewport "zoom" (number 1)
+  _ <- setProp viewport "worldW" (number (fromIntegral gridW))
+  _ <- setProp viewport "worldH" (number (fromIntegral gridH))
+  _ <- setProp viewport "lastStepMs" (number (-1))
   _ <- setProp viewport "renderPanX" (number (canvasW / 2) - cx * px)
   _ <- setProp viewport "renderPanY" (number (canvasH / 2) - cy * px)
   _ <- setProp viewport "renderZoom" (number 1)
@@ -644,8 +729,10 @@ clampZoomIndex ::
   -> Expr f 'Number
   -> Expr f 'Number
 clampZoomIndex indices idx =
-  let len = Array.length indices
-   in Math.max (number 0) (Math.min (len - number 1) idx)
+  let
+    len = Array.length indices
+   in
+    Math.max (number 0) (Math.min (len - number 1) idx)
 
 stepZoom ::
   Effect f ('MutableObject ())
@@ -705,8 +792,11 @@ clampPan viewport = do
   let
     px = number (fromIntegral cellPx)
     scale = px * zoom
-    worldW = number (fromIntegral gridW) * scale
-    worldH = number (fromIntegral gridH) * scale
+  gw <- getProp viewport "worldW"
+  gh <- getProp viewport "worldH"
+  let
+    worldW = gw * scale
+    worldH = gh * scale
     cw = number canvasW
     ch = number canvasH
     minPanX = Math.min (number 0) (cw - worldW)
@@ -846,8 +936,8 @@ syncEraserCursor canvas toolRef = do
   sid <- getProp toolRef "sid"
   ifS
     (sid .== number (fromIntegral eraserToolSid))
-    ( Dom.setStyleProperty canvas "cursor" eraserCursor )
-    ( Dom.setStyleProperty canvas "cursor" (string "crosshair") )
+    (Dom.setStyleProperty canvas "cursor" eraserCursor)
+    (Dom.setStyleProperty canvas "cursor" (string "crosshair"))
 
 wireEraserSize ::
   Effect f ('MutableObject ())
@@ -864,12 +954,13 @@ wireEraserSize toolRef slider valEl = do
             (number (fromIntegral eraserMinRadius))
             ( Math.min
                 (number (fromIntegral eraserMaxRadius))
-                (parseInt_ raw (number (fromIntegral eraserDefaultRadius)))
+                (parseInt_ raw (number 10))
             )
       _ <- setProp toolRef "eraserRadius" radius
       label <-
         bindExpr $
           ffi "((n) => String(Math.round(n)))" (arg radius <: RecNil)
+      _ <- Dom.setValue slider label
       _ <- Dom.setAttribute slider "aria-valuenow" label
       Dom.setTextContent valEl label
       done
@@ -974,9 +1065,9 @@ tickEraserGhost toolRef tipRef state viewport ghost = do
               panY <- getProp viewport "panY"
               zoom <- getProp viewport "zoom"
               alive <- state.alive
+              w <- state.worldW
+              h <- state.worldH
               let
-                w = number (fromIntegral gridW)
-                h = number (fromIntegral gridH)
                 px = number (fromIntegral cellPx)
               ifS
                 (glLost .== 0)
@@ -1008,23 +1099,27 @@ eraserCursor =
         <> "%3C/svg%3E\") 12 12, crosshair"
     )
 
-wireToolsCollapse ::
+wireCollapse ::
   Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Expr f 'String
+  -> Expr f 'String
+  -> Expr f 'String
+  -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
-wireToolsCollapse toolsTray collapseBtn = do
+wireCollapse tray collapseBtn collapseLabel expandLabel openMark closedMark = do
   addEventListener "click" collapseBtn $ \_ ->
     stmts $ do
       toSyntax_ $
         callMethod
-          toolsTray
+          tray
           "classList.toggle"
           (arg (string "is-collapsed") <: RecNil)
       collapsed <-
         bindExpr $
           ffi
             "((el) => el.classList.contains('is-collapsed'))"
-            (ArgEffect toolsTray <: RecNil)
+            (ArgEffect tray <: RecNil)
       let
         expanded = not_ collapsed
       _ <-
@@ -1035,18 +1130,89 @@ wireToolsCollapse toolsTray collapseBtn = do
       _ <-
         Dom.setTextContent
           collapseBtn
-          (if_ expanded (string "−") (string "+"))
+          (if_ expanded openMark closedMark)
       _ <-
         Dom.setAttribute
           collapseBtn
           "aria-label"
-          ( if_
-              expanded
-              (string "Collapse tools")
-              (string "Expand tools")
-          )
+          (if_ expanded collapseLabel expandLabel)
       done
   done
+
+wireSettings ::
+  Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+wireSettings viewport zoomInBtn zoomOutBtn resetBtn = do
+  addEventListener "click" zoomInBtn $ \_ ->
+    stmts $ do
+      zoomIn viewport
+      done
+  addEventListener "click" zoomOutBtn $ \_ ->
+    stmts $ do
+      zoomOut viewport
+      done
+  addEventListener "click" resetBtn $ \_ ->
+    stmts $ do
+      resetViewport viewport
+      done
+  done
+
+wireSimSettings ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+wireSimSettings state viewport gridSel tickSlider tickVal = do
+  addEventListener "change" gridSel $ \_ ->
+    stmts $ do
+      raw <- Dom.getValue gridSel
+      w <-
+        bindExpr $
+          ffi "s=>+String(s).split('x')[0]||1024" (arg raw <: RecNil)
+      h <-
+        bindExpr $
+          ffi "s=>+String(s).split('x')[1]||768" (arg raw <: RecNil)
+      whenS (w .> 0 .&& h .> 0) $ resizeWorld state viewport w h
+      done
+  addEventListener "input" tickSlider $ \_ ->
+    stmts $ do
+      raw <- Dom.getValue tickSlider
+      let
+        ms =
+          Math.max
+            (number (fromIntegral tickMinMs))
+            ( Math.min
+                (number (fromIntegral tickMaxMs))
+                (parseInt_ raw (number 10))
+            )
+      set @"tickMs" state ms
+      label <-
+        bindExpr $
+          ffi
+            "n=>n<=0?'max':(Math.round(n)+' ms')"
+            (arg ms <: RecNil)
+      _ <- Dom.setAttribute tickSlider "aria-valuenow" (toString ms)
+      _ <- Dom.setTextContent tickVal label
+      done
+  done
+
+resetViewport ::
+  Effect f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
+resetViewport viewport = do
+  w <- getProp viewport "worldW"
+  h <- getProp viewport "worldH"
+  let
+    px = number (fromIntegral cellPx)
+  _ <- setProp viewport "zoom" (number 1)
+  _ <- setProp viewport "panX" (number (canvasW / 2) - (w / number 2) * px)
+  _ <- setProp viewport "panY" (number (canvasH / 2) - (h / number 2) * px)
+  clampPan viewport
+  invalidateViewportRender viewport
 
 syncPauseOverlay ::
   Effect f (MutableObjectOf LifeState)
@@ -1059,7 +1225,10 @@ syncPauseOverlay state overlay = do
       overlay
       "classList.toggle"
       (arg (string "is-visible") <: arg paused <: RecNil)
-  Dom.setAttribute overlay "aria-hidden" (if_ paused (string "false") (string "true"))
+  Dom.setAttribute
+    overlay
+    "aria-hidden"
+    (if_ paused (string "false") (string "true"))
 
 updateHud ::
   Effect f (MutableObjectOf LifeState)
@@ -1073,36 +1242,43 @@ updateHud ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine = do
-  gen <- state.gen
-  pop <- state.pop
-  paused <- state.paused
-  fpsN <- meter.fps
-  tickMs <- engineTickMs
-  mode <- engineModeLabel
-  levels <- getProp viewport "zoomLevels"
-  labels <- getProp viewport "zoomLabels"
-  indices <- getProp viewport "zoomIndices"
-  zoom <- getProp viewport "zoom"
-  let
-    zoomIdx = nearestZoomIndex levels indices zoom
-    zoomLabel = Array.index labels zoomIdx
-  _ <- Dom.setTextContent statGen (string "Gen: " <> toString gen)
-  _ <- Dom.setTextContent statCells (string "Cells: " <> toString pop)
-  _ <- Dom.setTextContent statFps (string "FPS: " <> toString fpsN)
-  _ <-
-    Dom.setTextContent
-      statZoom
-      (string "Zoom: " <> zoomLabel <> string "%")
-  _ <-
-    Dom.setTextContent
-      statTick
-      (string "Tick: " <> toString (Math.round tickMs) <> string "ms")
-  _ <- Dom.setTextContent statEngine (string "Engine: " <> mode)
-  ifS
-    paused
-    (Dom.setTextContent statStatus (string "paused"))
-    (Dom.setTextContent statStatus (string "running"))
+updateHud
+  state
+  meter
+  viewport
+  statGen
+  statCells
+  statFps
+  statZoom
+  statTick
+  statEngine
+  settingsZoom = do
+    gen <- state.gen
+    pop <- state.pop
+    fpsN <- meter.fps
+    tickMs <- engineTickMs
+    mode <- engineModeLabel
+    levels <- getProp viewport "zoomLevels"
+    labels <- getProp viewport "zoomLabels"
+    indices <- getProp viewport "zoomIndices"
+    zoom <- getProp viewport "zoom"
+    let
+      zoomIdx = nearestZoomIndex levels indices zoom
+      zoomLabel = Array.index labels zoomIdx
+    _ <- Dom.setTextContent statGen (string "Gen: " <> toString gen)
+    _ <- Dom.setTextContent statCells (string "Cells: " <> toString pop)
+    _ <- Dom.setTextContent statFps (string "FPS: " <> toString fpsN)
+    _ <-
+      Dom.setTextContent
+        statZoom
+        (string "Zoom: " <> zoomLabel <> string "%")
+    _ <-
+      Dom.setTextContent
+        statTick
+        (string "Tick: " <> toString (Math.round tickMs) <> string "ms")
+    _ <- Dom.setTextContent statEngine (string "Engine: " <> mode)
+    _ <- Dom.setTextContent settingsZoom (zoomLabel <> string "%")
+    done
 
 tickFps ::
   Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
@@ -1116,20 +1292,26 @@ tickFps meter now = do
 
 stepLifeBudget ::
   Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
   -> Effect f ('MutableObject Registry)
   -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-stepLifeBudget state registry stepCtx frameStart = do
+stepLifeBudget state viewport registry stepCtx frameStart = do
+  interval <- state.tickMs
+  lastStep <- getProp viewport "lastStepMs"
   let
+    due = lastStep .< number 0 .|| frameStart - lastStep .>= interval
     budget = number (fromIntegral simBudgetMs)
-  stepLife state registry stepCtx
-  t1 <- performanceNow
-  whenS (t1 - frameStart .< budget) $ do
+  whenS due $ do
+    _ <- setProp viewport "lastStepMs" frameStart
     stepLife state registry stepCtx
-    t2 <- performanceNow
-    whenS (t2 - frameStart .< budget) $
+    t1 <- performanceNow
+    whenS (interval .<= number 0 .&& t1 - frameStart .< budget) $ do
       stepLife state registry stepCtx
+      t2 <- performanceNow
+      whenS (t2 - frameStart .< budget) $
+        stepLife state registry stepCtx
 
 tickIndex ::
   Effect f (MutableObjectOf LifeState)
@@ -1152,4 +1334,20 @@ tickIndex state registry tracker seen listEl now = do
     liveY0 <- state.boundY0
     liveX1 <- state.boundX1
     liveY1 <- state.boundY1
-    stepIndexTracker alive species pal registry tracker seen listEl now liveX0 liveY0 liveX1 liveY1
+    w <- state.worldW
+    h <- state.worldH
+    stepIndexTracker
+      alive
+      species
+      pal
+      registry
+      tracker
+      seen
+      listEl
+      now
+      liveX0
+      liveY0
+      liveX1
+      liveY1
+      w
+      h

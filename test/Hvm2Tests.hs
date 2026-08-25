@@ -17,7 +17,7 @@ import JShark.Hvm2Lint
   , hvm2CandidatesFromExpr
   )
 import JShark.Types (Hvm2KernelEntry (..))
-import Kernels (hvm2Entries)
+import Kernels (hvm2Entries, mandelJsSource, maxIter)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -39,8 +39,10 @@ hvm2Tests =
         bendDefNames "def inc(x): return x\ndef main(): return 0\n"
           @?= ["inc"]
     , testCase "emitKernelExportsC names WASM exports" $
-        let shim = emitKernelExportsC [("double", 1)]
-         in T.isInfixOf "export_name(\"double\")" shim @?= True
+        let
+          shim = emitKernelExportsC [("double", 1)]
+         in
+          T.isInfixOf "export_name(\"double\")" shim @?= True
     , testCase "pureAST emits callable HVM2 export ref" $
         let
           js =
@@ -51,10 +53,11 @@ hvm2Tests =
                       (number 3)
                   )
               )
-         in do
-          T.isInfixOf "__jsharkHvm2" js @?= True
-          T.isInfixOf "Float64Array" js @?= True
-          T.isInfixOf "(3.0)" js @?= True
+         in
+          do
+            T.isInfixOf "__jsharkHvm2" js @?= True
+            T.isInfixOf "Float64Array" js @?= True
+            T.isInfixOf "(3.0)" js @?= True
     , testCase "loadHvm2Wasm emits fetch/instantiate loader" $
         let
           js =
@@ -62,11 +65,12 @@ hvm2Tests =
               ( effectfulAST
                   (fromSyntax (loadHvm2Wasm (string "static/jshark-hvm2.wasm") *> toSyntax noOp))
               )
-         in do
-          T.isInfixOf "fetch(" js @?= True
-          T.isInfixOf "WebAssembly.instantiate" js @?= True
-          T.isInfixOf "__jsharkHvm2" js @?= True
-          T.isInfixOf "static/jshark-hvm2.wasm" js @?= True
+         in
+          do
+            T.isInfixOf "fetch(" js @?= True
+            T.isInfixOf "WebAssembly.instantiate" js @?= True
+            T.isInfixOf "__jsharkHvm2" js @?= True
+            T.isInfixOf "static/jshark-hvm2.wasm" js @?= True
     , testCase "hvm2Candidates finds heavy closed lambda" $
         let
           heavy =
@@ -75,9 +79,10 @@ hvm2Tests =
                   let_ (x + x) (\a -> let_ (a + a) (\b -> let_ (b + b) (\c -> c + c)))
               )
           cands = hvm2CandidatesFromExpr heavy
-         in do
-          not (null cands) @?= True
-          all ((>= defaultHvm2MinCandidateSize) . hvm2CandidateSize) cands @?= True
+         in
+          do
+            not (null cands) @?= True
+            all ((>= defaultHvm2MinCandidateSize) . hvm2CandidateSize) cands @?= True
     , testCase "hvm2Candidates skips string kernels" $
         null (hvm2CandidatesFromExpr (lambda (\x -> toString x)))
           @?= True
@@ -87,7 +92,15 @@ hvm2Tests =
           Right bend -> do
             T.isInfixOf "def mandel" bend @?= True
             T.isInfixOf "def main():" bend @?= True
+            T.isInfixOf "rec6(0, 0, 0)" bend @?= True
+            T.isInfixOf "rec6(0)(0)(0)" bend @?= False
+    , testCase "mandelJsSource matches maxIter" $
+        T.pack (show maxIter) `T.isInfixOf` T.pack mandelJsSource @?= True
+    , testCase "mandel shims use maxIter" $ do
+        shims <- T.pack <$> readFile "examples/Hvm2Demo/shims.c"
+        T.pack ("MANDEL_MAX_ITER " <> show maxIter) `T.isInfixOf` shims @?= True
     , testCase "applyCompilerArgs enables hvm2 warnings" $
-        configWarnHvm2Candidates (applyCompilerArgs ["--warn-hvm2-candidates"] readableConfig)
+        configWarnHvm2Candidates
+          (applyCompilerArgs ["--warn-hvm2-candidates"] readableConfig)
           @?= True
     ]

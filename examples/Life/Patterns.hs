@@ -50,6 +50,9 @@ import Types
   , gridH
   , gridN
   , gridW
+  , lcgInc
+  , lcgModulus
+  , lcgMult
   , manualSpecies
   , methuselahMax
   , methuselahMin
@@ -57,17 +60,14 @@ import Types
   , miscMin
   , oscMax
   , oscMin
-  , lcgInc
-  , lcgModulus
-  , lcgMult
   , seedH
   , seedOx
   , seedOy
   , seedW
   , shipMax
+  , shipMin
   , soupDensity
   , soupRngSeed
-  , shipMin
   , soupSpecies
   , stillMax
   , stillMin
@@ -664,7 +664,7 @@ initialBoundX0, initialBoundY0, initialBoundX1, initialBoundY1 :: Int
   , initialBoundX1
   , initialBoundY1
   ) =
-  buildInitialGrid
+    buildInitialGrid
 
 buildInitialGrid :: ([(Int, Word8)], Int, Int, Int, Int, Int, Int)
 buildInitialGrid = runST $ do
@@ -811,7 +811,6 @@ bytes xs = runST go
   write i# (W8# w : rest) mba s =
     write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
 
-
 lcg01 :: Int -> (Int, Double)
 lcg01 s =
   let
@@ -837,23 +836,23 @@ paletteBytes =
 
 speciesColor :: Int -> (Int, Int, Int)
 speciesColor n
-  | n == soupSpecies = (72, 72, 88)
-  | n == manualSpecies = hslRgb 280 0.45 0.68
+  | n == soupSpecies = hslRgb 192 0.40 0.50
+  | n == manualSpecies = hslRgb 268 0.38 0.52
   | n >= stillMin && n <= stillMax =
-      hslRgb (200 + fromIntegral (n - stillMin) * 2.5) 0.62 0.58
+      hslRgb (198 + fromIntegral (n - stillMin) * 4.8) 0.42 0.50
   | n >= oscMin && n <= oscMax =
-      hslRgb (95 + fromIntegral (n - oscMin) * 3) 0.58 0.52
+      hslRgb (108 + fromIntegral (n - oscMin) * 4.2) 0.40 0.49
   | n >= shipMin && n <= shipMax =
-      hslRgb (12 + fromIntegral (n - shipMin) * 4) 0.72 0.55
+      hslRgb (16 + fromIntegral (n - shipMin) * 5.2) 0.41 0.48
   | n >= methuselahMin && n <= methuselahMax =
-      hslRgb (175 + fromIntegral (n - methuselahMin) * 4) 0.55 0.50
+      hslRgb (152 + fromIntegral (n - methuselahMin) * 6.0) 0.40 0.48
   | n >= eaterMin && n <= eaterMax =
-      hslRgb (35 + fromIntegral (n - eaterMin) * 5) 0.60 0.52
+      hslRgb (34 + fromIntegral (n - eaterMin) * 6.5) 0.42 0.49
   | n >= miscMin && n <= miscMax =
-      hslRgb (52 + fromIntegral (n - miscMin) * 4) 0.58 0.54
+      hslRgb (288 + fromIntegral (n - miscMin) * 4.5) 0.39 0.50
   | n >= discoverMin =
-      hslRgb (fromIntegral ((n * 137508) `mod` 360000) / 1000) 0.62 0.56
-  | otherwise = (72, 72, 88)
+      hslRgb (fromIntegral ((n * 137508) `mod` 360000) / 1000) 0.42 0.49
+  | otherwise = hslRgb 210 0.38 0.48
 
 packBytes :: [Word8] -> ByteArray
 packBytes = bytes

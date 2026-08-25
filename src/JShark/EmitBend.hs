@@ -1,8 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Emit Bend source for the HVM2 pipeline (Bend → HVM2 → C → WASM).
 -- Bend is the human-readable frontend; HVM2 is the interaction-net IR.
@@ -69,12 +69,13 @@ emitBendKernel name ir = do
   bodyLines <- emitBody env body
   pure $
     T.unlines
-      ( ("def "
-          <> sanitizeBendId name
-          <> paramsLine paramNames paramTypes
-          <> " -> "
-          <> retTy
-          <> ":")
+      ( ( "def "
+            <> sanitizeBendId name
+            <> paramsLine paramNames paramTypes
+            <> " -> "
+            <> retTy
+            <> ":"
+        )
           : bodyLines
       )
 
@@ -160,10 +161,7 @@ emitIrExpr env e =
       case IM.lookup i env of
         Just n -> pure n
         Nothing -> Left (Hvm2Unsupported ("free variable " <> T.pack (show i)))
-    IrApply f x -> do
-      fTxt <- emitIrExpr env f
-      xTxt <- emitIrExpr env x
-      pure (fTxt <> "(" <> xTxt <> ")")
+    IrApply f x -> emitApplyCall env (unsafeCoerce f) (unsafeCoerce x)
     IrIf c t eF -> do
       cTxt <- emitIrExpr env c
       tTxt <- emitIrExpr env t
@@ -206,6 +204,25 @@ emitIrExpr env e =
       Left (Hvm2Unsupported "field access")
     IrHvm2Ref {} ->
       Left (Hvm2Unsupported "nested Hvm2Kernel")
+
+emitApplyCall :: IntMap Text -> IrExpr u -> IrExpr u -> Either Hvm2Error Text
+emitApplyCall env f x = do
+  let
+    (fn, args) = collectApplySpine f x
+  fnTxt <- emitIrExpr env fn
+  argTxts <- traverse (emitIrExpr env) args
+  pure (fnTxt <> "(" <> T.intercalate ", " argTxts <> ")")
+
+collectApplySpine :: IrExpr u -> IrExpr u -> (IrExpr u, [IrExpr u])
+collectApplySpine f x =
+  case f of
+    IrApply f' x' ->
+      let
+        (fn, args) = collectApplySpine (unsafeCoerce f' :: IrExpr u) (unsafeCoerce x' :: IrExpr u)
+       in
+        (fn, args ++ [x])
+    _ ->
+      (f, [x])
 
 emitKernel :: IntMap Text -> IrKernel u -> Either Hvm2Error Text
 emitKernel env = \case
@@ -286,16 +303,20 @@ emitLiteral = \case
 peelLambdasFn' :: IrExpr v -> ([Int], IrExpr v)
 peelLambdasFn' = \case
   IrLambda tag body ->
-    let (tags, inner) = peelLambdasFn' (unsafeCoerce body)
-     in (tag : tags, inner)
+    let
+      (tags, inner) = peelLambdasFn' (unsafeCoerce body)
+     in
+      (tag : tags, inner)
   e -> ([], e)
 
 peelLambdas :: IrExpr u -> ([Int], IrExpr u)
 peelLambdas ir =
   case ir of
     IrLambda tag body ->
-      let (rest, inner) = peelLambdasFn' body
-       in (tag : rest, unsafeCoerce inner)
+      let
+        (rest, inner) = peelLambdasFn' body
+       in
+        (tag : rest, unsafeCoerce inner)
     _ -> ([], ir)
 
 paramName :: Int -> Int -> Text
@@ -312,23 +333,35 @@ inferParamType tag body
 
 varInBoolCtx :: Int -> IrExpr u -> Bool
 varInBoolCtx tag = \case
-  IrVar i -> i == tag
-  IrKernelK (KAnd x y) -> mentions tag x || mentions tag y
-  IrKernelK (KOr x y) -> mentions tag x || mentions tag y
-  IrKernelK (KEq _ x y) -> mentions tag x || mentions tag y
-  IrKernelK (KNEq _ x y) -> mentions tag x || mentions tag y
-  IrKernelK (KGTh x y) -> mentions tag x || mentions tag y
-  IrKernelK (KLTh x y) -> mentions tag x || mentions tag y
-  IrKernelK (KGTEq x y) -> mentions tag x || mentions tag y
-  IrKernelK (KLTEq x y) -> mentions tag x || mentions tag y
-  IrIf c t eF -> varInBoolCtx tag c || varInBoolCtx tag t || varInBoolCtx tag eF
+  IrIf (IrVar i) _ _ | i == tag -> True
+  IrKernelK (KAnd x y) -> boolBinCtx tag x y
+  IrKernelK (KOr x y) -> boolBinCtx tag x y
+  IrKernelK (KEq _ x y) -> compareBoolCtx tag x y
+  IrKernelK (KNEq _ x y) -> compareBoolCtx tag x y
+  IrIf c _ _ -> varInBoolCtx tag c
   IrApply f x -> varInBoolCtx tag f || varInBoolCtx tag x
   IrLet _ x g -> varInBoolCtx tag x || varInBoolCtx tag g
   _ -> False
 
+boolBinCtx :: Int -> IrExpr u -> IrExpr u -> Bool
+boolBinCtx tag x y =
+  (mentions tag x && isBoolIr y) || (mentions tag y && isBoolIr x)
+
+compareBoolCtx :: Int -> IrExpr u -> IrExpr u -> Bool
+compareBoolCtx tag x y =
+  (mentions tag x && isBoolIr y) || (mentions tag y && isBoolIr x)
+
+isBoolIr :: IrExpr u -> Bool
+isBoolIr = \case
+  IrLiteral (ValueBool _) -> True
+  IrKernelK (KAnd _ _) -> True
+  IrKernelK (KOr _ _) -> True
+  IrKernelK (KEq _ _ _) -> True
+  IrKernelK (KNEq _ _ _) -> True
+  _ -> False
+
 varInFloatCtx :: Int -> IrExpr u -> Bool
 varInFloatCtx tag = \case
-  IrVar i -> i == tag
   IrKernelK (KFracDiv x y) ->
     mentions tag x
       || mentions tag y
@@ -396,19 +429,23 @@ bendTypeName = \case
 
 sanitizeBendId :: Text -> Text
 sanitizeBendId t =
-  let base = T.map (\c -> if c `elem` (['_', '-'] :: [Char]) then '_' else c) t
-   in if T.null base || not (isAlpha (T.head base))
-        then "k_" <> base
-        else base
+  let
+    base = T.map (\c -> if c `elem` (['_', '-'] :: [Char]) then '_' else c) t
+   in
+    if T.null base || not (isAlpha (T.head base))
+      then "k_" <> base
+      else base
  where
   isAlpha c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 
 cIdent :: Text -> Text
 cIdent t =
-  let id_ = sanitizeBendId t
-   in if id_ `elem` cKeywords
-        then "k_" <> id_
-        else id_
+  let
+    id_ = sanitizeBendId t
+   in
+    if id_ `elem` cKeywords
+      then "k_" <> id_
+      else id_
 
 cKeywords :: [Text]
 cKeywords =
@@ -502,7 +539,7 @@ emitKernelExportsC exports =
               <> "("
               <> T.intercalate ", " (replicate arity "jshark_hvm2_i64")
               <> ")"
-    in
+     in
       [ "__attribute__((export_name(\"" <> exportName <> "\")))"
       , "jshark_hvm2_i64 jshark_hvm2_export_" <> cSym <> "(" <> argList <> ") {"
       , "  extern jshark_hvm2_i64 " <> externSig <> ";"

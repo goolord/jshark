@@ -74,7 +74,9 @@ set ::
   Effect f ('MutableObject r) -> Expr f (Field r k) -> EffectSyntax f (f 'Unit)
 set o v =
   toSyntax $
-    UnsafeObjectAssign (UnsafeObjectGet o (T.pack (symbolVal (Proxy :: Proxy k)))) (Lift v)
+    UnsafeObjectAssign
+      (UnsafeObjectGet o (T.pack (symbolVal (Proxy :: Proxy k))))
+      (Lift v)
 
 -- | Empty object of a known record type.
 newObject :: Effect f ('MutableObject r)

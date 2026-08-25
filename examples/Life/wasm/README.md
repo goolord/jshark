@@ -41,9 +41,9 @@ After `growTo(w*h*2 + 65536)`:
 
 Load order in the page:
 
-1. `LUTGenerator.js` — LUT + `stepRegionLUT` (delegates to wasm when ready)
-2. `LifeSimd.js` — loader + JS fallbacks
-3. `Main.js` — `LifeEngine.loadWasm('js/life-simd.wasm')` migrates grids into wasm memory
+1. `LUTGenerator.js`: LUT + `stepRegionLUT` (delegates to wasm when ready)
+2. `LifeSimd.js`: loader + JS fallbacks
+3. `Main.js`: `LifeEngine.loadWasm('js/life-simd.wasm')` migrates grids into wasm memory
 
 Workers keep the pure-JS path (no wasm in `EngineWorker.js`). If wasm is
 unavailable, `LifeSimd` methods fall back to `Uint8Array.fill` / `.set` and

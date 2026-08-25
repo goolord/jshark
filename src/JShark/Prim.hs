@@ -25,8 +25,8 @@ module JShark.Prim
 where
 
 import Data.Text (Text)
-import JShark.Types
 import JShark.Emit (JS, parens)
+import JShark.Types
 
 -- | Witness that a 'FixedOp' is a unary @Math@ op (refines kind indices).
 data MathUnary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) where

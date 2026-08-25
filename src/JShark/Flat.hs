@@ -55,14 +55,14 @@ data FlatLit where
 data FlatArg
   = FlatArgExpr NodeId
   | FlatArgEffect NodeId
-  deriving (Eq)
+  deriving Eq
 
 data FlatField
   = FlatField Text NodeId
   | FlatFieldEff Text NodeId
   | FlatFieldExtra Text NodeId
   | FlatFieldExtraEff Text NodeId
-  deriving (Eq)
+  deriving Eq
 
 data FlatFixed where
   FlatFixedU :: FixedOp a b c u -> NodeId -> FlatFixed
@@ -231,49 +231,56 @@ fieldKeyText = T.pack (symbolVal (Proxy @k))
 addNode :: FlatNode -> State PackState NodeId
 addNode node = do
   st <- get
-  let n = length (psNodes st)
+  let
+    n = length (psNodes st)
   put st {psNodes = node : psNodes st}
   pure n
 
 addLit :: FlatLit -> State PackState Int
 addLit lit = do
   st <- get
-  let i = length (psLits st)
+  let
+    i = length (psLits st)
   put st {psLits = lit : psLits st}
   pure i
 
 addText :: Text -> State PackState Int
 addText txt = do
   st <- get
-  let i = length (psTexts st)
+  let
+    i = length (psTexts st)
   put st {psTexts = txt : psTexts st}
   pure i
 
 addFFI :: FFIForm -> State PackState Int
 addFFI form = do
   st <- get
-  let i = length (psFFIs st)
+  let
+    i = length (psFFIs st)
   put st {psFFIs = form : psFFIs st}
   pure i
 
 addStrCases :: [(Text, NodeId)] -> State PackState Int
 addStrCases cases = do
   st <- get
-  let i = length (psStrCases st)
+  let
+    i = length (psStrCases st)
   put st {psStrCases = cases : psStrCases st}
   pure i
 
 addFieldGroup :: [FlatField] -> State PackState Int
 addFieldGroup fs = do
   st <- get
-  let i = length (psFieldGroups st)
+  let
+    i = length (psFieldGroups st)
   put st {psFieldGroups = fs : psFieldGroups st}
   pure i
 
 addArgGroup :: [FlatArg] -> State PackState Int
 addArgGroup args = do
   st <- get
-  let i = length (psArgGroups st)
+  let
+    i = length (psArgGroups st)
   put st {psArgGroups = args : psArgGroups st}
   pure i
 
@@ -453,8 +460,14 @@ validateFlatProgram p =
       )
       ()
       [0 .. n - 1]
-      `seq` foldr (\r () -> inRange r) () (map flatArgRef (concat (V.toList (fpArgGroups p))))
-      `seq` foldr (\r () -> inRange r) () (map flatFieldRef (concat (V.toList (fpFieldGroups p))))
+      `seq` foldr
+        (\r () -> inRange r)
+        ()
+        (map flatArgRef (concat (V.toList (fpArgGroups p))))
+      `seq` foldr
+        (\r () -> inRange r)
+        ()
+        (map flatFieldRef (concat (V.toList (fpFieldGroups p))))
       `seq` foldr (\r () -> inRange r) () (map snd (concat (V.toList (fpStrCases p))))
       `seq` if fpRoot p >= 0 && fpRoot p < n
         then ()
@@ -494,7 +507,7 @@ packFieldLits fs = addFieldGroup =<< traverse packFieldLit fs
 
 packFnBody :: IrFnBody us r -> State PackState ([Int], NodeId)
 packFnBody = \case
-  IrJfNil e -> (, ) [] <$> packExpr e
+  IrJfNil e -> (,) [] <$> packExpr e
   IrJfCons t rest -> do
     (ts, body) <- packFnBody rest
     pure (t : ts, body)

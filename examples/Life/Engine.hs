@@ -18,6 +18,7 @@ module Engine
   , eraseCircle
   , placePattern
   , markSceneDirty
+  , resizeWorld
   )
 where
 
@@ -76,6 +77,7 @@ import Types
   , soupRngSeed
   , texH
   , texW
+  , tickDefaultMs
   )
 import WorkerBridge
   ( engineCanStep
@@ -91,6 +93,9 @@ initLife app viewport = do
   state <- hold (newRecord @LifeState)
   set @"gen" state 0
   set @"paused" state false_
+  set @"worldW" state (fromIntegral gridW)
+  set @"worldH" state (fromIntegral gridH)
+  set @"tickMs" state (fromIntegral tickDefaultMs)
   alive <- bindExpr (newByteArray (number (fromIntegral gridN)))
   species <- bindExpr (newByteArray (number (fromIntegral gridN)))
   toSyntax_ $
@@ -124,7 +129,10 @@ initLife app viewport = do
   _ <- Pixi.mountSprite app sprite
   _ <- setProp viewport "texture" texture
   _ <- setProp viewport "sprite" sprite
-  _ <- Pixi.installLifeShader app viewport sprite texture
+  _ <- Pixi.installLifeShader app viewport sprite texture w h
+  _ <- setProp viewport "worldW" w
+  _ <- setProp viewport "worldH" h
+  _ <- setProp viewport "lastStepMs" (number (-1))
   set @"rgbaPixels" state pixels
   pal <- state.palette
   paletteRgba <- initPaletteRgba pal
@@ -167,7 +175,7 @@ initLife app viewport = do
       (number (fromIntegral initialBoundX1))
       (number (fromIntegral initialBoundY1))
       liveList
-  _ <- initWorkerEngine
+  _ <- initWorkerEngine w h
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
@@ -204,6 +212,8 @@ maybeDiscover state registry = do
     liveX1 <- state.boundX1
     liveY1 <- state.boundY1
     nextD <- state.nextDiscover
+    wDisc <- state.worldW
+    hDisc <- state.worldH
     (nextOut, mintedArr) <-
       discoverLife
         alive
@@ -213,7 +223,8 @@ maybeDiscover state registry = do
         visited
         stackX
         stackY
-        (number (fromIntegral gridW))
+        wDisc
+        hDisc
         liveX0
         liveY0
         liveX1
@@ -234,8 +245,8 @@ stepGeneration ::
   -> Effect f (MutableObjectOf StepCtx)
   -> EffectSyntax f (f 'Unit)
 stepGeneration state stepCtx = do
-  w <- pure (number (fromIntegral gridW))
-  h <- pure (number (fromIntegral gridH))
+  w <- state.worldW
+  h <- state.worldH
   x0 <- state.boundX0
   y0 <- state.boundY0
   x1 <- state.boundX1
@@ -396,9 +407,8 @@ syncLiveList state = do
   y0 <- state.boundY0
   x1 <- state.boundX1
   y1 <- state.boundY1
-  let
-    w = number (fromIntegral gridW)
-    h = number (fromIntegral gridH)
+  w <- state.worldW
+  h <- state.worldH
   rebuildLiveList alive w h x0 y0 x1 y1 liveList
 
 swapLiveLists ::
@@ -438,8 +448,8 @@ renderLife viewport renderDirty state fallback = do
   now <- performanceNow
   glLost <- getProp viewport "glLost"
   app <- getProp viewport "app"
-  w <- pure (number (fromIntegral gridW))
-  h <- pure (number (fromIntegral gridH))
+  w <- state.worldW
+  h <- state.worldH
   px <- pure (number (fromIntegral cellPx))
   cw <- pure (number canvasW)
   ch <- pure (number canvasH)
@@ -492,6 +502,7 @@ renderLife viewport renderDirty state fallback = do
       liveList
       changedList
       sceneDirty
+      viewportDirty
       w
       h
       px
@@ -508,6 +519,86 @@ renderLife viewport renderDirty state fallback = do
   _ <- setProp viewport "renderZoom" zoom
   setProp viewport "renderPanValid" true_
 
+resizeWorld ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+resizeWorld state viewport w h = do
+  let
+    cellsN = w * h
+    seedW' = Math.max 8 (Math.floor (w / number 2))
+    seedH' = Math.max 8 (Math.floor (h / number 2))
+    ox = Math.floor ((w - seedW') / number 2)
+    oy = Math.floor ((h - seedH') / number 2)
+  alive <- bindExpr (newByteArray cellsN)
+  species <- bindExpr (newByteArray cellsN)
+  toSyntax_ $ u8Fill species (number 0)
+  toSyntax_ $
+    seedSoupRegion
+      alive
+      ox
+      oy
+      seedW'
+      seedH'
+      w
+      (number (fromIntegral soupRngSeed))
+  toSyntax_ (rebuildPackedCounts alive w h)
+  nextAlive <- bindExpr (newByteArray cellsN)
+  nextSpecies <- bindExpr (newByteArray cellsN)
+  visited <- bindExpr (newByteArray cellsN)
+  stackX <- bindExpr (newByteArray cellsN)
+  stackY <- bindExpr (newByteArray cellsN)
+  stepStamp <- bindExpr (newByteArray cellsN)
+  pixels <- bindExpr (newByteArray (cellsN * number 4))
+  set @"alive" state alive
+  set @"species" state species
+  set @"nextAlive" state nextAlive
+  set @"nextSpecies" state nextSpecies
+  set @"discoverVisited" state visited
+  set @"discoverStackX" state stackX
+  set @"discoverStackY" state stackY
+  set @"stepStamp" state stepStamp
+  set @"rgbaPixels" state pixels
+  set @"worldW" state w
+  set @"worldH" state h
+  set @"gen" state 0
+  set @"boundX0" state ox
+  set @"boundY0" state oy
+  set @"boundX1" state (ox + seedW' - number 1)
+  set @"boundY1" state (oy + seedH' - number 1)
+  set @"nextDiscover" state (fromIntegral discoverMin)
+  liveList <- state.liveList
+  _ <-
+    rebuildLiveList
+      alive
+      w
+      h
+      ox
+      oy
+      (ox + seedW' - number 1)
+      (oy + seedH' - number 1)
+      liveList
+  set @"pop" state (Array.length liveList)
+  _ <- setProp viewport "worldW" w
+  _ <- setProp viewport "worldH" h
+  tex <- Pixi.replaceGridTexture viewport pixels w h
+  appE <- getProp viewport "app"
+  appH <- hold (expr appE)
+  sprite <- getProp viewport "sprite"
+  _ <- Pixi.installLifeShader appH viewport sprite tex w h
+  _ <- initWorkerEngine w h
+  let
+    cx = ox + seedW' / number 2
+    cy = oy + seedH' / number 2
+    px = number (fromIntegral cellPx)
+  _ <- setProp viewport "zoom" (number 1)
+  _ <- setProp viewport "panX" (number (canvasW / 2) - cx * px)
+  _ <- setProp viewport "panY" (number (canvasH / 2) - cy * px)
+  markSceneDirty state
+  setProp viewport "renderPanValid" false_
+
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 togglePause state = do
   cur <- state.paused
@@ -519,8 +610,8 @@ flipCell ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 flipCell state gx gy = do
-  w <- pure (number (fromIntegral gridW))
-  h <- pure (number (fromIntegral gridH))
+  w <- state.worldW
+  h <- state.worldH
   whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
     alive <- state.alive
     species <- state.species
@@ -554,8 +645,8 @@ eraseCircle ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 eraseCircle state gx gy radius = do
-  w <- pure (number (fromIntegral gridW))
-  h <- pure (number (fromIntegral gridH))
+  w <- state.worldW
+  h <- state.worldH
   whenS (radius .>= 0) $ do
     alive <- state.alive
     species <- state.species
@@ -614,8 +705,8 @@ placePattern ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 placePattern state cells gx gy sid = do
-  w <- pure (number (fromIntegral gridW))
-  h <- pure (number (fromIntegral gridH))
+  w <- state.worldW
+  h <- state.worldH
   whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
     alive <- state.alive
     species <- state.species

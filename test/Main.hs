@@ -18,16 +18,17 @@ import Data.Text (Text)
 import qualified Data.Text as T
 -- import ExampleTests (exampleTests)
 
+import Hvm2Tests (hvm2Tests)
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
-import JShark.FlatTest
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Classes as C
 import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
+import JShark.FlatTest
 import qualified JShark.Generic as G
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
@@ -41,7 +42,6 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
-import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
 import PerfTests (perfTests)
 import LucidTests (lucidDomTests)
@@ -450,49 +450,51 @@ controlFlowTests =
           )
           @?= "let n0;\nif (cond()) {n0 = 1.0;}\nelse {n0 = 2.0;}"
     , testCase "whileE re-emits an FFI condition" $ do
-        let js =
-              renderJS
-                ( effectfulAST
-                    (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp))
-                )
+        let
+          js =
+            renderJS
+              ( effectfulAST
+                  (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp))
+              )
         assertJSContains "while (cond())" js
         assertJSContains "foo();" js
     , testCase "forRange_ emits a C-style for loop" $ do
-        let js =
-              renderJS
-                ( effectfulAST
-                    ( fromSyntax
-                        ( toSyntax_
-                            ( forRange (number 0) (number 3) $ \i ->
-                                discard (u8Set (uint8Array (bytes [0])) i (number 1))
-                            )
-                            *> toSyntax noOp
-                        )
-                    )
-                )
+        let
+          js =
+            renderJS
+              ( effectfulAST
+                  ( fromSyntax
+                      ( toSyntax_
+                          ( forRange (number 0) (number 3) $ \i ->
+                              discard (u8Set (uint8Array (bytes [0])) i (number 1))
+                          )
+                          *> toSyntax noOp
+                      )
+                  )
+              )
         assertJSContains "for (let n0 = 0.0 ; n0 < 3.0 ; n0 ++)" js
         assertJSContains "new Uint8Array(1)[n0] = 1.0;" js
     , testCase "flat forRange_ emits u8Set in loop body" $ do
-        let js =
-              renderJS
-                ( effectfulASTIr
-                    ( fromSyntax
-                        ( toSyntax_
-                            ( forRange (number 0) (number 3) $ \i ->
-                                discard (u8Set (uint8Array (bytes [0])) i (number 1))
-                            )
-                            *> toSyntax noOp
-                        )
-                    )
-                )
+        let
+          js =
+            renderJS
+              ( effectfulASTIr
+                  ( fromSyntax
+                      ( toSyntax_
+                          ( forRange (number 0) (number 3) $ \i ->
+                              discard (u8Set (uint8Array (bytes [0])) i (number 1))
+                          )
+                          *> toSyntax noOp
+                      )
+                  )
+              )
         assertJSContains "for (let" js
         assertJSContains "[n" js
     , testCase "multi-arg arrow FFI wraps IIFE" $
         renderJS
           ( effectfulAST
               ( ffi
-                  ( "(a,b)=>a+b"
-                  )
+                  ("(a,b)=>a+b")
                   (arg (number 1) <: arg (number 2) <: RecNil)
               )
           )
@@ -501,8 +503,7 @@ controlFlowTests =
         renderJS
           ( effectfulASTIr
               ( ffi
-                  ( "(a,b)=>a+b"
-                  )
+                  ("(a,b)=>a+b")
                   (arg (number 1) <: arg (number 2) <: RecNil)
               )
           )
@@ -566,7 +567,8 @@ controlFlowTests =
                       toSyntax noOp
                   )
               )
-         in T.isInfixOf ".set(" js @?= True
+         in
+          T.isInfixOf ".set(" js @?= True
     , testCase "ifE of two getAttributes keeps the result bind" $
         renderJS
           ( effectfulAST

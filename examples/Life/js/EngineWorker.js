@@ -2,7 +2,7 @@
 
 /**
  * Web Worker tile loop: SharedArrayBuffer grids + Atomics generation barrier.
- * WASM SIMD (LifeSimd) applies only on the main thread — worker grids stay on
+ * WASM SIMD (LifeSimd) applies only on the main thread; worker grids stay on
  * the SAB and use the JS fill/set fallbacks inside LifeLUT.stepRegionLUT.
  */
 importScripts('LUTGenerator.js');

@@ -49,6 +49,7 @@ data-files:
   examples/Life/js/EngineWorker.js
   examples/Life/js/Main.js
   examples/Life/js/life-simd.wasm
+  examples/Life/shaders/cell.frag.glsl
 
 common warnings
   ghc-options:
@@ -271,6 +272,7 @@ executable examples
     , jshark
     , life
     , scotty >= 0.20 && < 1
+    , warp >= 3.3 && < 3.6
     , synth
     , text
     , todo-mvc

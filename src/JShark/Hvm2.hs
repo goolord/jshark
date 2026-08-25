@@ -28,8 +28,8 @@ import qualified Data.Text.IO as T
 import JShark (collectHvm2Kernels, irExprFromClosed)
 import JShark.EmitBend
   ( Hvm2Error (..)
-  , bendDefNames
   , bendDefExports
+  , bendDefNames
   , emitBendKernel
   , emitBendModuleFromDefs
   , emitKernelExportsC

@@ -33,7 +33,7 @@ import Catalog
   , catalogVerbsIng
   )
 import GHC.Generics (Generic)
-import Grid (cellIdx, clampLiveBounds, setU8, u8Get, packedIsAlive)
+import Grid (cellIdx, clampLiveBounds, packedIsAlive, setU8, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
@@ -54,8 +54,6 @@ import Names (lookupDisplayName)
 import Types
   ( discoverMax
   , discoverMin
-  , gridH
-  , gridW
   , indexRefreshMs
   , lifeTypesListId
   , manualSpecies
@@ -171,46 +169,59 @@ discoverLife ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f ('Array 'Number))
-discoverLife alive species palette registry visited stackX stackY w0 x0 y0 x1 y1 nextId0 = do
-  toSyntax_ (u8Fill visited (number 0))
-  let
-    h0 = number (fromIntegral gridH)
-  minted <- bindExpr $ Array.fromEffects []
-  scratch <- hold (newRecord @DiscoverScratch)
-  set @"nextId" scratch nextId0
-  set @"stackLen" scratch 0
-  set @"minX" scratch 0
-  set @"minY" scratch 0
-  set @"w" scratch w0
-  set @"h" scratch h0
-  set @"minCells" scratch 4
-  set @"maxCells" scratch 72
-  set @"maxSid" scratch (number (fromIntegral discoverMax))
-  regE <- bindExpr registry
-  _ <- setProp scratch "alive" alive
-  _ <- setProp scratch "species" species
-  _ <- setProp scratch "palette" palette
-  _ <- setProp scratch "registry" regE
-  _ <- setProp scratch "visited" visited
-  _ <- setProp scratch "stackX" stackX
-  _ <- setProp scratch "stackY" stackY
-  _ <- setProp scratch "minted" minted
-  -- Margin 1 so unlabeled seeds on the live-bounds halo still flood in.
-  let
-    (ix0, iy0, ixStop, iyStop) =
-      clampLiveBounds w0 h0 x0 y0 x1 y1 (number 1)
-  whenS (ixStop .> ix0 .&& iyStop .> iy0) $
-    forRange_ iy0 iyStop $ \y ->
-      forRange_ ix0 ixStop $ \x -> do
-        let
-          i = cellIdx w0 x y
-        vis <- u8Get visited i
-        sp <- u8Get species i
-        whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
-          floodComponent scratch i x y
-  nid <- scratch.nextId
-  pure (nid, minted)
+discoverLife
+  alive
+  species
+  palette
+  registry
+  visited
+  stackX
+  stackY
+  w0
+  h0
+  x0
+  y0
+  x1
+  y1
+  nextId0 = do
+    toSyntax_ (u8Fill visited (number 0))
+    minted <- bindExpr $ Array.fromEffects []
+    scratch <- hold (newRecord @DiscoverScratch)
+    set @"nextId" scratch nextId0
+    set @"stackLen" scratch 0
+    set @"minX" scratch 0
+    set @"minY" scratch 0
+    set @"w" scratch w0
+    set @"h" scratch h0
+    set @"minCells" scratch 4
+    set @"maxCells" scratch 72
+    set @"maxSid" scratch (number (fromIntegral discoverMax))
+    regE <- bindExpr registry
+    _ <- setProp scratch "alive" alive
+    _ <- setProp scratch "species" species
+    _ <- setProp scratch "palette" palette
+    _ <- setProp scratch "registry" regE
+    _ <- setProp scratch "visited" visited
+    _ <- setProp scratch "stackX" stackX
+    _ <- setProp scratch "stackY" stackY
+    _ <- setProp scratch "minted" minted
+    -- Margin 1 so unlabeled seeds on the live-bounds halo still flood in.
+    let
+      (ix0, iy0, ixStop, iyStop) =
+        clampLiveBounds w0 h0 x0 y0 x1 y1 (number 1)
+    whenS (ixStop .> ix0 .&& iyStop .> iy0) $
+      forRange_ iy0 iyStop $ \y ->
+        forRange_ ix0 ixStop $ \x -> do
+          let
+            i = cellIdx w0 x y
+          vis <- u8Get visited i
+          sp <- u8Get species i
+          whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
+            floodComponent scratch i x y
+    nid <- scratch.nextId
+    pure (nid, minted)
 
 floodComponent ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -355,7 +366,7 @@ assignCells species cells sid =
     setU8 species (Array.index cells k) sid
 
 -- | Same order as 'Catalog.shapeHash' (numeric @(x,y)@, then @"x,y"@ join).
---   That is what @LifeCatalog.known@ stores — not JS lexicographic string sort.
+--   That is what @LifeCatalog.known@ stores, not JS lexicographic string sort.
 componentHash ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> EffectSyntax f (Expr f 'String)
@@ -406,8 +417,8 @@ discoverRgb ::
 discoverRgb n =
   let
     hue = rem_ (n * number 137.508) (number 360)
-    s = number 0.62
-    l = number 0.56
+    s = number 0.42
+    l = number 0.49
     c = (number 1 - abs (number 2 * l - number 1)) * s
     hp = hue / number 60
     hpMod = hp - number 2 * Math.floor (hp / number 2)
@@ -457,14 +468,14 @@ stepIndexTracker ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-stepIndexTracker alive species palette registry tracker seen container now x0 y0 x1 y1 = do
+stepIndexTracker alive species palette registry tracker seen container now x0 y0 x1 y1 w0 h0 = do
   pending <- getProp tracker "pending"
   lastMs <- getProp tracker "lastMs"
   let
     refresh = number (fromIntegral indexRefreshMs)
-    w0 = number (fromIntegral gridW)
-    h0 = number (fromIntegral gridH)
     (ix0, iy0, ixStop, iyStop) =
       clampLiveBounds w0 h0 x0 y0 x1 y1 (number 0)
   whenS
@@ -572,8 +583,10 @@ paintIndex tracker counts palette registry seen container = do
     Set.mapM_
       ( \sid ->
           whenS
-            ( countOf counts sid .== 0
-                .&& sid .>= number (fromIntegral discoverMin)
+            ( countOf counts sid
+                .== 0
+                .&& sid
+                .>= number (fromIntegral discoverMin)
             )
             (Set.delete seen sid)
       )

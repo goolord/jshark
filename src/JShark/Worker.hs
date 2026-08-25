@@ -35,7 +35,9 @@ newWorker :: Expr f 'String -> EffectSyntax f (Effect f ('MutableObject ()))
 newWorker url = pure (ffi "u=>new Worker(u)" (arg url <: RecNil))
 
 workerPostMessage ::
-  Effect f ('MutableObject ()) -> Expr f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
+  Effect f ('MutableObject ())
+  -> Expr f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
 workerPostMessage w msg = toSyntax $ callMethod w "postMessage" (arg msg <: RecNil)
 
 atomicsLoad ::
@@ -52,12 +54,18 @@ atomicsStore arr idx val =
   toSyntax $ ffi "Atomics.store" (arg arr <: arg idx <: arg val <: RecNil)
 
 atomicsAdd ::
-  Expr f ('MutableObject ()) -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+  Expr f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f 'Number)
 atomicsAdd arr idx delta =
   bindExpr $ ffi "Atomics.add" (arg arr <: arg idx <: arg delta <: RecNil)
 
 atomicsNotify ::
-  Expr f ('MutableObject ()) -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+  Expr f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f 'Number)
 atomicsNotify arr idx count =
   bindExpr $ ffi "Atomics.notify" (arg arr <: arg idx <: arg count <: RecNil)
 

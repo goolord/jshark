@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module DevServer
   ( Example (..)
@@ -10,6 +11,8 @@ module DevServer
   )
 where
 
+import Control.Exception (IOException)
+import qualified Control.Exception as Exception
 import Control.Monad (forM_, when)
 import Data.String (fromString)
 import qualified Data.Text as T
@@ -17,8 +20,9 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.IO as TL
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
-import Lucid
 import qualified Life
+import Lucid
+import Network.Wai.Handler.Warp (setHost, setPort)
 import Paths_jshark (getDataFileName)
 import System.Directory
   ( copyFile
@@ -28,7 +32,8 @@ import System.Directory
   , removePathForcibly
   )
 import System.FilePath ((</>))
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, hPutStrLn, stderr, stdout)
+import System.IO.Error (isAlreadyInUseError)
 import Web.Scotty
 
 resolveDataFile :: FilePath -> IO FilePath
@@ -91,6 +96,7 @@ lifeEngineJs =
   , ("js/Main.js", "examples/Life/js/Main.js")
   , ("js/EngineWorker.js", "examples/Life/js/EngineWorker.js")
   , ("js/life-simd.wasm", "examples/Life/js/life-simd.wasm")
+  , ("js/shaders/cell.frag.glsl", "examples/Life/shaders/cell.frag.glsl")
   ]
 
 -- | Sandboxed frame fetches @app.js@ / wasm from the example origin; CORP +
@@ -102,70 +108,117 @@ lifeAssetHeaders = do
   setHeader "Cross-Origin-Resource-Policy" "cross-origin"
   setHeader "Access-Control-Allow-Origin" "*"
 
+serverHost :: String
+serverHost = "127.0.0.1"
+
+serverOpts :: Int -> Options
+serverOpts port =
+  defaultOptions
+    { settings =
+        setHost "127.0.0.1" . setPort port $ settings defaultOptions
+    }
+
 -- | Serve every example and a screenshot directory at @/@.
-serveExamples :: Int -> String -> [Example] -> IO ()
-serveExamples port banner examples = do
-  putStrLn banner
-  hFlush stdout
+-- Tries @startPort@, then successive ports until warp binds.
+serveExamples :: Int -> [Example] -> IO ()
+serveExamples startPort examples = do
   shots <- traverse exampleShot examples
   assets <-
     fmap concat $
       traverse staticAsset staticFiles
   lifeJs <- traverse lifeJsAsset lifeEngineJs
-  scotty port $ do
-    get "/" $ do
+  tryServe startPort startPort (startPort + 100) shots assets lifeJs examples
+
+tryServe ::
+  Int
+  -> Int
+  -> Int
+  -> [(Example, Maybe FilePath)]
+  -> [(String, FilePath)]
+  -> [(FilePath, FilePath)]
+  -> [Example]
+  -> IO ()
+tryServe startPort port maxPort shots assets lifeJs examples
+  | port > maxPort =
+      fail $
+        "no free port in range "
+          <> show startPort
+          <> ".."
+          <> show maxPort
+  | otherwise = do
+      putStrLn ("Examples on http://" <> serverHost <> ":" <> show port)
+      hFlush stdout
+      Exception.catch
+        (scottyOpts (serverOpts port) (exampleRoutes shots assets lifeJs examples))
+        $ \e ->
+          if isAlreadyInUseError e
+            then do
+              hPutStrLn
+                stderr
+                ("port " <> show port <> " in use, trying " <> show (port + 1))
+              tryServe startPort (port + 1) maxPort shots assets lifeJs examples
+            else Exception.throwIO (e :: IOException)
+
+exampleRoutes ::
+  [(Example, Maybe FilePath)]
+  -> [(String, FilePath)]
+  -> [(FilePath, FilePath)]
+  -> [Example]
+  -> ScottyM ()
+exampleRoutes shots assets lifeJs examples = do
+  get "/" $ do
+    setHeader "Content-Type" "text/html; charset=utf-8"
+    html $ renderText (indexPage serverPaths shots)
+  forM_ examples $ \ex -> do
+    let
+      base = "/" <> T.unpack (exampleName ex)
+      page =
+        examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
+      isLife = exampleName ex == "life"
+    get (fromString base) $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
-      html $ renderText (indexPage serverPaths shots)
-    forM_ examples $ \ex -> do
+      html $ renderText page
+    get (fromString (base <> "/")) $ do
+      setHeader "Content-Type" "text/html; charset=utf-8"
+      html $ renderText page
+    get (fromString (base <> "/app.js")) $ do
+      setHeader "Content-Type" "application/javascript; charset=utf-8"
+      setHeader "Cache-Control" "no-store"
+      when isLife lifeAssetHeaders
+      text (TL.fromStrict (exampleJs ex))
+    when isLife $ do
       let
-        base = "/" <> T.unpack (exampleName ex)
-        page =
-          examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
-        isLife = exampleName ex == "life"
-      get (fromString base) $ do
+        static = srcStatic serverPaths
+        script = srcScript serverPaths (exampleName ex)
+        frame =
+          Life.framePage static script (Life.assetBaseFor script)
+      get (fromString (base <> "/frame")) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
-        html $ renderText page
-      get (fromString (base <> "/")) $ do
+        lifeAssetHeaders
+        html $ renderText frame
+      get (fromString (base <> "/frame/")) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
-        html $ renderText page
-      get (fromString (base <> "/app.js")) $ do
-        setHeader "Content-Type" "application/javascript; charset=utf-8"
-        setHeader "Cache-Control" "no-store"
-        when isLife lifeAssetHeaders
-        text (TL.fromStrict (exampleJs ex))
-      when isLife $ do
-        let
-          static = srcStatic serverPaths
-          script = srcScript serverPaths (exampleName ex)
-          frame =
-            Life.framePage static script (Life.assetBaseFor script)
-        get (fromString (base <> "/frame")) $ do
-          setHeader "Content-Type" "text/html; charset=utf-8"
+        lifeAssetHeaders
+        html $ renderText frame
+      forM_ lifeJs $ \(route, path) ->
+        get (fromString (base <> "/" <> route)) $ do
+          setHeader "Content-Type" (lifeAssetType route)
           lifeAssetHeaders
-          html $ renderText frame
-        get (fromString (base <> "/frame/")) $ do
-          setHeader "Content-Type" "text/html; charset=utf-8"
-          lifeAssetHeaders
-          html $ renderText frame
-        forM_ lifeJs $ \(route, path) ->
-          get (fromString (base <> "/" <> route)) $ do
-            setHeader "Content-Type" (lifeAssetType route)
-            lifeAssetHeaders
-            file path
-    forM_ assets $ \(name, path) ->
-      get (fromString ("/static/" <> name)) $ do
-        setHeader "Content-Type" (staticType name)
-        setHeader "Cross-Origin-Resource-Policy" "cross-origin"
-        setHeader "Access-Control-Allow-Origin" "*"
-        file path
-    forM_ shots $ \(ex, path) ->
-      case path of
-        Nothing -> pure ()
-        Just filePath ->
-          get (fromString ("/static/" <> T.unpack (exampleName ex) <> ".png")) $ do
-            setHeader "Content-Type" "image/png"
-            setHeader "Cross-Origin-Resource-Policy" "cross-origin"
-            file filePath
+          file path
+  forM_ assets $ \(name, path) ->
+    get (fromString ("/static/" <> name)) $ do
+      setHeader "Content-Type" (staticType name)
+      setHeader "Cross-Origin-Resource-Policy" "cross-origin"
+      setHeader "Access-Control-Allow-Origin" "*"
+      file path
+  forM_ shots $ \(ex, path) ->
+    case path of
+      Nothing -> pure ()
+      Just filePath ->
+        get (fromString ("/static/" <> T.unpack (exampleName ex) <> ".png")) $ do
+          setHeader "Content-Type" "image/png"
+          setHeader "Cross-Origin-Resource-Policy" "cross-origin"
+          file filePath
 
 -- | Write a static tree GitHub Pages can host.
 exportExamples :: FilePath -> [Example] -> IO ()
@@ -206,6 +259,7 @@ exportExamples dest examples = do
         (dir </> "frame" </> "index.html")
         (renderText (Life.framePage static script (Life.assetBaseFor script)))
       createDirectoryIfMissing True (dir </> "js")
+      createDirectoryIfMissing True (dir </> "js/shaders")
       forM_ lifeEngineJs $ \(route, rel) -> do
         src <- getDataFileName rel
         copyFile src (dir </> route)
@@ -254,6 +308,7 @@ lifeJsAsset (route, rel) = do
 lifeAssetType :: FilePath -> TL.Text
 lifeAssetType route
   | ".wasm" `T.isSuffixOf` T.pack route = "application/wasm"
+  | ".glsl" `T.isSuffixOf` T.pack route = "text/plain; charset=utf-8"
   | otherwise = "application/javascript; charset=utf-8"
 
 staticType :: FilePath -> TL.Text

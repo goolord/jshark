@@ -12,6 +12,7 @@
 -- @
 module Main (main) where
 
+import qualified Data.Text.IO as T
 import JShark.Hvm2
   ( Hvm2Config (..)
   , bendDefExports
@@ -21,10 +22,9 @@ import JShark.Hvm2
   )
 import Kernels (hvm2Entries)
 import System.Directory (createDirectoryIfMissing, makeAbsolute)
-import System.Exit (die, ExitCode (..))
+import System.Exit (ExitCode (..), die)
 import System.FilePath (takeDirectory, (</>))
 import System.Process (readProcessWithExitCode)
-import qualified Data.Text.IO as T
 
 outDir :: FilePath
 outDir = "wasm/hvm2/generated-demo"

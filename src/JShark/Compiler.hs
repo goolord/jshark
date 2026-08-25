@@ -70,8 +70,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Word (Word64)
-import JShark.Emit (JS, renderJS)
-import qualified TextBuilder as TB
 import JShark
   ( ClosedEffect
   , ClosedExpr
@@ -81,6 +79,7 @@ import JShark
   , pureProgram
   , renderJSCompact
   )
+import JShark.Emit (JS, renderJS)
 import JShark.Hvm2Lint (warnHvm2CandidatesEffect, warnHvm2CandidatesExpr)
 import Numeric (showHex)
 import System.Directory
@@ -96,6 +95,7 @@ import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
+import qualified TextBuilder as TB
 
 -- | Compilation level for Google Closure Compiler.
 -- Encoded as the long names ('SIMPLE_OPTIMIZATIONS' /
@@ -400,7 +400,10 @@ formatJS = go 0
         let
           n' = max 0 (n - 1)
          in
-          TB.char '\n' <> indent n' <> TB.char '}' <> afterClose n' (T.dropWhile isSpace xs)
+          TB.char '\n'
+            <> indent n'
+            <> TB.char '}'
+            <> afterClose n' (T.dropWhile isSpace xs)
       Just (';', xs) ->
         let
           xs' = T.dropWhile isSpace xs
@@ -455,9 +458,10 @@ formatJS = go 0
         then case T.uncons cs of
           Just (d, ds) -> TB.char c <> TB.char d <> string q ds k
           Nothing -> TB.char c
-        else if c == q
-          then TB.char c <> k cs
-          else TB.char c <> string q cs k
+        else
+          if c == q
+            then TB.char c <> k cs
+            else TB.char c <> string q cs k
 
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.

@@ -6,7 +6,8 @@ module JShark.FlatTest
   ( flatSoaColumnsRoundTrip
   , flatProgramRoundTrip
   , flatSoaPureNodeCount
-  ) where
+  )
+where
 
 import Data.Vector (Vector)
 import qualified Data.Vector as V

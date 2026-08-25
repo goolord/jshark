@@ -127,6 +127,8 @@ body {
 
 .hvm2-telemetry {
   margin-top: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-top: 1px solid #334155;
 }
 
 .hvm2 .status {
@@ -135,16 +137,19 @@ body {
   color: #94a3b8;
   margin: 0;
   word-break: break-word;
+  line-height: 1.45;
 }
 
 .hvm2 .hint {
   font-size: 0.82rem;
   color: #64748b;
-  margin: 0.45rem 0 0;
+  margin: 0.5rem 0 0;
+  line-height: 1.45;
 }
 
 .hvm2 .info {
   margin-top: 1.5rem;
+  padding: 0.85rem 0 0.5rem;
   font-size: 0.85rem;
   color: #64748b;
 }

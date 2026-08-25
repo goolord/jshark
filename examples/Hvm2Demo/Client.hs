@@ -12,6 +12,7 @@ module Client (mainJS) where
 
 import GHC.Generics (Generic)
 import JShark.Api
+import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, newRecord)
@@ -26,8 +27,7 @@ import Kernels
   , initialCenterIm
   , initialCenterRe
   , initialScale
-  , mandelEscapes
-  , mandelKernel
+  , mandelJsSource
   , maxIter
   , zoomRate
   )
@@ -36,11 +36,12 @@ import Page (benchId, boardId, modeJsId, modeWasmId, statusId)
 data LabState = LabState
   { labFrame :: Double
   , labWasm :: Bool
-  , labReady :: Bool
   , labTickMs :: Double
   , labCenterRe :: Double
   , labCenterIm :: Double
   , labScale :: Double
+  , labPrevMs :: Double
+  , labFps :: Double
   }
   deriving Generic
 
@@ -55,6 +56,10 @@ wasmLoaderFFI =
     ++ "globalThis.__jsharkHvm2={exports:i.exports}"
     ++ "})()"
 
+initMandelJsFFI :: String
+initMandelJsFFI =
+  "()=>{globalThis.__jsharkMandelJs=" ++ mandelJsSource ++ "}"
+
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
@@ -68,16 +73,18 @@ mainJS = do
     st <- hold (newRecord @LabState)
     set @"labFrame" st 0
     set @"labWasm" st false_
-    set @"labReady" st false_
     set @"labTickMs" st (number (-1))
     set @"labCenterRe" st (number initialCenterRe)
     set @"labCenterIm" st (number initialCenterIm)
     set @"labScale" st (number initialScale)
+    set @"labPrevMs" st (number (-1))
+    set @"labFps" st 0
+    _ <- toSyntax_ $ ffi initMandelJsFFI (RecNil)
     wasmUrl <- getProp canvas "dataset.wasm"
     let
       loadP =
-        ffi wasmLoaderFFI (arg wasmUrl <: RecNil)
-          :: Effect f ('MutableObject (Promise 'Unit))
+        ffi wasmLoaderFFI (arg wasmUrl <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Unit))
     promiseCatch loadP $ \_ ->
       stmts $ do
         set @"labWasm" st false_
@@ -85,7 +92,6 @@ mainJS = do
         boot ctxH status modeWasm modeJs benchBtn st
     promiseThen loadP $ \_ ->
       stmts $ do
-        set @"labReady" st true_
         set @"labWasm" st true_
         setStatus status (string "WASM ready")
         boot ctxH status modeWasm modeJs benchBtn st
@@ -142,10 +148,22 @@ setActive on off = do
   done
 
 tickFrame ::
-  Effect f (MutableObjectOf LabState) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Effect f (MutableObjectOf LabState)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 tickFrame st now = do
+  prev <- st.labPrevMs
+  prevFps <- st.labFps
   f <- st.labFrame
   scale <- st.labScale
+  let
+    delta = Math.max (now - prev) (number 1)
+    instant =
+      if_ (prev .>= number 0) (number 1000 / delta) (number 0)
+    smoothed =
+      if_ (prev .>= number 0) (prevFps * number 0.85 + instant * number 0.15) instant
+  set @"labFps" st smoothed
+  set @"labPrevMs" st now
   set @"labFrame" st (f + 1)
   set @"labScale" st (scale * number zoomRate)
   set @"labTickMs" st now
@@ -169,51 +187,85 @@ paint ctx st status = do
     blocksY = Math.floor (h / blk)
   set @"fillStyle" ctx (string "#07080f")
   Canvas.fillRect ctx 0 0 w h
+  grid <-
+    bindExpr $
+      sampleGrid wasmOn centerRe centerIm scale w h blk blocksX blocksY
   forRange_ 0 blocksY $ \by ->
     forRange_ 0 blocksX $ \bx -> do
       let
         px = bx * blk + half
         py = by * blk + half
-        iters =
-          mandelAt px py w h centerRe centerIm scale wasmOn
+        iters = Array.index grid (by * blocksX + bx)
       css <- iterColor iters
       set @"fillStyle" ctx css
       Canvas.fillRect ctx (px - half) (py - half) blk blk
+      done
   fpsLine status st wasmOn centerRe centerIm scale
   done
 
-mandelAt ::
-  Expr f 'Number
+sampleGrid ::
+  Expr f 'Bool
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Expr f 'Bool
   -> Expr f 'Number
-mandelAt px py w h centerRe centerIm scale wasmOn =
-  let
-    cr = centerRe + (px - w / number 2) * scale / w
-    ci = centerIm + (py - h / number 2) * scale / h
-    wasmIters =
-      apply
-        ( lambda
-            ( \_ ->
-                apply (apply (hvm2Kernel "mandel" mandelKernel) cr) ci
-            )
-        )
-        (number 0)
-  in
-    if_ wasmOn wasmIters (mandelEscapes cr ci)
+  -> Expr f 'Number
+  -> Effect f ('Array 'Number)
+sampleGrid wasmOn centerRe centerIm scale w h blk blocksX blocksY =
+  ffi
+    ( "(wasmOn,centerRe,centerIm,scale,w,h,blk,bxN,byN)=>{"
+        <> "const out=new Array(bxN*byN);"
+        <> "const half=blk/2;"
+        <> "const buf=new ArrayBuffer(8);"
+        <> "const f64=new Float64Array(buf);"
+        <> "const i64=new BigInt64Array(buf);"
+        <> "const pack=x=>{f64[0]=+x;return i64[0];};"
+        <> "const wasm=globalThis.__jsharkHvm2?.exports?.mandel;"
+        <> "const js=globalThis.__jsharkMandelJs;"
+        <> "const useWasm=wasmOn&&typeof wasm==='function';"
+        <> "let k=0;"
+        <> "for(let by=0;by<byN;by++){"
+        <> "for(let bx=0;bx<bxN;bx++){"
+        <> "const px=bx*blk+half,py=by*blk+half;"
+        <> "const cr=centerRe+(px-w/2)*scale/w;"
+        <> "const ci=centerIm+(py-h/2)*scale/h;"
+        <> "if(useWasm){"
+        <> "const r=wasm(pack(cr),pack(ci));"
+        <> "out[k++]=typeof r==='bigint'?Number(r):r;"
+        <> "}else{"
+        <> "out[k++]=js(cr,ci);"
+        <> "}"
+        <> "}"
+        <> "}"
+        <> "return out;"
+        <> "}"
+    )
+    ( arg wasmOn
+        <: arg centerRe
+        <: arg centerIm
+        <: arg scale
+        <: arg w
+        <: arg h
+        <: arg blk
+        <: arg blocksX
+        <: arg blocksY
+        <: RecNil
+    )
 
 iterColor :: Expr f 'Number -> EffectSyntax f (Expr f 'String)
 iterColor iters =
   bindExpr $
     ffi
-      ( "(i=>{const t=i/"
+      ( "(i=>{const max="
           <> show maxIter
-          <> ";const h=(240-t*220)|0;const s=100;const l=(18+t*62)|0;"
+          <> ";if(i>=max)return '#090912';"
+          <> "const t=i/(max-1);"
+          <> "const h=(285-t*250)|0;"
+          <> "const s=100;"
+          <> "const l=(62+t*28)|0;"
           <> "return 'hsl('+h+','+s+'%,'+l+'%)';})"
       )
       (arg iters <: RecNil)
@@ -228,13 +280,16 @@ fpsLine ::
   -> EffectSyntax f (f 'Unit)
 fpsLine status st wasmOn centerRe centerIm scale = do
   frameN <- st.labFrame
-  frameMs <- st.labTickMs
+  fps <- st.labFps
   let
     mode = if_ wasmOn (string "WASM") (string "JS")
+    fpsTxt = toString (Math.round fps)
   setStatus
     status
-    ( mode
-        <> string " · mandelbrot · frame "
+    ( fpsTxt
+        <> string " fps · "
+        <> mode
+        <> string " · frame "
         <> toString frameN
         <> string " · scale "
         <> toString scale
@@ -242,9 +297,7 @@ fpsLine status st wasmOn centerRe centerIm scale = do
         <> toString centerRe
         <> string "+"
         <> toString centerIm
-        <> string "i · t="
-        <> toString frameMs
-        <> string "ms"
+        <> string "i"
     )
 
 setStatus ::
@@ -268,7 +321,7 @@ runBench st status = do
       benchMandel wasmOn centerRe centerIm (number (-0.5)) (number 0)
   setStatus
     status
-    ( string "bench 2000× mandel → "
+    ( string "bench 50k× mandel → "
         <> toString ms
         <> string " ms ("
         <> if_ wasmOn (string "WASM") (string "JS")
@@ -290,21 +343,14 @@ benchMandel wasmOn cr ci cr2 ci2 =
         <> "const f64=new Float64Array(buf);"
         <> "const i64=new BigInt64Array(buf);"
         <> "const pack=x=>{f64[0]=+x;return i64[0];};"
+        <> "const step=globalThis.__jsharkMandelJs;"
         <> "if(wasmOn){"
         <> "const f=globalThis.__jsharkHvm2?.exports?.mandel;"
         <> "if(typeof f!=='function')return -1;"
-        <> "for(let i=0;i<2000;i++)f(pack(cr+cr2*0.001*i),pack(ci+ci2*0.001*i));"
+        <> "for(let i=0;i<50000;i++)f(pack(cr+cr2*0.001*i),pack(ci+ci2*0.001*i));"
         <> "}else{"
-        <> "const max=64;"
-        <> "const step=(c,d)=>{"
-        <> "let n=0,zr=0,zi=0;"
-        <> "while(n<max&&zr*zr+zi*zi<4){"
-        <> "const nzr=zr*zr-zi*zi+c,nzi=2*zr*zi+d;"
-        <> "zr=nzr;zi=nzi;n++;"
-        <> "}"
-        <> "return n;"
-        <> "};"
-        <> "for(let i=0;i<2000;i++)step(cr+cr2*0.001*i,ci+ci2*0.001*i);"
+        <> "if(typeof step!=='function')return -1;"
+        <> "for(let i=0;i<50000;i++)step(cr+cr2*0.001*i,ci+ci2*0.001*i);"
         <> "}"
         <> "return performance.now()-t0;"
         <> "}"

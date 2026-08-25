@@ -36,8 +36,8 @@ import qualified JShark.Object as Object
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
-import Support
 import Life (initialCatalogCells, initialPop, soupSeedPop)
+import Support
 import System.Directory (findExecutable)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -268,7 +268,8 @@ bunEvalTests =
                       ("document is not defined" `T.isInfixOf` T.pack (show e))
             , testCase "a non-terminating program hits the timeout" $ do
                 let
-                  spin = T.unpack (renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp)))
+                  spin =
+                    T.unpack (renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)

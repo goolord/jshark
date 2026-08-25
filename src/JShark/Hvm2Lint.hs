@@ -22,16 +22,16 @@ import JShark
   , irOptimizedExprFromClosed
   )
 import JShark.EmitBend (emitBendKernel, peelLambdas)
-import qualified JShark.Ir as Ir
 import JShark.Ir
-  ( IrEffect (..)
+  ( IrArg (..)
+  , IrEffect (..)
   , IrExpr (..)
   , IrFieldLit (..)
-  , IrArg (..)
   , irMetaPure
   , irMetaSize
   , metaIrExpr
   )
+import qualified JShark.Ir as Ir
 import JShark.Rec (Rec (..))
 import JShark.Types (ClosedEffect, ClosedExpr)
 import System.IO (hPutStrLn, stderr)
@@ -63,18 +63,18 @@ warnHvm2CandidatesEffect e = mapM_ printCandidate (hvm2CandidatesFromEffect e)
 
 printCandidate :: Hvm2Candidate -> IO ()
 printCandidate c =
-  hPutStrLn stderr $
-    T.unpack $
-      "hvm2-candidate: "
-        <> hvm2CandidateName c
-        <> " (size "
-        <> T.pack (show (hvm2CandidateSize c))
-        <> ", "
-        <> T.pack (show (hvm2CandidateParams c))
-        <> " param(s)): consider `hvm2Kernel "
-        <> hvm2CandidateName c
-        <> " (...)` — "
-        <> T.take 72 (T.strip (hvm2CandidatePreview c))
+  hPutStrLn stderr
+    $ T.unpack
+    $ "hvm2-candidate: "
+      <> hvm2CandidateName c
+      <> " (size "
+      <> T.pack (show (hvm2CandidateSize c))
+      <> ", "
+      <> T.pack (show (hvm2CandidateParams c))
+      <> " param(s)): consider `hvm2Kernel "
+      <> hvm2CandidateName c
+      <> " (...)` — "
+      <> T.take 72 (T.strip (hvm2CandidatePreview c))
 
 scanIrEffect :: Int -> Int -> IrEffect u -> [Hvm2Candidate]
 scanIrEffect minSize n = \case
@@ -109,9 +109,13 @@ scanIrEffect minSize n = \case
   IrU8Fill b v ->
     scanIrExprs minSize n b <> scanIrExprs minSize n v
   IrOptionCaseE o noneE _ someE ->
-    scanIrExprs minSize n o <> scanIrEffect minSize n noneE <> scanIrEffect minSize n someE
+    scanIrExprs minSize n o
+      <> scanIrEffect minSize n noneE
+      <> scanIrEffect minSize n someE
   IrResultCaseE o _ er _ ok ->
-    scanIrExprs minSize n o <> scanIrEffect minSize n er <> scanIrEffect minSize n ok
+    scanIrExprs minSize n o
+      <> scanIrEffect minSize n er
+      <> scanIrEffect minSize n ok
   IrStringCaseE o arms d ->
     scanIrExprs minSize n o
       <> concatMap (scanIrEffect minSize n . snd) arms

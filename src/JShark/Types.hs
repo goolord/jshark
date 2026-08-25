@@ -131,7 +131,6 @@ module JShark.Types
   )
 where
 
-import Prelude hiding ((>>))
 import Control.Monad (ap)
 import Data.Array.Byte (ByteArray)
 import Data.Bits (xor, (.&.), (.|.))
@@ -1097,7 +1096,10 @@ liftBig1 :: (Integer -> Integer) -> Value 'BigInt -> Value 'BigInt
 liftBig1 f (ValueBigInt a) = ValueBigInt (f a)
 
 liftBig2 ::
-  (Integer -> Integer -> Integer) -> Value 'BigInt -> Value 'BigInt -> Value 'BigInt
+  (Integer -> Integer -> Integer)
+  -> Value 'BigInt
+  -> Value 'BigInt
+  -> Value 'BigInt
 liftBig2 f (ValueBigInt a) (ValueBigInt b) = ValueBigInt (f a b)
 
 instance Num (Value 'BigInt) where
@@ -1118,7 +1120,11 @@ instance Num (Expr f 'BigInt) where
     If
       (GTh x (Literal (ValueBigInt 0)))
       (Literal (ValueBigInt 1))
-      (If (LTh x (Literal (ValueBigInt 0))) (bigNeg (Literal (ValueBigInt 1))) (Literal (ValueBigInt 0)))
+      ( If
+          (LTh x (Literal (ValueBigInt 0)))
+          (bigNeg (Literal (ValueBigInt 1)))
+          (Literal (ValueBigInt 0))
+      )
   fromInteger n = Literal (ValueBigInt n)
   negate = bigNeg
 
@@ -1195,6 +1201,7 @@ seqSyntax :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
 seqSyntax = (*>)
 
 infixr 1 >>
+
 (>>) :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
 (>>) = (*>)
 

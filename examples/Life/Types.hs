@@ -48,6 +48,23 @@ module Types
   , lifeToolsId
   , lifeToolsCollapseId
   , lifePauseOverlayId
+  , lifePauseLabelId
+  , lifeDebugId
+  , lifeDebugCollapseId
+  , lifeSettingsId
+  , lifeSettingsCollapseId
+  , lifeSettingsZoomId
+  , lifeSettingsZoomInId
+  , lifeSettingsZoomOutId
+  , lifeSettingsResetId
+  , lifeSettingsGridId
+  , lifeSettingsTickId
+  , lifeSettingsTickValId
+  , gridSizePresets
+  , tickMinMs
+  , tickMaxMs
+  , tickStepMs
+  , tickDefaultMs
   , lifeEraserSizeId
   , lifeEraserRadiusId
   , lifeEraserRadiusValId
@@ -79,8 +96,8 @@ where
 
 import Data.Array.Byte (ByteArray)
 import Data.Char (toLower)
-import qualified Data.Text as T
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Numeric (showHex)
 
@@ -105,7 +122,7 @@ canvasW, canvasH :: Double
 canvasW = 768
 canvasH = 576
 
--- | Grid-resolution RGBA atlas (one texel per cell). ~3 MiB — the sprite
+-- | Grid-resolution RGBA atlas (one texel per cell). ~3 MiB; the sprite
 -- scales it on the GPU so pan/zoom never repaints cells.
 texW, texH :: Double
 texW = fromIntegral gridW
@@ -219,6 +236,56 @@ lifeToolsCollapseId = "life-tools-collapse"
 lifePauseOverlayId :: Text
 lifePauseOverlayId = "life-pause-overlay"
 
+lifePauseLabelId :: Text
+lifePauseLabelId = "life-pause-label"
+
+lifeDebugId :: Text
+lifeDebugId = "life-debug"
+
+lifeDebugCollapseId :: Text
+lifeDebugCollapseId = "life-debug-collapse"
+
+lifeSettingsId :: Text
+lifeSettingsId = "life-settings"
+
+lifeSettingsCollapseId :: Text
+lifeSettingsCollapseId = "life-settings-collapse"
+
+lifeSettingsZoomId :: Text
+lifeSettingsZoomId = "life-settings-zoom"
+
+lifeSettingsZoomInId :: Text
+lifeSettingsZoomInId = "life-settings-zoom-in"
+
+lifeSettingsZoomOutId :: Text
+lifeSettingsZoomOutId = "life-settings-zoom-out"
+
+lifeSettingsResetId :: Text
+lifeSettingsResetId = "life-settings-reset"
+
+lifeSettingsGridId :: Text
+lifeSettingsGridId = "life-settings-grid"
+
+lifeSettingsTickId :: Text
+lifeSettingsTickId = "life-settings-tick"
+
+lifeSettingsTickValId :: Text
+lifeSettingsTickValId = "life-settings-tick-val"
+
+-- | Selectable simulation worlds. Default matches 'gridW' × 'gridH'.
+gridSizePresets :: [(Int, Int)]
+gridSizePresets =
+  [ (256, 192)
+  , (512, 384)
+  , (1024, 768)
+  ]
+
+tickMinMs, tickMaxMs, tickStepMs, tickDefaultMs :: Int
+tickMinMs = 0
+tickMaxMs = 200
+tickStepMs = 5
+tickDefaultMs = 0
+
 lifeEraserSizeId :: Text
 lifeEraserSizeId = "life-eraser-size"
 
@@ -324,16 +391,19 @@ data LifeState = LifeState
   , discoverVisited :: ByteArray
   , discoverStackX :: ByteArray
   , discoverStackY :: ByteArray
-  -- | Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
   , liveList :: [Int]
-  -- | Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
+  -- ^ Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
   , nextLiveList :: [Int]
+  -- ^ Host schema only; runtime is a JS @Array@ of cell indices (@Number@).
   , stepStamp :: ByteArray
-  -- | Host schema only; runtime is a JS @Array@ of changed cell indices.
   , changedList :: [Int]
+  -- ^ Host schema only; runtime is a JS @Array@ of changed cell indices.
   , nextChangedList :: [Int]
   , birthCounts :: ByteArray
   , birthTouched :: ByteArray
   , sceneDirty :: Bool
+  , worldW :: Int
+  , worldH :: Int
+  , tickMs :: Double
   }
   deriving Generic

@@ -25,7 +25,8 @@ module JShark.Emit
   , iifeBody
   , nonEmpty
   , isEmpty
-  ) where
+  )
+where
 
 import Data.List (intersperse)
 import Data.Maybe (mapMaybe)

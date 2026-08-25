@@ -1,5 +1,4 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -8,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -553,57 +553,62 @@ paintGridCells
   visY0
   visY1
   out =
-  FFI
-    ( FFILambda
-        ( "(p,cw,ch,pal,alive,species,w,scale,panX,panY,bg,live,changed,full,vx0,vx1,vy0,vy1,out)=>{"
-            <> "let cx0=1e9,cy0=1e9,cx1=-1,cy1=-1,painted=false;"
-            <> "const bgR=bg&255,bgG=(bg>>8)&255,bgB=(bg>>16)&255,bgA=bg>>>24;"
-            <> "const bump=(a,b,c,d)=>{if(a<cx0)cx0=a;if(b<cy0)cy0=b;if(c>cx1)cx1=c;if(d>cy1)cy1=d;};"
-            <> "const paint=(gi)=>{"
-            <> "const x=gi%w,y=(gi/w)|0;"
-            <> "if(x<vx0||x>=vx1||y<vy0||y>=vy1)return;"
-            <> "const sx0=Math.floor(x*scale+panX),sy0=Math.floor(y*scale+panY);"
-            <> "const sx1=Math.ceil((x+1)*scale+panX),sy1=Math.ceil((y+1)*scale+panY);"
-            <> "const cellW=sx1-sx0,cellH=sy1-sy0;"
-            <> "if(cellW<=0||cellH<=0||sx1<=0||sy1<=0||sx0>=cw||sy0>=ch)return;"
-            <> "const sp=species[gi],base=sp<<2;"
-            <> "const live=alive[gi]&1;"
-            <> "const r=live?pal[base]:bgR,g=live?pal[base+1]:bgG,b=live?pal[base+2]:bgB,a=live?255:bgA;"
-            <> "const dx0=Math.max(0,sx0),dy0=Math.max(0,sy0);"
-            <> "const dx1=Math.min(cw,sx1),dy1=Math.min(ch,sy1);"
-            <> "for(let yy=dy0;yy<dy1;yy++){const row=yy*cw|0;for(let xx=dx0;xx<dx1;xx++){const o=(row+xx)<<2;p[o]=r;p[o+1]=g;p[o+2]=b;p[o+3]=a;}}"
-            <> "bump(dx0,dy0,dx1,dy1);painted=true;"
-            <> "};"
-            <> "if(full){for(let i=0;i<p.length;i+=4){p[i]=bgR;p[i+1]=bgG;p[i+2]=bgB;p[i+3]=bgA;}"
-            <> "for(let k=0,n=live.length|0;k<n;k++)paint(live[k]);"
-            <> "out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=cw;out.dirtyCy1=ch;out.dirtyFull=true;out.dirtyPainted=true;return;}"
-            <> "for(let k=0,n=changed.length|0;k<n;k++)paint(changed[k]);"
-            <> "if(!painted){out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=0;out.dirtyCy1=0;out.dirtyPainted=false;out.dirtyFull=false;return;}"
-            <> "out.dirtyCx0=cx0;out.dirtyCy0=cy0;out.dirtyCx1=cx1;out.dirtyCy1=cy1;out.dirtyFull=false;out.dirtyPainted=painted;"
-            <> "}"
-        )
-    )
-    ( arg pixels
-        <: arg cw
-        <: arg ch
-        <: arg paletteRgba
-        <: arg alive
-        <: arg species
-        <: arg w
-        <: arg scale
-        <: arg panX
-        <: arg panY
-        <: arg bg
-        <: arg liveList
-        <: arg changedList
-        <: arg fullRedraw
-        <: arg visX0
-        <: arg visX1
-        <: arg visY0
-        <: arg visY1
-        <: ArgEffect out
-        <: RecNil
-    )
+    FFI
+      ( FFILambda
+          ( "(p,cw,ch,pal,alive,species,w,scale,panX,panY,bg,live,changed,full,vx0,vx1,vy0,vy1,out)=>{"
+              <> "let cx0=1e9,cy0=1e9,cx1=-1,cy1=-1,painted=false;"
+              <> "const bgR=bg&255,bgG=(bg>>8)&255,bgB=(bg>>16)&255,bgA=bg>>>24;"
+              <> "const bump=(a,b,c,d)=>{if(a<cx0)cx0=a;if(b<cy0)cy0=b;if(c>cx1)cx1=c;if(d>cy1)cy1=d;};"
+              <> "const paint=(gi)=>{"
+              <> "const x=gi%w,y=(gi/w)|0;"
+              <> "if(x<vx0||x>=vx1||y<vy0||y>=vy1)return;"
+              <> "const sx0=Math.floor(x*scale+panX),sy0=Math.floor(y*scale+panY);"
+              <> "const sx1=Math.ceil((x+1)*scale+panX),sy1=Math.ceil((y+1)*scale+panY);"
+              <> "const cellW=sx1-sx0,cellH=sy1-sy0;"
+              <> "if(cellW<=0||cellH<=0||sx1<=0||sy1<=0||sx0>=cw||sy0>=ch)return;"
+              <> "const sp=species[gi],base=sp<<2;"
+              <> "const live=alive[gi]&1;"
+              <> "const r=live?pal[base]:bgR,g=live?pal[base+1]:bgG,b=live?pal[base+2]:bgB,a=live?255:bgA;"
+              <> "const dx0=Math.max(0,sx0),dy0=Math.max(0,sy0);"
+              <> "const dx1=Math.min(cw,sx1),dy1=Math.min(ch,sy1);"
+              <> "for(let yy=dy0;yy<dy1;yy++){const row=yy*cw|0;for(let xx=dx0;xx<dx1;xx++){const o=(row+xx)<<2;p[o]=r;p[o+1]=g;p[o+2]=b;p[o+3]=a;}}"
+              <> "bump(dx0,dy0,dx1,dy1);painted=true;"
+              <> "};"
+              <> "if(full){"
+              <> "const gx0=Math.max(0,vx0|0),gx1=Math.min(w,vx1|0);"
+              <> "const gh=(p.length>>2)/w|0;"
+              <> "const gy0=Math.max(0,vy0|0),gy1=Math.min(gh,vy1|0);"
+              <> "for(let y=gy0;y<gy1;y++){const row=y*w|0;for(let x=gx0;x<gx1;x++){"
+              <> "const o=(row+x)<<2;p[o]=bgR;p[o+1]=bgG;p[o+2]=bgB;p[o+3]=bgA;}}"
+              <> "for(let k=0,n=live.length|0;k<n;k++)paint(live[k]);"
+              <> "out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=cw;out.dirtyCy1=ch;out.dirtyFull=true;out.dirtyPainted=true;return;}"
+              <> "for(let k=0,n=changed.length|0;k<n;k++)paint(changed[k]);"
+              <> "if(!painted){out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=0;out.dirtyCy1=0;out.dirtyPainted=false;out.dirtyFull=false;return;}"
+              <> "out.dirtyCx0=cx0;out.dirtyCy0=cy0;out.dirtyCx1=cx1;out.dirtyCy1=cy1;out.dirtyFull=false;out.dirtyPainted=painted;"
+              <> "}"
+          )
+      )
+      ( arg pixels
+          <: arg cw
+          <: arg ch
+          <: arg paletteRgba
+          <: arg alive
+          <: arg species
+          <: arg w
+          <: arg scale
+          <: arg panX
+          <: arg panY
+          <: arg bg
+          <: arg liveList
+          <: arg changedList
+          <: arg fullRedraw
+          <: arg visX0
+          <: arg visX1
+          <: arg visY0
+          <: arg visY1
+          <: ArgEffect out
+          <: RecNil
+      )
 
 -- | Zero a rectangular region of a row-major @Uint8Array@ (@y * gridW + x@).
 -- Half-open intervals: @x0 <= x < x1@, @y0 <= y < y1@.

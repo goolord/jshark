@@ -17,6 +17,7 @@ module Kernels
   , mandelAt
   , crAt
   , ciAt
+  , mandelJsSource
   )
 where
 
@@ -48,27 +49,32 @@ mandelEscapes :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 mandelEscapes cr ci =
   letRec
     ( \f ->
-        lambda (\n ->
-          lambda (\zr ->
-            lambda (\zi ->
-              if_
-                ( n .>= number (fromIntegral maxIter)
-                    .|| (zr * zr + zi * zi) .>= escapeR2
+        lambda
+          ( \n ->
+              lambda
+                ( \zr ->
+                    lambda
+                      ( \zi ->
+                          if_
+                            ( n
+                                .>= number (fromIntegral maxIter)
+                                .|| (zr * zr + zi * zi)
+                                .>= escapeR2
+                            )
+                            n
+                            ( apply
+                                ( apply
+                                    ( apply
+                                        f
+                                        (n + number 1)
+                                    )
+                                    (zr * zr - zi * zi + cr)
+                                )
+                                (number 2 * zr * zi + ci)
+                            )
+                      )
                 )
-                n
-                ( apply
-                    ( apply
-                        ( apply
-                            f
-                            (n + number 1)
-                        )
-                        (zr * zr - zi * zi + cr)
-                    )
-                    (number 2 * zr * zi + ci)
-                )
-            )
           )
-        )
     )
     ( \f ->
         apply
@@ -111,3 +117,17 @@ mandelAt ::
   -> Expr f 'Number
 mandelAt px py w h centerRe centerIm scale =
   mandelEscapes (crAt px w centerRe scale) (ciAt py h centerIm scale)
+
+-- | JS fallback body; keep in sync with 'examples/Hvm2Demo/shims.c'.
+mandelJsSource :: String
+mandelJsSource =
+  "function(cr,ci){"
+    ++ "let n=0,zr=0,zi=0;"
+    ++ "while(n<"
+    ++ show maxIter
+    ++ "&&zr*zr+zi*zi<4){"
+    ++ "const nzr=zr*zr-zi*zi+cr,nzi=2*zr*zi+ci;"
+    ++ "zr=nzr;zi=nzi;n++;"
+    ++ "}"
+    ++ "return n;"
+    ++ "}"

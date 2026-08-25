@@ -43,7 +43,8 @@ exampleTests =
 parseExampleCase :: String -> ClosedEffect 'Unit -> TestTree
 parseExampleCase name eff = testCase name $ do
   js <- renderExample eff
-  let probe = "(() => { function unused() {\n" ++ js ++ "\n} return 1; })()"
+  let
+    probe = "(() => { function unused() {\n" ++ js ++ "\n} return 1; })()"
   got <- T.unpack <$> runJS probe
   assertEqual (name ++ " should parse") "1" got
 

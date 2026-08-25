@@ -20,22 +20,18 @@ import Grid (StepCtx)
 import JShark.Api
 import JShark.Generic (MutableObjectOf)
 import JShark.Rec (Rec (..), (<:))
-import Types (gridH, gridW)
 
-initWorkerEngine :: EffectSyntax f (f 'Unit)
-initWorkerEngine =
+initWorkerEngine :: Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+initWorkerEngine w h =
   toSyntax $
-      ffi
+    ffi
       ( "((w,h)=>{const E=globalThis.LifeEngine;if(!E)return;"
           <> "E.init({width:w|0,height:h|0,workerCount:0});"
           <> "E._wasmReady=false;"
           <> "void E.loadWasm('js/life-simd.wasm');"
           <> "})"
       )
-      ( arg (number (fromIntegral gridW))
-          <: arg (number (fromIntegral gridH))
-          <: RecNil
-      )
+      (arg w <: arg h <: RecNil)
 
 engineCanStep :: EffectSyntax f (Expr f 'Bool)
 engineCanStep =
@@ -97,29 +93,29 @@ engineStepGeneration
   nextLiveList
   nextChangedList
   stepCtx = do
-  bindExpr $
-    ffi
-      ( "((alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList,scratch)=>{"
-          <> "const S=globalThis.LifeEngineSync;"
-          <> "const r=S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList):null;"
-          <> "if(!r)return false;"
-          <> "scratch.pop=r.pop;"
-          <> "scratch.bx0=r.bx0;scratch.by0=r.by0;scratch.bx1=r.bx1;scratch.by1=r.by1;"
-          <> "return true;"
-          <> "})"
-      )
-      ( arg alive
-          <: arg species
-          <: arg nextAlive
-          <: arg nextSpecies
-          <: arg w
-          <: arg h
-          <: arg x0
-          <: arg y0
-          <: arg x1
-          <: arg y1
-          <: arg nextLiveList
-          <: arg nextChangedList
-          <: ArgEffect stepCtx
-          <: RecNil
-      )
+    bindExpr $
+      ffi
+        ( "((alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList,scratch)=>{"
+            <> "const S=globalThis.LifeEngineSync;"
+            <> "const r=S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList):null;"
+            <> "if(!r)return false;"
+            <> "scratch.pop=r.pop;"
+            <> "scratch.bx0=r.bx0;scratch.by0=r.by0;scratch.bx1=r.bx1;scratch.by1=r.by1;"
+            <> "return true;"
+            <> "})"
+        )
+        ( arg alive
+            <: arg species
+            <: arg nextAlive
+            <: arg nextSpecies
+            <: arg w
+            <: arg h
+            <: arg x0
+            <: arg y0
+            <: arg x1
+            <: arg y1
+            <: arg nextLiveList
+            <: arg nextChangedList
+            <: ArgEffect stepCtx
+            <: RecNil
+        )

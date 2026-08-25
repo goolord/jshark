@@ -158,10 +158,35 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
+import qualified Data.Vector as V
+import Data.Word (Word32)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
-import qualified Data.Vector as V
+import JShark.Emit
+  ( JS
+  , blockBody
+  , braces
+  , brackets
+  , colon
+  , dquotes
+  , hcat
+  , iifeBody
+  , jsDecimal
+  , jsDouble
+  , jsString
+  , jsText
+  , nonEmpty
+  , parens
+  , punctuate
+  , renderJS
+  , renderJSCompact
+  , semi
+  , vcat
+  , vcatNonEmpty
+  , ($$)
+  , (<+>)
+  )
 import qualified JShark.Flat as Flat
 import qualified JShark.FlatSoA as FlatSoA
 import qualified JShark.Ir as Ir
@@ -176,30 +201,6 @@ import qualified JShark.Prim as Prim
 import JShark.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Rec
 import JShark.Types
-import JShark.Emit
-  ( JS
-  , ($$)
-  , (<+>)
-  , braces
-  , blockBody
-  , brackets
-  , colon
-  , dquotes
-  , hcat
-  , jsDecimal
-  , jsDouble
-  , jsString
-  , jsText
-  , iifeBody
-  , nonEmpty
-  , parens
-  , punctuate
-  , renderJS
-  , renderJSCompact
-  , semi
-  , vcat
-  , vcatNonEmpty
-  )
 import Numeric (readInt, showHex)
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -3081,8 +3082,9 @@ hvm2ExportRef name =
   let
     key = dquotes (jsString (escapeJsString (T.unpack name)))
     err =
-      dquotes (jsString (escapeJsString ("HVM2 kernel not loaded: " ++ T.unpack name)))
-  in
+      dquotes
+        (jsString (escapeJsString ("HVM2 kernel not loaded: " ++ T.unpack name)))
+   in
     "((function(){var f=globalThis.__jsharkHvm2?.exports?.["
       <> key
       <> "];if(typeof f!==\"function\")return function(){throw new Error("
@@ -4335,7 +4337,7 @@ flatIsUnitExpr prog nid = case Flat.flatNode prog nid of
     case Flat.flatLitValue prog li of
       ValueUnit -> True
       _ -> False
-  Flat.FE_Var{} -> False
+  Flat.FE_Var {} -> False
   _ -> False
 
 flatIsUnitEffect :: Flat.FlatProgram -> Flat.NodeId -> Bool
@@ -4362,10 +4364,10 @@ flatIsUnitEffect prog nid = case Flat.flatNode prog nid of
 flatIsSimpleEffectNode :: Flat.FlatProgram -> Flat.NodeId -> Bool
 flatIsSimpleEffectNode prog nid = case Flat.flatNode prog nid of
   Flat.FX_Lift eid -> flatIsSimpleNode prog eid
-  Flat.FX_FFI{} -> True
-  Flat.FX_CallMethod{} -> True
-  Flat.FX_UnsafeObject{} -> True
-  Flat.FX_UnsafeObjectGet{} -> True
+  Flat.FX_FFI {} -> True
+  Flat.FX_CallMethod {} -> True
+  Flat.FX_UnsafeObject {} -> True
+  Flat.FX_UnsafeObjectGet {} -> True
   Flat.FX_ArrayLit es -> all (flatIsSimpleEffectNode prog) es
   _ -> False
 
@@ -4378,42 +4380,42 @@ flatIsSimpleNode prog nid = case Flat.flatNode prog nid of
   Flat.FE_KTypeOf _ -> True
   Flat.FE_KNegate _ -> True
   Flat.FE_KBigNeg _ -> True
-  Flat.FE_KConcat{} -> False
-  Flat.FE_KPlus{} -> False
-  Flat.FE_KTimes{} -> False
-  Flat.FE_KMinus{} -> False
-  Flat.FE_KFracDiv{} -> False
-  Flat.FE_KRem{} -> False
-  Flat.FE_KBitAnd{} -> False
-  Flat.FE_KBitOr{} -> False
-  Flat.FE_KBitXor{} -> False
-  Flat.FE_KShl{} -> False
-  Flat.FE_KShr{} -> False
-  Flat.FE_KUShr{} -> False
-  Flat.FE_KBig{} -> False
-  Flat.FE_KAnd{} -> False
-  Flat.FE_KOr{} -> False
-  Flat.FE_KEq{} -> False
-  Flat.FE_KNEq{} -> False
-  Flat.FE_KGTh{} -> False
-  Flat.FE_KLTh{} -> False
-  Flat.FE_KGTEq{} -> False
-  Flat.FE_KLTEq{} -> False
-  Flat.FE_Fixed{} -> True
-  Flat.FE_MethMap{} -> False
-  Flat.FE_MethFilter{} -> False
-  Flat.FE_MethReduce{} -> False
-  Flat.FE_MethReduceRight{} -> False
-  Flat.FE_MethToSorted{} -> False
-  Flat.FE_MethFrom{} -> False
-  Flat.FE_FnLit{} -> True
-  Flat.FE_Index{} -> True
-  Flat.FE_U8Index{} -> True
-  Flat.FE_Error{} -> False
+  Flat.FE_KConcat {} -> False
+  Flat.FE_KPlus {} -> False
+  Flat.FE_KTimes {} -> False
+  Flat.FE_KMinus {} -> False
+  Flat.FE_KFracDiv {} -> False
+  Flat.FE_KRem {} -> False
+  Flat.FE_KBitAnd {} -> False
+  Flat.FE_KBitOr {} -> False
+  Flat.FE_KBitXor {} -> False
+  Flat.FE_KShl {} -> False
+  Flat.FE_KShr {} -> False
+  Flat.FE_KUShr {} -> False
+  Flat.FE_KBig {} -> False
+  Flat.FE_KAnd {} -> False
+  Flat.FE_KOr {} -> False
+  Flat.FE_KEq {} -> False
+  Flat.FE_KNEq {} -> False
+  Flat.FE_KGTh {} -> False
+  Flat.FE_KLTh {} -> False
+  Flat.FE_KGTEq {} -> False
+  Flat.FE_KLTEq {} -> False
+  Flat.FE_Fixed {} -> True
+  Flat.FE_MethMap {} -> False
+  Flat.FE_MethFilter {} -> False
+  Flat.FE_MethReduce {} -> False
+  Flat.FE_MethReduceRight {} -> False
+  Flat.FE_MethToSorted {} -> False
+  Flat.FE_MethFrom {} -> False
+  Flat.FE_FnLit {} -> True
+  Flat.FE_Index {} -> True
+  Flat.FE_U8Index {} -> True
+  Flat.FE_Error {} -> False
   Flat.FE_UnsafeNullable x -> flatIsSimpleNode prog x
-  Flat.FE_FrozenLit{} -> True
-  Flat.FE_Hvm2Ref{} -> True
-  Flat.FE_GetField{} -> True
+  Flat.FE_FrozenLit {} -> True
+  Flat.FE_Hvm2Ref {} -> True
+  Flat.FE_GetField {} -> True
   _ -> False
 
 flatWrapOperand :: Flat.FlatProgram -> Flat.NodeId -> JS -> JS
@@ -4483,7 +4485,8 @@ flatRenderField env prog s = \case
       (s', MkCode d r _) = flatEffectfulAST' env s prog eid
      in
       ( s'
-      , ( fromMaybe mempty d
+      ,
+        ( fromMaybe mempty d
         , (dquotes (jsText k) <> ":") <+> fromMaybe mempty r
         )
       )
@@ -4492,7 +4495,8 @@ flatRenderField env prog s = \case
       (s', MkCode d r _) = flatEffectfulAST' env s prog eid
      in
       ( s'
-      , ( fromMaybe mempty d
+      ,
+        ( fromMaybe mempty d
         , (dquotes (jsText k) <> ":") <+> fromMaybe mempty r
         )
       )
@@ -4619,7 +4623,11 @@ flatRenderKernel env s0 prog = \case
           (s2, Code xDecl xRef) = flatPureAST' env s1 prog x
           (s3, Code yDecl yRef) = flatPureAST' env s2 prog y
          in
-          (s3, Code (xDecl $$ yDecl) (jsValueEq (flatWrapOperand prog x xRef) (flatWrapOperand prog y yRef)))
+          ( s3
+          , Code
+              (xDecl $$ yDecl)
+              (jsValueEq (flatWrapOperand prog x xRef) (flatWrapOperand prog y yRef))
+          )
     | otherwise ->
         flatRenderBin env "===" s0 prog x y
   Flat.FE_KNEq structural x y
@@ -4629,7 +4637,11 @@ flatRenderKernel env s0 prog = \case
           (s2, Code xDecl xRef) = flatPureAST' env s1 prog x
           (s3, Code yDecl yRef) = flatPureAST' env s2 prog y
          in
-          (s3, Code (xDecl $$ yDecl) (jsValueNEq (flatWrapOperand prog x xRef) (flatWrapOperand prog y yRef)))
+          ( s3
+          , Code
+              (xDecl $$ yDecl)
+              (jsValueNEq (flatWrapOperand prog x xRef) (flatWrapOperand prog y yRef))
+          )
     | otherwise ->
         flatRenderBin env "!==" s0 prog x y
   Flat.FE_KGTh x y -> flatRenderBin env ">" s0 prog x y
@@ -4681,7 +4693,10 @@ flatRenderFold env method s0 prog arrId zId tagA tagB bodyId =
     env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
     (s5, Code exDecl exRef) = flatPureAST' env' s4 prog bodyId
     cb = jsCallback [nJS nAcc, nJS nElem] exDecl exRef
-    call = flatWrapOperand prog arrId rRef <> jsString method <> parens (cb <> ", " <> zRef)
+    call =
+      flatWrapOperand prog arrId rRef
+        <> jsString method
+        <> parens (cb <> ", " <> zRef)
    in
     (s5, Code (rDecl $$ zDecl) call)
 
@@ -5044,37 +5059,37 @@ flatPureAST' !env !s0 prog nid =
       (s0, Code mempty (hvm2ExportRef (Flat.flatText prog ti)))
     knode ->
       case knode of
-        Flat.FE_KConcat{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KPlus{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KTimes{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KMinus{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KNegate{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KFracDiv{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KRem{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBitAnd{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBitOr{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBitXor{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KShl{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KShr{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KUShr{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBig{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBigNeg{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KAnd{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KOr{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KEq{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KNEq{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KGTh{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KLTh{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KGTEq{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KLTEq{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KShow{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KTypeOf{} -> flatRenderKernel env s0 prog knode
-        Flat.FE_MethMap{} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethFilter{} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethReduce{} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethReduceRight{} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethToSorted{} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethFrom{} -> flatRenderMethod env s0 prog knode
+        Flat.FE_KConcat {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KPlus {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KTimes {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KMinus {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KNegate {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KFracDiv {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KRem {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBitAnd {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBitOr {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBitXor {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KShl {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KShr {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KUShr {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBig {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KBigNeg {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KAnd {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KOr {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KEq {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KNEq {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KGTh {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KLTh {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KGTEq {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KLTEq {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KShow {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_KTypeOf {} -> flatRenderKernel env s0 prog knode
+        Flat.FE_MethMap {} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethFilter {} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethReduce {} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethReduceRight {} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethToSorted {} -> flatRenderMethod env s0 prog knode
+        Flat.FE_MethFrom {} -> flatRenderMethod env s0 prog knode
         _ -> error "JShark.flatPureAST': unexpected node"
 
 flatEffectfulAST' ::
@@ -5367,7 +5382,7 @@ ifElseStmt cRef tDecl tRef eDecl eRef
       "if"
         <+> parens cRef
         <+> blockBody (asStmt tDecl tRef)
-          $$ "else"
+        $$ "else"
         <+> blockBody (asStmt eDecl eRef)
 
 assignResult :: Text -> Maybe (JS) -> JS
@@ -5438,7 +5453,7 @@ ifAssignOrStmt (Just rv) c tD tR eD eR =
   "if"
     <+> parens c
     <+> blockBody (fromMaybe mempty tD $$ assignResult rv tR)
-      $$ "else"
+    $$ "else"
     <+> blockBody (fromMaybe mempty eD $$ assignResult rv eR)
 
 tryCatchStmt ::
@@ -5457,11 +5472,11 @@ tryCatchStmt mRes catchN aDecl aRef bDecl bRef =
       Nothing ->
         "try"
           <+> blockBody (asStmt aDecl aRef)
-            $$ (catchHead <+> blockBody (asStmt bDecl bRef))
+          $$ (catchHead <+> blockBody (asStmt bDecl bRef))
       Just rv ->
         "try"
           <+> blockBody (fromMaybe mempty aDecl $$ assignResult rv aRef)
-            $$ (catchHead <+> blockBody (fromMaybe mempty bDecl $$ assignResult rv bRef))
+          $$ (catchHead <+> blockBody (fromMaybe mempty bDecl $$ assignResult rv bRef))
 
 renderFunction :: Int -> Maybe (JS) -> Maybe (JS) -> JS
 renderFunction nParam decl ref =
@@ -5495,7 +5510,8 @@ renderFFIInvoke :: FFIForm -> JS -> JS
 renderFFIInvoke fn argRefs = case fn of
   FFILambda s -> parens (jsText s) <> parens argRefs
   FFICall s ->
-    let callee = jsText s
+    let
+      callee = jsText s
      in
       if "=>" `T.isInfixOf` s && not (isWholeParenthesized s)
         then parens callee <> parens argRefs

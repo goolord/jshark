@@ -28,8 +28,8 @@ module LifeTestSupport
 where
 
 import Grid
-  ( StepScratch (..)
-  , StepCtx (..)
+  ( StepCtx (..)
+  , StepScratch (..)
   , cellIdx
   , processCell
   , rebuildPackedCounts
@@ -53,20 +53,29 @@ assertEqual expected actual = do
   done
 
 assertAlive ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 assertAlive grid w x y = do
   let
     i = cellIdx w x y
   b <- aliveBit grid i
   assertEqual (number 1) b
 
-aliveBit :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+aliveBit ::
+  Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
 aliveBit grid i = do
   b <- u8Get grid i
   pure (bitAnd b (number 1))
 
 setAlive ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 setAlive grid w x y = do
   let
     i = cellIdx w x y
@@ -78,7 +87,11 @@ clearBinaryGrid grid = do
   toSyntax_ (u8Fill grid (number 0))
   done
 
-gridPop :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+gridPop ::
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f 'Number)
 gridPop grid w h = do
   ref <- hold (toObject (StepScratch 0 0 0 0 0))
   let
@@ -91,7 +104,10 @@ gridPop grid w h = do
   ref.pop
 
 seedBlock ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 seedBlock grid w h = do
   toSyntax_ (u8Fill grid (number 0))
   setAlive grid w (number 1) (number 1)
@@ -102,7 +118,10 @@ seedBlock grid w h = do
   done
 
 seedBeehive ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 seedBeehive grid w h = do
   toSyntax_ (u8Fill grid (number 0))
   setAlive grid w (number 1) (number 0)
@@ -115,7 +134,10 @@ seedBeehive grid w h = do
   done
 
 seedBlinkerHorizontal ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 seedBlinkerHorizontal grid w h = do
   toSyntax_ (u8Fill grid (number 0))
   setAlive grid w (number 1) (number 2)
@@ -125,7 +147,10 @@ seedBlinkerHorizontal grid w h = do
   done
 
 seedBlinkerVertical ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 seedBlinkerVertical grid w h = do
   toSyntax_ (u8Fill grid (number 0))
   setAlive grid w (number 2) (number 1)

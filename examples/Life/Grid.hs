@@ -136,7 +136,10 @@ bumpPackedNeighbors grid w h x y delta =
           setU8 grid ni (cur + delta)
 
 setPackedAlive ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
 setPackedAlive grid i alive = do
   cur <- u8Get grid i
   setU8 grid i (bitAnd cur (number 0xFE) + alive)
@@ -392,80 +395,84 @@ stepGrid
   stepCtx
   birthCounts
   birthTouched = do
-  let
-    (xStart, yStart, xStop, yStop) =
-      clampLiveBounds w h x0 y0 x1 y1 (number 1)
-    regionCells = (xStop - xStart) * (yStop - yStart)
-  let
-    copyFull = regionCells .> (w * h) / number 2
-  toSyntax_ $
-    ifE
-      (toEffect copyFull)
-      (u8Copy nextAlive alive)
-      (u8CopyRegion nextAlive alive w xStart yStart xStop yStop)
-  toSyntax_ $
-    ifE
-      (toEffect copyFull)
-      (u8Fill nextSpecies (number 0))
-      (u8FillRegion nextSpecies w xStart yStart xStop yStop (number 0))
-  set @"bx0" stepCtx (number 1e9)
-  set @"by0" stepCtx (number 1e9)
-  set @"bx1" stepCtx (number (-1))
-  set @"by1" stepCtx (number (-1))
-  set @"pop" stepCtx 0
-  let
-    runCell x y =
-      processCell
-        alive
-        species
-        nextAlive
-        nextSpecies
-        nextLiveList
-        nextChangedList
-        stepCtx
-        birthCounts
-        birthTouched
-        w
-        h
-        x
-        y
-    runIndex i = do
-      -- Stamp dedup only on the sparse path; dense scans call 'runCell' directly.
-      s <- u8Get stepStamp i
-      whenS (s .!= stepTag) $ do
-        setU8 stepStamp i stepTag
+    let
+      (xStart, yStart, xStop, yStop) =
+        clampLiveBounds w h x0 y0 x1 y1 (number 1)
+      regionCells = (xStop - xStart) * (yStop - yStart)
+    let
+      copyFull = regionCells .> (w * h) / number 2
+    toSyntax_ $
+      ifE
+        (toEffect copyFull)
+        (u8Copy nextAlive alive)
+        (u8CopyRegion nextAlive alive w xStart yStart xStop yStop)
+    toSyntax_ $
+      ifE
+        (toEffect copyFull)
+        (u8Fill nextSpecies (number 0))
+        (u8FillRegion nextSpecies w xStart yStart xStop yStop (number 0))
+    set @"bx0" stepCtx (number 1e9)
+    set @"by0" stepCtx (number 1e9)
+    set @"bx1" stepCtx (number (-1))
+    set @"by1" stepCtx (number (-1))
+    set @"pop" stepCtx 0
+    let
+      runCell x y =
+        processCell
+          alive
+          species
+          nextAlive
+          nextSpecies
+          nextLiveList
+          nextChangedList
+          stepCtx
+          birthCounts
+          birthTouched
+          w
+          h
+          x
+          y
+      runIndex i = do
+        -- Stamp dedup only on the sparse path; dense scans call 'runCell' directly.
+        s <- u8Get stepStamp i
+        whenS (s .!= stepTag) $ do
+          setU8 stepStamp i stepTag
+          let
+            x = rem_ i w
+            y = Math.floor (i / w)
+          runCell x y
+      runIndexWithNeighbors i = do
+        runIndex i
         let
           x = rem_ i w
           y = Math.floor (i / w)
-        runCell x y
-    runIndexWithNeighbors i = do
-      runIndex i
-      let
-        x = rem_ i w
-        y = Math.floor (i / w)
-      forRange_ (number (-1)) (number 2) $ \dy ->
-        forRange_ (number (-1)) (number 2) $ \dx ->
-          whenS (not_ (dx .== 0 .&& dy .== 0)) $ do
-            let
-              nx = x + dx
-              ny = y + dy
-            whenS (inBounds w h nx ny) $ runIndex (cellIdx w nx ny)
-  -- Sparse when bbox scan would touch >> live cells (~12× pop crossover in practice).
-  ifS
-    ( prevPop .> 0
-        .&& regionCells .> prevPop * number 12
-        .&& Array.length prevLiveList .> 0
-    )
-    ( forRange_ (number 0) (Array.length prevLiveList) $ \k -> do
-        let
-          i = Array.index prevLiveList k
-        runIndexWithNeighbors i
-    )
-    ( forRange_ yStart yStop $ \y ->
-        forRange_ xStart xStop $ \x ->
-          runCell x y
-    )
-  stepCtx.pop
+        forRange_ (number (-1)) (number 2) $ \dy ->
+          forRange_ (number (-1)) (number 2) $ \dx ->
+            whenS (not_ (dx .== 0 .&& dy .== 0)) $ do
+              let
+                nx = x + dx
+                ny = y + dy
+              whenS (inBounds w h nx ny) $ runIndex (cellIdx w nx ny)
+    -- Sparse when bbox scan would touch >> live cells (~12× pop crossover in practice).
+    ifS
+      ( prevPop
+          .> 0
+          .&& regionCells
+          .> prevPop
+          * number 12
+            .&& Array.length prevLiveList
+            .> 0
+      )
+      ( forRange_ (number 0) (Array.length prevLiveList) $ \k -> do
+          let
+            i = Array.index prevLiveList k
+          runIndexWithNeighbors i
+      )
+      ( forRange_ yStart yStop $ \y ->
+          forRange_ xStart xStop $ \x ->
+            runCell x y
+      )
+    stepCtx.pop
 
 processCell ::
   Expr f 'Uint8Array
@@ -496,60 +503,60 @@ processCell
   h
   x
   y = do
-  let
-    i = cellIdx w x y
-  b <- u8Get alive i
-  let
-    alive0 = bitAnd b (number 1)
-    nCount = packedCount b
-  sp <- u8Get species i
-  set @"touchedLen" stepCtx 0
-  set @"best" stepCtx 0
-  set @"bestCount" stepCtx 0
-  whenS (alive0 .== 0 .&& nCount .== 3) $
-    forRange_ (number (-1)) (number 2) $ \dy ->
-      forRange_ (number (-1)) (number 2) $ \dx ->
-        whenS (not_ (dx .== 0 .&& dy .== 0)) $
-          countBirthSpecies alive species counts touchedBuf stepCtx w h x y dx dy
-  bestSp <- stepCtx.best
-  whenS
-    (alive0 .== 1 .&& (nCount .== 2 .|| nCount .== 3))
-    ( do
-        setU8 nextSpecies i sp
-        Array.push_ nextLiveList i
-        bumpPop stepCtx
-        bumpBounds stepCtx x y
-    )
-  whenS
-    (alive0 .== 1 .&& not_ (nCount .== 2 .|| nCount .== 3))
-    ( markDead
-        nextAlive
-        nextSpecies
-        nextLiveList
-        nextChangedList
-        w
-        h
-        x
-        y
-        i
-    )
-  whenS
-    (alive0 .== 0 .&& nCount .== 3)
-    ( markBorn
-        nextAlive
-        nextSpecies
-        nextLiveList
-        nextChangedList
-        stepCtx
-        w
-        h
-        x
-        y
-        i
-        bestSp
-    )
-  whenS (alive0 .== 0 .&& nCount .!= 3) (setU8 nextSpecies i (number 0))
-  resetBirthCounts counts touchedBuf stepCtx
+    let
+      i = cellIdx w x y
+    b <- u8Get alive i
+    let
+      alive0 = bitAnd b (number 1)
+      nCount = packedCount b
+    sp <- u8Get species i
+    set @"touchedLen" stepCtx 0
+    set @"best" stepCtx 0
+    set @"bestCount" stepCtx 0
+    whenS (alive0 .== 0 .&& nCount .== 3) $
+      forRange_ (number (-1)) (number 2) $ \dy ->
+        forRange_ (number (-1)) (number 2) $ \dx ->
+          whenS (not_ (dx .== 0 .&& dy .== 0)) $
+            countBirthSpecies alive species counts touchedBuf stepCtx w h x y dx dy
+    bestSp <- stepCtx.best
+    whenS
+      (alive0 .== 1 .&& (nCount .== 2 .|| nCount .== 3))
+      ( do
+          setU8 nextSpecies i sp
+          Array.push_ nextLiveList i
+          bumpPop stepCtx
+          bumpBounds stepCtx x y
+      )
+    whenS
+      (alive0 .== 1 .&& not_ (nCount .== 2 .|| nCount .== 3))
+      ( markDead
+          nextAlive
+          nextSpecies
+          nextLiveList
+          nextChangedList
+          w
+          h
+          x
+          y
+          i
+      )
+    whenS
+      (alive0 .== 0 .&& nCount .== 3)
+      ( markBorn
+          nextAlive
+          nextSpecies
+          nextLiveList
+          nextChangedList
+          stepCtx
+          w
+          h
+          x
+          y
+          i
+          bestSp
+      )
+    whenS (alive0 .== 0 .&& nCount .!= 3) (setU8 nextSpecies i (number 0))
+    resetBirthCounts counts touchedBuf stepCtx
 
 markBorn ::
   Expr f 'Uint8Array
@@ -684,9 +691,13 @@ expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
     yb = Math.min (h - number 1) (y1 + number 1)
     regionCells = (xb - xa + number 1) * (yb - ya + number 1)
   ifS
-    ( prevPop .> 0
-        .&& Array.length liveList .> 0
-        .&& Array.length liveList .< regionCells / number 4
+    ( prevPop
+        .> 0
+        .&& Array.length liveList
+        .> 0
+        .&& Array.length liveList
+        .< regionCells
+        / number 4
     )
     ( forRange_ (number 0) (Array.length liveList) $ \k -> do
         let
@@ -751,54 +762,56 @@ drawGridViewport
   renderDirty
   viewport
   now = do
-  let
-    cellChanged = Array.length changedList .> 0
-    needsPaint = sceneDirty .|| cellChanged
-    needsDraw = needsPaint .|| viewportDirty
-    -- Dead cells get A=0 so the SDF can read liveness from atlas alpha.
-    bg =
-      number 15
-        + shl (number 23) (number 8)
-        + shl (number 42) (number 16)
-  whenS needsPaint $
-    do
-      let
-        cellScale = px * zoomLevel
-        visX0 =
-          Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
-        visX1 =
-          Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
-        visY0 =
-          Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
-        visY1 =
-          Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
-      toSyntax_ $
-        paintGridCells
-          pixels
-          w
-          h
-          paletteRgba
-          alive
-          species
-          w
-          (number 1)
-          (number 0)
-          (number 0)
-          bg
-          liveList
-          changedList
-          sceneDirty
-          visX0
-          visX1
-          visY0
-          visY1
-          renderDirty
-      done
-  sprH <- hold (expr sprite)
-  gridTex <- hold (expr texture)
-  whenS needsDraw $ Pixi.setSpriteViewport sprH panX panY zoomLevel px
-  Pixi.presentGrid app viewport gridTex now needsPaint needsDraw
-  done
+    let
+      cellChanged = Array.length changedList .> 0
+      -- Atlas only stores the current vis rect; pan/zoom must refill it.
+      visRefresh = sceneDirty .|| viewportDirty
+      needsPaint = visRefresh .|| cellChanged
+      needsDraw = needsPaint .|| viewportDirty
+      -- Dead cells get A=0 so the SDF can read liveness from atlas alpha.
+      bg =
+        number 15
+          + shl (number 23) (number 8)
+          + shl (number 42) (number 16)
+    whenS needsPaint $
+      do
+        let
+          cellScale = px * zoomLevel
+          visX0 =
+            Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
+          visX1 =
+            Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
+          visY0 =
+            Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
+          visY1 =
+            Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
+        toSyntax_ $
+          paintGridCells
+            pixels
+            w
+            h
+            paletteRgba
+            alive
+            species
+            w
+            (number 1)
+            (number 0)
+            (number 0)
+            bg
+            liveList
+            changedList
+            visRefresh
+            visX0
+            visX1
+            visY0
+            visY1
+            renderDirty
+        done
+    sprH <- hold (expr sprite)
+    gridTex <- hold (expr texture)
+    whenS needsDraw $ Pixi.setSpriteViewport sprH panX panY zoomLevel px
+    Pixi.presentGrid app viewport gridTex now needsPaint needsDraw
+    done
 
 -- | CPU fallback when WebGL is lost or unavailable: paint the atlas, then
 --   blit it onto the 2D overlay canvas with the same pan/zoom transform the
@@ -812,6 +825,7 @@ drawGridFallback ::
   -> Expr f 'Uint8Array
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
+  -> Expr f 'Bool
   -> Expr f 'Bool
   -> Expr f 'Number
   -> Expr f 'Number
@@ -832,6 +846,7 @@ drawGridFallback
   liveList
   changedList
   sceneDirty
+  viewportDirty
   w
   h
   px
@@ -841,47 +856,48 @@ drawGridFallback
   panY
   zoomLevel
   renderDirty = do
-  let
-    needsPaint = sceneDirty .|| Array.length changedList .> 0
-    cellScale = px * zoomLevel
-    visX0 =
-      Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
-    visX1 =
-      Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
-    visY0 =
-      Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
-    visY1 =
-      Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
-    bg =
-      number 15
-        + shl (number 23) (number 8)
-        + shl (number 42) (number 16)
-  whenS needsPaint $ do
-    toSyntax_ $
-      paintGridCells
-        pixels
-        w
-        h
-        paletteRgba
-        alive
-        species
-        w
-        (number 1)
-        (number 0)
-        (number 0)
-        bg
-        liveList
-        changedList
-        sceneDirty
-        visX0
-        visX1
-        visY0
-        visY1
-        renderDirty
-    done
-  toSyntax_
-    $ discard
-    $ ffi
+    let
+      visRefresh = sceneDirty .|| viewportDirty
+      needsPaint = visRefresh .|| Array.length changedList .> 0
+      cellScale = px * zoomLevel
+      visX0 =
+        Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
+      visX1 =
+        Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
+      visY0 =
+        Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
+      visY1 =
+        Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
+      bg =
+        number 15
+          + shl (number 23) (number 8)
+          + shl (number 42) (number 16)
+    whenS needsPaint $ do
+      toSyntax_ $
+        paintGridCells
+          pixels
+          w
+          h
+          paletteRgba
+          alive
+          species
+          w
+          (number 1)
+          (number 0)
+          (number 0)
+          bg
+          liveList
+          changedList
+          visRefresh
+          visX0
+          visX1
+          visY0
+          visY1
+          renderDirty
+      done
+    toSyntax_
+      $ discard
+      $ ffi
         ( "(cv, pixels, texW, texH, scale, panX, panY, cw, ch) => {"
             <> " if (cv.style.display === 'none') {"
             <> "   cv.style.display = 'block';"
@@ -920,7 +936,7 @@ drawGridFallback
             <: arg ch
             <: RecNil
         )
-  done
+    done
 
 -- | Hide the 2D fallback overlay once the GPU path is healthy again.
 hideFallback2d ::

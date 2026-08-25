@@ -1,6 +1,8 @@
 /* WASM exports matching examples/Hvm2Demo/Kernels.hs (keep in sync). */
 #include <stdint.h>
 
+#define MANDEL_MAX_ITER 64 /* must match Kernels.maxIter */
+
 typedef int64_t jshark_hvm2_i64;
 
 static double i64_to_f64(jshark_hvm2_i64 x) {
@@ -16,7 +18,7 @@ static jshark_hvm2_i64 mandel_iter(double cr, double ci) {
   int n = 0;
   double zr = 0.0;
   double zi = 0.0;
-  while (n < 64 && (zr * zr + zi * zi) < 4.0) {
+  while (n < MANDEL_MAX_ITER && (zr * zr + zi * zi) < 4.0) {
     double nzr = zr * zr - zi * zi + cr;
     double nzi = 2.0 * zr * zi + ci;
     zr = nzr;

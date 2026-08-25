@@ -28,15 +28,15 @@ where
 
 import Control.Monad (foldM, forM_, when)
 import Control.Monad.ST (runST)
-import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Bits ((.&.))
 import Data.Int (Int32)
+import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
 import qualified Data.Vector as V
 import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
-import Data.Word (Word8, Word16)
+import Data.Word (Word16, Word8)
 import JShark.Flat
   ( FlatArg (..)
   , FlatField (..)
@@ -53,18 +53,90 @@ import JShark.Types (BigBinOp (..), FFIForm, Value (..))
 
 type Op = Word16
 
-oFE_LITERAL, oFE_VAR, oFE_LET, oFE_LETREC, oFE_LAMBDA, oFE_APPLY, oFE_EMBEDEFF :: Op
-oFE_IF, oFE_OPTIONCASE, oFE_RESOK, oFE_RESERR, oFE_RESCASE, oFE_INDEX, oFE_U8INDEX :: Op
-oFE_ERROR, oFE_FIXED, oFE_FNLIT, oFE_FROZEN, oFE_GETFIELD, oFE_UNSAFENULL, oFE_KCONCAT :: Op
-oFE_KPLUS, oFE_KTIMES, oFE_KMINUS, oFE_KNEG, oFE_KDIV, oFE_KREM, oFE_KBITAND, oFE_KBITOR :: Op
-oFE_KBITXOR, oFE_KSHL, oFE_KSHR, oFE_KUSHR, oFE_KBIG, oFE_KBIGNEG, oFE_KAND, oFE_KOR :: Op
-oFE_KEQ, oFE_KNEQ, oFE_KGTH, oFE_KLTH, oFE_KGTEQ, oFE_KLTEQ, oFE_KSHOW, oFE_KTYPEOF :: Op
-oFE_MMAP, oFE_MFILTER, oFE_MREDUCE, oFE_MREDUCER, oFE_MTOSORTED, oFE_MFROM, oFE_HVM2REF :: Op
-oFX_LIFT, oFX_FFI, oFX_UNSAFEOBJ, oFX_UNSAFEOBJGET, oFX_UNSAFEOBJSET, oFX_CALLMETHOD :: Op
-oFX_BIND, oFX_THENE, oFX_BINDREC, oFX_LAMBDAE, oFX_APPLYE, oFX_IFE, oFX_WHILE, oFX_FORRANGE :: Op
-oFX_U8SET, oFX_U8FILL, oFX_OPTCASEE, oFX_RESCASEE, oFX_STRCASEE, oFX_THROW, oFX_TRY :: Op
+oFE_LITERAL
+  , oFE_VAR
+  , oFE_LET
+  , oFE_LETREC
+  , oFE_LAMBDA
+  , oFE_APPLY
+  , oFE_EMBEDEFF ::
+    Op
+oFE_IF
+  , oFE_OPTIONCASE
+  , oFE_RESOK
+  , oFE_RESERR
+  , oFE_RESCASE
+  , oFE_INDEX
+  , oFE_U8INDEX ::
+    Op
+oFE_ERROR
+  , oFE_FIXED
+  , oFE_FNLIT
+  , oFE_FROZEN
+  , oFE_GETFIELD
+  , oFE_UNSAFENULL
+  , oFE_KCONCAT ::
+    Op
+oFE_KPLUS
+  , oFE_KTIMES
+  , oFE_KMINUS
+  , oFE_KNEG
+  , oFE_KDIV
+  , oFE_KREM
+  , oFE_KBITAND
+  , oFE_KBITOR ::
+    Op
+oFE_KBITXOR
+  , oFE_KSHL
+  , oFE_KSHR
+  , oFE_KUSHR
+  , oFE_KBIG
+  , oFE_KBIGNEG
+  , oFE_KAND
+  , oFE_KOR ::
+    Op
+oFE_KEQ
+  , oFE_KNEQ
+  , oFE_KGTH
+  , oFE_KLTH
+  , oFE_KGTEQ
+  , oFE_KLTEQ
+  , oFE_KSHOW
+  , oFE_KTYPEOF ::
+    Op
+oFE_MMAP
+  , oFE_MFILTER
+  , oFE_MREDUCE
+  , oFE_MREDUCER
+  , oFE_MTOSORTED
+  , oFE_MFROM
+  , oFE_HVM2REF ::
+    Op
+oFX_LIFT
+  , oFX_FFI
+  , oFX_UNSAFEOBJ
+  , oFX_UNSAFEOBJGET
+  , oFX_UNSAFEOBJSET
+  , oFX_CALLMETHOD ::
+    Op
+oFX_BIND
+  , oFX_THENE
+  , oFX_BINDREC
+  , oFX_LAMBDAE
+  , oFX_APPLYE
+  , oFX_IFE
+  , oFX_WHILE
+  , oFX_FORRANGE ::
+    Op
+oFX_U8SET
+  , oFX_U8FILL
+  , oFX_OPTCASEE
+  , oFX_RESCASEE
+  , oFX_STRCASEE
+  , oFX_THROW
+  , oFX_TRY ::
+    Op
 oFX_OBJLIT, oFX_DELETEPROP, oFX_ARRAYLIT :: Op
-
 oFE_LITERAL = 1
 oFE_VAR = 2
 oFE_LET = 3
@@ -72,74 +144,143 @@ oFE_LETREC = 4
 oFE_LAMBDA = 5
 oFE_APPLY = 6
 oFE_EMBEDEFF = 7
+
 oFE_IF = 8
+
 oFE_OPTIONCASE = 9
+
 oFE_RESOK = 10
+
 oFE_RESERR = 11
+
 oFE_RESCASE = 12
+
 oFE_INDEX = 13
+
 oFE_U8INDEX = 14
+
 oFE_ERROR = 15
+
 oFE_FIXED = 16
+
 oFE_FNLIT = 17
+
 oFE_FROZEN = 18
+
 oFE_GETFIELD = 19
+
 oFE_UNSAFENULL = 20
+
 oFE_KCONCAT = 21
+
 oFE_KPLUS = 22
+
 oFE_KTIMES = 23
+
 oFE_KMINUS = 24
+
 oFE_KNEG = 25
+
 oFE_KDIV = 26
+
 oFE_KREM = 27
+
 oFE_KBITAND = 28
+
 oFE_KBITOR = 29
+
 oFE_KBITXOR = 30
+
 oFE_KSHL = 31
+
 oFE_KSHR = 32
+
 oFE_KUSHR = 33
+
 oFE_KBIG = 34
+
 oFE_KBIGNEG = 35
+
 oFE_KAND = 36
+
 oFE_KOR = 37
+
 oFE_KEQ = 38
+
 oFE_KNEQ = 39
+
 oFE_KGTH = 40
+
 oFE_KLTH = 41
+
 oFE_KGTEQ = 42
+
 oFE_KLTEQ = 43
+
 oFE_KSHOW = 44
+
 oFE_KTYPEOF = 45
+
 oFE_MMAP = 46
+
 oFE_MFILTER = 47
+
 oFE_MREDUCE = 48
+
 oFE_MREDUCER = 49
+
 oFE_MTOSORTED = 50
+
 oFE_MFROM = 51
+
 oFE_HVM2REF = 52
+
 oFX_LIFT = 100
+
 oFX_FFI = 101
+
 oFX_UNSAFEOBJ = 102
+
 oFX_UNSAFEOBJGET = 103
+
 oFX_UNSAFEOBJSET = 104
+
 oFX_CALLMETHOD = 105
+
 oFX_BIND = 106
+
 oFX_THENE = 107
+
 oFX_BINDREC = 108
+
 oFX_LAMBDAE = 109
+
 oFX_APPLYE = 110
+
 oFX_IFE = 111
+
 oFX_WHILE = 112
+
 oFX_FORRANGE = 113
+
 oFX_U8SET = 114
+
 oFX_U8FILL = 115
+
 oFX_OPTCASEE = 116
+
 oFX_RESCASEE = 117
+
 oFX_STRCASEE = 118
+
 oFX_THROW = 119
+
 oFX_TRY = 120
+
 oFX_OBJLIT = 121
+
 oFX_DELETEPROP = 122
+
 oFX_ARRAYLIT = 123
 
 data FlatSoA = FlatSoA
@@ -336,17 +477,18 @@ fromProgram p =
         (Enc oFX_ARRAYLIT (i32 ai) 0 0 0 0, fx, fl, ag `V.snoc` V.fromList ns)
 
   bigOpTag :: BigBinOp -> Int32
-  bigOpTag = fromIntegral . \case
-    BPlus -> (0 :: Int)
-    BMinus -> 1
-    BTimes -> 2
-    BQuot -> 3
-    BRem -> 4
-    BBitAnd -> 5
-    BBitOr -> 6
-    BBitXor -> 7
-    BShl -> 8
-    BShr -> 9
+  bigOpTag =
+    fromIntegral . \case
+      BPlus -> (0 :: Int)
+      BMinus -> 1
+      BTimes -> 2
+      BQuot -> 3
+      BRem -> 4
+      BBitAnd -> 5
+      BBitOr -> 6
+      BBitXor -> 7
+      BShl -> 8
+      BShr -> 9
 
 toProgram :: FlatSoA -> FlatProgram
 toProgram soa =
@@ -500,7 +642,8 @@ propagatePureFlagsPass soa =
       changedRef <- newSTRef False
       let
         ch j = do
-          let i = fromIntegral j :: Int
+          let
+            i = fromIntegral j :: Int
           if i >= 0 && i < n
             then MVU.read mp i
             else pure (0 :: Word8)
@@ -655,7 +798,8 @@ optConstantFoldNumOnce soa0 = runST $ do
       pure (litAsNumber v)
     addLit d = do
       litsM <- readSTRef litsRef
-      let li = GM.length litsM
+      let
+        li = GM.length litsM
       litsM' <- GM.unsafeGrow litsM 1
       GM.unsafeWrite litsM' li (FLit (ValueNumber d))
       writeSTRef litsRef litsM'

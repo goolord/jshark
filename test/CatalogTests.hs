@@ -2,12 +2,12 @@
 
 module CatalogTests (catalogTests) where
 
-import Life (catalogJs)
-import Test.Tasty
-import Test.Tasty.HUnit
 import qualified Data.Text.IO as T
+import Life (catalogJs)
 import System.Directory (getCurrentDirectory)
 import System.FilePath ((</>))
+import Test.Tasty
+import Test.Tasty.HUnit
 
 catalogTests :: TestTree
 catalogTests =
