@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -14,6 +15,7 @@ module JShark.EmitBend
   , emitBendModuleFromDefs
   , emitIrExpr
   , emitKernelExportsC
+  , bendDefExports
   , peelLambdas
   )
 where
@@ -28,7 +30,7 @@ import JShark.Ir
   , irMetaPure
   , metaIrExpr
   )
-import JShark.Types (Value (..))
+import JShark.Types (Universe (Bool), Value (..))
 import Unsafe.Coerce (unsafeCoerce)
 import Prelude
 
@@ -75,17 +77,20 @@ emitBendKernel name ir = do
           <> ":")
           : bodyLines
       )
- where
-  paramsLine ps ts =
-    if null ps
-      then "()"
-      else
-        "("
-          <> T.intercalate ", " (zipWith (\p ty -> p <> ": " <> bendTypeName ty) ps ts)
-          <> ")"
+
+paramsLine :: [Text] -> [BendType] -> Text
+paramsLine ps ts =
+  if null ps
+    then "()"
+    else
+      "("
+        <> T.intercalate ", " (zipWith (\p ty -> p <> ": " <> bendTypeName ty) ps ts)
+        <> ")"
 
 emitBody :: IntMap Text -> IrExpr u -> Either Hvm2Error [Text]
 emitBody env = \case
+  IrLetRec tag r b -> emitLetRec env tag r b
+  IrIf c t e -> emitIfReturn env c t e
   IrLet tag x body -> do
     xTxt <- emitIrExpr env x
     let
@@ -96,6 +101,56 @@ emitBody env = \case
   e -> do
     eTxt <- emitIrExpr env e
     pure ["  return " <> eTxt]
+
+emitIfReturn ::
+  IntMap Text -> IrExpr 'Bool -> IrExpr u -> IrExpr u -> Either Hvm2Error [Text]
+emitIfReturn env c t e = do
+  cTxt <- emitIrExpr env c
+  tTxt <- emitIrExpr env t
+  eTxt <- emitIrExpr env e
+  pure
+    [ "  if " <> cTxt <> ":"
+    , "    return " <> tTxt
+    , "  else:"
+    , "    return " <> eTxt
+    ]
+
+emitLetRec ::
+  IntMap Text -> Int -> IrExpr u -> IrExpr v -> Either Hvm2Error [Text]
+emitLetRec env tag r b = do
+  let
+    recName = "rec" <> T.pack (show (abs tag))
+    envRec = IM.insert tag recName env
+  (fnTags, fnBody) <- peelRecFn tag r
+  let
+    fnNames = zipWith paramName fnTags [0 ..]
+    fnTypes = inferParamTypes fnTags fnBody
+    envFn =
+      foldl
+        (\e (t, n) -> IM.insert t n e)
+        envRec
+        (zip fnTags fnNames)
+    retTy = bendTypeName (inferType fnBody)
+  fnBodyLines <- emitBody envFn fnBody
+  callLines <- emitBody envRec b
+  pure $
+    ( "  def "
+        <> recName
+        <> paramsLine fnNames fnTypes
+        <> " -> "
+        <> retTy
+        <> ":"
+        : fnBodyLines
+    )
+      ++ callLines
+
+peelRecFn :: Int -> IrExpr u -> Either Hvm2Error ([Int], IrExpr u)
+peelRecFn _ r =
+  case r of
+    IrLambda {} ->
+      pure (peelLambdas r)
+    _ ->
+      Left (Hvm2Unsupported "letRec rhs must be a lambda")
 
 emitIrExpr :: IntMap Text -> IrExpr u -> Either Hvm2Error Text
 emitIrExpr env e =
@@ -120,7 +175,7 @@ emitIrExpr env e =
     IrLet {} ->
       Left (Hvm2Unsupported "let outside kernel body walker")
     IrLetRec {} ->
-      Left (Hvm2Unsupported "letrec")
+      Left (Hvm2Unsupported "letrec in expression position")
     IrEmbedEff {} ->
       Left Hvm2ImpureKernel
     IrOptionCase {} ->
@@ -279,20 +334,10 @@ varInFloatCtx tag = \case
       || mentions tag y
       || isFloatLiteral x
       || isFloatLiteral y
-  IrKernelK k -> mentionsInKernel tag k
   IrIf c t eF -> varInFloatCtx tag c || varInFloatCtx tag t || varInFloatCtx tag eF
   IrApply f x -> varInFloatCtx tag f || varInFloatCtx tag x
   IrLet _ x g -> varInFloatCtx tag x || varInFloatCtx tag g
   _ -> False
- where
-  mentionsInKernel t = \case
-    KPlus x y -> mentions t x || mentions t y
-    KMinus x y -> mentions t x || mentions t y
-    KTimes x y -> mentions t x || mentions t y
-    KFracDiv x y -> mentions t x || mentions t y
-    KRem x y -> mentions t x || mentions t y
-    KNegate x -> mentions t x
-    _ -> False
 
 mentions :: Int -> IrExpr v -> Bool
 mentions tag = \case
@@ -403,19 +448,34 @@ cKeywords =
   ]
 
 bendDefNames :: Text -> [Text]
-bendDefNames src =
-  [ name
+bendDefNames src = map fst (bendDefExports src)
+
+bendDefExports :: Text -> [(Text, Int)]
+bendDefExports src =
+  [ (name, arity)
   | line <- T.lines src
+  , isTopLevelDef line
   , Just rest <- [T.stripPrefix "def " (T.stripStart line)]
   , (name, after) <- [T.breakOn "(" rest]
   , not (T.null name)
   , T.all (\c -> c /= ':' && c /= ' ') name
   , name /= "main"
   , T.isPrefixOf "(" after
+  , let
+      params = T.takeWhile (/= ')') (T.drop 1 after)
+      arity = paramArity params
   ]
+ where
+  isTopLevelDef line =
+    not (T.isPrefixOf " " line)
+      && not (T.isPrefixOf "\t" line)
+  paramArity params
+    | T.null (T.filter (not . isSpace) params) = 0
+    | otherwise = 1 + T.length (T.filter (== ',') params)
+  isSpace c = c == ' ' || c == '\t'
 
-emitKernelExportsC :: [Text] -> Text
-emitKernelExportsC names =
+emitKernelExportsC :: [(Text, Int)] -> Text
+emitKernelExportsC exports =
   T.unlines $
     [ "/* Auto-generated WASM export shims for JShark HVM2 kernels. */"
     , "#include <stdint.h>"
@@ -423,19 +483,30 @@ emitKernelExportsC names =
     , "typedef int64_t jshark_hvm2_i64;"
     , ""
     ]
-      <> concatMap exportDef names
+      <> concatMap (uncurry exportDef) exports
       <> [""]
  where
-  exportDef name =
+  exportDef name arity =
     let
       bendId = sanitizeBendId name
       cSym = cIdent name
       exportName = bendId
+      args = map (\i -> "a" <> T.pack (show i)) [0 .. arity - 1]
+      argList = T.intercalate ", " (map (\a -> "jshark_hvm2_i64 " <> a) args)
+      callArgs = T.intercalate ", " args
+      externSig =
+        if null args
+          then cSym <> "()"
+          else
+            cSym
+              <> "("
+              <> T.intercalate ", " (replicate arity "jshark_hvm2_i64")
+              <> ")"
     in
       [ "__attribute__((export_name(\"" <> exportName <> "\")))"
-      , "jshark_hvm2_i64 jshark_hvm2_export_" <> cSym <> "(jshark_hvm2_i64 arg) {"
-      , "  extern jshark_hvm2_i64 " <> cSym <> "(jshark_hvm2_i64);"
-      , "  return " <> cSym <> "(arg);"
+      , "jshark_hvm2_i64 jshark_hvm2_export_" <> cSym <> "(" <> argList <> ") {"
+      , "  extern jshark_hvm2_i64 " <> externSig <> ";"
+      , "  return " <> cSym <> "(" <> callArgs <> ");"
       , "}"
       , ""
       ]

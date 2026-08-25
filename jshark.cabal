@@ -41,6 +41,7 @@ data-files:
   examples/static/*.png
   examples/static/*.js
   examples/static/*.css
+  examples/static/hvm2-demo.wasm
   examples/Life/js/catalog.js
   examples/Life/js/LUTGenerator.js
   examples/Life/js/LifeSimd.js
@@ -63,8 +64,16 @@ common warnings
     -Wpartial-fields
     -Wredundant-constraints
 
+common llvm
+  ghc-options:
+    -fllvm
+    -pgmlo
+    opt-20
+    -pgmlc
+    llc-20
+
 library
-  import: warnings
+  import: warnings, llvm
   exposed-modules:
     JShark
     JShark.Api
@@ -123,7 +132,6 @@ library
     Haskell2010
   ghc-options:
     -O2
-    -fllvm
 
 -- JShark.Lucid destructures Lucid.Base's Attribute, which is not part of
 -- the public Lucid API, so the bound is the tested minor rather than the
@@ -213,6 +221,35 @@ library life
   hs-source-dirs:
     examples/Life
 
+library hvm2-demo
+  import: example-lib
+  exposed-modules:
+    Hvm2Demo
+    Kernels
+  other-modules:
+    Client
+    Page
+  hs-source-dirs:
+    examples/Hvm2Demo
+
+executable build-hvm2-demo-wasm
+  import: warnings
+  main-is:
+    BuildWasm.hs
+  other-modules:
+    Kernels
+  hs-source-dirs:
+    examples/Hvm2Demo
+  build-depends:
+    , base
+    , directory >= 1.3 && < 2
+    , filepath
+    , jshark
+    , process >= 1.2 && < 2
+    , text
+  default-language:
+    Haskell2010
+
 executable examples
   import: warnings, lucid-dep
   main-is:
@@ -230,6 +267,7 @@ executable examples
     , breakout
     , directory >= 1.3 && < 2
     , filepath
+    , hvm2-demo
     , jshark
     , life
     , scotty >= 0.20 && < 1
@@ -263,6 +301,7 @@ test-suite jshark-test
     , base
     , async
     , breakout
+    , hvm2-demo
     , jshark
     , jshark-lucid
     , life
@@ -284,11 +323,10 @@ test-suite jshark-test
     -with-rtsopts=-M10G
 
 common bench
-  import: warnings
+  import: warnings, llvm
   default-language: Haskell2010
   ghc-options:
     -O2
-    -fllvm
     -threaded
     -rtsopts
     -with-rtsopts=-N

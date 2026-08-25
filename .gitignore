@@ -25,6 +25,7 @@ cabal.sandbox.config
 .stack-work/
 cabal.project.local
 cabal.project.local~
+.nix-llvm-wrappers/
 .HTF/
 .ghc.environment.*
 _site/

@@ -18,7 +18,7 @@ After generating sources (Haskell `compileHvm2Wasm` writes them, or by hand):
 cd wasm/hvm2
 mkdir -p generated
 # copy or emit kernel.bend, then:
-bend gen-c generated/kernel.bend -o generated/kernel.c
+bend gen-c generated/kernel.bend > generated/kernel.c
 # emit kernel_exports.c from Haskell (see JShark.EmitBend.emitKernelExportsC)
 zig build \
   -Doptimize=ReleaseFast \

@@ -3,6 +3,7 @@
 module Main (main) where
 
 import qualified Breakout
+import qualified Hvm2Demo
 import DevServer (Example (..), exportExamples, serveExamples)
 import JShark.Compiler (applyCompilerArgs, compileEffects, isCompilerFlag, readableConfig)
 import JShark.Types (fromSyntax)
@@ -20,13 +21,14 @@ main = do
   let
     (flags, cmd) = partition isCompilerFlag args
     cfg = applyCompilerArgs flags readableConfig
-  [breakoutJs, todoJs, synthJs, lifeJs] <-
+  [breakoutJs, todoJs, synthJs, lifeJs, hvm2Js] <-
     compileEffects
       cfg
       [ fromSyntax Breakout.mainJS
       , fromSyntax TodoMvc.mainJS
       , fromSyntax Synth.mainJS
       , fromSyntax Life.mainJS
+      , fromSyntax Hvm2Demo.mainJS
       ]
   let
     examples =
@@ -58,6 +60,17 @@ main = do
               Life.page static script (Life.frameSrcFor script)
           )
           lifeJs
+      , Example
+          "hvm2-demo"
+          "HVM2 Lab"
+          ( \script static ->
+              Hvm2Demo.page
+                static
+                (sourceHead static)
+                (sourcePane static hvm2Js)
+                script
+          )
+          hvm2Js
       ]
   case cmd of
     [] ->

@@ -260,6 +260,7 @@ staticType :: FilePath -> TL.Text
 staticType name
   | ".js" `T.isSuffixOf` T.pack name = "application/javascript; charset=utf-8"
   | ".css" `T.isSuffixOf` T.pack name = "text/css; charset=utf-8"
+  | ".wasm" `T.isSuffixOf` T.pack name = "application/wasm"
   | otherwise = "application/octet-stream"
 
 indexPage :: SitePaths -> [(Example, Maybe FilePath)] -> Html ()
@@ -298,4 +299,6 @@ staticFiles =
   , "synth.css"
   , "todo-mvc.css"
   , "life.css"
+  , "hvm2-demo.css"
+  , "hvm2-demo.wasm"
   ]

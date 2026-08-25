@@ -47,7 +47,7 @@
       devShells = forAllSystems (system:
         let
           pkgs = pkgsFor { inherit system; };
-          llvm = pkgs.llvm_21;
+          llvm = pkgs.llvm_20;
         in {
           default = pkgs.haskellPackages.shellFor {
             packages = p: [ p.jshark ];
@@ -60,7 +60,10 @@
               llvm
             ];
             shellHook = ''
-              export PATH="${llvm}/bin:$PATH"
+              mkdir -p .nix-llvm-wrappers
+              ln -sf ${llvm}/bin/opt .nix-llvm-wrappers/opt-20
+              ln -sf ${llvm}/bin/llc .nix-llvm-wrappers/llc-20
+              export PATH="$PWD/.nix-llvm-wrappers:${llvm}/bin:$PATH"
             '';
           };
         });

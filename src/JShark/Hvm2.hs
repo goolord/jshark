@@ -17,6 +17,7 @@ module JShark.Hvm2
   , defaultHvm2Config
   , defaultWasmBuildDir
   , bendDefNames
+  , bendDefExports
   , emitKernelExportsC
   )
 where
@@ -28,6 +29,7 @@ import JShark (collectHvm2Kernels, irExprFromClosed)
 import JShark.EmitBend
   ( Hvm2Error (..)
   , bendDefNames
+  , bendDefExports
   , emitBendKernel
   , emitBendModuleFromDefs
   , emitKernelExportsC
@@ -89,11 +91,12 @@ compileHvm2GenC cfg outDir bendSrc = do
     cPath = outDir </> "kernel.c"
     exportsPath = outDir </> "kernel_exports.c"
   T.writeFile bendPath bendSrc
-  T.writeFile exportsPath (emitKernelExportsC (bendDefNames bendSrc))
-  genRes <-
-    readProcessWithExitCode (hvm2BendExe cfg) ["gen-c", bendPath, "-o", cPath] ""
+  T.writeFile exportsPath (emitKernelExportsC (bendDefExports bendSrc))
+  genRes <- readProcessWithExitCode (hvm2BendExe cfg) ["gen-c", bendPath] ""
   case genRes of
-    (ExitSuccess, _, _) -> pure (Right cPath)
+    (ExitSuccess, out, _) -> do
+      T.writeFile cPath (T.pack out)
+      pure (Right cPath)
     (ExitFailure code, out, err) ->
       pure $
         Left
@@ -119,16 +122,18 @@ compileHvm2Wasm cfg outDir bendSrc = do
       let
         wasmPath = outDir </> "bin" </> "jshark-hvm2.wasm"
         buildDir = hvm2WasmBuildDir cfg
+        buildFile = buildDir </> "build.zig"
         exportsPath = outDir </> "kernel_exports.c"
       createDirectoryIfMissing True (takeDirectory wasmPath)
       absCPath <- makeAbsolute cPath
       absExportsPath <- makeAbsolute exportsPath
+      absBuildFile <- makeAbsolute buildFile
       zigRes <-
         readProcessWithExitCode
           (hvm2ZigExe cfg)
           [ "build"
-          , "-C"
-          , buildDir
+          , "--build-file"
+          , absBuildFile
           , "-Doptimize=ReleaseFast"
           , "-Dkernel-c=" ++ absCPath
           , "-Dexports-c=" ++ absExportsPath

@@ -3085,9 +3085,16 @@ hvm2ExportRef name =
   in
     "((function(){var f=globalThis.__jsharkHvm2?.exports?.["
       <> key
-      <> "];if(typeof f===\"function\")return f;return function(){throw new Error("
+      <> "];if(typeof f!==\"function\")return function(){throw new Error("
       <> err
-      <> ")};})())"
+      <> ")};"
+      <> "function toI64(x){var buf=new ArrayBuffer(8);"
+      <> "var f64=new Float64Array(buf);var i64=new BigInt64Array(buf);"
+      <> "f64[0]=+x;return i64[0];}"
+      <> "function fromOut(r){return typeof r===\"bigint\"?Number(r):r;}"
+      <> "if(f.length>=2){return function(a){return function(b){"
+      <> "return fromOut(f(toI64(a),toI64(b)));};};}"
+      <> "return function(a){return fromOut(f(toI64(a)));};})())"
 
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =

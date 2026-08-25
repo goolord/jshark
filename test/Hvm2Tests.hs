@@ -17,6 +17,7 @@ import JShark.Hvm2Lint
   , hvm2CandidatesFromExpr
   )
 import JShark.Types (Hvm2KernelEntry (..))
+import Kernels (hvm2Entries)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -38,7 +39,7 @@ hvm2Tests =
         bendDefNames "def inc(x): return x\ndef main(): return 0\n"
           @?= ["inc"]
     , testCase "emitKernelExportsC names WASM exports" $
-        let shim = emitKernelExportsC ["double"]
+        let shim = emitKernelExportsC [("double", 1)]
          in T.isInfixOf "export_name(\"double\")" shim @?= True
     , testCase "pureAST emits callable HVM2 export ref" $
         let
@@ -52,7 +53,7 @@ hvm2Tests =
               )
          in do
           T.isInfixOf "__jsharkHvm2" js @?= True
-          T.isInfixOf "typeof f===\"function\"" js @?= True
+          T.isInfixOf "Float64Array" js @?= True
           T.isInfixOf "(3.0)" js @?= True
     , testCase "loadHvm2Wasm emits fetch/instantiate loader" $
         let
@@ -80,6 +81,12 @@ hvm2Tests =
     , testCase "hvm2Candidates skips string kernels" $
         null (hvm2CandidatesFromExpr (lambda (\x -> toString x)))
           @?= True
+    , testCase "hvm2 demo kernels emit bend module" $
+        case bendModule hvm2Entries of
+          Left bendErr -> assertFailure (show bendErr)
+          Right bend -> do
+            T.isInfixOf "def mandel" bend @?= True
+            T.isInfixOf "def main():" bend @?= True
     , testCase "applyCompilerArgs enables hvm2 warnings" $
         configWarnHvm2Candidates (applyCompilerArgs ["--warn-hvm2-candidates"] readableConfig)
           @?= True
