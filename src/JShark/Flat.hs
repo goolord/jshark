@@ -8,8 +8,6 @@
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
-
 -- | Untyped flat IR: optimized 'Ir' trees packed into vectors for codegen.
 module JShark.Flat
   ( NodeId
@@ -26,6 +24,7 @@ module JShark.Flat
   , flatNode
   , flatLit
   , flatLitValue
+  , flatPure
   , flatText
   , flatFFI
   , flatStrCases
@@ -40,6 +39,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Data.Word (Word8)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import JShark.Ir
 import JShark.Rec (Rec (..))
@@ -54,12 +54,14 @@ data FlatLit where
 data FlatArg
   = FlatArgExpr NodeId
   | FlatArgEffect NodeId
+  deriving (Eq)
 
 data FlatField
   = FlatField Text NodeId
   | FlatFieldEff Text NodeId
   | FlatFieldExtra Text NodeId
   | FlatFieldExtraEff Text NodeId
+  deriving (Eq)
 
 data FlatFixed where
   FlatFixedU :: FixedOp a b c u -> NodeId -> FlatFixed
@@ -153,6 +155,7 @@ data FlatProgram = FlatProgram
   , fpStrCases :: Vector [(Text, NodeId)]
   , fpFieldGroups :: Vector [FlatField]
   , fpArgGroups :: Vector [FlatArg]
+  , fpPure :: Vector Word8
   , fpRoot :: NodeId
   }
 
@@ -184,9 +187,16 @@ flatNode p i = fpNodes p V.! i
 flatLit :: FlatProgram -> Int -> FlatLit
 flatLit p i = fpLits p V.! i
 
+-- | Recover a typed literal after PHOAS typechecking erased 'u'.
+-- INVARIANT: only call on literals produced by 'packEffectProgram'.
 flatLitValue :: FlatProgram -> Int -> Value u
 flatLitValue p i = case flatLit p i of
   FLit v -> unsafeCoerce v
+
+flatPure :: FlatProgram -> NodeId -> Word8
+flatPure p i
+  | i >= 0 && i < V.length (fpPure p) = fpPure p V.! i
+  | otherwise = 0
 
 flatText :: FlatProgram -> Int -> Text
 flatText p i = fpTexts p V.! i
@@ -267,16 +277,185 @@ addArgGroup args = do
 
 finalizePack :: NodeId -> PackState -> FlatProgram
 finalizePack root st =
-  FlatProgram
-    { fpNodes = V.fromList (reverse (psNodes st))
-    , fpLits = V.fromList (reverse (psLits st))
-    , fpTexts = V.fromList (reverse (psTexts st))
-    , fpFFIs = V.fromList (reverse (psFFIs st))
-    , fpStrCases = V.fromList (reverse (psStrCases st))
-    , fpFieldGroups = V.fromList (reverse (psFieldGroups st))
-    , fpArgGroups = V.fromList (reverse (psArgGroups st))
-    , fpRoot = root
-    }
+  let
+    prog =
+      FlatProgram
+        { fpNodes = V.fromList (reverse (psNodes st))
+        , fpLits = V.fromList (reverse (psLits st))
+        , fpTexts = V.fromList (reverse (psTexts st))
+        , fpFFIs = V.fromList (reverse (psFFIs st))
+        , fpStrCases = V.fromList (reverse (psStrCases st))
+        , fpFieldGroups = V.fromList (reverse (psFieldGroups st))
+        , fpArgGroups = V.fromList (reverse (psArgGroups st))
+        , fpPure = V.empty
+        , fpRoot = root
+        }
+   in
+    validateFlatProgram prog `seq` prog
+
+fixedRefs :: FlatFixed -> [NodeId]
+fixedRefs = \case
+  FlatFixedU _ x -> [x]
+  FlatFixedB _ x y -> [x, y]
+  FlatFixedT _ x y z -> [x, y, z]
+
+flatNodeChildRefs :: FlatNode -> [NodeId]
+flatNodeChildRefs = \case
+  FE_Literal _ -> []
+  FE_Var _ -> []
+  FE_Let _ x b -> [x, b]
+  FE_LetRec _ r b -> [r, b]
+  FE_Lambda _ b -> [b]
+  FE_Apply f x -> [f, x]
+  FE_EmbedEff e -> [e]
+  FE_If c t e -> [c, t, e]
+  FE_OptionCase o n _ s -> [o, n, s]
+  FE_ResultOk x -> [x]
+  FE_ResultErr x -> [x]
+  FE_ResultCase o _ er _ ok -> [o, er, ok]
+  FE_Index a idx -> [a, idx]
+  FE_U8Index b idx -> [b, idx]
+  FE_Error m -> [m]
+  FE_Fixed fix -> fixedRefs fix
+  FE_KConcat x y -> [x, y]
+  FE_KPlus x y -> [x, y]
+  FE_KTimes x y -> [x, y]
+  FE_KMinus x y -> [x, y]
+  FE_KNegate x -> [x]
+  FE_KFracDiv x y -> [x, y]
+  FE_KRem x y -> [x, y]
+  FE_KBitAnd x y -> [x, y]
+  FE_KBitOr x y -> [x, y]
+  FE_KBitXor x y -> [x, y]
+  FE_KShl x y -> [x, y]
+  FE_KShr x y -> [x, y]
+  FE_KUShr x y -> [x, y]
+  FE_KBig _ x y -> [x, y]
+  FE_KBigNeg x -> [x]
+  FE_KAnd x y -> [x, y]
+  FE_KOr x y -> [x, y]
+  FE_KEq _ x y -> [x, y]
+  FE_KNEq _ x y -> [x, y]
+  FE_KGTh x y -> [x, y]
+  FE_KLTh x y -> [x, y]
+  FE_KGTEq x y -> [x, y]
+  FE_KLTEq x y -> [x, y]
+  FE_KShow x -> [x]
+  FE_KTypeOf x -> [x]
+  FE_MethMap a _ b -> [a, b]
+  FE_MethFilter a _ b -> [a, b]
+  FE_MethReduce a z _ _ body -> [a, z, body]
+  FE_MethReduceRight a z _ _ body -> [a, z, body]
+  FE_MethToSorted a _ _ b -> [a, b]
+  FE_MethFrom n _ b -> [n, b]
+  FE_FnLit _ b -> [b]
+  FE_UnsafeNullable x -> [x]
+  FE_FrozenLit _ -> []
+  FE_GetField _ o -> [o]
+  FX_Lift x -> [x]
+  FX_FFI _ _ -> []
+  FX_UnsafeObject _ -> []
+  FX_UnsafeObjectGet x _ -> [x]
+  FX_UnsafeObjectAssign x y -> [x, y]
+  FX_CallMethod r _ _ -> [r]
+  FX_Bind _ x b -> [x, b]
+  FX_ThenE x y -> [x, y]
+  FX_BindRec _ r b -> [r, b]
+  FX_LambdaE _ b -> [b]
+  FX_ApplyE f x -> [f, x]
+  FX_IfE c t e -> [c, t, e]
+  FX_While c b -> [c, b]
+  FX_ForRange s e _ b -> [s, e, b]
+  FX_U8Set b i v -> [b, i, v]
+  FX_U8Fill b v -> [b, v]
+  FX_OptionCaseE o n _ s -> [o, n, s]
+  FX_ResultCaseE o _ er _ ok -> [o, er, ok]
+  FX_StringCaseE s _ d -> [s, d]
+  FX_Throw x -> [x]
+  FX_Try a _ k -> [a, k]
+  FX_ObjectLit _ -> []
+  FX_DeleteProp o k -> [o, k]
+  FX_ArrayLit ns -> ns
+
+flatNodeSideRefs :: FlatProgram -> FlatNode -> [NodeId]
+flatNodeSideRefs p = \case
+  FX_FFI _ ai -> sideArgRefs p ai
+  FX_CallMethod _ _ ai -> sideArgRefs p ai
+  FX_StringCaseE _ ai _ -> sideStrCaseRefs p ai
+  FX_ObjectLit gi -> sideFieldRefs p gi
+  _ -> []
+ where
+  sideArgRefs prog ai
+    | ai >= 0 && ai < V.length (fpArgGroups prog) =
+        map flatArgRef (fpArgGroups prog V.! ai)
+    | otherwise =
+        error "JShark.Flat.flatNodeSideRefs: arg group index out of range"
+  sideStrCaseRefs prog ai
+    | ai >= 0 && ai < V.length (fpStrCases prog) =
+        map snd (fpStrCases prog V.! ai)
+    | otherwise =
+        error "JShark.Flat.flatNodeSideRefs: str case group index out of range"
+  sideFieldRefs prog gi
+    | gi >= 0 && gi < V.length (fpFieldGroups prog) =
+        map flatFieldRef (fpFieldGroups prog V.! gi)
+    | otherwise =
+        error "JShark.Flat.flatNodeSideRefs: field group index out of range"
+
+flatNodePackRefs :: FlatProgram -> FlatNode -> [NodeId]
+flatNodePackRefs p node =
+  flatNodeChildRefs node ++ flatNodeSideRefs p node
+
+flatArgRef :: FlatArg -> NodeId
+flatArgRef = \case
+  FlatArgExpr j -> j
+  FlatArgEffect j -> j
+
+flatFieldRef :: FlatField -> NodeId
+flatFieldRef = \case
+  FlatField _ j -> j
+  FlatFieldEff _ j -> j
+  FlatFieldExtra _ j -> j
+  FlatFieldExtraEff _ j -> j
+
+validateFlatProgram :: FlatProgram -> ()
+validateFlatProgram p =
+  let
+    nodes = fpNodes p
+    n = V.length nodes
+    inRange ref
+      | ref >= 0 && ref < n = ()
+      | otherwise =
+          error $
+            "JShark.Flat.validateFlatProgram: node ref "
+              <> show ref
+              <> " out of range [0,"
+              <> show n
+              <> ")"
+    packOrder i ref
+      | ref < i = ()
+      | otherwise =
+          error $
+            "JShark.Flat.validateFlatProgram: node "
+              <> show i
+              <> " refs "
+              <> show ref
+              <> " (pack order violated)"
+   in
+    foldr
+      ( \i acc ->
+          foldr
+            (\ref a -> packOrder i ref `seq` a)
+            acc
+            (flatNodePackRefs p (nodes V.! i))
+      )
+      ()
+      [0 .. n - 1]
+      `seq` foldr (\r () -> inRange r) () (map flatArgRef (concat (V.toList (fpArgGroups p))))
+      `seq` foldr (\r () -> inRange r) () (map flatFieldRef (concat (V.toList (fpFieldGroups p))))
+      `seq` foldr (\r () -> inRange r) () (map snd (concat (V.toList (fpStrCases p))))
+      `seq` if fpRoot p >= 0 && fpRoot p < n
+        then ()
+        else error "JShark.Flat.validateFlatProgram: invalid root"
 
 packRecArgs :: Rec IrArg us -> State PackState Int
 packRecArgs rec = addArgGroup =<< packRecArgsGo rec

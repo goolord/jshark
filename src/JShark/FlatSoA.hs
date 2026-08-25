@@ -8,12 +8,14 @@ module JShark.FlatSoA
   ( FlatSoA (..)
   , fromProgram
   , toProgram
+  , optimizeFlatProgram
   , propagatePureFlags
   , optConstantFoldNum
   , optimizeSoA
   , packEffectProgramSoA
   , soaPureCount
   , exprMask
+  , soaColumnsEqual
   )
 where
 
@@ -37,6 +39,7 @@ import JShark.Flat
   , FlatNode (..)
   , FlatProgram (..)
   , NodeId
+  , fpPure
   , packEffectProgram
   )
 import JShark.Ir (IrEffect)
@@ -174,6 +177,10 @@ fromProgram p =
       List.foldl' encodeOne ([], V.empty, V.empty, V.empty) (V.toList (fpNodes p))
     rev = reverse encs
     n = length rev
+    pureV =
+      if V.length (fpPure p) == n
+        then VU.fromList (V.toList (fpPure p))
+        else VU.replicate n 0
    in
     FlatSoA
       { fsaOpcodes = VU.fromList (map encOp rev)
@@ -182,7 +189,7 @@ fromProgram p =
       , fsaC = VU.fromList (map encC rev)
       , fsaD = VU.fromList (map encD rev)
       , fsaE = VU.fromList (map encE rev)
-      , fsaPure = VU.replicate n 0
+      , fsaPure = pureV
       , fsaFixed = fixed
       , fsaFnLit = fnLit
       , fsaArrayGroups = arrGrps
@@ -326,6 +333,7 @@ toProgram soa =
     , fpStrCases = fsaStrCases soa
     , fpFieldGroups = fsaFieldGroups soa
     , fpArgGroups = fsaArgGroups soa
+    , fpPure = V.fromList (VU.toList (fsaPure soa))
     , fpRoot = fsaRoot soa
     }
  where
@@ -418,7 +426,15 @@ decodeOp soa op ix iy iz iw iv
   | op == oFX_DELETEPROP = FX_DeleteProp ix iy
   | op == oFX_ARRAYLIT =
       FX_ArrayLit (V.toList (fsaArrayGroups soa V.! ix))
-  | otherwise = error "JShark.FlatSoA.toProgram: unknown opcode"
+  | otherwise =
+      unknownFlatOpcode op ix iy iz iw iv
+
+unknownFlatOpcode :: Op -> Int -> Int -> Int -> Int -> Int -> FlatNode
+unknownFlatOpcode op _ _ _ _ _ =
+  error $
+    "JShark.FlatSoA.decodeOp: unknown opcode "
+      <> show (fromIntegral op :: Int)
+      <> " (add a decode arm and test)"
 
 tagBigOp :: Int32 -> BigBinOp
 tagBigOp = \case
@@ -439,7 +455,19 @@ exprMask soa =
   VU.map (\op -> if op < oFX_LIFT then 1 else 0) (fsaOpcodes soa)
 
 propagatePureFlags :: FlatSoA -> FlatSoA
-propagatePureFlags soa =
+propagatePureFlags soa0 =
+  let
+    n = VU.length (fsaOpcodes soa0)
+    go k soa
+      | k >= n = soa
+      | otherwise =
+          let soa' = propagatePureFlagsPass soa
+           in if fsaPure soa' == fsaPure soa then soa' else go (k + 1) soa'
+   in
+    go 0 soa0
+
+propagatePureFlagsPass :: FlatSoA -> FlatSoA
+propagatePureFlagsPass soa =
   let
     n = VU.length (fsaOpcodes soa)
     pureV = runST $ do
@@ -480,14 +508,6 @@ propagatePureFlags soa =
             ns = map fieldNode (fsaFieldGroups soa V.! fromIntegral gi)
            in
             andNodes ns
-        pureArgs ai =
-          let
-            argNode = \case
-              FlatArgExpr j -> j
-              FlatArgEffect j -> j
-            ns = map argNode (fsaArgGroups soa V.! fromIntegral ai)
-           in
-            andNodes ns
 
         pureForOp op a b c d e
           | op == oFE_LITERAL = pure 1
@@ -522,12 +542,6 @@ propagatePureFlags soa =
           | op == oFE_MTOSORTED = bin a d
           | op == oFE_MFROM = bin a c
           | op == oFX_LIFT = ch a
-          | op == oFX_UNSAFEOBJGET = ch a
-          | op == oFX_UNSAFEOBJSET = bin a b
-          | op == oFX_CALLMETHOD = do
-              r <- ch a
-              as <- pureArgs c
-              pure (r .&. as)
           | op == oFX_BIND = bin b c
           | op == oFX_THENE = bin a b
           | op == oFX_BINDREC = bin b c
@@ -592,14 +606,15 @@ litAsNumber :: FlatLit -> Maybe Double
 litAsNumber (FLit (ValueNumber d)) = Just d
 litAsNumber _ = Nothing
 
-optConstantFoldNum :: FlatSoA -> FlatSoA
-optConstantFoldNum soa0 = runST $ do
+optConstantFoldNumOnce :: FlatSoA -> (FlatSoA, Bool)
+optConstantFoldNumOnce soa0 = runST $ do
   let
     n = VU.length (fsaOpcodes soa0)
   opM <- VU.unsafeThaw (fsaOpcodes soa0)
   aM <- VU.unsafeThaw (fsaA soa0)
   bM <- VU.unsafeThaw (fsaB soa0)
   litsRef <- newSTRef =<< V.unsafeThaw (fsaLits soa0)
+  changedRef <- newSTRef False
   let
     readOp i = MVU.read opM i
     readA i = MVU.read aM i
@@ -637,13 +652,74 @@ optConstantFoldNum soa0 = runST $ do
             MVU.write opM i oFE_LITERAL
             MVU.write aM i liNew
             MVU.write bM i 0
+            writeSTRef changedRef True
           _ -> pure ()
   forM_ [0 .. n - 1] tryFold
   opF <- VU.unsafeFreeze opM
   aF <- VU.unsafeFreeze aM
   litsM <- readSTRef litsRef
   litsF <- V.unsafeFreeze litsM
-  pure soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}
+  changed <- readSTRef changedRef
+  pure (soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}, changed)
+
+optConstantFoldNum :: FlatSoA -> FlatSoA
+optConstantFoldNum soa0 =
+  fst (optConstantFoldNumWithChanged soa0)
+
+optConstantFoldNumWithChanged :: FlatSoA -> (FlatSoA, Bool)
+optConstantFoldNumWithChanged soa0 =
+  let
+    go soa didFold =
+      let
+        (soa', changed) = optConstantFoldNumOnce soa
+       in
+        if changed then go soa' True else (soa, didFold)
+   in
+    go soa0 False
+
+soaColumnsEqual :: FlatSoA -> FlatSoA -> Bool
+soaColumnsEqual a b =
+  soaUnboxedEqual a b
+    && soaSideLengthsEqual a b
+    && fsaTexts a == fsaTexts b
+    && fsaStrCases a == fsaStrCases b
+    && fsaFnLit a == fsaFnLit b
+    && fsaArrayGroups a == fsaArrayGroups b
+    && fsaArgGroups a == fsaArgGroups b
+    && fsaFieldGroups a == fsaFieldGroups b
+    && soaUnboxedEqual a (fromProgram (toProgram a))
+    && soaUnboxedEqual b (fromProgram (toProgram b))
+
+soaUnboxedEqual :: FlatSoA -> FlatSoA -> Bool
+soaUnboxedEqual a b =
+  fsaOpcodes a == fsaOpcodes b
+    && fsaA a == fsaA b
+    && fsaB a == fsaB b
+    && fsaC a == fsaC b
+    && fsaD a == fsaD b
+    && fsaE a == fsaE b
+    && fsaPure a == fsaPure b
+    && fsaRoot a == fsaRoot b
+
+soaSideLengthsEqual :: FlatSoA -> FlatSoA -> Bool
+soaSideLengthsEqual a b =
+  V.length (fsaFixed a) == V.length (fsaFixed b)
+    && V.length (fsaLits a) == V.length (fsaLits b)
+    && V.length (fsaFFIs a) == V.length (fsaFFIs b)
+
+-- | Run SoA opts and attach 'fpPure' (staging metadata; emit ignores for now).
+optimizeFlatProgram :: FlatProgram -> FlatProgram
+optimizeFlatProgram p =
+  let
+    soa0 = fromProgram p
+    (soa1, folded) = optConstantFoldNumWithChanged soa0
+    soa2 = propagatePureFlags soa1
+    pureV = V.fromList (VU.toList (fsaPure soa2))
+   in
+    if folded
+      then toProgram soa2
+      else p {fpPure = pureV}
 
 optimizeSoA :: FlatSoA -> FlatSoA
-optimizeSoA = propagatePureFlags . optConstantFoldNum
+optimizeSoA soa =
+  propagatePureFlags (optConstantFoldNum soa)

@@ -20,6 +20,7 @@ import qualified Data.Text as T
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
+import JShark.FlatTest
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Classes as C
@@ -69,6 +70,7 @@ tests =
     , genericTests
     , optimizeTests
     , irParityTests
+    , flatSoATests
     , compilerTests
     , bunEvalTests
     , lucidDomTests
@@ -1762,6 +1764,29 @@ irParityTests =
     bindSyntax (expr (number 1)) (\_ -> ffi "foo" RecNil)
   tryBinding :: Effect f 'Number
   tryBinding = try_ (ffi "foo" RecNil) (expr (number 0))
+
+flatSoATests :: TestTree
+flatSoATests =
+  testGroup
+    "flat soa"
+    [ testCase "column round-trip" $
+        flatSoaColumnsRoundTrip kernelAndLambdaUse @?= True
+    , testCase "program round-trip" $
+        flatProgramRoundTrip kernelAndLambdaUse @?= True
+    , testCase "optimize attaches fpPure" $
+        flatSoaPureNodeCount (expr (number 1 + number 2)) > (0 :: Int) @?= True
+    , testCase "constant fold chains" $
+        renderJS (effectfulASTIr (expr ((number 1 + number 2) + number 3)))
+          @?= renderJS (effectfulASTIr (expr (number 6)))
+    , testCase "flat matches phoas on kernel" $
+        renderJS (effectfulASTIr kernelAndLambdaUse)
+          @?= renderJS (effectfulAST kernelAndLambdaUse)
+    ]
+ where
+  kernelAndLambdaUse :: Effect f 'Number
+  kernelAndLambdaUse =
+    bindSyntax (fooE :: Effect f 'Number) $ \x ->
+      expr (x + Apply (lambda (\_ -> x * number 2)) (number 1))
 
 -- | Bind an effect and use its result in another effect.
 bindSyntax :: Effect f a -> (Expr f a -> Effect f b) -> Effect f b

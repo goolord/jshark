@@ -117,6 +117,7 @@ module JShark
   , effectfulAST
   , effectfulASTFromFlat
   , effectfulASTIr
+  , irEffectFromClosed
   , pureProgram
   , effectfulProgram
   , printComputation
@@ -2914,8 +2915,8 @@ optimize (e :: ClosedExpr u) =
 {-# NOINLINE optimize #-}
 
 -- | Legacy PHOAS round-trip: optimize via IR, then 'reifyEffect' back to
--- 'Effect Stamp'. 'effectfulASTIr' uses 'effectfulASTFromFlat' instead;
--- keep this for callers that still need an optimized 'Effect' tree.
+-- 'Effect Stamp'. Large programs use the flat pipeline instead; kept for
+-- callers that still need an optimized 'Effect' tree.
 optimizeEffectIr :: Effect Stamp u -> Effect Stamp u
 optimizeEffectIr e =
   let
@@ -2938,6 +2939,15 @@ optimizeEffectTree (e :: ClosedEffect u) =
 optimizeEffect :: ClosedEffect u -> Effect Stamp u
 optimizeEffect e = optimizeEffectTree e
 {-# NOINLINE optimizeEffect #-}
+
+irEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
+irEffectFromClosed (e :: ClosedEffect u) =
+  let
+    (_, ir) = lowerEffectAt (-2) (flattenEff e)
+    (_, irOpt, _) = Ir.optIrEffect (-2) ir
+   in
+    irOpt
+{-# NOINLINE irEffectFromClosed #-}
 
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =
@@ -4139,6 +4149,8 @@ bindEffectCode env s0 x f =
                   yFX
               )
 
+-- Flat codegen ('flatPureAST'' / 'flatEffectfulAST'') mirrors the PHOAS
+-- emitters above; keep in sync — 'irParityTests' diff the two paths.
 flatRenderLiteral ::
   Env -> CG -> Value u -> (CG, Code ann)
 flatRenderLiteral env s0 = \case
@@ -5121,11 +5133,8 @@ flatEffectfulCodegen ::
   ClosedEffect u -> (CG, Code ann)
 flatEffectfulCodegen (e :: ClosedEffect u) =
   let
-    (_, ir) = lowerEffectAt (-2) (flattenEff e)
-    (_, irOpt, _) = Ir.optIrEffect (-2) ir
     prog =
-      FlatSoA.toProgram
-        (FlatSoA.optimizeSoA (FlatSoA.fromProgram (Flat.packEffectProgram irOpt)))
+      FlatSoA.optimizeFlatProgram (Flat.packEffectProgram (irEffectFromClosed e))
     root = Flat.fpRootEffect prog
    in
     if root < 0 || root >= flatProgramNodeCount prog
@@ -5144,10 +5153,9 @@ effectfulAST e
         renderWithHelpers
         (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
--- | 'effectfulAST' forced through the first-order IR optimizer, whatever
--- the size of the term. Same output as 'effectfulAST'; exposed so the
--- two optimizer paths can be diffed on programs below the routing
--- threshold.
+-- | Flat IR codegen after 'Ir.optIrEffect'. Below 'optIrLargeThreshold',
+-- 'effectfulAST' still uses the PHOAS pipeline; this always uses flat
+-- pack + SoA opts. Output matches 'effectfulAST' on 'irParityTests'.
 effectfulASTIr :: ClosedEffect u -> Doc ann
 effectfulASTIr = effectfulASTFromFlat
 
