@@ -1579,7 +1579,7 @@ optimizeTests =
           @?= "const n0 = foo();\n(n0 + n0) + 2.0"
     , testCase "letRec rhs folds" $
         renderJS (pureAST (letRec (\_ -> number 1 + number 2) (\n -> n)))
-          @?= "let n0;\nn0 = 3.0;\nn0"
+          @?= "const n0 = 3.0;\nn0"
     , testCase "dead pure let is dropped" $
         renderJS (pureAST (let_ (number 1) (\_ -> number 2))) @?= "2.0"
     , testCase "unused FFI let is kept as a statement" $

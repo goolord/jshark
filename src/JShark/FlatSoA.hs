@@ -4,6 +4,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Struct-of-arrays flat IR and bulk-friendly optimizer passes.
+--
+-- Column arrays ('fsaOpcodes', 'fsaA'…'fsaE') are laid out for contiguous
+-- scans; 'fromProgram' writes them in one pass without an intermediate
+-- @[(Enc)]@. Optimizer passes that walk node indices sequentially
+-- ('optConstantFoldNumOnce', 'propagatePureFlagsPass') remain
+-- data-dependent and are poor SIMD targets; equality checks on columns
+-- already delegate to unboxed vector primitives.
 module JShark.FlatSoA
   ( FlatSoA (..)
   , fromProgram
@@ -21,7 +28,6 @@ where
 
 import Control.Monad (foldM, forM_, when)
 import Control.Monad.ST (runST)
-import qualified Data.List as List
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Bits ((.&.))
 import Data.Int (Int32)
@@ -161,52 +167,69 @@ packEffectProgramSoA = fromProgram . packEffectProgram
 i32 :: Int -> Int32
 i32 = fromIntegral
 
-data Enc = Enc
-  { encOp :: !Op
-  , encA :: !Int32
-  , encB :: !Int32
-  , encC :: !Int32
-  , encD :: !Int32
-  , encE :: !Int32
-  }
+data Enc = Enc !Op !Int32 !Int32 !Int32 !Int32 !Int32
 
 fromProgram :: FlatProgram -> FlatSoA
 fromProgram p =
   let
-    (encs, fixed, fnLit, arrGrps) =
-      List.foldl' encodeOne ([], V.empty, V.empty, V.empty) (V.toList (fpNodes p))
-    rev = reverse encs
-    n = length rev
-    pureV =
-      if V.length (fpPure p) == n
-        then VU.fromList (V.toList (fpPure p))
-        else VU.replicate n 0
+    nodes = fpNodes p
+    n = V.length nodes
+    pureV = pureColumn (fpPure p) n
    in
-    FlatSoA
-      { fsaOpcodes = VU.fromList (map encOp rev)
-      , fsaA = VU.fromList (map encA rev)
-      , fsaB = VU.fromList (map encB rev)
-      , fsaC = VU.fromList (map encC rev)
-      , fsaD = VU.fromList (map encD rev)
-      , fsaE = VU.fromList (map encE rev)
-      , fsaPure = pureV
-      , fsaFixed = fixed
-      , fsaFnLit = fnLit
-      , fsaArrayGroups = arrGrps
-      , fsaLits = fpLits p
-      , fsaTexts = fpTexts p
-      , fsaFFIs = fpFFIs p
-      , fsaStrCases = fpStrCases p
-      , fsaFieldGroups = fpFieldGroups p
-      , fsaArgGroups = fpArgGroups p
-      , fsaRoot = fpRoot p
-      }
+    runST $ do
+      opM <- MVU.new n
+      aM <- MVU.new n
+      bM <- MVU.new n
+      cM <- MVU.new n
+      dM <- MVU.new n
+      eM <- MVU.new n
+      let
+        writeEnc !i (Enc op a b c d e) = do
+          MVU.write opM i op
+          MVU.write aM i a
+          MVU.write bM i b
+          MVU.write cM i c
+          MVU.write dM i d
+          MVU.write eM i e
+        go !i !fx !fl !ag
+          | i >= n = pure (fx, fl, ag)
+          | otherwise = do
+              let
+                (enc, fx', fl', ag') =
+                  encodeNode (nodes V.! i) fx fl ag
+              writeEnc i enc
+              go (i + 1) fx' fl' ag'
+      (fx, fl, ag) <- go 0 V.empty V.empty V.empty
+      opF <- VU.unsafeFreeze opM
+      aF <- VU.unsafeFreeze aM
+      bF <- VU.unsafeFreeze bM
+      cF <- VU.unsafeFreeze cM
+      dF <- VU.unsafeFreeze dM
+      eF <- VU.unsafeFreeze eM
+      pure
+        FlatSoA
+          { fsaOpcodes = opF
+          , fsaA = aF
+          , fsaB = bF
+          , fsaC = cF
+          , fsaD = dF
+          , fsaE = eF
+          , fsaPure = pureV
+          , fsaFixed = fx
+          , fsaFnLit = fl
+          , fsaArrayGroups = ag
+          , fsaLits = fpLits p
+          , fsaTexts = fpTexts p
+          , fsaFFIs = fpFFIs p
+          , fsaStrCases = fpStrCases p
+          , fsaFieldGroups = fpFieldGroups p
+          , fsaArgGroups = fpArgGroups p
+          , fsaRoot = fpRoot p
+          }
  where
-  encodeOne (es, fx, fl, ag) node =
-    let
-      (e, fx', fl', ag') = encodeNode node fx fl ag
-     in
-      (e : es, fx', fl', ag')
+  pureColumn fp n
+    | V.length fp == n = VU.generate n (\i -> fp V.! i)
+    | otherwise = VU.replicate n 0
 
   encodeNode node fx fl ag = case node of
     FE_Literal li -> (Enc oFE_LITERAL (i32 li) 0 0 0 0, fx, fl, ag)
@@ -457,21 +480,21 @@ exprMask soa =
 propagatePureFlags :: FlatSoA -> FlatSoA
 propagatePureFlags soa0 =
   let
-    n = VU.length (fsaOpcodes soa0)
-    go k soa
-      | k >= n = soa
-      | otherwise =
-          let soa' = propagatePureFlagsPass soa
-           in if fsaPure soa' == fsaPure soa then soa' else go (k + 1) soa'
+    go soa =
+      let
+        (soa', changed) = propagatePureFlagsPass soa
+       in
+        if changed then go soa' else soa'
    in
-    go 0 soa0
+    go soa0
 
-propagatePureFlagsPass :: FlatSoA -> FlatSoA
+propagatePureFlagsPass :: FlatSoA -> (FlatSoA, Bool)
 propagatePureFlagsPass soa =
   let
     n = VU.length (fsaOpcodes soa)
-    pureV = runST $ do
-      mp <- MVU.new n
+    (pureV, changed) = runST $ do
+      mp <- VU.unsafeThaw (fsaPure soa)
+      changedRef <- newSTRef False
       let
         ch j = do
           let i = fromIntegral j :: Int
@@ -575,10 +598,14 @@ propagatePureFlagsPass soa =
        in
         forM_ [0 .. n - 1] $ \idx -> do
           p <- pureAt idx
+          old <- MVU.read mp idx
+          when (p /= old) (writeSTRef changedRef True)
           MVU.write mp idx p
-      VU.unsafeFreeze mp
+      ch <- readSTRef changedRef
+      pureV' <- VU.unsafeFreeze mp
+      pure (pureV', ch)
    in
-    soa {fsaPure = pureV}
+    (soa {fsaPure = pureV}, changed)
  where
   impureOp :: Op -> Bool
   impureOp op

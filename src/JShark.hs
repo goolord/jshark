@@ -5199,9 +5199,8 @@ letResult resultVar = ("let" <+> jsText resultVar) <> semi
 
 recBindStmt :: JS -> Maybe (JS) -> Maybe (JS) -> JS
 recBindStmt n rDecl rRef =
-  ("let" <+> n)
-    <> semi $$ fromMaybe mempty rDecl $$ (n <+> "=" <+> fromMaybe mempty rRef)
-    <> semi
+  fromMaybe mempty rDecl
+    $$ (("const" <+> n <+> "=" <+> fromMaybe mempty rRef) <> semi)
 
 resultCasePrelude ::
   Env

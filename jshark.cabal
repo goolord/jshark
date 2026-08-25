@@ -115,6 +115,7 @@ library
     Haskell2010
   ghc-options:
     -O2
+    -fllvm
 
 -- JShark.Lucid destructures Lucid.Base's Attribute, which is not part of
 -- the public Lucid API, so the bound is the tested minor rather than the
@@ -276,6 +277,7 @@ common bench
   default-language: Haskell2010
   ghc-options:
     -O2
+    -fllvm
     -threaded
     -rtsopts
     -with-rtsopts=-N
