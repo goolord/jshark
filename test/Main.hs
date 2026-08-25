@@ -1577,7 +1577,7 @@ optimizeTests =
           @?= "function (n0) {return (1.0 + n0)}"
     , testCase "multi-use let inside a lambda stays inside the function" $
         renderJS (pureAST (lambda (\x -> let_ (x + x) (\y -> y + y))))
-          @?= "function (n0) {const n1 = n0 + n0;\n               return (n1 + n1)}"
+          @?= "function (n0) {const n1 = n0 + n0;\nreturn (n1 + n1)}"
     , testCase "array index of a literal folds" $
         renderJS (pureAST (Array.index numArray (number 0))) @?= "1.0"
     , testCase "let-bound frozen field is cheap and folds" $
