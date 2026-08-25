@@ -36,6 +36,7 @@ module JShark.Ir
 where
 
 import Data.IntMap.Strict (IntMap)
+import Data.Monoid (Any (..))
 import qualified Data.IntMap.Strict as IM
 import Data.Kind (Type)
 import Data.Text (Text)
@@ -252,45 +253,94 @@ data IrEffect :: Universe -> Type where
   IrDeleteProp :: IrEffect object -> IrExpr 'String -> IrEffect 'Bool
   IrArrayLit :: [IrEffect u] -> IrEffect ('Array u)
 
+-- | Structural metadata. Every child contributes, including the lazy
+-- ones: a free variable that occurs only inside a lambda body, a @?:@
+-- arm, or an FFI argument is still a use, and 'substIrExpr' keys its
+-- skip test off 'irFree'.
 metaIrExpr :: IrExpr u -> IrMeta
-metaIrExpr = \case
+metaIrExpr e = case e of
   IrLiteral v -> IrMeta 1 IM.empty True (isCheapValueIr v)
   IrVar i -> IrMeta 1 (IM.singleton i 1) True True
-  IrEmbedEff e -> metaIrEffect e
-  IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) True
-  IrKernelK {} -> IrMeta 1 IM.empty True False
-  e ->
-    IrMeta 1 IM.empty True False
-      <> foldIrExpr metaIrExpr metaLazyIrExpr metaIrEffect e
-
-metaLazyIrExpr :: IrExpr u -> IrMeta
-metaLazyIrExpr e =
-  if IM.null (irFree (metaIrExpr e))
-    then mempty
-    else IrMeta 0 IM.empty True True
+  IrEmbedEff x -> metaIrEffect x
+  _ -> here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+ where
+  here = case e of
+    IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) True
+    _ -> IrMeta 1 IM.empty True False
 
 metaIrEffect :: IrEffect u -> IrMeta
-metaIrEffect = \case
-  IrFFI {} -> IrMeta 1 IM.empty False False
-  IrUnsafeObjectGet {} -> IrMeta 1 IM.empty False False
-  IrUnsafeObjectAssign {} -> IrMeta 1 IM.empty False False
-  IrCallMethod {} -> IrMeta 1 IM.empty False False
-  IrApplyE {} -> IrMeta 1 IM.empty False False
-  IrWhile {} -> IrMeta 1 IM.empty False False
-  IrForRange {} -> IrMeta 1 IM.empty False False
-  IrU8Set {} -> IrMeta 1 IM.empty False False
-  IrThrow {} -> IrMeta 1 IM.empty False False
-  IrTry {} -> IrMeta 1 IM.empty False False
-  IrDeleteProp {} -> IrMeta 1 IM.empty False False
-  e ->
-    IrMeta 1 IM.empty True False
-      <> foldIrEff metaIrExpr metaIrEffect metaLazyIrEffect e
+metaIrEffect e =
+  here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+ where
+  here = case e of
+    IrFFI {} -> impure
+    IrUnsafeObject {} -> impure
+    IrUnsafeObjectGet {} -> impure
+    IrUnsafeObjectAssign {} -> impure
+    IrCallMethod {} -> impure
+    IrApplyE {} -> impure
+    IrWhile {} -> impure
+    IrForRange {} -> impure
+    IrU8Set {} -> impure
+    IrThrow {} -> impure
+    IrTry {} -> impure
+    IrDeleteProp {} -> impure
+    _ -> IrMeta 1 IM.empty True False
+  impure = IrMeta 1 IM.empty False False
 
-metaLazyIrEffect :: IrEffect u -> IrMeta
-metaLazyIrEffect e =
-  if IM.null (irFree (metaIrEffect e))
-    then mempty
-    else IrMeta 0 IM.empty True True
+-- | Occurrence test for 'substIrExpr' / 'substIrEffect'. Short-circuits
+-- on the first hit and, unlike a free-variable map, allocates nothing.
+occursIrExpr :: Int -> IrExpr u -> P.Bool
+occursIrExpr t = \case
+  IrVar i -> i == t
+  IrEmbedEff e -> occursIrEffect t e
+  e ->
+    getAny
+      ( foldIrExpr
+          (Any . occursIrExpr t)
+          (Any . occursIrExpr t)
+          (Any . occursIrEffect t)
+          e
+      )
+
+occursIrEffect :: Int -> IrEffect u -> P.Bool
+occursIrEffect t e =
+  getAny
+    ( foldIrEff
+        (Any . occursIrExpr t)
+        (Any . occursIrEffect t)
+        (Any . occursIrEffect t)
+        e
+    )
+
+-- | Does the tag occur in a position that is not evaluated exactly once
+-- where it stands: a lambda body, a @?:@ arm, an @&&@ right operand, a
+-- loop body? Inlining there either skips work the program asked for or
+-- repeats it, so those uses keep their binding.
+lazyOccursIrExpr :: Int -> IrExpr u -> P.Bool
+lazyOccursIrExpr t = \case
+  IrEmbedEff e -> lazyOccursIrEffect t e
+  e ->
+    getAny
+      ( foldIrExpr
+          (Any . lazyOccursIrExpr t)
+          (Any . occursIrExpr t)
+          (Any . lazyOccursIrEffect t)
+          e
+      )
+
+lazyOccursIrEffect :: Int -> IrEffect u -> P.Bool
+lazyOccursIrEffect t = \case
+  -- Re-evaluated once per iteration, so neither part is a "once" slot.
+  IrWhile c b -> occursIrEffect t c P.|| occursIrEffect t b
+  e ->
+    getAny
+      ( foldIrEff
+          (Any . lazyOccursIrExpr t)
+          (Any . lazyOccursIrEffect t)
+          (Any . occursIrEffect t)
+          e
+      )
 
 foldIrExpr ::
   Monoid m =>
@@ -595,7 +645,7 @@ mapIrArgs gf ge = \case
 substIrExpr :: Int -> Int -> IrExpr u -> IrExpr u
 substIrExpr old new e
   | old == new = e
-  | IM.notMember old (irFree (metaIrExpr e)) = e
+  | not (occursIrExpr old e) = e
   | otherwise = case e of
       IrVar i | i == old -> IrVar new
       _ -> mapIrExpr (substIrExpr old new) (substIrEffect old new) e
@@ -603,24 +653,34 @@ substIrExpr old new e
 substIrEffect :: Int -> Int -> IrEffect u -> IrEffect u
 substIrEffect old new e
   | old == new = e
-  | IM.notMember old (irFree (metaIrEffect e)) = e
+  | not (occursIrEffect old e) = e
   | otherwise = mapIrEff (substIrExpr old new) (substIrEffect old new) e
 
+-- | Replace the binder with the bound term itself. A variable-to-variable
+-- bound term is a plain rename; anything else has to be spliced in, and
+-- treating it as a rename would drop the binding while leaving the uses
+-- pointing at a tag nothing binds.
 inlineIrExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-inlineIrExpr tag bound body = substIrExpr tag (inlineExprTag bound) body
- where
-  inlineExprTag = \case
-    IrVar i -> i
-    _ -> tag
+inlineIrExpr tag bound body = case bound of
+  IrVar i -> substIrExpr tag i body
+  _ -> replaceIrVarExpr tag bound body
+
+replaceIrVarExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
+replaceIrVarExpr tag bound = \case
+  IrVar i | i == tag -> unsafeCoerce bound
+  e -> mapIrExpr (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound) e
+
+replaceIrVarEff :: Int -> IrExpr u -> IrEffect v -> IrEffect v
+replaceIrVarEff tag bound =
+  mapIrEff (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound)
 
 inlineIrEffect :: Int -> IrEffect u -> IrEffect v -> IrEffect v
-inlineIrEffect tag bound body = case body of
-  IrLift e -> IrLift (inlineIrExprInEff tag bound e)
-  _ -> substIrEffect tag (inlineEffTag bound) body
- where
-  inlineEffTag = \case
-    IrLift (IrVar i) -> i
-    _ -> tag
+inlineIrEffect tag bound body = case bound of
+  IrLift (IrVar i) -> substIrEffect tag i body
+  _
+    | not (occursIrEffect tag body) -> body
+    | otherwise ->
+        mapIrEff (inlineIrExprInEff tag bound) (inlineIrEffect tag bound) body
 
 inlineIrEffectInExpr :: Int -> IrEffect u -> IrEffect v -> IrEffect v
 inlineIrEffectInExpr tag bound = \case
@@ -651,15 +711,20 @@ elimIrLet ::
   -> IrMeta
   -> (IrExpr v, IrMeta)
 elimIrLet mdX tag x body mdBody =
-  let uses = IM.findWithDefault 0 tag (irFree mdBody)
+  let
+    uses = IM.findWithDefault 0 tag (irFree mdBody)
+    closed = bindMeta tag mdBody
+    spliced = closed <> mdX
+    once = irCheap mdX P.|| not (lazyOccursIrExpr tag body)
    in
     case uses of
-      0 | irPure mdX -> (body, mdBody)
-      0 -> (IrLet tag x body, nodeMeta mdX mdBody)
-      1 | irSize mdBody <= optSmall -> (inlineIrExpr tag x body, mdBody)
+      0 | irPure mdX -> (body, closed)
+      0 -> (IrLet tag x body, nodeMeta mdX closed)
+      1 | irSize mdBody <= optSmall, once ->
+        (inlineIrExpr tag x body, spliced)
       _ | irCheap mdX, irSize mdBody <= optSmall ->
-        (inlineIrExpr tag x body, mdBody)
-      _ -> (IrLet tag x body, nodeMeta mdX mdBody)
+        (inlineIrExpr tag x body, spliced)
+      _ -> (IrLet tag x body, nodeMeta mdX closed)
 
 elimIrBind ::
   IrMeta
@@ -669,18 +734,32 @@ elimIrBind ::
   -> IrMeta
   -> (IrEffect v, IrMeta)
 elimIrBind mdX tag x body mdBody =
-  let uses = IM.findWithDefault 0 tag (irFree mdBody)
+  let
+    uses = IM.findWithDefault 0 tag (irFree mdBody)
+    closed = bindMeta tag mdBody
+    spliced = closed <> mdX
+    once =
+      isAliasIrEffect x
+        P.|| irCheap mdX
+        P.|| not (lazyOccursIrEffect tag body)
    in
     case uses of
-      0 | irPure mdX, not (isAliasIrEffect x) -> (body, mdBody)
-      0 -> (IrThenE x body, nodeMeta mdX mdBody)
-      1 | irSize mdBody <= optSmall -> (inlineIrEffect tag x body, mdBody)
+      0 | irPure mdX, not (isAliasIrEffect x) -> (body, closed)
+      0 -> (IrThenE x body, nodeMeta mdX closed)
+      1 | irSize mdBody <= optSmall, once ->
+        (inlineIrEffect tag x body, spliced)
       _ | irCheap mdX, irSize mdBody <= optSmall ->
-        (inlineIrEffect tag x body, mdBody)
-      _ -> (IrBind tag x body, nodeMeta mdX mdBody)
+        (inlineIrEffect tag x body, spliced)
+      _ -> (IrBind tag x body, nodeMeta mdX closed)
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta
 nodeMeta mdX mdY = IrMeta 1 IM.empty (irPure mdX && irPure mdY) False <> mdX <> mdY
+
+-- | Close a binder: its tag is no longer free above this node. Without
+-- this the free map grows to every tag in the subtree, and the union in
+-- '<>' then costs the whole program at every node.
+bindMeta :: Int -> IrMeta -> IrMeta
+bindMeta tag md = md {irFree = IM.delete tag (irFree md)}
 
 optIrExpr :: Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
 optIrExpr t0 = \case
@@ -692,6 +771,15 @@ optIrExpr t0 = \case
       (t2, body', mdBody) = optIrExpr t1 body
      in
       let (e', md') = elimIrLet mdX tag x' body' mdBody
+       in (t2, e', md')
+  -- A JS call evaluates its argument before the body runs, so an applied
+  -- lambda is a let and gets the same inlining decision.
+  IrApply (IrLambda tag g) x ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      (t2, g', mdG) = optIrExpr t1 g
+     in
+      let (e', md') = elimIrLet mdX tag x' g' mdG
        in (t2, e', md')
   IrFixed op args ->
     let (t1, args', md) = optIrFixedArgs t0 args
@@ -722,10 +810,10 @@ optIrExprChildren t0 = \case
       (t1, r', mdR) = optIrExpr t0 r
       (t2, b', mdB) = optIrExpr t1 b
      in
-      (t2, IrLetRec tag r' b', nodeMeta mdR mdB)
+      (t2, IrLetRec tag r' b', bindMeta tag (nodeMeta mdR mdB))
   IrLambda tag g ->
     let (t1, g', md) = optIrExpr t0 g
-     in (t1, IrLambda tag g', md)
+     in (t1, IrLambda tag g', bindMeta tag md)
   IrApply f x ->
     let
       (t1, f', mdF) = optIrExpr t0 f
@@ -750,7 +838,7 @@ optIrExprChildren t0 = \case
      in
       ( t3
       , IrOptionCase o' n' tag s'
-      , nodeMeta mdO (nodeMeta mdN mdS)
+      , nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS))
       )
   IrResultOk x ->
     let (t1, x', md) = optIrExpr t0 x
@@ -766,7 +854,7 @@ optIrExprChildren t0 = \case
      in
       ( t3
       , IrResultCase o' tagE e' tagO s'
-      , nodeMeta mdO (nodeMeta mdE mdS)
+      , nodeMeta mdO (nodeMeta (bindMeta tagE mdE) (bindMeta tagO mdS))
       )
   IrIndex x i ->
     binOptIr t0 IrIndex x i
@@ -878,13 +966,13 @@ optIrMethod t0 = \case
       (t1, x', mdX) = optIrExpr t0 x
       (t2, g', mdG) = optIrExpr t1 g
      in
-      (t2, IrMethMap x' tag g', nodeMeta mdX mdG)
+      (t2, IrMethMap x' tag g', nodeMeta mdX (bindMeta tag mdG))
   IrMethFilter x tag g ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, g', mdG) = optIrExpr t1 g
      in
-      (t2, IrMethFilter x' tag g', nodeMeta mdX mdG)
+      (t2, IrMethFilter x' tag g', nodeMeta mdX (bindMeta tag mdG))
   IrMethReduce x z tagA tagB g ->
     let
       (t1, x', mdX) = optIrExpr t0 x
@@ -893,7 +981,7 @@ optIrMethod t0 = \case
      in
       ( t3
       , IrMethReduce x' z' tagA tagB g'
-      , nodeMeta mdX (nodeMeta mdZ mdG)
+      , nodeMeta mdX (nodeMeta mdZ (bindMeta tagA (bindMeta tagB mdG)))
       )
   IrMethReduceRight x z tagA tagB g ->
     let
@@ -903,20 +991,23 @@ optIrMethod t0 = \case
      in
       ( t3
       , IrMethReduceRight x' z' tagA tagB g'
-      , nodeMeta mdX (nodeMeta mdZ mdG)
+      , nodeMeta mdX (nodeMeta mdZ (bindMeta tagA (bindMeta tagB mdG)))
       )
   IrMethToSorted x tagA tagB g ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, g', mdG) = optIrExpr t1 g
      in
-      (t2, IrMethToSorted x' tagA tagB g', nodeMeta mdX mdG)
+      ( t2
+      , IrMethToSorted x' tagA tagB g'
+      , nodeMeta mdX (bindMeta tagA (bindMeta tagB mdG))
+      )
   IrMethFrom n tag g ->
     let
       (t1, n', mdN) = optIrExpr t0 n
       (t2, g', mdG) = optIrExpr t1 g
      in
-      (t2, IrMethFrom n' tag g', nodeMeta mdN mdG)
+      (t2, IrMethFrom n' tag g', nodeMeta mdN (bindMeta tag mdG))
 
 optIrFnBody :: Int -> IrFnBody us r -> (Int, IrFnBody us r, IrMeta)
 optIrFnBody t0 = \case
@@ -925,7 +1016,7 @@ optIrFnBody t0 = \case
      in (t1, IrJfNil e', md)
   IrJfCons tag k ->
     let (t1, k', md) = optIrFnBody (t0 - optStep) k
-     in (t1, IrJfCons tag k', md)
+     in (t1, IrJfCons tag k', bindMeta tag md)
 
 mapAccumIrFieldLit ::
   Int -> [IrFieldLit r] -> (Int, [IrFieldLit r], IrMeta)
@@ -995,10 +1086,10 @@ optIrEffect t0 = \case
       (t1, r', mdR) = optIrEffect (t0 - optStep) r
       (t2, b', mdB) = optIrEffect t1 b
      in
-      (t2, IrBindRec tag r' b', nodeMeta mdR mdB)
+      (t2, IrBindRec tag r' b', bindMeta tag (nodeMeta mdR mdB))
   IrLambdaE tag g ->
     let (t1, g', md) = optIrEffect (t0 - optStep) g
-     in (t1, IrLambdaE tag g', md)
+     in (t1, IrLambdaE tag g', bindMeta tag md)
   IrApplyE f x ->
     let
       (t1, f', mdF) = optIrEffect t0 f
@@ -1024,7 +1115,7 @@ optIrEffect t0 = \case
       (t2, e', mdE) = optIrExpr t1 e
       (t3, b', mdB) = optIrEffect (t2 - optStep) b
      in
-      (t3, IrForRange s' e' tag b', nodeMeta mdS (nodeMeta mdE mdB))
+      (t3, IrForRange s' e' tag b', nodeMeta mdS (nodeMeta mdE (bindMeta tag mdB)))
   IrU8Set b i v ->
     let
       (t1, b', mdB) = optIrExpr t0 b
@@ -1044,7 +1135,7 @@ optIrEffect t0 = \case
       (t2, n', mdN) = optIrEffect t1 n
       (t3, s', mdS) = optIrEffect (t2 - optStep) s
      in
-      (t3, IrOptionCaseE o' n' tag s', nodeMeta mdO (nodeMeta mdN mdS))
+      (t3, IrOptionCaseE o' n' tag s', nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS)))
   IrResultCaseE o tagE e tagO s ->
     let
       (t1, o', mdO) = optIrExpr t0 o
@@ -1053,7 +1144,7 @@ optIrEffect t0 = \case
      in
       ( t3
       , IrResultCaseE o' tagE e' tagO s'
-      , nodeMeta mdO (nodeMeta mdE mdS)
+      , nodeMeta mdO (nodeMeta (bindMeta tagE mdE) (bindMeta tagO mdS))
       )
   IrStringCaseE s arms d ->
     let
@@ -1070,7 +1161,7 @@ optIrEffect t0 = \case
       (t1, a', mdA) = optIrEffect t0 a
       (t2, k', mdK) = optIrEffect (t1 - optStep) k
      in
-      (t2, IrTry a' tag k', nodeMeta mdA mdK)
+      (t2, IrTry a' tag k', nodeMeta mdA (bindMeta tag mdK))
   IrObjectLit fs ->
     let (t1, fs', md) = mapAccumIrFieldLit t0 fs
      in (t1, IrObjectLit fs', md)

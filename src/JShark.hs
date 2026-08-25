@@ -108,11 +108,13 @@ module JShark
   , nodeCountExpr
   , nodeCountEff
   , closedEffectNodes
+  , optIrLargeThreshold
   , optimizedExprSize
   , optimizedEffectSize
   -- Codegen
   , pureAST
   , effectfulAST
+  , effectfulASTIr
   , pureProgram
   , effectfulProgram
   , printComputation
@@ -1394,6 +1396,9 @@ occursVarInEff t =
       (Occ . occursVarInEff t)
       (Occ . occursVarInEff t)
 
+-- | Structural node count. Lazy children (lambda bodies, @?:@ arms,
+-- @&&@ RHS) are part of the tree, so they count: a size gate that
+-- skipped them under-measured a whole paint body as a leaf.
 nodeCountExpr :: Expr Stamp u -> Int
 nodeCountExpr = \case
   Var (Embed e') -> nodeCountExpr e'
@@ -1404,7 +1409,7 @@ nodeCountExpr = \case
         ( foldExpr
             nestedDummy
             (Sum . nodeCountExpr)
-            (const mempty)
+            (Sum . nodeCountExpr)
             (Sum . nodeCountEff)
             e
         )
@@ -1417,7 +1422,7 @@ nodeCountEff e =
           nestedDummy
           (Sum . nodeCountExpr)
           (Sum . nodeCountEff)
-          (const mempty)
+          (Sum . nodeCountEff)
           e
       )
 
@@ -4113,6 +4118,16 @@ effectfulAST e =
     renderWithHelpers
     (effectfulAST' IM.empty startCG (optimizeEffectTree e))
 
+-- | 'effectfulAST' forced through the first-order IR optimizer, whatever
+-- the size of the term. Same output as 'effectfulAST'; exposed so the
+-- two optimizer paths can be diffed on programs below the routing
+-- threshold.
+effectfulASTIr :: ClosedEffect u -> Doc ann
+effectfulASTIr (e :: ClosedEffect u) =
+  uncurry
+    renderWithHelpers
+    (effectfulAST' IM.empty startCG (optimizeEffectIr (e :: Effect Stamp u)))
+
 -- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
 -- materializes continuations (@f nestedDummy@).
 isUnitBoundEffect :: Effect Stamp u -> Bool
@@ -4134,6 +4149,7 @@ isUnitWitness = \case
   While {} -> True
   ForRange {} -> True
   Bind _ f -> isUnitWitness (f nestedDummy)
+  ThenE _ y -> isUnitWitness y
   BindRec _ f -> isUnitWitness (f nestedDummy)
   IfE _ t e -> isUnitWitness t && isUnitWitness e
   OptionCaseE _ n s -> isUnitWitness n && isUnitWitness (s nestedDummy)

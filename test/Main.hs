@@ -67,6 +67,7 @@ tests =
     , goodPartsTests
     , genericTests
     , optimizeTests
+    , irParityTests
     , compilerTests
     , bunEvalTests
     , lucidDomTests
@@ -1691,6 +1692,58 @@ optimizeTests =
           )
           @?= "baz()"
     ]
+
+-- | The IR optimizer runs instead of the PHOAS one above
+-- 'optIrLargeThreshold', so the two must agree. These cases cover the
+-- positions whose IR metadata used to report no free variables at all
+-- (FFI arguments, method receivers, kernel operands, lambda bodies),
+-- which silently deleted still-referenced bindings.
+irParityTests :: TestTree
+irParityTests =
+  testGroup
+    "ir parity"
+    [ parity "multi-use bind" (with1 fooE (\x -> x + x))
+    , parity "chained binds" (with2 fooE barE (\x y -> y + x))
+    , parity "use under a lambda" $
+        with1 fooE (\x -> lambda (\_ -> x + number 1))
+    , parity "use in an if_ branch" $
+        with2 fooE condE (\x c -> if_ c x (number 0))
+    , parity "use on the && RHS" (with2 condE barE (\x y -> And y x))
+    , parity "use inside an ffi argument" ffiArgUse
+    , parity "use inside a method receiver" methodUse
+    , parity "use in both a kernel and a lambda" kernelAndLambdaUse
+    , parity "while body use" whileUse
+    , parity "unused pure bind is dropped" unusedPureBind
+    , parity "try_ result binding" tryBinding
+    ]
+ where
+  parity :: String -> (forall f. Effect f u) -> TestTree
+  parity name p =
+    testCase name (renderJS (effectfulASTIr p) @?= renderJS (effectfulAST p))
+  ffiArgUse :: Effect f 'Unit
+  ffiArgUse =
+    bindSyntax (fooE :: Effect f 'Number) (\x -> ffi "sink" (arg x <: RecNil))
+  methodUse :: Effect f ('Array 'Number)
+  methodUse =
+    bindSyntax (ffi "list" RecNil :: Effect f ('Array 'Number)) $ \x ->
+      expr (Array.map x (\y -> y + number 1))
+  kernelAndLambdaUse :: Effect f 'Number
+  kernelAndLambdaUse =
+    bindSyntax (fooE :: Effect f 'Number) $ \x ->
+      expr (x + Apply (lambda (\_ -> x * number 2)) (number 1))
+  whileUse :: Effect f 'Unit
+  whileUse = bindSyntax condE (\c -> while_ (expr c) (ffi "tick" RecNil))
+  unusedPureBind :: Effect f 'Unit
+  unusedPureBind =
+    bindSyntax (expr (number 1)) (\_ -> ffi "foo" RecNil)
+  tryBinding :: Effect f 'Number
+  tryBinding = try_ (ffi "foo" RecNil) (expr (number 0))
+
+-- | Bind an effect and use its result in another effect.
+bindSyntax :: Effect f a -> (Expr f a -> Effect f b) -> Effect f b
+bindSyntax e k = fromSyntax $ do
+  x <- toSyntax e
+  toSyntax (k (Var x))
 
 compilerTests :: TestTree
 compilerTests =

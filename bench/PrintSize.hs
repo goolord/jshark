@@ -1,22 +1,49 @@
-
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 
+-- | Routing evidence for 'optIrLargeThreshold': how big Life is, and what
+-- each optimizer path costs on it.
+--
+--   cabal run print-size
 module Main (main) where
 
-import qualified Life
+import qualified Data.Text as T
+import qualified Control.Exception as Ex
+import GHC.Clock (getMonotonicTime)
 import JShark
 import JShark.Api
-import System.CPUTime
+import qualified Life
+import System.Timeout (timeout)
 import Text.Printf
+
+-- | Seconds, or Nothing when the stage did not finish in time.
+timeStage :: Int -> (() -> Int) -> IO (Maybe (Double, Int))
+timeStage limitSec f = do
+  t0 <- getMonotonicTime
+  res <- timeout (limitSec * 1000000) (Ex.evaluate (f ()))
+  t1 <- getMonotonicTime
+  pure (fmap (\n -> (t1 - t0, n)) res)
+
+timePath :: Int -> (() -> T.Text) -> IO (Maybe (Double, Int))
+timePath limitSec f = timeStage limitSec (T.length . f)
+
+report :: String -> Maybe (Double, Int) -> IO ()
+report name = \case
+  Nothing -> printf "%-14s TIMEOUT\n" name
+  Just (secs, n) -> printf "%-14s %8.3f sec  %7d chars\n" name secs n
 
 main :: IO ()
 main = do
   let l = stmts Life.mainJS
-  start <- getCPUTime
-  let !size = optimizedEffectSize l
-  end <- getCPUTime
-  let diff = fromIntegral (end - start) / 1e12 :: Double
-  printf "Life size: %d\n" size
-  printf "Optimization time: %0.3f sec\n" diff
+  t0 <- getMonotonicTime
+  !nodes <- Ex.evaluate (closedEffectNodes l)
+  t1 <- getMonotonicTime
+  printf "Life nodes:    %d  (counted in %.3f sec)\n" nodes (t1 - t0)
+  printf "IR threshold:  %d\n" optIrLargeThreshold
+
+  irOpt <- timeStage 60 (\() -> optimizedEffectSize l)
+  report "ir optimize" irOpt
+  ir <- timePath 60 (\() -> renderJSCompact (effectfulASTIr l))
+  report "ir + codegen" ir
