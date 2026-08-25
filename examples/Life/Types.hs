@@ -3,6 +3,7 @@
 
 module Types
   ( boardId
+  , lifeBoard2dId
   , gridW
   , gridH
   , cellPx
@@ -46,6 +47,14 @@ module Types
   , lifeTooltipNameId
   , lifeToolsId
   , lifeToolsCollapseId
+  , lifePauseOverlayId
+  , lifeEraserSizeId
+  , lifeEraserRadiusId
+  , lifeEraserRadiusValId
+  , lifeEraserGhostId
+  , eraserDefaultRadius
+  , eraserMinRadius
+  , eraserMaxRadius
   , lifeStatGenId
   , lifeStatCellsId
   , lifeStatFpsId
@@ -77,6 +86,10 @@ import Numeric (showHex)
 
 boardId :: Text
 boardId = "life-board"
+
+-- | 2D overlay canvas used to render the world when WebGL is lost.
+lifeBoard2dId :: Text
+lifeBoard2dId = "life-board-2d"
 
 -- | Simulation grid (world). The canvas is only the viewport.
 gridW, gridH, cellPx :: Int
@@ -202,6 +215,26 @@ lifeToolsId = "life-tools"
 
 lifeToolsCollapseId :: Text
 lifeToolsCollapseId = "life-tools-collapse"
+
+lifePauseOverlayId :: Text
+lifePauseOverlayId = "life-pause-overlay"
+
+lifeEraserSizeId :: Text
+lifeEraserSizeId = "life-eraser-size"
+
+lifeEraserRadiusId :: Text
+lifeEraserRadiusId = "life-eraser-radius"
+
+lifeEraserRadiusValId :: Text
+lifeEraserRadiusValId = "life-eraser-radius-val"
+
+lifeEraserGhostId :: Text
+lifeEraserGhostId = "life-eraser-ghost"
+
+eraserDefaultRadius, eraserMinRadius, eraserMaxRadius :: Int
+eraserDefaultRadius = 3
+eraserMinRadius = 1
+eraserMaxRadius = 12
 
 lifeStatGenId :: Text
 lifeStatGenId = "life-stat-gen"

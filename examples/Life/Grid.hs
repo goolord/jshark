@@ -21,6 +21,8 @@ module Grid
   , processCell
   , expandBoundsForLive
   , drawGridViewport
+  , drawGridFallback
+  , hideFallback2d
   , initPaletteRgba
   , syncPaletteRgbaSid
   , rebuildPackedCounts
@@ -41,6 +43,7 @@ where
 import GHC.Generics (Generic)
 import JShark.Api
 import qualified JShark.Array as Array
+import JShark.Dom (DomElement)
 import JShark.Generic (MutableObjectOf)
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
@@ -702,7 +705,7 @@ expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
 
 -- | Grid-resolution atlas + GPU sprite scale: 1 texel/cell, pan/zoom on GPU.
 drawGridViewport ::
-  Effect f ('MutableObject Pixi.Application)
+  Expr f ('MutableObject Pixi.Application)
   -> Expr f ('MutableObject Pixi.Sprite)
   -> Expr f ('MutableObject Pixi.Texture)
   -> Expr f 'Uint8Array
@@ -788,11 +791,9 @@ drawGridViewport
               visY0
               visY1
               renderDirty
-          gridTex <- hold (expr texture)
           isFull <- renderDirty.dirtyFull
           ifS
-            isFull
-            (Pixi.uploadTextureFull gridTex)
+            (not_ isFull)
             ( do
                 painted <- renderDirty.dirtyPainted
                 whenS (not_ painted) $
@@ -801,16 +802,149 @@ drawGridViewport
                       ( "(()=>{console.warn('[Life] changed cells produced no visible dirty rect');})"
                       )
                       RecNil
-                whenS painted $ do
-                  ix0 <- renderDirty.dirtyCx0
-                  iy0 <- renderDirty.dirtyCy0
-                  ix1 <- renderDirty.dirtyCx1
-                  iy1 <- renderDirty.dirtyCy1
-                  Pixi.uploadTextureRegion app gridTex ix0 iy0 ix1 iy1 w
             )
+            done
       sprH <- hold (expr sprite)
+      gridTex <- hold (expr texture)
       Pixi.setSpriteViewport sprH panX panY zoomLevel px
-      Pixi.render app
+      ifS
+        needsPaint
+        (Pixi.uploadAndRender app gridTex pixels)
+        (Pixi.render app)
+  done
+
+-- | CPU fallback when WebGL is lost or unavailable: paint the atlas, then
+--   blit it onto the 2D overlay canvas with the same pan/zoom transform the
+--   GPU sprite would use. The overlay sits above the dead WebGL canvas and
+--   is pointer-events:none so input still lands on the board.
+drawGridFallback ::
+  Effect f ('MutableObject DomElement)
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f ('Array 'Number)
+  -> Expr f ('Array 'Number)
+  -> Expr f 'Bool
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f (MutableObjectOf RenderDirty)
+  -> EffectSyntax f (f 'Unit)
+drawGridFallback
+  cv
+  pixels
+  paletteRgba
+  alive
+  species
+  liveList
+  changedList
+  sceneDirty
+  w
+  h
+  px
+  cw
+  ch
+  panX
+  panY
+  zoomLevel
+  renderDirty = do
+  let
+    needsPaint = sceneDirty .|| Array.length changedList .> 0
+    cellScale = px * zoomLevel
+    visX0 =
+      Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
+    visX1 =
+      Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
+    visY0 =
+      Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
+    visY1 =
+      Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
+    bg =
+      number 15
+        + shl (number 23) (number 8)
+        + shl (number 42) (number 16)
+        + shl (number 255) (number 24)
+  whenS needsPaint $ do
+    toSyntax_ $
+      paintGridCells
+        pixels
+        w
+        h
+        paletteRgba
+        alive
+        species
+        w
+        (number 1)
+        (number 0)
+        (number 0)
+        bg
+        liveList
+        changedList
+        sceneDirty
+        visX0
+        visX1
+        visY0
+        visY1
+        renderDirty
+    done
+  toSyntax_
+    $ discard
+    $ ffi
+        ( "(cv, pixels, texW, texH, scale, panX, panY, cw, ch) => {"
+            <> " if (cv.style.display === 'none') {"
+            <> "   cv.style.display = 'block';"
+            <> "   console.warn('[Life] rendering via 2D canvas fallback');"
+            <> " }"
+            <> " let st = cv.__lifeBlit;"
+            <> " if (!st || st.img.data.buffer !== pixels.buffer) {"
+            <> "   const off = document.createElement('canvas');"
+            <> "   off.width = texW; off.height = texH;"
+            <> "   st = cv.__lifeBlit = {"
+            <> "     off,"
+            <> "     offCtx: off.getContext('2d'),"
+            <> "     ctx: cv.getContext('2d'),"
+            <> "     img: new ImageData(new Uint8ClampedArray(pixels.buffer), texW, texH)"
+            <> "   };"
+            <> " }"
+            <> " st.offCtx.putImageData(st.img, 0, 0);"
+            <> " const c = st.ctx;"
+            <> " c.setTransform(1, 0, 0, 1, 0, 0);"
+            <> " c.fillStyle = '#0f172a';"
+            <> " c.fillRect(0, 0, cw, ch);"
+            <> " c.imageSmoothingEnabled = false;"
+            <> " c.setTransform(scale, 0, 0, scale, panX, panY);"
+            <> " c.drawImage(st.off, 0, 0);"
+            <> " c.setTransform(1, 0, 0, 1, 0, 0);"
+            <> " }"
+        )
+        ( ArgEffect cv
+            <: arg pixels
+            <: arg w
+            <: arg h
+            <: arg cellScale
+            <: arg panX
+            <: arg panY
+            <: arg cw
+            <: arg ch
+            <: RecNil
+        )
+  done
+
+-- | Hide the 2D fallback overlay once the GPU path is healthy again.
+hideFallback2d ::
+  Effect f ('MutableObject DomElement) -> EffectSyntax f (f 'Unit)
+hideFallback2d cv = do
+  toSyntax_
+    $ discard
+    $ ffi
+      "((cv) => { if (cv && cv.style.display !== 'none') cv.style.display = 'none'; })"
+      (ArgEffect cv <: RecNil)
   done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number

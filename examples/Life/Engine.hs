@@ -15,7 +15,7 @@ module Engine
   , renderLife
   , togglePause
   , flipCell
-  , eraseCell
+  , eraseCircle
   , placePattern
   , markSceneDirty
   )
@@ -26,8 +26,10 @@ import Grid
   ( RenderDirty (..)
   , StepCtx (..)
   , cellIdx
+  , drawGridFallback
   , drawGridViewport
   , expandBoundsForLive
+  , hideFallback2d
   , initPaletteRgba
   , rebuildLiveList
   , rebuildPackedCounts
@@ -39,6 +41,8 @@ import Grid
   , writeCellState
   )
 import JShark.Api
+import JShark.Dom (DomElement)
+import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
@@ -421,12 +425,14 @@ swapBuffers state = do
   set @"nextSpecies" state sp
 
 renderLife ::
-  Effect f ('MutableObject Pixi.Application)
-  -> Effect f ('MutableObject ())
+  Effect f ('MutableObject ())
   -> Effect f (MutableObjectOf RenderDirty)
   -> Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject DomElement)
   -> EffectSyntax f (f 'Unit)
-renderLife app viewport renderDirty state = do
+renderLife viewport renderDirty state fallback = do
+  glLost <- getProp viewport "glLost"
+  app <- getProp viewport "app"
   w <- pure (number (fromIntegral gridW))
   h <- pure (number (fromIntegral gridH))
   px <- pure (number (fromIntegral cellPx))
@@ -446,27 +452,48 @@ renderLife app viewport renderDirty state = do
   zoom <- getProp viewport "zoom"
   renderValid <- getProp viewport "renderPanValid"
   viewportDirty <- pure (not_ renderValid)
-  drawGridViewport
-    app
-    sprite
-    img
-    pixels
-    paletteRgba
-    alive
-    species
-    liveList
-    changedList
-    sceneDirty
-    viewportDirty
-    w
-    h
-    px
-    cw
-    ch
-    panX
-    panY
-    zoom
-    renderDirty
+  whenS (glLost .== 0) $ do
+    hideFallback2d fallback
+    drawGridViewport
+      app
+      sprite
+      img
+      pixels
+      paletteRgba
+      alive
+      species
+      liveList
+      changedList
+      sceneDirty
+      viewportDirty
+      w
+      h
+      px
+      cw
+      ch
+      panX
+      panY
+      zoom
+      renderDirty
+  whenS (glLost .!= 0) $
+    drawGridFallback
+      fallback
+      pixels
+      paletteRgba
+      alive
+      species
+      liveList
+      changedList
+      sceneDirty
+      w
+      h
+      px
+      cw
+      ch
+      panX
+      panY
+      zoom
+      renderDirty
   Array.clear_ changedList
   set @"sceneDirty" state false_
   _ <- setProp viewport "renderPanX" panX
@@ -513,25 +540,61 @@ flipCell state gx gy = do
     done
   markSceneDirty state
 
-eraseCell ::
+eraseCircle ::
   Effect f (MutableObjectOf LifeState)
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-eraseCell state gx gy = do
+eraseCircle state gx gy radius = do
   w <- pure (number (fromIntegral gridW))
   h <- pure (number (fromIntegral gridH))
-  whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
+  whenS (radius .>= 0) $ do
     alive <- state.alive
     species <- state.species
+    info <-
+      bindExpr $
+        ffi
+          ( "(function(a,sp,gx,gy,r,w,h){"
+              <> "let removed=0,bx0=1e9,by0=1e9,bx1=-1,by1=-1;"
+              <> "const ri=Math.max(0,Math.floor(r))|0;"
+              <> "const rr=ri*ri;"
+              <> "for(let dy=-ri;dy<=ri;dy++){"
+              <> "for(let dx=-ri;dx<=ri;dx++){"
+              <> "if(dx*dx+dy*dy>rr)continue;"
+              <> "const x=(gx+dx)|0,y=(gy+dy)|0;"
+              <> "if(x<0||y<0||x>=w||y>=h)continue;"
+              <> "const i=y*w+x;"
+              <> "if(a[i]&1){"
+              <> "a[i]=a[i]&0xFE;sp[i]=0;"
+              <> "removed++;"
+              <> "if(x<bx0)bx0=x;if(y<by0)by0=y;"
+              <> "if(x>bx1)bx1=x;if(y>by1)by1=y;"
+              <> "}"
+              <> "}"
+              <> "}"
+              <> "return [removed,bx0,by0,bx1,by1];"
+              <> "})"
+          )
+          ( arg alive
+              <: arg species
+              <: arg gx
+              <: arg gy
+              <: arg radius
+              <: arg w
+              <: arg h
+              <: RecNil
+          )
     let
-      i = cellIdx w gx gy
-    a <- u8Get alive i
-    pop0 <- state.pop
-    whenS (bitAnd a (number 1) .== 1) $ do
-      writeCellState alive species i false_ (number 0)
-      set @"pop" state (pop0 - 1)
-      toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
+      removed = Array.index info (number 0)
+      bx0n = Array.index info (number 1)
+      by0n = Array.index info (number 2)
+      bx1n = Array.index info (number 3)
+      by1n = Array.index info (number 4)
+    whenS (removed .> 0) $ do
+      pop0 <- state.pop
+      set @"pop" state (pop0 - removed)
+      toSyntax_ (refreshPackedRegion alive w h bx0n by0n bx1n by1n)
       syncLiveList state
       markSceneDirty state
     done

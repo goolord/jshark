@@ -18,6 +18,7 @@ import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.IO as TL
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Lucid
+import qualified Life
 import Paths_jshark (getDataFileName)
 import System.Directory
   ( copyFile
@@ -92,10 +93,10 @@ lifeEngineJs =
   , ("js/life-simd.wasm", "examples/Life/js/life-simd.wasm")
   ]
 
--- | Blob iframe (null origin) fetches app.js / wasm from the host; CORP + ACAO
--- | are required. COOP/COEP stay off the shell HTML so the blob frame is not
+-- | Sandboxed frame fetches @app.js@ / wasm from the example origin; CORP +
+-- | ACAO are required. COOP/COEP stay off the shell HTML so the frame is not
 -- | blocked by require-corp (SharedArrayBuffer workers need headers on the
--- | frame document itself, which blob URLs cannot carry).
+-- | frame document itself).
 lifeAssetHeaders :: ActionM ()
 lifeAssetHeaders = do
   setHeader "Cross-Origin-Resource-Policy" "cross-origin"
@@ -129,9 +130,23 @@ serveExamples port banner examples = do
         html $ renderText page
       get (fromString (base <> "/app.js")) $ do
         setHeader "Content-Type" "application/javascript; charset=utf-8"
+        setHeader "Cache-Control" "no-store"
         when isLife lifeAssetHeaders
         text (TL.fromStrict (exampleJs ex))
-      when isLife $
+      when isLife $ do
+        let
+          static = srcStatic serverPaths
+          script = srcScript serverPaths (exampleName ex)
+          frame =
+            Life.framePage static script (Life.assetBaseFor script)
+        get (fromString (base <> "/frame")) $ do
+          setHeader "Content-Type" "text/html; charset=utf-8"
+          lifeAssetHeaders
+          html $ renderText frame
+        get (fromString (base <> "/frame/")) $ do
+          setHeader "Content-Type" "text/html; charset=utf-8"
+          lifeAssetHeaders
+          html $ renderText frame
         forM_ lifeJs $ \(route, path) ->
           get (fromString (base <> "/" <> route)) $ do
             setHeader "Content-Type" (lifeAssetType route)
@@ -183,6 +198,13 @@ exportExamples dest examples = do
       )
     T.writeFile (dir </> "app.js") (exampleJs ex)
     when (exampleName ex == "life") $ do
+      createDirectoryIfMissing True (dir </> "frame")
+      let
+        static = srcStatic exportPaths
+        script = srcScript exportPaths (exampleName ex)
+      TL.writeFile
+        (dir </> "frame" </> "index.html")
+        (renderText (Life.framePage static script (Life.assetBaseFor script)))
       createDirectoryIfMissing True (dir </> "js")
       forM_ lifeEngineJs $ \(route, rel) -> do
         src <- getDataFileName rel

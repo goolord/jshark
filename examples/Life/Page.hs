@@ -1,15 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Page (page) where
+module Page (page, framePage, frameSrcFor, assetBaseFor) where
 
 import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
 import Lucid
 import Lucid.Base (makeAttribute)
 import Names (patternLabel)
 import Patterns (PatternSpec (..), disturbPatterns, speciesColor)
 import Types
   ( boardId
+  , lifeBoard2dId
   , canvasH
   , canvasW
   , cellPx
@@ -20,6 +20,7 @@ import Types
   , lifeIndexHostId
   , lifeToolsId
   , lifeToolsCollapseId
+  , lifePauseOverlayId
   , lifeStatCellsId
   , lifeStatEngineId
   , lifeStatFpsId
@@ -31,23 +32,26 @@ import Types
   , lifeTooltipNameId
   , lifeTooltipSwatchId
   , lifeTypesListId
+  , lifeEraserSizeId
+  , lifeEraserRadiusId
+  , lifeEraserRadiusValId
+  , lifeEraserGhostId
+  , eraserDefaultRadius
+  , eraserMinRadius
+  , eraserMaxRadius
   , toggleToolSid
   , eraserToolSid
   )
 
--- | Shell page. The live board, tooltip, and index run inside a @blob:@
---   iframe so extension content scripts (Bitwarden, video scanners) that
---   match @http(s)://*@ never attach to the mutating document. Page JS
---   cannot revoke those listeners; an opaque origin is what actually
---   keeps them off the game. The iframe is @sandbox=\"allow-scripts\"@
---   without @allow-same-origin@ so the parent (and extension worlds
---   injected there) cannot walk @contentDocument@. @<base href>@ is
---   filled in at boot so relative @app.js@ / static URLs still resolve
---   against the host page.
---
---   Fetched at runtime from @app.js@ so the blob iframe stays small.
-page :: T.Text -> T.Text -> Html ()
-page staticRoot scriptSrc = doctypehtml_ $ do
+-- | Shell page. Game runs in an iframe at @frameSrc@ (HTTP, not blob) so
+--   Firefox can fetch @app.js@, wasm, and workers under CORP headers.
+--   The frame is deliberately NOT sandboxed: @sandbox=\"allow-scripts\"@
+--   gives the frame an opaque origin, and browsers that isolate sandboxed
+--   frames into their own process (Chromium/Electron) fail to bring up the
+--   WebGL renderer there — the sim ticks but the board stays black.
+--   If WebGL is unavailable in the frame the game falls back to a 2D canvas.
+page :: T.Text -> T.Text -> T.Text -> Html ()
+page _staticRoot _scriptSrc frameSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
@@ -58,22 +62,40 @@ page staticRoot scriptSrc = doctypehtml_ $ do
       [ id_ "life-frame"
       , class_ "life-frame"
       , title_ "Game of Life"
-      , sandbox_ "allow-scripts"
+      , src_ frameSrc
       ]
       mempty
-    script_ (bootJs (gameHtml staticRoot scriptSrc))
+    script_ focusFrameScript
 
-gameHtml :: T.Text -> T.Text -> T.Text
-gameHtml staticRoot scriptSrc =
-  TL.toStrict (renderText (gameDocument staticRoot scriptSrc))
+-- | Inner document served at @/<example>/frame/@.
+framePage :: T.Text -> T.Text -> T.Text -> Html ()
+framePage staticRoot scriptSrc assetBase = gameDocument staticRoot scriptSrc assetBase
 
-gameDocument :: T.Text -> T.Text -> Html ()
-gameDocument staticRoot scriptSrc = doctypehtml_ $ do
+-- | @/life/app.js@ → @/life/frame/@; export @app.js@ → @frame/@.
+frameSrcFor :: T.Text -> T.Text
+frameSrcFor script =
+  if script == "app.js"
+    then "frame/"
+    else T.take (T.length script - 6) script <> "frame/"
+
+-- | Base href for assets (@js/@, @app.js@) inside the frame document.
+assetBaseFor :: T.Text -> T.Text
+assetBaseFor script =
+  if script == "app.js"
+    then "../"
+    else T.take (T.length script - 6) script
+
+focusFrameScript :: T.Text
+focusFrameScript =
+  "document.getElementById('life-frame').addEventListener('load',function(){this.focus();},{once:true});"
+
+gameDocument :: T.Text -> T.Text -> T.Text -> Html ()
+gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
     title_ "JShark • Game of Life"
-    toHtmlRaw ("<base href=\"%%LIFE_BASE%%\">" :: T.Text)
+    base_ [href_ assetBase]
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/github-dark.min.css")]
     style_ toolsCss
@@ -90,15 +112,42 @@ gameDocument staticRoot scriptSrc = doctypehtml_ $ do
           , autofocus_
           ]
           mempty
+        canvas_
+          [ id_ lifeBoard2dId
+          , class_ "life-board-2d"
+          , width_ (T.pack (show (round canvasW :: Int)))
+          , height_ (T.pack (show (round canvasH :: Int)))
+          , style_ "display:none"
+          , makeAttribute "aria-hidden" "true"
+          ]
+          mempty
+        -- Hidden unless the 2D fallback needs it: a visible canvas stacked
+        -- over the WebGL board occlusion-culls the board's quad in
+        -- software-composited browsers, blanking the whole game.
+        canvas_
+          [ id_ lifeEraserGhostId
+          , class_ "life-eraser-ghost"
+          , width_ (T.pack (show (round canvasW :: Int)))
+          , height_ (T.pack (show (round canvasH :: Int)))
+          , style_ "display:none"
+          , makeAttribute "aria-hidden" "true"
+          ]
+          mempty
+        div_
+          [ id_ lifePauseOverlayId
+          , class_ "life-pause-overlay"
+          , makeAttribute "aria-hidden" "true"
+          ]
+          mempty
         statsHud
         toolsHud
       div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
         span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
         span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
       p_ [class_ "help"] $
-        "Space to pause or resume. Shift+drag to pan; +/− (or numpad) to zoom. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle, eraser, or drop a spaceship or methuselah. Hover within "
+        "Space to pause or resume. Shift+drag to pan; +/− (or numpad) to zoom. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle, eraser (circular brush — drag to stroke, size slider when active), or drop a spaceship or methuselah. Hover within "
           <> toHtml (T.pack (show (hoverRadius * cellPx + cellPx)))
-          <> "px of a species for its name. "
+          <> "px of a species for its name (hidden while eraser is active). "
           <> "Emergent soup patterns are scanned every 45 generations: "
           <> "known shapes inherit catalog hues; novel ones get procedural names and colors."
       p_ $
@@ -209,23 +258,6 @@ shellCss =
   \body.life-shell{display:block}\
   \.life-frame{display:block;width:100%;height:100vh;border:0;background:#0f172a}"
 
-bootJs :: T.Text -> T.Text
-bootJs inner =
-  T.concat
-    [ "(()=>{"
-    , "const frame=document.getElementById('life-frame');"
-    , "const pageUrl=new URL(document.baseURI);"
-    , "if(!pageUrl.pathname.endsWith('/')){pageUrl.pathname+='/';}"
-    , "const base=pageUrl.href;"
-    , "const html="
-    , jsString inner
-    , ".split('%%LIFE_BASE%%').join(base);"
-    , "const url=URL.createObjectURL(new Blob([html],{type:'text/html'}));"
-    , "frame.src=url;"
-    , "frame.addEventListener('load',()=>{URL.revokeObjectURL(url);frame.focus();},{once:true});"
-    , "})();"
-    ]
-
 -- | JS string literal safe to embed in a @<script>@ (no raw @<@ / line separators).
 jsString :: T.Text -> T.Text
 jsString t =
@@ -280,6 +312,37 @@ toolsHud =
         toolButton toggleToolSid "Toggle" [(1, 1)] (Just (3, 3)) True
         toolButton eraserToolSid "Eraser" [(1, 1)] (Just (3, 3)) False
         mapM_ disturbButton disturbPatterns
+      div_
+        [ id_ lifeEraserSizeId
+        , class_ "life-eraser-size"
+        , hidden_ ""
+        , makeAttribute "aria-hidden" "true"
+        ]
+        $ do
+          label_
+            [ for_ lifeEraserRadiusId
+            , class_ "life-eraser-size-label"
+            ]
+            $ do
+              "Brush "
+              input_
+                [ id_ lifeEraserRadiusId
+                , type_ "range"
+                , class_ "life-eraser-radius"
+                , makeAttribute "min" (T.pack (show eraserMinRadius))
+                , makeAttribute "max" (T.pack (show eraserMaxRadius))
+                , makeAttribute "value" (T.pack (show eraserDefaultRadius))
+                , makeAttribute "aria-valuemin" (T.pack (show eraserMinRadius))
+                , makeAttribute "aria-valuemax" (T.pack (show eraserMaxRadius))
+                , makeAttribute "aria-valuenow" (T.pack (show eraserDefaultRadius))
+                , makeAttribute "aria-label" "Eraser brush size"
+                ]
+          span_
+            [ id_ lifeEraserRadiusValId
+            , class_ "life-eraser-radius-val"
+            , makeAttribute "aria-hidden" "true"
+            ]
+            (toHtml (T.pack (show eraserDefaultRadius)))
 
 disturbButton :: PatternSpec -> Html ()
 disturbButton p =
@@ -357,6 +420,21 @@ toolsCss =
   ".life-stage{position:relative;width:768px;max-width:100%;margin:1.5rem auto;overflow:visible}\
   \.life-stage canvas{display:block;margin:0;width:768px;max-width:100%;height:auto;aspect-ratio:768/576;\
   \image-rendering:pixelated;image-rendering:crisp-edges;cursor:crosshair}\
+  \.life-board-2d{position:absolute;inset:0;width:100%;height:auto;aspect-ratio:768/576;\
+  \pointer-events:none;z-index:1;image-rendering:pixelated;image-rendering:crisp-edges}\
+  \.life-eraser-ghost{position:absolute;inset:0;width:100%;height:auto;aspect-ratio:768/576;\
+  \pointer-events:none;z-index:2;image-rendering:pixelated;image-rendering:crisp-edges}\
+  \.life-eraser-size{display:flex;align-items:center;gap:0.45rem;pointer-events:auto;padding:0.35rem 0.5rem;\
+  \border-radius:6px;background:rgba(15,23,42,0.88);border:1px solid #334155;\
+  \box-shadow:0 2px 8px rgba(0,0,0,0.35);font:0.72rem system-ui,sans-serif;color:#cbd5e1}\
+  \.life-eraser-size[hidden]{display:none!important}\
+  \.life-eraser-size-label{display:flex;align-items:center;gap:0.35rem;margin:0;cursor:default}\
+  \.life-eraser-radius{width:5.5rem;accent-color:#f87171}\
+  \.life-eraser-radius-val{min-width:1.1rem;text-align:right;color:#f87171;font-variant-numeric:tabular-nums}\
+  \.life-pause-overlay{position:absolute;inset:0;z-index:3;pointer-events:none;\
+  \background:rgba(56,189,248,0.1);box-shadow:inset 0 0 0 1px rgba(56,189,248,0.18);\
+  \opacity:0;transition:opacity 0.15s ease}\
+  \.life-pause-overlay.is-visible{opacity:1}\
   \.life-stats{position:absolute;inset:0 0 auto 0;height:90px;pointer-events:none;z-index:4;\
   \font:15px Georgia,serif;color:"
     <> ink

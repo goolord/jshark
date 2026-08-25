@@ -9,7 +9,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Runtime discovery of emergent life forms, plus the biomass index.
---    Isolation from extension observers is the blob iframe in 'Page'; the
+--    The game runs in a plain (unsandboxed) iframe from 'Page'; the
 --    index counts on the frame and paints on a timeout.
 module Discover
   ( Registry

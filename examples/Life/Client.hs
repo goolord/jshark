@@ -40,6 +40,7 @@ import Names (lookupDisplayName)
 import Types
   ( LifeState
   , boardId
+  , lifeBoard2dId
   , canvasBgPixi
   , canvasH
   , canvasW
@@ -60,6 +61,14 @@ import Types
   , lifeTooltipSwatchId
   , lifeToolsId
   , lifeToolsCollapseId
+  , lifePauseOverlayId
+  , lifeEraserGhostId
+  , lifeEraserSizeId
+  , lifeEraserRadiusId
+  , lifeEraserRadiusValId
+  , eraserDefaultRadius
+  , eraserMinRadius
+  , eraserMaxRadius
   , toggleToolSid
   , eraserToolSid
   , seedH
@@ -111,6 +120,8 @@ boot canvas app = do
   viewport <- initViewport
   renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))
   state <- initLife appH viewport
+  _ <- setProp viewport "app" app
+  Pixi.wireContextRecovery canvas viewport state
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   registry <- initRegistry
   indexTracker <- initIndexTracker
@@ -140,25 +151,37 @@ boot canvas app = do
   toolBtnsE <- bindExpr toolBtns
   toolsTray <- Dom.lookupId (string lifeToolsId)
   toolsCollapse <- Dom.lookupId (string lifeToolsCollapseId)
+  pauseOverlay <- Dom.lookupId (string lifePauseOverlayId)
+  eraserGhost <- Dom.lookupId (string lifeEraserGhostId)
+  fallback2d <- Dom.lookupId (string lifeBoard2dId)
+  eraserSize <- Dom.lookupId (string lifeEraserSizeId)
+  eraserRadius <- Dom.lookupId (string lifeEraserRadiusId)
+  eraserRadiusVal <- Dom.lookupId (string lifeEraserRadiusValId)
   wire canvas state tooltip tipRef toolRef toolsMap viewport
-  wireTools toolRef toolBtnsE
+  wireTools toolRef toolBtnsE canvas eraserSize
+  wireEraserSize toolRef eraserRadius eraserRadiusVal
+  syncEraserUi toolRef canvas eraserSize
   wireToolsCollapse toolsTray toolsCollapse
+  renderLife viewport renderDirty state fallback2d
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
     whenS (not_ paused) $
       stepLifeBudget state registry stepCtx now
     tickIndex state registry indexTracker seenSpecies typesList now
+    Pixi.tickGlRecovery canvas viewport state
     renderStart <- performanceNow
-    renderLife appH viewport renderDirty state
+    renderLife viewport renderDirty state fallback2d
     renderEnd <- performanceNow
     setEngineRenderMs (renderEnd - renderStart)
+    syncPauseOverlay state pauseOverlay
     lastHud <- getProp viewport "lastHudMs"
     whenS (now - lastHud .>= number (fromIntegral hudRefreshMs)) $ do
       updateHud state meter viewport statGen statCells statFps statStatus statZoom statTick statEngine
       _ <- setProp viewport "lastHudMs" now
       done
-    tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits
+    tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
+    tickEraserGhost toolRef tipRef state viewport eraserGhost
 
 wire ::
   Effect f ('MutableObject Dom.DomElement)
@@ -185,7 +208,8 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
   let
     endDrag = do
       _ <- setProp viewport "dragging" (number 0)
-      Dom.setStyleProperty canvas "cursor" (string "crosshair")
+      _ <- setProp viewport "erasing" (number 0)
+      syncEraserCursor canvas toolRef
   addEventListener "keydown" win $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       code <- getProp' e "code"
@@ -250,6 +274,17 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
         _ <- setProp viewport "dragStartY" cy
         _ <- setProp viewport "moved" (number 0)
         Dom.setStyleProperty canvas "cursor" (string "grabbing")
+      whenS (not_ shift .&& btn .== 0) $ do
+        sid <- getProp toolRef "sid"
+        whenS (sid .== number (fromIntegral eraserToolSid)) $ do
+          _ <- setProp viewport "erasing" (number 1)
+          cx <- getProp' e "clientX"
+          cy <- getProp' e "clientY"
+          ox <- getProp' e "offsetX"
+          oy <- getProp' e "offsetY"
+          (gx, gy) <- gridFromPointer canvas viewport ox oy
+          syncPointerTip tipRef cx cy gx gy
+          applyErase state toolRef gx gy
   addEventListener "mouseup" canvas $ \_ -> stmts endDrag
   addEventListener "mouseup" win $ \_ -> stmts endDrag
   addEventListener "click" canvas $ \(e :: Expr f ('MutableObject ())) ->
@@ -267,6 +302,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
       cx <- getProp' e "clientX"
       cy <- getProp' e "clientY"
       dragging <- getProp viewport "dragging"
+      erasing <- getProp viewport "erasing"
       ifS
         (dragging .== 1)
         ( do
@@ -291,21 +327,21 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
             whenS (dx * dx + dy * dy .> 9) $
               setProp viewport "moved" (number 1)
         )
-        ( do
-            ox <- getProp' e "offsetX"
-            oy <- getProp' e "offsetY"
-            (gx, gy) <- gridFromPointer canvas viewport ox oy
-            let
-              w = number (fromIntegral gridW)
-              h = number (fromIntegral gridH)
-            _ <- setProp tipRef "cx" cx
-            _ <- setProp tipRef "cy" cy
-            _ <- setProp tipRef "gx" gx
-            _ <- setProp tipRef "gy" gy
-            setProp
-              tipRef
-              "over"
-              (if_ (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) (number 1) (number 0))
+        ( ifS
+            (erasing .== 1)
+            ( do
+                ox <- getProp' e "offsetX"
+                oy <- getProp' e "offsetY"
+                (gx, gy) <- gridFromPointer canvas viewport ox oy
+                syncPointerTip tipRef cx cy gx gy
+                applyErase state toolRef gx gy
+            )
+            ( do
+                ox <- getProp' e "offsetX"
+                oy <- getProp' e "offsetY"
+                (gx, gy) <- gridFromPointer canvas viewport ox oy
+                syncPointerTip tipRef cx cy gx gy
+            )
         )
   addEventListener "mouseleave" canvas $ \_ ->
     stmts $ do
@@ -325,6 +361,26 @@ hideTooltip tipRef tooltip = do
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
   Dom.setStyleProperty tooltip "visibility" (string "hidden")
 
+syncPointerTip ::
+  Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+syncPointerTip tipRef cx cy gx gy = do
+  let
+    w = number (fromIntegral gridW)
+    h = number (fromIntegral gridH)
+  _ <- setProp tipRef "cx" cx
+  _ <- setProp tipRef "cy" cy
+  _ <- setProp tipRef "gx" gx
+  _ <- setProp tipRef "gy" gy
+  setProp
+    tipRef
+    "over"
+    (if_ (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) (number 1) (number 0))
+
 tickHover ::
   Effect f ('MutableObject ())
   -> Expr f ('Array 'Number)
@@ -334,29 +390,36 @@ tickHover ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('Set Number)
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits = do
-  over <- getProp tipRef "over"
+tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef = do
+  sid <- getProp toolRef "sid"
   ifS
-    (over .== 0)
+    (sid .== number (fromIntegral eraserToolSid))
+    (hideTooltip tipRef tooltip)
     ( do
-        fp <- getProp tipRef "fp"
-        whenS (fp .!= string "") (hideTooltip tipRef tooltip)
-    )
-    ( do
-        gx <- getProp tipRef "gx"
-        gy <- getProp tipRef "gy"
-        lastGx <- getProp tipRef "shownGx"
-        lastGy <- getProp tipRef "shownGy"
-        whenS (gx .!= lastGx .|| gy .!= lastGy) $ do
-          _ <- setProp tipRef "shownGx" gx
-          _ <- setProp tipRef "shownGy" gy
-          cx <- getProp tipRef "cx"
-          cy <- getProp tipRef "cy"
-          let
-            w = number (fromIntegral gridW)
-            h = number (fromIntegral gridH)
-          applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx gy cx cy
+        over <- getProp tipRef "over"
+        ifS
+          (over .== 0)
+          ( do
+              fp <- getProp tipRef "fp"
+              whenS (fp .!= string "") (hideTooltip tipRef tooltip)
+          )
+          ( do
+              gx <- getProp tipRef "gx"
+              gy <- getProp tipRef "gy"
+              lastGx <- getProp tipRef "shownGx"
+              lastGy <- getProp tipRef "shownGy"
+              whenS (gx .!= lastGx .|| gy .!= lastGy) $ do
+                _ <- setProp tipRef "shownGx" gx
+                _ <- setProp tipRef "shownGy" gy
+                cx <- getProp tipRef "cx"
+                cy <- getProp tipRef "cy"
+                let
+                  w = number (fromIntegral gridW)
+                  h = number (fromIntegral gridH)
+                applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx gy cx cy
+          )
     )
 
 -- | Grid index lookup, not a board-wide collision scan. A live cursor
@@ -538,9 +601,11 @@ initViewport = do
   _ <- setProp viewport "dragStartX" (number 0)
   _ <- setProp viewport "dragStartY" (number 0)
   _ <- setProp viewport "moved" (number 0)
+  _ <- setProp viewport "erasing" (number 0)
   _ <- setProp viewport "zoomLevels" zoomLevelsLit
   _ <- setProp viewport "zoomLabels" zoomLabelsLit
   _ <- setProp viewport "zoomIndices" zoomIndicesLit
+  _ <- setProp viewport "glLost" (number 0)
   clampPan viewport
   pure viewport
 
@@ -658,6 +723,8 @@ initTool :: EffectSyntax f (Effect f ('MutableObject ()))
 initTool = do
   toolRef <- hold newObject
   _ <- setProp toolRef "sid" (number (fromIntegral toggleToolSid))
+  _ <-
+    setProp toolRef "eraserRadius" (number (fromIntegral eraserDefaultRadius))
   pure toolRef
 
 initDisturbCatalog ::
@@ -680,7 +747,7 @@ applyClick state toolRef toolsMap gx gy = do
     (flipCell state gx gy)
     ( ifS
         (sid .== number (fromIntegral eraserToolSid))
-        (eraseCell state gx gy)
+        done
         ( do
             hit <- Map.lookup toolsMap sid
             toSyntax $
@@ -691,25 +758,41 @@ applyClick state toolRef toolsMap gx gy = do
         )
     )
 
+applyErase ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+applyErase state toolRef gx gy = do
+  radius0 <- getProp toolRef "eraserRadius"
+  let
+    radius = Math.floor radius0
+  eraseCircle state gx gy radius
+
 wireTools ::
   Effect f ('MutableObject ())
   -> Expr f ('Array ('MutableObject Dom.DomElement))
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-wireTools toolRef btns = do
+wireTools toolRef btns canvas eraserSize = do
   forRange_ (number 0) (Array.length btns) $ \i -> do
     btn <- hold (expr (Array.index btns i))
     addEventListener "click" btn $ \_ ->
       stmts $ do
         raw <- Dom.getAttribute btn "data-tool"
-        selectTool toolRef btns (parseInt_ raw (number 10))
+        selectTool toolRef btns (parseInt_ raw (number 10)) canvas eraserSize
     done
 
 selectTool ::
   Effect f ('MutableObject ())
   -> Expr f ('Array ('MutableObject Dom.DomElement))
   -> Expr f 'Number
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-selectTool toolRef btns sid = do
+selectTool toolRef btns sid canvas eraserSize = do
   _ <- setProp toolRef "sid" sid
   forRange_ (number 0) (Array.length btns) $ \i -> do
     btn <- hold (expr (Array.index btns i))
@@ -727,6 +810,203 @@ selectTool toolRef btns sid = do
         "aria-pressed"
         (if_ on (string "true") (string "false"))
     done
+  syncEraserUi toolRef canvas eraserSize
+
+syncEraserUi ::
+  Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+syncEraserUi toolRef canvas eraserSize = do
+  sid <- getProp toolRef "sid"
+  let
+    eraserOn = sid .== number (fromIntegral eraserToolSid)
+  _ <-
+    ifS
+      eraserOn
+      ( do
+          toSyntax_ $
+            callMethod
+              eraserSize
+              "removeAttribute"
+              (arg (string "hidden") <: RecNil)
+          Dom.setAttribute eraserSize "aria-hidden" (string "false")
+      )
+      ( do
+          _ <- Dom.setAttribute eraserSize "hidden" (string "")
+          Dom.setAttribute eraserSize "aria-hidden" (string "true")
+      )
+  syncEraserCursor canvas toolRef
+
+syncEraserCursor ::
+  Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+syncEraserCursor canvas toolRef = do
+  sid <- getProp toolRef "sid"
+  ifS
+    (sid .== number (fromIntegral eraserToolSid))
+    ( Dom.setStyleProperty canvas "cursor" eraserCursor )
+    ( Dom.setStyleProperty canvas "cursor" (string "crosshair") )
+
+wireEraserSize ::
+  Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+wireEraserSize toolRef slider valEl = do
+  addEventListener "input" slider $ \_ ->
+    stmts $ do
+      raw <- Dom.getValue slider
+      let
+        radius =
+          Math.max
+            (number (fromIntegral eraserMinRadius))
+            ( Math.min
+                (number (fromIntegral eraserMaxRadius))
+                (parseInt_ raw (number (fromIntegral eraserDefaultRadius)))
+            )
+      _ <- setProp toolRef "eraserRadius" radius
+      label <-
+        bindExpr $
+          ffi "((n) => String(Math.round(n)))" (arg radius <: RecNil)
+      _ <- Dom.setAttribute slider "aria-valuenow" label
+      Dom.setTextContent valEl label
+      done
+  done
+
+-- | Clear and hide the 2D ghost overlay. Hiding matters: a visible canvas
+--   stacked over the WebGL board occlusion-culls the board's WebGL quad in
+--   software-composited browsers, blanking the whole game.
+clearEraserGhostStm ::
+  Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+clearEraserGhostStm ghost = do
+  toSyntax_ $
+    ffi
+      ( "(function(ghost){if(ghost.style.display==='none')return;"
+          <> "const ctx=ghost.getContext('2d');"
+          <> "ctx.clearRect(0,0,ghost.width,ghost.height);"
+          <> "ghost.style.display='none';})"
+      )
+      (ArgEffect ghost <: RecNil)
+  done
+
+drawEraserGhostStm ::
+  Effect f ('MutableObject Dom.DomElement)
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+drawEraserGhostStm ghost alive w h gx gy radius panX panY zoom px = do
+  toSyntax_ $
+    ffi
+      ( "(function(ghost,alive,w,h,gx,gy,r,panX,panY,zoom,cellPx){"
+          <> "ghost.style.display='';"
+          <> "const ctx=ghost.getContext('2d');"
+          <> "ctx.clearRect(0,0,ghost.width,ghost.height);"
+          <> "const ri=Math.max(0,Math.floor(r))|0;"
+          <> "const scale=cellPx*zoom,rr=ri*ri;"
+          <> "for(let dy=-ri;dy<=ri;dy++){"
+          <> "for(let dx=-ri;dx<=ri;dx++){"
+          <> "if(dx*dx+dy*dy>rr)continue;"
+          <> "const x=(gx+dx)|0,y=(gy+dy)|0;"
+          <> "if(x<0||y<0||x>=w||y>=h)continue;"
+          <> "const i=y*w+x;"
+          <> "if(alive[i]&1){"
+          <> "ctx.fillStyle='rgba(248,113,113,0.5)';"
+          <> "ctx.fillRect(panX+x*scale,panY+y*scale,scale,scale);"
+          <> "}"
+          <> "}"
+          <> "}"
+          <> "const cx=panX+(gx+0.5)*scale,cy=panY+(gy+0.5)*scale;"
+          <> "ctx.beginPath();"
+          <> "ctx.arc(cx,cy,(ri+0.5)*scale,0,Math.PI*2);"
+          <> "ctx.strokeStyle='rgba(248,113,113,0.85)';"
+          <> "ctx.lineWidth=Math.max(1,scale*0.15);"
+          <> "ctx.stroke();"
+          <> "})"
+      )
+      ( ArgEffect ghost
+          <: arg alive
+          <: arg w
+          <: arg h
+          <: arg gx
+          <: arg gy
+          <: arg radius
+          <: arg panX
+          <: arg panY
+          <: arg zoom
+          <: arg px
+          <: RecNil
+      )
+  done
+
+tickEraserGhost ::
+  Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
+  -> Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+tickEraserGhost toolRef tipRef state viewport ghost = do
+  sid <- getProp toolRef "sid"
+  glLost <- getProp viewport "glLost"
+  app <- getProp viewport "app"
+  ifS
+    (sid .== number (fromIntegral eraserToolSid))
+    ( do
+        over <- getProp tipRef "over"
+        ifS
+          (over .== 1)
+          ( do
+              gx <- getProp tipRef "gx"
+              gy <- getProp tipRef "gy"
+              radius <- getProp toolRef "eraserRadius"
+              panX <- getProp viewport "panX"
+              panY <- getProp viewport "panY"
+              zoom <- getProp viewport "zoom"
+              alive <- state.alive
+              let
+                w = number (fromIntegral gridW)
+                h = number (fromIntegral gridH)
+                px = number (fromIntegral cellPx)
+              ifS
+                (glLost .== 0)
+                ( do
+                    clearEraserGhostStm ghost
+                    Pixi.drawEraserGhost app alive w h gx gy radius panX panY zoom px
+                )
+                ( do
+                    Pixi.clearEraserGhost app
+                    drawEraserGhostStm ghost alive w h gx gy radius panX panY zoom px
+                )
+          )
+          ( do
+              clearEraserGhostStm ghost
+              Pixi.clearEraserGhost app
+          )
+    )
+    ( do
+        clearEraserGhostStm ghost
+        Pixi.clearEraserGhost app
+    )
+
+eraserCursor :: Expr f 'String
+eraserCursor =
+  string
+    ( "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+        <> "width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' "
+        <> "cy='12' r='8' fill='none' stroke='%23f87171' stroke-width='2'/%3E"
+        <> "%3C/svg%3E\") 12 12, crosshair"
+    )
 
 wireToolsCollapse ::
   Effect f ('MutableObject Dom.DomElement)
@@ -767,6 +1047,19 @@ wireToolsCollapse toolsTray collapseBtn = do
           )
       done
   done
+
+syncPauseOverlay ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+syncPauseOverlay state overlay = do
+  paused <- state.paused
+  toSyntax_ $
+    callMethod
+      overlay
+      "classList.toggle"
+      (arg (string "is-visible") <: arg paused <: RecNil)
+  Dom.setAttribute overlay "aria-hidden" (if_ paused (string "false") (string "true"))
 
 updateHud ::
   Effect f (MutableObjectOf LifeState)
