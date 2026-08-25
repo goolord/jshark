@@ -51,12 +51,16 @@ module JShark.Compiler
 
     -- * Cache
   , clearCompilerCache
+
+    -- * HVM2 lint
+  , applyCompilerArgs
+  , isCompilerFlag
   )
 where
 
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (IOException, SomeException, catch, evaluate, throwIO)
-import Control.Monad (guard)
+import Control.Monad (guard, when)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -69,13 +73,15 @@ import Data.Word (Word64)
 import JShark.Emit (JS, renderJS)
 import qualified TextBuilder as TB
 import JShark
-  ( effectfulAST
+  ( ClosedEffect
+  , ClosedExpr
+  , effectfulAST
   , effectfulProgram
   , pureAST
   , pureProgram
   , renderJSCompact
   )
-import JShark.Types (ClosedEffect, ClosedExpr)
+import JShark.Hvm2Lint (warnHvm2CandidatesEffect, warnHvm2CandidatesExpr)
 import Numeric (showHex)
 import System.Directory
   ( createDirectoryIfMissing
@@ -183,21 +189,22 @@ data CompilerConfig = CompilerConfig
   --     'False', 'compileWith' throws. Named helpers ('compileEsbuild' etc.)
   --     set this to 'False'.
   , configStyle :: OutputStyle
+  , configWarnHvm2Candidates :: Bool
   }
   deriving (Show, Eq, Ord)
 
 -- | Auto backend, minified output, no in-process cache, fall back to the
 -- unminified source if no minifier is installed (or if it crashes).
 defaultCompilerConfig :: CompilerConfig
-defaultCompilerConfig = CompilerConfig Auto NoCache True Minified
+defaultCompilerConfig = CompilerConfig Auto NoCache True Minified False
 
 -- | Skip minification entirely. Useful in tests of the IIFE wrapper.
 passthroughConfig :: CompilerConfig
-passthroughConfig = CompilerConfig Passthrough NoCache False Minified
+passthroughConfig = CompilerConfig Passthrough NoCache False Minified False
 
 -- | Human-readable JS: assignment elimination, no minifier, no IIFE.
 readableConfig :: CompilerConfig
-readableConfig = CompilerConfig Passthrough NoCache False Readable
+readableConfig = CompilerConfig Passthrough NoCache False Readable False
 
 cacheFormatVersion :: Text
 cacheFormatVersion = "jshark-minify-2"
@@ -345,19 +352,20 @@ compileClosure lvl =
         MemoryCache
         False
         Minified
+        False
     )
 
 -- | Minify with esbuild. Throws if esbuild is missing or fails.
 compileEsbuild :: Text -> IO Text
 compileEsbuild =
   compileWith
-    (CompilerConfig (Esbuild defaultEsbuildConfig) MemoryCache False Minified)
+    (CompilerConfig (Esbuild defaultEsbuildConfig) MemoryCache False Minified False)
 
 -- | Minify with Terser. Throws if terser is missing or fails.
 compileTerser :: Text -> IO Text
 compileTerser =
   compileWith
-    (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified)
+    (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified False)
 
 -- | Indent generated JavaScript. Understands double/single-quoted strings
 -- (with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
@@ -462,11 +470,15 @@ compileTree cfg doc = do
   forceCompiled (finishStyle style out)
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffect cfg eff = compileTree cfg (`effectDoc` eff)
+compileEffect cfg eff = do
+  when (configWarnHvm2Candidates cfg) (warnHvm2CandidatesEffect eff)
+  compileTree cfg (`effectDoc` eff)
 
 -- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePure cfg e = compileTree cfg (`pureDoc` e)
+compilePure cfg e = do
+  when (configWarnHvm2Candidates cfg) (warnHvm2CandidatesExpr e)
+  compileTree cfg (`pureDoc` e)
 
 -- | Compile many effectful programs concurrently (one capability per item).
 compileEffects ::
@@ -688,3 +700,19 @@ executeProcessRaw cmd args source =
             )
   )
     `catch` (\(e :: SomeException) -> pure (Left (show e)))
+
+-- | Recognized compiler CLI flags (for example servers and build tools).
+isCompilerFlag :: String -> Bool
+isCompilerFlag = \case
+  "--warn-hvm2-candidates" -> True
+  _ -> False
+
+-- | Apply recognized CLI flags to a 'CompilerConfig'.
+applyCompilerArgs :: [String] -> CompilerConfig -> CompilerConfig
+applyCompilerArgs args cfg =
+  foldl applyCompilerArg cfg args
+
+applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
+applyCompilerArg cfg = \case
+  "--warn-hvm2-candidates" -> cfg {configWarnHvm2Candidates = True}
+  _ -> cfg

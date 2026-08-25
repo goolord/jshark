@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -171,6 +172,8 @@ module JShark.Api
   , toBigInt
   , fromBigInt
   , parseBigInt_
+  , hvm2Kernel
+  , loadHvm2Wasm
   )
 where
 
@@ -921,3 +924,24 @@ fromBigInt = expr1 FixFromBigInt
 -- | @BigInt(s)@. Accepts an optional sign and @0x@ / @0b@ / @0o@ prefixes.
 parseBigInt_ :: Expr f 'String -> Expr f 'BigInt
 parseBigInt_ = expr1 FixParseBigInt
+
+-- | Mark a closed pure kernel for HVM2 compilation ('Hvm2Kernel' in JS AST).
+hvm2Kernel :: Text -> ClosedExpr u -> Expr f u
+hvm2Kernel name k = Hvm2Kernel name k
+
+-- | Fetch and instantiate the HVM2 WASM module at @url@, setting
+-- @globalThis.__jsharkHvm2.exports@ for 'hvm2Kernel' call sites.
+-- Returns a Promise (awaited by the Bun runner and in async JS hosts).
+loadHvm2Wasm :: Expr f 'String -> EffectSyntax f ()
+loadHvm2Wasm url = toSyntax_ $ ffi hvm2LoadWasmFFI (arg url <: RecNil)
+
+hvm2LoadWasmFFI :: String
+hvm2LoadWasmFFI =
+  "url=>(async()=>{"
+    ++ "if(!globalThis.WebAssembly)throw new Error(\"WebAssembly unavailable\");"
+    ++ "const r=await fetch(url);"
+    ++ "if(!r.ok)throw new Error(\"HVM2 wasm fetch failed: \"+url);"
+    ++ "const b=await r.arrayBuffer();"
+    ++ "const{instance:i}=await WebAssembly.instantiate(b,{});"
+    ++ "globalThis.__jsharkHvm2={exports:i.exports}"
+    ++ "})()"

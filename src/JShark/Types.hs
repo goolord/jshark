@@ -87,6 +87,7 @@ module JShark.Types
   , GroupBy
   , ClosedExpr
   , ClosedEffect
+  , Hvm2KernelEntry (..)
   , Comparable
   , KnownScalar
   , NumericU (..)
@@ -432,6 +433,15 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     Expr f ('Object r)
     -> Expr f (Field r k)
     -- ^ Pure @o.k@. Folded by 'sameSymbol' against 'FrozenLit'.
+  Hvm2Kernel ::
+    Text
+    -> ClosedExpr u
+    -> Expr f u
+    -- ^ Closed pure subtree compiled to Bend for the HVM2 pipeline
+    -- (Bend → HVM2 → C → WASM via Zig). Codegen emits a call to
+    -- @globalThis.__jsharkHvm2.exports@; load the module with
+    -- 'JShark.Api.loadHvm2Wasm' and build with 'JShark.Hvm2.bendModule' /
+    -- 'JShark.Hvm2.compileHvm2Wasm'.
 
 -- | Closed fixed-arity pure JS names (@Math.sin@, @arr.length@, …).
 -- Higher-order stdlib (@map@, @reduce@, …) stays on 'Std' separately.
@@ -813,6 +823,9 @@ pattern TypeOf x <- Std (Kernel (KTypeOf x))
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
+
+-- | Existential wrapper for kernels collected from an open 'Expr' tree.
+data Hvm2KernelEntry = forall u. Hvm2KernelEntry !Text !(ClosedExpr u)
 
 -- | Closed effectful term: no free PHOAS binders. The end @forall f. 'Effect' f u@.
 type ClosedEffect (u :: Universe) = forall (f :: Universe -> Type). Effect f u

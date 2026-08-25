@@ -41,6 +41,7 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
+import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
 import LucidTests (lucidDomTests)
 import Support
@@ -78,6 +79,7 @@ tests =
     -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
     -- , exampleTests
     , lifeTests
+    , hvm2Tests
     , catalogTests
     ]
 
@@ -1865,7 +1867,7 @@ compilerTests =
     , testCase "memory cache returns the same payload" $ do
         clearCompilerCache
         let
-          cfg = CompilerConfig Passthrough MemoryCache False Minified
+          cfg = CompilerConfig Passthrough MemoryCache False Minified False
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -1888,7 +1890,7 @@ compilerTests =
         removePathForcibly dir
         createDirectoryIfMissing True dir
         let
-          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified
+          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -1905,7 +1907,7 @@ compilerTests =
         removePathForcibly dir
         createDirectoryIfMissing True dir
         let
-          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified
+          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False
         _ <- compileWith cfg "const a = 1;"
         files <- listDirectory dir
         mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
@@ -1923,7 +1925,7 @@ compilerTests =
             let
               snippet = number 1 + number 2
               raw = renderJS (pureProgram snippet)
-              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified
+              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False
             out <- compilePure cfg snippet
             assertBool "non-empty" (not (T.null out))
             assertBool "minifier changed the IIFE" (out /= raw)
@@ -1939,7 +1941,7 @@ compilerTests =
           (Nothing, Nothing) -> do
             res <-
               tryCompileWith
-                (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified)
+                (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False)
                 "1+2;"
             case res of
               Left _ -> pure ()
@@ -1958,6 +1960,7 @@ compilerTests =
                   NoCache
                   False
                   Minified
+                  False
             res <- tryCompileWith cfg "(() => { return 1; })();"
             case res of
               Left _ -> pure ()
@@ -1976,6 +1979,7 @@ compilerTests =
                   NoCache
                   True
                   Minified
+                  False
             out <- compileWith cfg src
             out @?= src
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
@@ -1997,14 +2001,14 @@ compilerTests =
         clearCompilerCache
         out <-
           compileEffect
-            (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable)
+            (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False)
             fooE
         out @?= "foo()"
     , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
         clearCompilerCache
         let
           src = "const x = 1 + 2;" :: Text
-          cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable
+          cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False
         out <- compileWith cfg src
         out @?= src
     , testCase "prettyJS breaks if/else and function bodies onto their own lines" $

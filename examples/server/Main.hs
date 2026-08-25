@@ -4,20 +4,25 @@ module Main (main) where
 
 import qualified Breakout
 import DevServer (Example (..), exportExamples, serveExamples)
-import JShark.Compiler (compileEffects, readableConfig)
+import JShark.Compiler (applyCompilerArgs, compileEffects, isCompilerFlag, readableConfig)
 import JShark.Types (fromSyntax)
 import qualified Life
 import SourcePane (sourceHead, sourcePane)
 import qualified Synth
 import System.Environment (getArgs)
 import System.Exit (die)
+import Data.List (partition)
 import qualified TodoMvc
 
 main :: IO ()
 main = do
+  args <- getArgs
+  let
+    (flags, cmd) = partition isCompilerFlag args
+    cfg = applyCompilerArgs flags readableConfig
   [breakoutJs, todoJs, synthJs, lifeJs] <-
     compileEffects
-      readableConfig
+      cfg
       [ fromSyntax Breakout.mainJS
       , fromSyntax TodoMvc.mainJS
       , fromSyntax Synth.mainJS
@@ -54,9 +59,8 @@ main = do
           )
           lifeJs
       ]
-  args <- getArgs
-  case args of
+  case cmd of
     [] ->
       serveExamples 3000 "Examples on http://localhost:3000" examples
     ["export", dest] -> exportExamples dest examples
-    _ -> die "usage: examples | examples export DIR"
+    _ -> die "usage: examples [--warn-hvm2-candidates] | examples [--warn-hvm2-candidates] export DIR"

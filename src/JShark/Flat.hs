@@ -121,6 +121,7 @@ data FlatNode
   | FE_UnsafeNullable NodeId
   | FE_FrozenLit Int
   | FE_GetField Int NodeId
+  | FE_Hvm2Ref Int
   | -- effect (IrEffect)
     FX_Lift NodeId
   | FX_FFI Int Int
@@ -352,6 +353,7 @@ flatNodeChildRefs = \case
   FE_UnsafeNullable x -> [x]
   FE_FrozenLit _ -> []
   FE_GetField _ o -> [o]
+  FE_Hvm2Ref _ -> []
   FX_Lift x -> [x]
   FX_FFI _ _ -> []
   FX_UnsafeObject _ -> []
@@ -712,6 +714,9 @@ packExpr = \case
     ti <- addText (fieldKeyText @k)
     n <- packExpr o
     addNode (FE_GetField ti n)
+  IrHvm2Ref name -> do
+    ti <- addText name
+    addNode (FE_Hvm2Ref ti)
 
 packEffectArms :: [(Text, IrEffect v)] -> State PackState Int
 packEffectArms arms =

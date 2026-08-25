@@ -59,7 +59,7 @@ oFE_ERROR, oFE_FIXED, oFE_FNLIT, oFE_FROZEN, oFE_GETFIELD, oFE_UNSAFENULL, oFE_K
 oFE_KPLUS, oFE_KTIMES, oFE_KMINUS, oFE_KNEG, oFE_KDIV, oFE_KREM, oFE_KBITAND, oFE_KBITOR :: Op
 oFE_KBITXOR, oFE_KSHL, oFE_KSHR, oFE_KUSHR, oFE_KBIG, oFE_KBIGNEG, oFE_KAND, oFE_KOR :: Op
 oFE_KEQ, oFE_KNEQ, oFE_KGTH, oFE_KLTH, oFE_KGTEQ, oFE_KLTEQ, oFE_KSHOW, oFE_KTYPEOF :: Op
-oFE_MMAP, oFE_MFILTER, oFE_MREDUCE, oFE_MREDUCER, oFE_MTOSORTED, oFE_MFROM :: Op
+oFE_MMAP, oFE_MFILTER, oFE_MREDUCE, oFE_MREDUCER, oFE_MTOSORTED, oFE_MFROM, oFE_HVM2REF :: Op
 oFX_LIFT, oFX_FFI, oFX_UNSAFEOBJ, oFX_UNSAFEOBJGET, oFX_UNSAFEOBJSET, oFX_CALLMETHOD :: Op
 oFX_BIND, oFX_THENE, oFX_BINDREC, oFX_LAMBDAE, oFX_APPLYE, oFX_IFE, oFX_WHILE, oFX_FORRANGE :: Op
 oFX_U8SET, oFX_U8FILL, oFX_OPTCASEE, oFX_RESCASEE, oFX_STRCASEE, oFX_THROW, oFX_TRY :: Op
@@ -116,6 +116,7 @@ oFE_MREDUCE = 48
 oFE_MREDUCER = 49
 oFE_MTOSORTED = 50
 oFE_MFROM = 51
+oFE_HVM2REF = 52
 oFX_LIFT = 100
 oFX_FFI = 101
 oFX_UNSAFEOBJ = 102
@@ -266,6 +267,7 @@ fromProgram p =
     FE_UnsafeNullable x -> (Enc oFE_UNSAFENULL (i32 x) 0 0 0 0, fx, fl, ag)
     FE_FrozenLit gi -> (Enc oFE_FROZEN (i32 gi) 0 0 0 0, fx, fl, ag)
     FE_GetField ti o -> (Enc oFE_GETFIELD (i32 ti) (i32 o) 0 0 0, fx, fl, ag)
+    FE_Hvm2Ref ti -> (Enc oFE_HVM2REF (i32 ti) 0 0 0 0, fx, fl, ag)
     FE_KConcat x y -> (Enc oFE_KCONCAT (i32 x) (i32 y) 0 0 0, fx, fl, ag)
     FE_KPlus x y -> (Enc oFE_KPLUS (i32 x) (i32 y) 0 0 0, fx, fl, ag)
     FE_KTimes x y -> (Enc oFE_KTIMES (i32 x) (i32 y) 0 0 0, fx, fl, ag)
@@ -393,6 +395,7 @@ decodeOp soa op ix iy iz iw iv
   | op == oFE_UNSAFENULL = FE_UnsafeNullable ix
   | op == oFE_FROZEN = FE_FrozenLit ix
   | op == oFE_GETFIELD = FE_GetField ix iy
+  | op == oFE_HVM2REF = FE_Hvm2Ref ix
   | op == oFE_KCONCAT = FE_KConcat ix iy
   | op == oFE_KPLUS = FE_KPlus ix iy
   | op == oFE_KTIMES = FE_KTimes ix iy
@@ -550,6 +553,7 @@ propagatePureFlagsPass soa =
           | op == oFE_FIXED = pureFixed a
           | op == oFE_FNLIT = ch b
           | op == oFE_GETFIELD = ch b
+          | op == oFE_HVM2REF = pure 1
           | op == oFE_UNSAFENULL = ch a
           | op == oFE_KNEG = ch a
           | op == oFE_KBIGNEG = ch a

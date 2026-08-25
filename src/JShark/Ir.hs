@@ -212,6 +212,7 @@ data IrExpr :: Universe -> Type where
   IrUnsafeNullable :: IrExpr u -> IrExpr ('Option u)
   IrFrozenLit :: [IrFieldLit r] -> IrExpr ('Object r)
   IrGetField :: forall k r. KnownSymbol k => IrExpr ('Object r) -> IrExpr (Field r k)
+  IrHvm2Ref :: Text -> IrExpr u
 
 data IrFnBody :: [Universe] -> Universe -> Type where
   IrJfNil :: IrExpr r -> IrFnBody '[] r
@@ -372,6 +373,7 @@ foldIrExpr se le sf = \case
   IrUnsafeNullable x -> se x
   IrFrozenLit fs -> foldMap (foldIrFieldLit se sf) fs
   IrGetField o -> se o
+  IrHvm2Ref {} -> mempty
 
 foldIrKernel ::
   Monoid m =>
@@ -524,6 +526,7 @@ mapIrExpr ge gf = \case
   IrUnsafeNullable x -> IrUnsafeNullable (ge x)
   IrFrozenLit fs -> IrFrozenLit (map (mapIrFieldLit ge gf) fs)
   IrGetField @k o -> IrGetField @k (ge o)
+  IrHvm2Ref name -> IrHvm2Ref name
 
 mapIrKernel ::
   (forall v. IrExpr v -> IrExpr v)
@@ -790,6 +793,8 @@ optIrExpr t0 = \case
   IrMethod m ->
     let (t1, m', md) = optIrMethod t0 m
      in (t1, IrMethod m', md)
+  IrHvm2Ref name ->
+    (t0, IrHvm2Ref name, IrMeta 1 IM.empty True True)
   e ->
     let (t1, e', md) = optIrExprChildren t0 e
      in (t1, e', md)

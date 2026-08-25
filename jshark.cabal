@@ -34,6 +34,9 @@ build-type:
 extra-source-files:
   README.md
   CHANGELOG.md
+  wasm/hvm2/build.zig
+  wasm/hvm2/src/root.zig
+  wasm/hvm2/README.md
 data-files:
   examples/static/*.png
   examples/static/*.js
@@ -88,6 +91,8 @@ library
     JShark.Rec
     JShark.Regex
     JShark.Compiler
+    JShark.Hvm2
+    JShark.Hvm2Lint
     JShark.Bun
     JShark.Bun.Internal
     JShark.FlatTest
@@ -96,6 +101,7 @@ library
     JShark.Flat
     JShark.FlatSoA
     JShark.Ir
+    JShark.EmitBend
   build-depends:
     , async >= 2.2 && < 2.4
     , base >= 4.17 && < 5
@@ -248,6 +254,7 @@ test-suite jshark-test
     LucidTests
     ExampleTests
     LifeTests
+    Hvm2Tests
   hs-source-dirs:
     test
   build-depends:

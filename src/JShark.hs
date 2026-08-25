@@ -64,11 +64,13 @@ module JShark
       , UnsafeNullable
       , FrozenLit
       , GetField
+      , Hvm2Kernel
       )
   , FnBody (..)
   , Value (..)
   , GroupBy
   , Arg (..)
+  , Hvm2KernelEntry (..)
   , ClosedExpr
   , ClosedEffect
   , Effect
@@ -118,6 +120,10 @@ module JShark
   , effectfulASTFromFlat
   , effectfulASTIr
   , irEffectFromClosed
+  , irExprFromClosed
+  , irOptimizedEffectFromClosed
+  , irOptimizedExprFromClosed
+  , collectHvm2Kernels
   , pureProgram
   , effectfulProgram
   , printComputation
@@ -726,6 +732,7 @@ evalAlg rec apply = \case
   GetField @k o -> do
     ov <- rec o
     withFrozenField @k ov rec
+  Hvm2Kernel {} -> cannotEval "Hvm2Kernel (use WASM export)"
 
 -- | Force an array 'Value' and continue. Every array node is a
 -- 'ValueArray' constructor; the case is here so call sites stay linear.
@@ -1307,6 +1314,7 @@ isSimple = \case
   UnsafeNullable x -> isSimple x
   FrozenLit {} -> True
   GetField {} -> True
+  Hvm2Kernel {} -> True
   _ -> False
 
 isSimpleEffect :: Effect Stamp u -> Bool
@@ -1714,6 +1722,7 @@ mapExpr ge gf = \case
   UnsafeNullable x -> UnsafeNullable (ge x)
   FrozenLit fs -> FrozenLit (map (mapFieldLit ge gf) fs)
   GetField @k o -> GetField @k (ge o)
+  Hvm2Kernel name k -> Hvm2Kernel name k
 
 mapStd ::
   (forall v. Expr f v -> Expr f v)
@@ -1831,6 +1840,7 @@ foldExpr dummy se le sf = \case
   UnsafeNullable x -> se x
   FrozenLit fs -> foldMap (foldFieldLit se sf) fs
   GetField o -> se o
+  Hvm2Kernel {} -> mempty
 
 foldStd ::
   forall f m u.
@@ -2633,6 +2643,8 @@ lowerExprAt t0 = \case
       (t1, o') = lowerExprAt t0 o
      in
       (t1, Ir.IrGetField @k o')
+  Hvm2Kernel name _ ->
+    (t0, Ir.IrHvm2Ref name)
 
 reifyExpr :: Ir.IrExpr u -> Expr Stamp u
 reifyExpr = \case
@@ -2668,6 +2680,8 @@ reifyExpr = \case
   Ir.IrUnsafeNullable x -> UnsafeNullable (reifyExpr x)
   Ir.IrFrozenLit fs -> FrozenLit (map reifyFieldLit fs)
   Ir.IrGetField @k o -> GetField @k (reifyExpr o)
+  Ir.IrHvm2Ref name ->
+    error ("JShark.reifyExpr: IrHvm2Ref " <> T.unpack name)
 
 lowerEffect :: Effect Stamp u -> Ir.IrEffect u
 lowerEffect e = snd (lowerEffectAt (-2) e)
@@ -2923,6 +2937,170 @@ irEffectFromClosed (e :: ClosedEffect u) =
    in
     irOpt
 {-# NOINLINE irEffectFromClosed #-}
+
+irExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
+irExprFromClosed (e :: ClosedExpr u) =
+  let
+    (_, ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
+    (_, irOpt, _) = Ir.optIrExpr (-2) ir
+   in
+    irOpt
+{-# NOINLINE irExprFromClosed #-}
+
+irOptimizedExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
+irOptimizedExprFromClosed (e :: ClosedExpr u) =
+  let
+    (_, ir) = lowerExprAt (-2) (flattenExpr (optimize e))
+    (_, irOpt, _) = Ir.optIrExpr (-2) ir
+   in
+    irOpt
+{-# NOINLINE irOptimizedExprFromClosed #-}
+
+irOptimizedEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
+irOptimizedEffectFromClosed (e :: ClosedEffect u) =
+  let
+    (_, ir) = lowerEffectAt (-2) (flattenEff (optimizeEffect e))
+    (_, irOpt, _) = Ir.optIrEffect (-2) ir
+   in
+    irOpt
+{-# NOINLINE irOptimizedEffectFromClosed #-}
+
+collectHvm2Kernels :: Expr f u -> [Hvm2KernelEntry]
+collectHvm2Kernels expr = collectAny (unsafeCoerce expr :: Expr Stamp u)
+ where
+  collectAny :: Expr Stamp v -> [Hvm2KernelEntry]
+  collectAny = \case
+    Hvm2Kernel name k -> [Hvm2KernelEntry name k]
+    Literal _ -> []
+    Var _ -> []
+    Let x g -> collectAny x <> collectAny (g nestedDummy)
+    LetRec r b ->
+      collectAny (r nestedDummy) <> collectAny (b nestedDummy)
+    Lambda g -> collectAny (g nestedDummy)
+    Apply f x -> collectAny f <> collectAny x
+    If c t eF -> collectAny c <> collectAny t <> collectAny eF
+    OptionCase o n s ->
+      collectAny o <> collectAny n <> collectAny (s nestedDummy)
+    ResultOk x -> collectAny x
+    ResultErr x -> collectAny x
+    ResultCase o er ok ->
+      collectAny o
+        <> collectAny (er nestedDummy)
+        <> collectAny (ok nestedDummy)
+    Index x i -> collectAny x <> collectAny i
+    U8Index x i -> collectAny x <> collectAny i
+    Error x -> collectAny x
+    Std s -> collectStdHvm2 s
+    FnLit body -> collectFnBodyHvm2 body
+    UnsafeNullable x -> collectAny x
+    FrozenLit fs -> concatMap collectFieldLitHvm2 fs
+    GetField o -> collectAny o
+  collectStdHvm2 = \case
+    Fixed _ args -> collectFixedArgsHvm2 args
+    Method m -> collectMethodHvm2 m
+    Kernel k -> collectKernelHvm2 k
+  collectFixedArgsHvm2 = \case
+    ArgsU x -> collectAny x
+    ArgsB x y -> collectAny x <> collectAny y
+    ArgsT x y z -> collectAny x <> collectAny y <> collectAny z
+  collectMethodHvm2 = \case
+    MethMap x f -> collectAny x <> collectAny (f nestedDummy)
+    MethFilter x f -> collectAny x <> collectAny (f nestedDummy)
+    MethReduce x z _ -> collectAny x <> collectAny z
+    MethReduceRight x z _ -> collectAny x <> collectAny z
+    MethToSorted x _ -> collectAny x
+    MethFrom n f -> collectAny n <> collectAny (f nestedDummy)
+  collectKernelHvm2 = \case
+    KPlus x y -> collectAny x <> collectAny y
+    KTimes x y -> collectAny x <> collectAny y
+    KMinus x y -> collectAny x <> collectAny y
+    KNegate x -> collectAny x
+    KFracDiv x y -> collectAny x <> collectAny y
+    KRem x y -> collectAny x <> collectAny y
+    KBitAnd x y -> collectAny x <> collectAny y
+    KBitOr x y -> collectAny x <> collectAny y
+    KBitXor x y -> collectAny x <> collectAny y
+    KShl x y -> collectAny x <> collectAny y
+    KShr x y -> collectAny x <> collectAny y
+    KUShr x y -> collectAny x <> collectAny y
+    KBig _ x y -> collectAny x <> collectAny y
+    KBigNeg x -> collectAny x
+    KConcat x y -> collectAny x <> collectAny y
+    KShow x -> collectAny x
+    KTypeOf x -> collectAny x
+    KAnd x y -> collectAny x <> collectAny y
+    KOr x y -> collectAny x <> collectAny y
+    KEq _ x y -> collectAny x <> collectAny y
+    KNEq _ x y -> collectAny x <> collectAny y
+    KGTh x y -> collectAny x <> collectAny y
+    KLTh x y -> collectAny x <> collectAny y
+    KGTEq x y -> collectAny x <> collectAny y
+    KLTEq x y -> collectAny x <> collectAny y
+  collectFnBodyHvm2 :: FnBody Stamp us r -> [Hvm2KernelEntry]
+  collectFnBodyHvm2 = \case
+    JfNil e -> collectAny e
+    JfCons k -> collectFnBodyHvm2 (k nestedDummy)
+  collectFieldLitHvm2 = \case
+    FieldLit e -> collectAny e
+    FieldLitEffect e -> collectEffectAny e
+    FieldLitExtra e -> collectAny e
+    FieldLitExtraEffect e -> collectEffectAny e
+  collectEffectAny :: Effect Stamp v -> [Hvm2KernelEntry]
+  collectEffectAny = \case
+    Lift x -> collectAny x
+    FFI _ args -> collectRecArgs args
+    Bind x f -> collectEffectAny x <> collectEffectAny (f nestedDummy)
+    ThenE x y -> collectEffectAny x <> collectEffectAny y
+    BindRec r b ->
+      collectEffectAny (r nestedDummy) <> collectEffectAny (b nestedDummy)
+    LambdaE f -> collectEffectAny (f nestedDummy)
+    ApplyE f x -> collectEffectAny f <> collectEffectAny x
+    IfE c u v -> collectEffectAny c <> collectEffectAny u <> collectEffectAny v
+    While c b -> collectEffectAny c <> collectEffectAny b
+    ForRange s e b ->
+      collectAny s <> collectAny e <> collectEffectAny (b nestedDummy)
+    U8Set b i v -> collectAny b <> collectAny i <> collectAny v
+    U8Fill b v -> collectAny b <> collectAny v
+    OptionCaseE o n s ->
+      collectAny o <> collectEffectAny n <> collectEffectAny (s nestedDummy)
+    ResultCaseE o er ok ->
+      collectAny o
+        <> collectEffectAny (er nestedDummy)
+        <> collectEffectAny (ok nestedDummy)
+    StringCaseE o arms d ->
+      collectAny o
+        <> concatMap (collectEffectAny . snd) arms
+        <> collectEffectAny d
+    Throw x -> collectAny x
+    Try a k -> collectEffectAny a <> collectEffectAny (k nestedDummy)
+    ObjectLit fs -> concatMap collectFieldLitHvm2 fs
+    DeleteProp o k -> collectEffectAny o <> collectAny k
+    ArrayLit es -> concatMap collectEffectAny es
+    UnsafeObject {} -> []
+    UnsafeObjectGet x _ -> collectEffectAny x
+    UnsafeObjectAssign x y -> collectEffectAny x <> collectEffectAny y
+    CallMethod x _ args -> collectEffectAny x <> collectRecArgs args
+  collectRecArgs :: Rec (Arg Stamp) us -> [Hvm2KernelEntry]
+  collectRecArgs = \case
+    RecNil -> []
+    RecCons a rest -> collectArgAny a <> collectRecArgs rest
+  collectArgAny :: Arg Stamp v -> [Hvm2KernelEntry]
+  collectArgAny = \case
+    ArgExpr e -> collectAny (unsafeCoerce e :: Expr Stamp v)
+    ArgEffect e -> collectEffectAny (unsafeCoerce e :: Effect Stamp v)
+
+hvm2ExportRef :: Text -> JS
+hvm2ExportRef name =
+  let
+    key = dquotes (jsString (escapeJsString (T.unpack name)))
+    err =
+      dquotes (jsString (escapeJsString ("HVM2 kernel not loaded: " ++ T.unpack name)))
+  in
+    "((function(){var f=globalThis.__jsharkHvm2?.exports?.["
+      <> key
+      <> "];if(typeof f===\"function\")return f;return function(){throw new Error("
+      <> err
+      <> ")};})())"
 
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =
@@ -3620,6 +3798,8 @@ optExpr t0 = \case
       case foldGetField @k o' of
         Just e -> optExpr t1 e
         Nothing -> (t1, GetField @k o', Metadata 1 True False <> mdO)
+  Hvm2Kernel name k ->
+    (t0, Hvm2Kernel name k, Metadata 1 True False)
 
 optMapped ::
   ( Expr Stamp ('Array u)
@@ -4238,6 +4418,7 @@ flatIsSimpleNode prog nid = case Flat.flatNode prog nid of
   Flat.FE_Error{} -> False
   Flat.FE_UnsafeNullable x -> flatIsSimpleNode prog x
   Flat.FE_FrozenLit{} -> True
+  Flat.FE_Hvm2Ref{} -> True
   Flat.FE_GetField{} -> True
   _ -> False
 
@@ -4865,6 +5046,8 @@ flatPureAST' !env !s0 prog nid =
         (s1, Code d r) = flatPureAST' env s0 prog oId
        in
         (s1, Code d (jsDotOrBracket r (Flat.flatText prog ti)))
+    Flat.FE_Hvm2Ref ti ->
+      (s0, Code mempty (hvm2ExportRef (Flat.flatText prog ti)))
     knode ->
       case knode of
         Flat.FE_KConcat{} -> flatRenderKernel env s0 prog knode
@@ -5689,6 +5872,8 @@ pureAST' !s0 env = \case
       (s1, Code d r) = pureAST' s0 env o
      in
       (s1, Code d (jsDotOrBracket r (T.pack (symbolVal (Proxy @k)))))
+  Hvm2Kernel name _ ->
+    (s0, Code mempty (hvm2ExportRef name))
 
 renderFixed ::
   Env
