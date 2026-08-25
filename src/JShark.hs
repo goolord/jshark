@@ -1237,9 +1237,11 @@ effectBindUses tag e =
    in
     if n == 0 && occursVarInEff tag e then 2 else n
 
-bindProbeTag :: Int -> Effect Stamp u -> (Int, Int)
+-- | Codegen only asks whether the bound value is referenced at all, so
+-- this stops at the first reference instead of counting every one.
+bindProbeTag :: Int -> Effect Stamp u -> (Int, Bool)
 bindProbeTag probeTag tagged =
-  (probeTag, effectBindUses probeTag tagged)
+  (probeTag, occursVarInEff probeTag tagged)
 
 letProbeTag :: Int -> Expr Stamp u -> (Int, Int)
 letProbeTag probeTag tagged =
@@ -2022,25 +2024,35 @@ flattenEff = \case
 
 -- | Replace 'Stamp' @old@ with @new@. Phantom in the universe, so this
 -- does not need a cast. Used after the one 'optUnder' apply of @f@.
+-- The occurrence check answers "is there anything to do here", so it
+-- belongs at the top of a rename only. Repeating it at every node of the
+-- descent re-reads each subtree once per ancestor, which turns one
+-- rename into work proportional to size times depth.
 renameExpr :: Int -> Int -> Expr Stamp u -> Expr Stamp u
 renameExpr old new e
   | old == new = e
   | not (occursVarInExpr old e) = e
-  | otherwise = case e of
-      Var (Embed e') -> renameExpr old new (flattenExpr e')
-      Var (EmbedEff (Lift e')) -> renameExpr old new (flattenExpr e')
-      Var (EmbedEff e') -> Var (EmbedEff (renameEff old new e'))
-      Var (Stamp t) | t == old -> Var (Stamp new)
-      Var s -> Var s
-      _ -> mapExpr (renameExpr old new) (renameEff old new) e
+  | otherwise = renameExprGo old new e
+
+renameExprGo :: Int -> Int -> Expr Stamp u -> Expr Stamp u
+renameExprGo old new = \case
+  Var (Embed e') -> renameExprGo old new (flattenExpr e')
+  Var (EmbedEff (Lift e')) -> renameExprGo old new (flattenExpr e')
+  Var (EmbedEff e') -> Var (EmbedEff (renameEffGo old new e'))
+  Var (Stamp t) | t == old -> Var (Stamp new)
+  Var s -> Var s
+  e -> mapExpr (renameExprGo old new) (renameEffGo old new) e
 
 renameEff :: Int -> Int -> Effect Stamp u -> Effect Stamp u
 renameEff old new e
   | old == new = e
   | not (occursVarInEff old e) = e
-  | otherwise = case e of
-      Lift (Var (EmbedEff e')) -> renameEff old new (flattenEff e')
-      _ -> mapEff (renameExpr old new) (renameEff old new) e
+  | otherwise = renameEffGo old new e
+
+renameEffGo :: Int -> Int -> Effect Stamp u -> Effect Stamp u
+renameEffGo old new = \case
+  Lift (Var (EmbedEff e')) -> renameEffGo old new (flattenEff e')
+  e -> mapEff (renameExprGo old new) (renameEffGo old new) e
 
 inlineExpr :: (Stamp u -> Expr Stamp v) -> Expr Stamp u -> Expr Stamp v
 inlineExpr f x = flattenExpr (f (Embed x))
@@ -4055,7 +4067,7 @@ bindEffectCode ::
 bindEffectCode env s0 x f =
   let
     (sProbe, tagged, probeTag) = probeContEff s0 f
-    (bTag, uses) = bindProbeTag probeTag tagged
+    (bTag, used) = bindProbeTag probeTag tagged
     (s1, MkCode xDecl xRef xFX) = effectfulAST' env sProbe x
     stmtX
       | isNothing xRef = fromMaybe mempty xDecl
@@ -4066,13 +4078,13 @@ bindEffectCode env s0 x f =
    in
     case xRef of
       Nothing ->
-        case uses of
-          0 ->
+        if not used
+          then
             let
               (s2, MkCode yDecl yRef yFX) = effectfulAST' env s1 tagged
              in
               (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
-          _ ->
+          else
             let
               n = fromMaybe nestedDummyId (liveBinder x)
               (env', sBind, bindDoc) =
@@ -4089,13 +4101,13 @@ bindEffectCode env s0 x f =
               , MkCode (Just (stmtX $$ bindDoc $$ fromMaybe mempty yDecl)) yRef yFX
               )
       Just _ ->
-        case uses of
-          0 ->
+        if not used
+          then
             let
               (s2, MkCode yDecl yRef yFX) = effectfulAST' env s1 tagged
              in
               (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
-          _ ->
+          else
             let
               (nBind, s2) = allocIdent s1
               env' = insertBinder env nBind

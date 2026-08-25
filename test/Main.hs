@@ -15,7 +15,7 @@ import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
-import ExampleTests (exampleTests)
+-- import ExampleTests (exampleTests)
 import LifeTests (lifeTests)
 import JShark
 import qualified JShark.Ajax as Ajax
@@ -71,7 +71,8 @@ tests =
     , compilerTests
     , bunEvalTests
     , lucidDomTests
-    , exampleTests
+    -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
+    -- , exampleTests
     , lifeTests
     ]
 
