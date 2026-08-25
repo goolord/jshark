@@ -105,6 +105,7 @@ module JShark
   -- Optimization
   , optimize
   , optimizeEffect
+  , optimizeEffectIr
   , nodeCountExpr
   , nodeCountEff
   , closedEffectNodes
@@ -1562,8 +1563,8 @@ keepExprCont ::
   -> (Stamp u -> Expr Stamp v)
   -> Stamp u
   -> Expr Stamp v
-keepExprCont t tag body _ f
-  | nodeCountExpr body <= optSmall = reoptExpr t f
+keepExprCont t tag body md f
+  | mdSize md <= optSmall = reoptExpr t f
   | otherwise = rebindExpr tag body
 
 keepEffCont ::
@@ -1574,8 +1575,8 @@ keepEffCont ::
   -> (Stamp u -> Effect Stamp v)
   -> Stamp u
   -> Effect Stamp v
-keepEffCont t tag body _ f
-  | nodeCountEff body <= optSmall = reoptEff t f
+keepEffCont t tag body md f
+  | mdSize md <= optSmall = reoptEff t f
   | otherwise = rebindEff tag body
 
 keepExprCont2 ::
@@ -3366,7 +3367,7 @@ elimLetFrom t x mdX f tag body mdBody =
       { elimCount = elimExprUses
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
-      , elimSize = \_ -> nodeCountExpr body
+      , elimSize = mdSize
       , elimRebuild = Let x . rebindExpr tag
       , elimSplice = \t' -> optExpr t' (inlineExpr f x)
       , elimDropUnused = const True
@@ -3405,7 +3406,7 @@ elimBindFrom t x mdX f tag body mdBody =
       { elimCount = elimEffUses
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
-      , elimSize = \_ -> nodeCountEff body
+      , elimSize = mdSize
       , elimRebuild = Bind x . rebindEff tag
       , elimSplice = \t' -> optEffect t' (inlineEff f x)
       , elimDropUnused = \_ -> not (isAliasBind x)

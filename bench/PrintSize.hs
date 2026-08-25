@@ -9,8 +9,8 @@
 --   cabal run print-size
 module Main (main) where
 
-import qualified Data.Text as T
 import qualified Control.Exception as Ex
+import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import JShark
 import JShark.Api
@@ -36,7 +36,8 @@ report name = \case
 
 main :: IO ()
 main = do
-  let l = stmts Life.mainJS
+  let
+    l = stmts Life.mainJS
   t0 <- getMonotonicTime
   !nodes <- Ex.evaluate (closedEffectNodes l)
   t1 <- getMonotonicTime
@@ -45,5 +46,9 @@ main = do
 
   irOpt <- timeStage 60 (\() -> optimizedEffectSize l)
   report "ir optimize" irOpt
+  -- Walking with 'nestedDummy' takes the identity branch of every
+  -- rebind closure, so this is reify plus one traversal and no renames.
+  reify <- timeStage 60 (\() -> nodeCountEff (optimizeEffectIr l))
+  report "ir reify" reify
   ir <- timePath 60 (\() -> renderJSCompact (effectfulASTIr l))
   report "ir + codegen" ir

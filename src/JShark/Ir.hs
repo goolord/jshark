@@ -36,9 +36,9 @@ module JShark.Ir
 where
 
 import Data.IntMap.Strict (IntMap)
-import Data.Monoid (Any (..))
 import qualified Data.IntMap.Strict as IM
 import Data.Kind (Type)
+import Data.Monoid (Any (..))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.TypeLits (KnownSymbol)
