@@ -91,6 +91,7 @@ library
   other-modules:
     JShark.Ir
   build-depends:
+    , async >= 2.2 && < 2.4
     , base >= 4.17 && < 5
     , text >= 1.2 && < 3
     , prettyprinter >= 1.7 && < 2
@@ -221,6 +222,7 @@ executable examples
     Haskell2010
   ghc-options:
     -threaded
+    -with-rtsopts=-N
 
 test-suite jshark-test
   import: warnings, lucid-dep

@@ -4,7 +4,7 @@ module Main (main) where
 
 import qualified Breakout
 import DevServer (Example (..), exportExamples, serveExamples)
-import JShark.Compiler (compileEffect, readableConfig)
+import JShark.Compiler (compileEffects, readableConfig)
 import JShark.Types (fromSyntax)
 import qualified Life
 import SourcePane (sourceHead, sourcePane)
@@ -15,10 +15,14 @@ import qualified TodoMvc
 
 main :: IO ()
 main = do
-  breakoutJs <- compileEffect readableConfig (fromSyntax Breakout.mainJS)
-  todoJs <- compileEffect readableConfig (fromSyntax TodoMvc.mainJS)
-  synthJs <- compileEffect readableConfig (fromSyntax Synth.mainJS)
-  lifeJs <- compileEffect readableConfig (fromSyntax Life.mainJS)
+  [breakoutJs, todoJs, synthJs, lifeJs] <-
+    compileEffects
+      readableConfig
+      [ fromSyntax Breakout.mainJS
+      , fromSyntax TodoMvc.mainJS
+      , fromSyntax Synth.mainJS
+      , fromSyntax Life.mainJS
+      ]
   let
     examples =
       [ Example

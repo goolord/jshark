@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -43,7 +44,9 @@ module JShark.Compiler
   , compileEsbuild
   , compileTerser
   , compileEffect
+  , compileEffects
   , compilePure
+  , compilePures
   , prettyJS
 
     -- * Cache
@@ -51,6 +54,7 @@ module JShark.Compiler
   )
 where
 
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (IOException, SomeException, catch, evaluate, throwIO)
 import Control.Monad (guard)
 import Data.Bits (xor)
@@ -366,7 +370,10 @@ prettyJS = formatJS . T.strip
 formatJS :: Text -> Text
 formatJS = TL.toStrict . TB.toLazyText . go 0
  where
-  indent n = TB.fromString (replicate (n * 2) ' ')
+  indentLevels :: [TB.Builder]
+  indentLevels = take 128 $ iterate (<> "  ") mempty
+
+  indent n = indentLevels !! min n (length indentLevels - 1)
 
   go :: Int -> Text -> TB.Builder
   go _ t | T.null t = mempty
@@ -448,12 +455,12 @@ formatJS = TL.toStrict . TB.toLazyText . go 0
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 compileTree :: CompilerConfig -> (OutputStyle -> Doc ann) -> IO Text
-compileTree cfg doc =
-  forceCompiled
-    =<< finishStyle (configStyle cfg)
-      <$> compileWith
-        cfg
-        (renderJSCompact (doc (configStyle cfg)))
+compileTree cfg doc = do
+  let
+    !style = configStyle cfg
+    !js = renderJSCompact (doc style)
+  out <- compileWith (styleConfig cfg) js
+  forceCompiled (finishStyle style out)
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff = compileTree cfg (`effectDoc` eff)
@@ -461,6 +468,15 @@ compileEffect cfg eff = compileTree cfg (`effectDoc` eff)
 -- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
 compilePure cfg e = compileTree cfg (`pureDoc` e)
+
+-- | Compile many effectful programs concurrently (one capability per item).
+compileEffects ::
+  CompilerConfig -> [ClosedEffect u] -> IO [Text]
+compileEffects cfg = mapConcurrently (compileEffect cfg)
+
+-- | Compile many pure programs concurrently. See 'compileEffects'.
+compilePures :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
+compilePures cfg = mapConcurrently (compilePure cfg)
 
 -- | Banner-before-serve only means JS is ready if this ran.
 forceCompiled :: Text -> IO Text
