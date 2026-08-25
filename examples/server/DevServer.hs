@@ -71,7 +71,8 @@ exportPaths =
 -- | Extra JS assets for an example (route suffix, data-file path under package).
 lifeEngineJs :: [(FilePath, FilePath)]
 lifeEngineJs =
-  [ ("js/LUTGenerator.js", "examples/Life/js/LUTGenerator.js")
+  [ ("js/catalog.js", "examples/Life/js/catalog.js")
+  , ("js/LUTGenerator.js", "examples/Life/js/LUTGenerator.js")
   , ("js/LifeSimd.js", "examples/Life/js/LifeSimd.js")
   , ("js/Main.js", "examples/Life/js/Main.js")
   , ("js/EngineWorker.js", "examples/Life/js/EngineWorker.js")

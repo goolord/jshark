@@ -540,6 +540,8 @@ soupSeedPopTest = fromSyntax $ do
   yield pop
 
 fullInitPopTest :: forall f. Effect f 'Number
+-- Soup + catalog stamp; 'initialCatalogCells' must match
+-- 'examples/Life/js/catalog.js' (see CatalogTests).
 fullInitPopTest = fromSyntax $ do
   a <- fmap var (toSyntax (newByteArray (number 786432)))
   s <- fmap var (toSyntax (newByteArray (number 786432)))

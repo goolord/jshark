@@ -10,6 +10,7 @@
 module Main (main) where
 
 import BunTests (bunEvalTests)
+import CatalogTests (catalogTests)
 import qualified Control.Exception as Ex
 import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
@@ -74,9 +75,10 @@ tests =
     , compilerTests
     , bunEvalTests
     , lucidDomTests
-    , -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
-      -- , exampleTests
-      lifeTests
+    -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
+    -- , exampleTests
+    , lifeTests
+    , catalogTests
     ]
 
 bigIntTests :: TestTree
@@ -432,6 +434,23 @@ controlFlowTests =
               )
           )
           @?= "if (cond()) {el.setAttribute(\"k\", \"a\");}\nelse {el.setAttribute(\"k\", \"b\");}"
+    , testCase "ifE keeps impure prelude when condition folds" $
+        let
+          js =
+            renderJS
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      dst <- bindExpr (newByteArray (number 4))
+                      src <- bindExpr (newByteArray (number 4))
+                      toSyntax_ $
+                        ifE
+                          (expr (number 1 .== number 1))
+                          (u8Copy dst src)
+                          noOp
+                      toSyntax noOp
+                  )
+              )
+         in T.isInfixOf ".set(" js @?= True
     , testCase "ifE of two getAttributes keeps the result bind" $
         renderJS
           ( effectfulAST

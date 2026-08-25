@@ -38,6 +38,7 @@ data-files:
   examples/static/*.png
   examples/static/*.js
   examples/static/*.css
+  examples/Life/js/catalog.js
   examples/Life/js/LUTGenerator.js
   examples/Life/js/LifeSimd.js
   examples/Life/js/EngineWorker.js
@@ -240,6 +241,7 @@ test-suite jshark-test
   other-modules:
     Support
     BunTests
+    CatalogTests
     LucidTests
     ExampleTests
     LifeTests
@@ -374,6 +376,15 @@ executable print-size
   import: bench
   main-is:
     PrintSize.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+executable gen-life-catalog
+  import: bench
+  main-is:
+    GenCatalog.hs
   hs-source-dirs:
     bench
   build-depends:

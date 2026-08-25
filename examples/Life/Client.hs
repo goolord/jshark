@@ -20,6 +20,7 @@ import Discover
   , stepIndexTracker
   )
 import Engine
+import Catalog (catalogDisturb)
 import GHC.Generics (Generic)
 import Grid (RenderDirty (..), StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
 import JShark.Api
@@ -28,15 +29,14 @@ import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, toObject)
 import qualified JShark.Generic as G
-import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.Timers as Timers
-import JShark.Types (Effect (Lift), Expr (Var))
+import JShark.Types (Effect (Lift), Expr (Literal, Var))
+import qualified JShark.Types as Ts
 import Names (lookupDisplayName)
-import Patterns (disturbCatalogJson)
 import Types
   ( LifeState
   , boardId
@@ -534,27 +534,24 @@ initViewport = do
   _ <- setProp viewport "dragStartX" (number 0)
   _ <- setProp viewport "dragStartY" (number 0)
   _ <- setProp viewport "moved" (number 0)
-  levels <- bindExpr zoomLevelsArray
-  labels <- bindExpr zoomLabelsArray
-  indices <- bindExpr zoomIndicesArray
-  _ <- setProp viewport "zoomLevels" levels
-  _ <- setProp viewport "zoomLabels" labels
-  _ <- setProp viewport "zoomIndices" indices
+  _ <- setProp viewport "zoomLevels" zoomLevelsLit
+  _ <- setProp viewport "zoomLabels" zoomLabelsLit
+  _ <- setProp viewport "zoomIndices" zoomIndicesLit
   clampPan viewport
   pure viewport
 
-zoomIndicesArray :: forall f. Effect f ('Array 'Number)
-zoomIndicesArray =
-  Array.fromEffects
-    (map (expr . number . fromIntegral) [0 .. length zoomLevels - 1])
+zoomIndicesLit :: forall f. Expr f ('Array 'Number)
+zoomIndicesLit =
+  Literal $
+    Ts.ValueArray (map (Ts.ValueNumber . fromIntegral) [0 .. length zoomLevels - 1])
 
-zoomLevelsArray :: forall f. Effect f ('Array 'Number)
-zoomLevelsArray =
-  Array.fromEffects (map (\z -> expr (number z)) zoomLevels)
+zoomLevelsLit :: forall f. Expr f ('Array 'Number)
+zoomLevelsLit =
+  Literal $ Ts.ValueArray (map Ts.ValueNumber zoomLevels)
 
-zoomLabelsArray :: forall f. Effect f ('Array 'String)
-zoomLabelsArray =
-  Array.fromEffects (map (\lbl -> expr (string lbl)) zoomLevelLabels)
+zoomLabelsLit :: forall f. Expr f ('Array 'String)
+zoomLabelsLit =
+  Literal $ Ts.ValueArray (map Ts.ValueString zoomLevelLabels)
 
 nearestZoomIndex ::
   Expr f ('Array 'Number)
@@ -662,7 +659,7 @@ initTool = do
 initDisturbCatalog ::
   EffectSyntax f (Effect f ('Map 'Number ('Array ('Array 'Number))))
 initDisturbCatalog = do
-  pairs <- bindExpr $ Json.unsafeParse (string disturbCatalogJson)
+  pairs <- bindExpr catalogDisturb
   hold $ Map.fromEntries pairs
 
 applyClick ::

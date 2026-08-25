@@ -310,28 +310,18 @@ stepGrid
     (xStart, yStart, xStop, yStop) =
       clampLiveBounds w h x0 y0 x1 y1 (number 1)
     regionCells = (xStop - xStart) * (yStop - yStart)
-  ifS
-    (regionCells .> (w * h) / number 2)
-    ( do
-        toSyntax_ (u8Copy nextAlive alive)
-        done
-    )
-    ( do
-        toSyntax_
-          (u8CopyRegion nextAlive alive w xStart yStart xStop yStop)
-        done
-    )
-  ifS
-    (regionCells .> (w * h) / number 2)
-    ( do
-        toSyntax_ (u8Fill nextSpecies (number 0))
-        done
-    )
-    ( do
-        toSyntax_
-          (u8FillRegion nextSpecies w xStart yStart xStop yStop (number 0))
-        done
-    )
+  let
+    copyFull = regionCells .> (w * h) / number 2
+  toSyntax_ $
+    ifE
+      (toEffect copyFull)
+      (u8Copy nextAlive alive)
+      (u8CopyRegion nextAlive alive w xStart yStart xStop yStop)
+  toSyntax_ $
+    ifE
+      (toEffect copyFull)
+      (u8Fill nextSpecies (number 0))
+      (u8FillRegion nextSpecies w xStart yStart xStop yStop (number 0))
   set @"bx0" stepCtx (number 1e9)
   set @"by0" stepCtx (number 1e9)
   set @"bx1" stepCtx (number (-1))

@@ -43,12 +43,12 @@ import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf, newRecord, toObject)
 import qualified JShark.Math as Math
 import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)
+import Catalog (catalogInitialCells, stampCatalogCells)
 import Patterns
   ( initialBoundX0
   , initialBoundX1
   , initialBoundY0
   , initialBoundY1
-  , initialCatalogCells
   , initialPop
   , paletteBytes
   )
@@ -94,7 +94,8 @@ initLife ctx viewport = do
       (number (fromIntegral seedH))
       (number (fromIntegral gridW))
       (number (fromIntegral soupRngSeed))
-  toSyntax_ (seedLiveCells alive species initialCatalogCells)
+  cells <- bindExpr catalogInitialCells
+  toSyntax_ (stampCatalogCells alive species cells)
   let
     w = number (fromIntegral gridW)
     h = number (fromIntegral gridH)

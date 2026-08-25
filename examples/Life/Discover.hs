@@ -23,14 +23,21 @@ module Discover
   )
 where
 
-import Catalog (catalogNamesJson, knownCatalogJson)
+import Catalog
+  ( catalogAdjectives
+  , catalogKnown
+  , catalogNames
+  , catalogNouns
+  , catalogPrefixes
+  , catalogSuffixes
+  , catalogVerbsIng
+  )
 import GHC.Generics (Generic)
 import Grid (cellIdx, clampLiveBounds, setU8, u8Get, packedIsAlive)
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, newRecord)
-import qualified JShark.Json as Json
 import JShark.Lucid
   ( JsHtml
   , renderFragment
@@ -114,10 +121,15 @@ initSeenSpecies = hold Set.new
 initRegistry ::
   EffectSyntax f (Effect f ('MutableObject Registry))
 initRegistry = do
-  knownPairs <- bindExpr $ Json.unsafeParse (string knownCatalogJson)
-  namePairs <- bindExpr $ Json.unsafeParse (string catalogNamesJson)
+  knownPairs <- bindExpr catalogKnown
+  namePairs <- bindExpr catalogNames
+  prefixes <- bindExpr catalogPrefixes
+  suffixes <- bindExpr catalogSuffixes
+  nouns <- bindExpr catalogNouns
+  adjectives <- bindExpr catalogAdjectives
+  verbsIng <- bindExpr catalogVerbsIng
   known <- hold $ Map.fromEntries knownPairs
-  catalogNames <- hold $ Map.fromEntries namePairs
+  catalogNamesMap <- hold $ Map.fromEntries namePairs
   displayCache <- hold $ Map.fromEntries namePairs
   _ <- Map.insert displayCache (number (fromIntegral soupSpecies)) (string "Soup")
   _ <-
@@ -127,7 +139,7 @@ initRegistry = do
   taken <- hold Set.new
   rec <- hold newObject
   knownE <- bindExpr known
-  catalogE <- bindExpr catalogNames
+  catalogE <- bindExpr catalogNamesMap
   cacheE <- bindExpr displayCache
   seenE <- bindExpr seen
   namesE <- bindExpr names
@@ -138,6 +150,11 @@ initRegistry = do
   _ <- setProp rec "names" namesE
   _ <- setProp rec "takenNames" takenE
   _ <- setProp rec "displayCache" cacheE
+  _ <- setProp rec "prefixes" prefixes
+  _ <- setProp rec "suffixes" suffixes
+  _ <- setProp rec "nouns" nouns
+  _ <- setProp rec "adjectives" adjectives
+  _ <- setProp rec "verbsIng" verbsIng
   pure rec
 
 discoverLife ::
@@ -338,7 +355,7 @@ assignCells species cells sid =
     setU8 species (Array.index cells k) sid
 
 -- | Same order as 'Catalog.shapeHash' (numeric @(x,y)@, then @"x,y"@ join).
---   That is what 'knownCatalogJson' stores — not JS lexicographic string sort.
+--   That is what @LifeCatalog.known@ stores — not JS lexicographic string sort.
 componentHash ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> EffectSyntax f (Expr f 'String)

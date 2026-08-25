@@ -850,7 +850,10 @@ ifS ::
   -> EffectSyntax f (f 'Unit)
   -> EffectSyntax f (f 'Unit)
   -> EffectSyntax f (f 'Unit)
-ifS c t e = toSyntax $ IfE (expr c) (discard (stmts t)) (discard (stmts e))
+-- Branches are already 'Effect' 'Unit' via 'stmts'; do not 'discard' here.
+-- 'discard(stmts …)' under a constant-folded 'IfE' arm can drop impure FFI
+-- preludes (see 'stepGrid' region copy).
+ifS c t e = toSyntax $ IfE (expr c) (stmts t) (stmts e)
 
 whenSomeS ::
   Expr f ('Option u)

@@ -14,7 +14,6 @@ module Patterns
   ( PatternSpec (..)
   , allPatterns
   , disturbPatterns
-  , disturbCatalogJson
   , initialCatalogCells
   , initialPop
   , soupSeedPop
@@ -34,8 +33,6 @@ import Data.Array.ST (STUArray, newArray, readArray, writeArray)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
-import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Word (Word8)
 import GHC.Exts
   ( Int (I#)
@@ -211,24 +208,6 @@ disturbSids =
 disturbPatterns :: [PatternSpec]
 disturbPatterns =
   mapMaybe (\sid -> find ((== sid) . patId) allPatterns) disturbSids
-
--- | @[[sid, [[x,y], …]], …]@ for the placement HUD.
-disturbCatalogJson :: Text
-disturbCatalogJson =
-  "[" <> T.intercalate "," (map entry disturbPatterns) <> "]"
- where
-  entry p =
-    "["
-      <> T.pack (show (patId p))
-      <> ","
-      <> cellsJson (patCells p)
-      <> "]"
-  cellsJson cells =
-    "["
-      <> T.intercalate
-        ","
-        ["[" <> T.pack (show x) <> "," <> T.pack (show y) <> "]" | (x, y) <- cells]
-      <> "]"
 
 -- Still lifes ---------------------------------------------------------------
 
@@ -677,7 +656,14 @@ cisBlock = [(0, 0), (1, 0), (0, 1), (2, 1)]
 initialCatalogCells :: [(Int, Word8)]
 initialPop, soupSeedPop :: Int
 initialBoundX0, initialBoundY0, initialBoundX1, initialBoundY1 :: Int
-(initialCatalogCells, initialPop, soupSeedPop, initialBoundX0, initialBoundY0, initialBoundX1, initialBoundY1) =
+( initialCatalogCells
+  , initialPop
+  , soupSeedPop
+  , initialBoundX0
+  , initialBoundY0
+  , initialBoundX1
+  , initialBoundY1
+  ) =
   buildInitialGrid
 
 buildInitialGrid :: ([(Int, Word8)], Int, Int, Int, Int, Int, Int)

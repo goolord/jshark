@@ -5,7 +5,6 @@
 -- | Shared species labels and procedural naming for catalog + discovery.
 module Names
   ( patternLabel
-  , catalogNamesJson
   , nameOfSid
   , cachedNameOfSid
   , lookupDisplayName
@@ -21,8 +20,7 @@ import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Map as Map
 import qualified JShark.Set as Set
-import JShark.Types (Effect (Lift), Expr (Literal, Var))
-import Patterns (PatternSpec (..), allPatterns)
+import JShark.Types (Effect (Lift), Expr (Var))
 import Types (discoverMin, manualSpecies, soupSpecies)
 
 patternLabel :: Int -> Text
@@ -118,205 +116,6 @@ patternLabel = \case
   89 -> "Cis Block"
   n -> "Type " <> T.pack (show n)
 
-catalogNamesJson :: Text
-catalogNamesJson =
-  T.concat
-    [ "["
-    , T.intercalate "," [nameEntry p | p <- allPatterns]
-    , "]"
-    ]
- where
-  nameEntry p =
-    let
-      sid = patId p
-      nm = patternLabel sid
-     in
-      "[" <> T.pack (show sid) <> "," <> jsonString nm <> "]"
-
-jsonString :: Text -> Text
-jsonString t =
-  "\"" <> T.concat (map jsonChar (T.unpack t)) <> "\""
- where
-  jsonChar '"' = "\\\""
-  jsonChar '\\' = "\\\\"
-  jsonChar c = T.singleton c
-
-prefixes, suffixes, nouns, adjectives, verbsIng :: [Text]
-prefixes =
-  [ "Nova"
-  , "Mira"
-  , "Axon"
-  , "Zeph"
-  , "Luma"
-  , "Vex"
-  , "Quin"
-  , "Orb"
-  , "Nex"
-  , "Sol"
-  , "Kael"
-  , "Rune"
-  , "Pyro"
-  , "Cyan"
-  , "Dusk"
-  , "Astra"
-  , "Brim"
-  , "Coro"
-  , "Echo"
-  , "Flux"
-  , "Gyre"
-  , "Helix"
-  , "Ion"
-  , "Jolt"
-  , "Kite"
-  , "Lux"
-  , "Myrrh"
-  , "Nimbus"
-  , "Onyx"
-  , "Prism"
-  ]
-suffixes =
-  [ "Morph"
-  , "Form"
-  , "Life"
-  , "Cell"
-  , "Oid"
-  , "Ium"
-  , "Ula"
-  , "Bit"
-  , "Zen"
-  , "Pod"
-  , "Wave"
-  , "Spark"
-  , "Mote"
-  , "Plex"
-  , "Drift"
-  , "Strand"
-  , "Weave"
-  , "Bloom"
-  , "Pulse"
-  , "Shard"
-  , "Gleam"
-  , "Trace"
-  , "Corpus"
-  , "Matrix"
-  , "Nexus"
-  , "Spore"
-  , "Vesicle"
-  , "Lattice"
-  , "Filament"
-  , "Glyph"
-  ]
-nouns =
-  [ "Acuity"
-  , "Artifice"
-  , "Pallor"
-  , "Bloom"
-  , "Bifurcation"
-  , "Luster"
-  , "Vapor"
-  , "Wish"
-  , "Qualia"
-  , "Malady"
-  , "Kindred"
-  , "Susurrus"
-  , "Gossamer"
-  , "Subterfuge"
-  , "Wretch"
-  , "Gibbet"
-  , "Murmur"
-  , "Flicker"
-  , "Shimmer"
-  , "Whir"
-  , "Pulchritude"
-  , "Cadence"
-  , "Chroma"
-  , "Dialect"
-  , "Entropy"
-  , "Fractal"
-  , "Glimmer"
-  , "Horizon"
-  , "Inertia"
-  , "Juxtaposition"
-  , "Kinesis"
-  , "Liminal"
-  , "Meridian"
-  , "Numen"
-  , "Obelisk"
-  , "Parallax"
-  , "Quorum"
-  , "Resonance"
-  , "Synapse"
-  , "Tessera"
-  , "Niumbus"
-  , "Nebula"
-  ]
-adjectives =
-  [ "Pulchritudinous"
-  , "Nascent"
-  , "Affine"
-  , "Hypoxic"
-  , "Ephemeral"
-  , "Derelict"
-  , "Noetic"
-  , "Cogent"
-  , "Inveterate"
-  , "Laconic"
-  , "Mellifluous"
-  , "Oblique"
-  , "Palimpsest"
-  , "Quiescent"
-  , "Sanguine"
-  , "Tenebrous"
-  , "Umbral"
-  , "Verdant"
-  , "Wistful"
-  , "Xenial"
-  , "Undead"
-  ]
-verbsIng =
-  [ "Acceding"
-  , "Capitulating"
-  , "Flickering"
-  , "Whirring"
-  , "Murmuring"
-  , "Exalting"
-  , "Shimmering"
-  , "Acquiescing"
-  , "Languishing"
-  , "Blooming"
-  , "Wishing"
-  , "Vaporing"
-  , "Dissolving"
-  , "Evolving"
-  , "Glimmering"
-  , "Orbiting"
-  , "Pulsing"
-  , "Radiating"
-  , "Spiraling"
-  , "Unfolding"
-  , "Wavering"
-  , "Yielding"
-  , "Zenithing"
-  , "Drifting"
-  , "Bleeding"
-  , "Tremoring"
-  ]
-
-wordArray :: [Text] -> Expr f ('Array 'String)
-wordArray xs = Literal (ValueArray (map ValueString xs))
-
-prefixesArr
-  , suffixesArr
-  , nounsArr
-  , adjectivesArr
-  , verbsIngArr ::
-    Expr f ('Array 'String)
-prefixesArr = wordArray prefixes
-suffixesArr = wordArray suffixes
-nounsArr = wordArray nouns
-adjectivesArr = wordArray adjectives
-verbsIngArr = wordArray verbsIng
-
 pickWord ::
   Expr f ('Array 'String)
   -> Expr f 'Number
@@ -326,29 +125,45 @@ pickWord ::
 pickWord arr n mul shift =
   Array.index arr (rem_ (n * mul + ushr n shift) (Array.length arr))
 
-makeName :: Expr f 'Number -> Expr f 'String
-makeName n =
+makeName ::
+  Effect f ('MutableObject a)
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f 'String)
+makeName registry n = do
+  nouns <- getProp registry "nouns"
+  prefixes <- getProp registry "prefixes"
+  suffixes <- getProp registry "suffixes"
+  verbsIng <- getProp registry "verbsIng"
+  adjectives <- getProp registry "adjectives"
   let
-    noun = pickWord nounsArr n (number 11) (number 3)
+    noun = pickWord nouns n (number 11) (number 3)
     mode = rem_ n (number 3)
-   in
-    if_
-      (mode .== 0)
-      ( pickWord prefixesArr n (number 17) (number 5)
-          <> string " "
-          <> pickWord suffixesArr n (number 23) (number 7)
-      )
-      ( if_
-          (mode .== 1)
-          ( pickWord verbsIngArr n (number 5) (number 4)
-              <> string " "
-              <> noun
-          )
-          ( pickWord adjectivesArr n (number 13) (number 6)
-              <> string " "
-              <> noun
-          )
-      )
+  pure
+    ( if_
+        (mode .== 0)
+        ( pickWord prefixes n (number 17) (number 5)
+            <> string " "
+            <> pickWord suffixes n (number 23) (number 7)
+        )
+        ( if_
+            (mode .== 1)
+            ( pickWord verbsIng n (number 5) (number 4)
+                <> string " "
+                <> noun
+            )
+            ( pickWord adjectives n (number 13) (number 6)
+                <> string " "
+                <> noun
+            )
+        )
+    )
+
+makeNameEffect ::
+  Effect f ('MutableObject a) -> Expr f 'Number -> Effect f 'String
+makeNameEffect registry sid =
+  fromSyntax $ do
+    nm <- makeName registry sid
+    toSyntax (expr nm)
 
 collectTaken ::
   Effect f ('MutableObject a)
@@ -392,8 +207,7 @@ uniqueNameSid sid registry = bindExpr $ fromSyntax $ do
   taken <- getProp registry "takenNames"
   let
     takenSet = Lift taken
-  let
-    base = makeName sid
+  base <- makeName registry sid
   stSym <- toSyntax emptyObject
   let
     st = Lift (Var stSym)
@@ -424,16 +238,16 @@ nameOfDiscovered ::
 nameOfDiscovered sid registry = do
   names <- getProp registry "names"
   discHit <- Map.lookup (Lift names) sid
+  fallback <-
+    bindExpr $
+      ifE
+        (expr (sid .>= number (fromIntegral discoverMin)))
+        (makeNameEffect registry sid)
+        (expr (string "Type " <> toString sid))
   toSyntax $
     optionCaseE
       discHit
-      ( expr
-          ( if_
-              (sid .>= number (fromIntegral discoverMin))
-              (makeName sid)
-              (string "Type " <> toString sid)
-          )
-      )
+      (expr fallback)
       (\nm -> expr nm)
 
 nameOfCatalog ::
@@ -462,7 +276,6 @@ nameOfSid sid registry =
           (fromSyntax (nameOfCatalog sid registry))
       )
 
--- | Cache-only label. Never runs 'makeName'; unknown sids become "Type N".
 lookupDisplayName ::
   Expr f 'Number
   -> Effect f ('MutableObject a)
@@ -472,7 +285,6 @@ lookupDisplayName sid registry = do
   hit <- Map.lookup (Lift cache) sid
   pure (orElse hit (string "Type " <> toString sid))
 
--- | Like 'nameOfSid' but memoizes on @registry.displayCache@.
 cachedNameOfSid ::
   Expr f 'Number
   -> Effect f ('MutableObject a)

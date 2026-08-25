@@ -52,3 +52,12 @@ main = do
   report "ir reify" reify
   ir <- timePath 60 (\() -> renderJSCompact (effectfulASTIr l))
   report "ir + codegen" ir
+  phoa <- timePath 60 (\() -> renderJSCompact (effectfulAST l))
+  report "phoa + codegen" phoa
+  case phoa of
+    Just (_, nPhoa) ->
+      case ir of
+        Just (_, nIr) ->
+          printf "parity:        %s (%d vs %d chars)\n" (if nPhoa == nIr then "ok" else "MISMATCH") nPhoa nIr
+        Nothing -> pure ()
+    Nothing -> pure ()
