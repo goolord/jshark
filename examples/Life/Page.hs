@@ -42,12 +42,19 @@ import Types
 --   injected there) cannot walk @contentDocument@. @<base href>@ is
 --   filled in at boot so relative @app.js@ / static URLs still resolve
 --   against the host page.
+--
+--   The source pane and shell @head@ extras live on the host page (not
+--   in the blob frame) so @/static/@ assets load with a normal origin.
+--   DevServer omits COOP/COEP on this shell so the blob frame is not
+--   cross-origin isolated; Life workers stay on the main thread unless
+--   that tradeoff is revisited.
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
 page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
     title_ "JShark • Game of Life"
+    headExtra
     style_ shellCss
   body_ [class_ "life-shell"] $ do
     iframe_
@@ -57,14 +64,15 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
       , sandbox_ "allow-scripts"
       ]
       mempty
-    script_ (bootJs (gameHtml staticRoot headExtra source scriptSrc))
+    source
+    script_ (bootJs (gameHtml staticRoot scriptSrc))
 
-gameHtml :: T.Text -> Html () -> Html () -> T.Text -> T.Text
-gameHtml staticRoot headExtra source scriptSrc =
-  TL.toStrict (renderText (gameDocument staticRoot headExtra source scriptSrc))
+gameHtml :: T.Text -> T.Text -> T.Text
+gameHtml staticRoot scriptSrc =
+  TL.toStrict (renderText (gameDocument staticRoot scriptSrc))
 
-gameDocument :: T.Text -> Html () -> Html () -> T.Text -> Html ()
-gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
+gameDocument :: T.Text -> T.Text -> Html ()
+gameDocument staticRoot scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
@@ -72,7 +80,6 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
     toHtmlRaw ("<base href=\"%%LIFE_BASE%%\">" :: T.Text)
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
     style_ toolsCss
-    headExtra
   body_ $ do
     main_ $ do
       h1_ "Conway's Game of Life"
@@ -104,7 +111,6 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
           <> "×"
           <> toHtml (T.pack (show gridH))
           <> ") — still lifes, oscillators, spaceships, methuselah seeds, eaters, and misc patterns seeded in the central region alongside random soup. Pan and zoom to explore."
-      source
       section_ [class_ "life-index"] $ do
         h2_ "Biomass Index"
         div_ [id_ lifeIndexHostId] $
@@ -117,8 +123,10 @@ gameDocument staticRoot headExtra source scriptSrc = doctypehtml_ $ do
 
 shellCss :: T.Text
 shellCss =
-  "html,body.life-shell{margin:0;height:100%;background:#0f172a;overflow:hidden}\
-  \.life-frame{display:block;width:100%;height:100%;border:0;background:#0f172a}"
+  "html,body.life-shell{margin:0;background:#0f172a;height:100%}\
+  \body.life-shell{display:flex;flex-direction:column;min-height:100vh}\
+  \.life-frame{display:block;flex:0 0 auto;width:100%;height:85vh;max-height:85vh;border:0;background:#0f172a}\
+  \body.life-shell>.js-source{flex:0 0 auto;margin:0;padding:0 1rem 2rem;color:#cbd5e1}"
 
 bootJs :: T.Text -> T.Text
 bootJs inner =

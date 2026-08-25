@@ -176,11 +176,16 @@
   }
 
   function refreshPackedRegion(grid, w, h, x0, y0, x1, y1) {
+    w = w | 0;
+    h = h | 0;
+    if (w <= 0 || h <= 0 || !grid) return;
     const xs = Math.max(0, Math.floor(x0) - 1);
     const ys = Math.max(0, Math.floor(y0) - 1);
     const xe = Math.min(w - 1, Math.floor(x1) + 1);
     const ye = Math.min(h - 1, Math.floor(y1) + 1);
+    if (xs > xe || ys > ye) return;
     for (let y = ys; y <= ye; y++) {
+      const row = y * w;
       for (let x = xs; x <= xe; x++) {
         let n = 0;
         for (let dy = -1; dy <= 1; dy++) {
@@ -192,8 +197,7 @@
             if (grid[ny * w + nx] & 1) n++;
           }
         }
-        const i = y * w + x;
-        grid[i] = (grid[i] & 1) + n * 2;
+        grid[row + x] = (grid[row + x] & 1) + n * 2;
       }
     }
   }
@@ -245,6 +249,9 @@
   ) {
     const E = global.LifeEngine;
     if (!E || !E.ready || E.mode === 'none') return null;
+    w = w | 0;
+    h = h | 0;
+    if (w <= 0 || h <= 0) return null;
     const n = (w * h) | 0;
     const counts = E._speciesCounts;
     const touched = E._speciesTouched;
@@ -254,7 +261,8 @@
     const xStop = Math.min(w, Math.floor(x1) + 2);
     const yStop = Math.min(h, Math.floor(y1) + 2);
     const regionRows = yStop - yStart;
-    const copyFull = regionRows * w * 2 >= n;
+    const regionCols = xStop - xStart;
+    const copyFull = regionRows * regionCols * 2 >= n;
 
     if (copyFull) {
       for (let i = 0; i < n; i++) E.gridA[i] = alive[i] & 1;
@@ -314,7 +322,11 @@
 
     nextLiveList.length = liveLen;
     nextChangedList.length = changedLen;
-    refreshPackedRegion(nextAlive, w, h, x0, y0, x1, y1);
+    if (pop > 0 && bx1 >= bx0 && by1 >= by0) {
+      refreshPackedRegion(nextAlive, w, h, bx0, by0, bx1, by1);
+    } else if (x1 >= x0 && y1 >= y0) {
+      refreshPackedRegion(nextAlive, w, h, x0, y0, x1, y1);
+    }
     const out = E._stepOut;
     out.pop = pop;
     out.bx0 = bx0;

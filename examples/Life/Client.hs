@@ -109,9 +109,6 @@ boot canvas ctx = do
   statTick <- Dom.lookupId (string lifeStatTickId)
   statEngine <- Dom.lookupId (string lifeStatEngineId)
   meter <- hold (G.toObject (Fps (-1) 0))
-  rectSym <- toSyntax emptyObject
-  let
-    rectRef = Lift (Var rectSym)
   tipSym <- toSyntax emptyObject
   let
     tipRef = Lift (Var tipSym)
@@ -123,7 +120,7 @@ boot canvas ctx = do
   toolsMap <- initDisturbCatalog
   toolBtns <- Dom.lookupSelector (string ".life-tool")
   toolBtnsE <- bindExpr toolBtns
-  wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport
+  wire canvas state tooltip tipRef toolRef toolsMap viewport
   wireTools toolRef toolBtnsE
   Timers.foreverFrame $ \now -> do
     tickFps meter now
@@ -148,11 +145,10 @@ wire ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject ())
   -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
   -> Effect f ('Map 'Number ('Array ('Array 'Number)))
   -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
+wire canvas state tooltip tipRef toolRef toolsMap viewport = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
   _ <- setProp tipRef "over" (number 0)
@@ -164,20 +160,7 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
   _ <- setProp tipRef "shownGy" (number (-2))
   _ <- setProp tipRef "fp" (string "")
   _ <- setProp tipRef "swatchSid" (number (-1))
-  let
-    refreshRect = do
-      r <- hold $ callMethod canvas "getBoundingClientRect" RecNil
-      left <- getProp r "left"
-      top <- getProp r "top"
-      width <- getProp r "width"
-      _ <- setProp rectRef "left" left
-      _ <- setProp rectRef "top" top
-      _ <- setProp rectRef "width" width
-      done
   win <- hold window
-  addEventListener "mouseenter" canvas $ \_ -> stmts refreshRect
-  addEventListener "resize" win $ \_ -> stmts refreshRect
-  _ <- refreshRect
   let
     endDrag = do
       _ <- setProp viewport "dragging" (number 0)
@@ -252,9 +235,9 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
     stmts $ do
       moved <- getProp viewport "moved"
       whenS (moved .== 0) $ do
-        cx <- getProp' e "clientX"
-        cy <- getProp' e "clientY"
-        (gx, gy) <- gridFromClient rectRef viewport cx cy
+        ox <- getProp' e "offsetX"
+        oy <- getProp' e "offsetY"
+        (gx, gy) <- gridFromPointer canvas viewport ox oy
         applyClick state toolRef toolsMap gx gy
       _ <- setProp viewport "moved" (number 0)
       done
@@ -270,9 +253,9 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
             dragY <- getProp viewport "dragY"
             panX <- getProp viewport "panX"
             panY <- getProp viewport "panY"
-            width <- getProp rectRef "width"
+            clientW <- getProp canvas "clientWidth"
             let
-              bufScale = number canvasW / width
+              bufScale = number canvasW / clientW
             _ <- setProp viewport "panX" (panX + (cx - dragX) * bufScale)
             _ <- setProp viewport "panY" (panY + (cy - dragY) * bufScale)
             clampPan viewport
@@ -288,7 +271,9 @@ wire canvas state tooltip rectRef tipRef toolRef toolsMap viewport = do
               setProp viewport "moved" (number 1)
         )
         ( do
-            (gx, gy) <- gridFromClient rectRef viewport cx cy
+            ox <- getProp' e "offsetX"
+            oy <- getProp' e "offsetY"
+            (gx, gy) <- gridFromPointer canvas viewport ox oy
             let
               w = number (fromIntegral gridW)
               h = number (fromIntegral gridH)
@@ -493,25 +478,23 @@ collectNearby alive species w h gx gy hits tipRef = do
           Set.insert hits sid
         whenS (dist .== best) $ Set.insert hits sid
 
-gridFromClient ::
-  Effect f ('MutableObject ())
+gridFromPointer ::
+  Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject ())
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f 'Number)
-gridFromClient rectRef viewport cx cy = do
-  left <- getProp rectRef "left"
-  top <- getProp rectRef "top"
-  width <- getProp rectRef "width"
+gridFromPointer canvas viewport localX localY = do
+  clientW <- getProp canvas "clientWidth"
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
   let
     px = number (fromIntegral cellPx)
-    bufScale = number canvasW / width
+    bufScale = number canvasW / clientW
   pure
-    ( Math.floor (((cx - left) * bufScale - panX) / zoom / px)
-    , Math.floor (((cy - top) * bufScale - panY) / zoom / px)
+    ( Math.floor ((localX * bufScale - panX) / zoom / px)
+    , Math.floor ((localY * bufScale - panY) / zoom / px)
     )
 
 initViewport :: EffectSyntax f (Effect f ('MutableObject ()))

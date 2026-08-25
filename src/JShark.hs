@@ -4913,7 +4913,11 @@ flatEffectfulAST' !env !s0 prog nid =
       let
         (s1, argDecl, argRefs) = flatRenderArgList env s0 prog ai
        in
-        (s1, fxCode argDecl (renderFFIForm (Flat.flatFFI prog fi) <> parens argRefs))
+        ( s1
+        , fxCode
+            argDecl
+            (renderFFIInvoke (Flat.flatFFI prog fi) argRefs)
+        )
     Flat.FX_UnsafeObject ti ->
       (s0, Code mempty (jsText (Flat.flatText prog ti)))
     Flat.FX_UnsafeObjectGet xId sId ->
@@ -5306,6 +5310,41 @@ renderFFIForm = \case
   FFICall s -> jsText s
   FFILambda s -> parens (jsText s)
 
+-- | Multi-parameter arrow lambdas are invalid IIFEs as @(...=>{...})(a,b)@;
+--   wrap the lambda in an extra pair of parens so the call applies cleanly.
+--   Parenthesized arrows from 'classifyFFI' become 'FFICall'; only wrap twice
+--   when the callee is not already a whole parenthesized expression.
+renderFFIInvoke :: FFIForm -> JS -> JS
+renderFFIInvoke fn argRefs = case fn of
+  FFILambda s -> parens (jsText s) <> parens argRefs
+  FFICall s ->
+    let callee = jsText s
+     in
+      if "=>" `T.isInfixOf` s && not (isWholeParenthesized s)
+        then parens callee <> parens argRefs
+        else callee <> parens argRefs
+
+-- | True when @t@ is @(… )@ with balanced outer parentheses only.
+isWholeParenthesized :: Text -> Bool
+isWholeParenthesized t =
+  case T.uncons t of
+    Nothing -> False
+    Just ('(', rest) ->
+      case T.unsnoc rest of
+        Nothing -> False
+        Just (inner, ')') -> parenBalanced inner (0 :: Int)
+        Just _ -> False
+    _ -> False
+ where
+  parenBalanced txt depth =
+    case T.uncons txt of
+      Nothing -> depth == 0
+      Just ('(', rest) -> parenBalanced rest (depth + 1)
+      Just (')', rest)
+        | depth == 0 -> False
+        | otherwise -> parenBalanced rest (depth - 1)
+      Just (_, rest) -> parenBalanced rest depth
+
 effectfulAST' :: forall v. Env -> CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !env !s0 = \case
   Lift x -> pureAST' s0 env x
@@ -5313,7 +5352,7 @@ effectfulAST' !env !s0 = \case
     let
       (s1, argDecl, argRefs) = renderArgList env s0 args
      in
-      (s1, fxCode argDecl (renderFFIForm fn <> parens argRefs))
+      (s1, fxCode argDecl (renderFFIInvoke fn argRefs))
   IfE c t e ->
     -- Value-producing @if@: a shared result var is assigned in both
     -- arms. Do not use emptiness to pick a ternary — a Unit leftover

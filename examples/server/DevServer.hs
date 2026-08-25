@@ -91,11 +91,14 @@ lifeEngineJs =
   , ("js/life-simd.wasm", "examples/Life/js/life-simd.wasm")
   ]
 
-lifeIsolationHeaders :: ActionM ()
-lifeIsolationHeaders = do
-  setHeader "Cross-Origin-Opener-Policy" "same-origin"
-  setHeader "Cross-Origin-Embedder-Policy" "require-corp"
+-- | Blob iframe (null origin) fetches app.js / wasm from the host; CORP + ACAO
+-- | are required. COOP/COEP stay off the shell HTML so the blob frame is not
+-- | blocked by require-corp (SharedArrayBuffer workers need headers on the
+-- | frame document itself, which blob URLs cannot carry).
+lifeAssetHeaders :: ActionM ()
+lifeAssetHeaders = do
   setHeader "Cross-Origin-Resource-Policy" "cross-origin"
+  setHeader "Access-Control-Allow-Origin" "*"
 
 -- | Serve every example and a screenshot directory at @/@.
 serveExamples :: Int -> String -> [Example] -> IO ()
@@ -119,26 +122,25 @@ serveExamples port banner examples = do
         isLife = exampleName ex == "life"
       get (fromString base) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
-        when isLife lifeIsolationHeaders
         html $ renderText page
       get (fromString (base <> "/")) $ do
         setHeader "Content-Type" "text/html; charset=utf-8"
-        when isLife lifeIsolationHeaders
         html $ renderText page
       get (fromString (base <> "/app.js")) $ do
         setHeader "Content-Type" "application/javascript; charset=utf-8"
-        when isLife lifeIsolationHeaders
+        when isLife lifeAssetHeaders
         text (TL.fromStrict (exampleJs ex))
       when isLife $
         forM_ lifeJs $ \(route, path) ->
           get (fromString (base <> "/" <> route)) $ do
             setHeader "Content-Type" (lifeAssetType route)
-            lifeIsolationHeaders
+            lifeAssetHeaders
             file path
     forM_ assets $ \(name, path) ->
       get (fromString ("/static/" <> name)) $ do
         setHeader "Content-Type" (staticType name)
         setHeader "Cross-Origin-Resource-Policy" "cross-origin"
+        setHeader "Access-Control-Allow-Origin" "*"
         file path
     forM_ shots $ \(ex, path) ->
       case path of
@@ -202,7 +204,7 @@ slashRedirect name =
 
 copyStatic :: FilePath -> FilePath -> IO ()
 copyStatic dest name = do
-  src <- getDataFileName ("examples/static/" <> name)
+  src <- resolveDataFile ("examples/static/" <> name)
   exists <- doesFileExist src
   if exists
     then copyFile src (dest </> "static" </> name)
@@ -217,7 +219,7 @@ exampleShot ex = do
 
 staticAsset :: FilePath -> IO [(String, FilePath)]
 staticAsset name = do
-  path <- getDataFileName ("examples/static/" <> name)
+  path <- resolveDataFile ("examples/static/" <> name)
   exists <- doesFileExist path
   pure [(name, path) | exists]
 

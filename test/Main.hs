@@ -391,6 +391,41 @@ controlFlowTests =
                 )
         assertJSContains "for (let n0 = 0.0 ; n0 < 3.0 ; n0 ++)" js
         assertJSContains "new Uint8Array(1)[n0] = 1.0;" js
+    , testCase "flat forRange_ emits u8Set in loop body" $ do
+        let js =
+              renderJS
+                ( effectfulASTIr
+                    ( fromSyntax
+                        ( toSyntax_
+                            ( forRange (number 0) (number 3) $ \i ->
+                                discard (u8Set (uint8Array (bytes [0])) i (number 1))
+                            )
+                            *> toSyntax noOp
+                        )
+                    )
+                )
+        assertJSContains "for (let" js
+        assertJSContains "[n" js
+    , testCase "multi-arg arrow FFI wraps IIFE" $
+        renderJS
+          ( effectfulAST
+              ( ffi
+                  ( "(a,b)=>a+b"
+                  )
+                  (arg (number 1) <: arg (number 2) <: RecNil)
+              )
+          )
+          @?= "((a,b)=>a+b)(1.0, 2.0)"
+    , testCase "flat multi-arg arrow FFI wraps IIFE" $
+        renderJS
+          ( effectfulASTIr
+              ( ffi
+                  ( "(a,b)=>a+b"
+                  )
+                  (arg (number 1) <: arg (number 2) <: RecNil)
+              )
+          )
+          @?= "((a,b)=>a+b)(1.0, 2.0)"
     , testCase "u8Index renders direct Uint8Array indexing" $
         renderJS (pureAST (u8Index (uint8Array (bytes [7, 8, 9])) (number 1)))
           @?= "new Uint8Array([7, 8, 9])[1.0]"

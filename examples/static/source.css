@@ -1,17 +1,53 @@
 .js-source {
   box-sizing: border-box;
+  position: static;
   max-width: 48rem;
   margin: 2rem auto;
-  padding: 0 1rem;
+  padding: 0 1rem 2rem;
   color: #e2e8f0;
   font-family: system-ui, sans-serif;
   text-align: left;
 }
 
-.js-source summary {
+.js-source-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   cursor: pointer;
   padding: 0.4rem 0;
   color: #94a3b8;
+  list-style: none;
+}
+
+.js-source-summary::-webkit-details-marker {
+  display: none;
+}
+
+.js-source-label {
+  flex: 1 1 auto;
+}
+
+.js-source-copy {
+  flex: 0 0 auto;
+  cursor: pointer;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.js-source-copy:hover:not(:disabled) {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+.js-source-copy:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .js-source pre {

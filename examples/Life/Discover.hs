@@ -481,7 +481,7 @@ stepIndexTracker alive species palette registry tracker seen container now x0 y0
                 i = cellIdx w0 x y
               whenS (packedIsAlive alive i) $ do
                 sid <- u8Get species i
-                incCount counts sid
+                _ <- incCount counts sid
                 Set.insert seen sid
         paintIndex tracker counts palette registry seen container
         done
@@ -489,19 +489,18 @@ stepIndexTracker alive species palette registry tracker seen container now x0 y0
 
 -- | 16-bit count in a 512-byte buffer: @lo@ at @sid*2@, @hi@ at @sid*2+1@.
 --   Grid is 49152 cells, so one species fits in 16 bits.
+-- | Flat codegen elides nested @setU8@ in the index scan; keep the increment
+--   in FFI until the flat path preserves @incCount@ effects.
 incCount :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 incCount counts sid = do
-  let
-    base = sid * number 2
-  lo <- u8Get counts base
-  ifS
-    (lo .== 255)
-    ( do
-        setU8 counts base 0
-        hi <- u8Get counts (base + 1)
-        setU8 counts (base + 1) (hi + 1)
-    )
-    (setU8 counts base (lo + 1))
+  toSyntax_ $
+    ffi
+      ( "(function(counts,sid){const base=sid*2;const lo=counts[base];"
+          <> "if(lo===255){counts[base]=0;counts[base+1]++;}"
+          <> "else{counts[base]=lo+1;}})"
+      )
+      (arg counts <: arg sid <: RecNil)
+  done
 
 countOf :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number
 countOf counts sid =

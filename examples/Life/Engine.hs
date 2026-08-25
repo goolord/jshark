@@ -22,8 +22,7 @@ where
 
 import Discover (Registry, discoverLife)
 import Grid
-  ( BoundScratch (..)
-  , RenderDirty (..)
+  ( RenderDirty (..)
   , StepCtx (..)
   , cellIdx
   , drawGridViewport
@@ -32,16 +31,16 @@ import Grid
   , rebuildLiveList
   , rebuildPackedCounts
   , refreshPackedRegion
-  , setU8
-  , setPackedAlive
+  , stampPatternCells
   , stepGrid
   , syncPaletteRgbaSid
   , u8Get
+  , writeCellState
   )
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
-import JShark.Generic (MutableObjectOf, newRecord, toObject)
+import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
 import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)
 import Catalog (catalogInitialCells, stampCatalogCells)
@@ -489,15 +488,13 @@ flipCell state gx gy = do
     ifS
       (bitAnd a (number 1) .== 1)
       ( do
-          setPackedAlive alive i (number 0)
-          setU8 species i 0
+          writeCellState alive species i false_ (number 0)
           set @"pop" state (pop0 - 1)
           toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
           done
       )
       ( do
-          setPackedAlive alive i (number 1)
-          setU8 species i (number (fromIntegral manualSpecies))
+          writeCellState alive species i true_ (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
           includeBounds state gx gy
           toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
@@ -520,41 +517,38 @@ placePattern state cells gx gy sid = do
   whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
     alive <- state.alive
     species <- state.species
-    bbox <- hold (toObject (BoundScratch 1e9 1e9 (-1) (-1)))
-    forRange_ (number 0) (Array.length cells) $ \k -> do
-      let
-        cell = Array.index cells k
-        dx = Array.index cell 0
-        dy = Array.index cell 1
-        x = gx + dx
-        y = gy + dy
-      whenS (x .>= 0 .&& y .>= 0 .&& x .< w .&& y .< h) $ do
-        let
-          i = cellIdx w x y
-        a <- u8Get alive i
-        whenS (bitAnd a (number 1) .== 0) $ do
-          setPackedAlive alive i (number 1)
-          curPop <- state.pop
-          set @"pop" state (curPop + 1)
-        setU8 species i sid
-        includeBounds state x y
-        curBx0 <- bbox.bx0
-        curBy0 <- bbox.by0
-        curBx1 <- bbox.bx1
-        curBy1 <- bbox.by1
-        _ <- set @"bx0" bbox (Math.min curBx0 x)
-        _ <- set @"by0" bbox (Math.min curBy0 y)
-        _ <- set @"bx1" bbox (Math.max curBx1 x)
-        set @"by1" bbox (Math.max curBy1 y)
-        done
-    syncLiveList state
-    bx0n <- bbox.bx0
-    by0n <- bbox.by0
-    bx1n <- bbox.bx1
-    by1n <- bbox.by1
+    info <- stampPatternCells alive species cells gx gy sid w h
+    let
+      added = Array.index info (number 0)
+      bx0n = Array.index info (number 1)
+      by0n = Array.index info (number 2)
+      bx1n = Array.index info (number 3)
+      by1n = Array.index info (number 4)
+    whenS (added .> 0) $ do
+      curPop <- state.pop
+      set @"pop" state (curPop + added)
     whenS (bx1n .>= bx0n) $ do
+      x0 <- state.boundX0
+      y0 <- state.boundY0
+      x1 <- state.boundX1
+      y1 <- state.boundY1
+      ifS
+        (x1 .< x0)
+        ( do
+            set @"boundX0" state (Math.floor bx0n)
+            set @"boundY0" state (Math.floor by0n)
+            set @"boundX1" state (Math.floor bx1n)
+            set @"boundY1" state (Math.floor by1n)
+        )
+        ( do
+            _ <- set @"boundX0" state (Math.floor (Math.min x0 bx0n))
+            _ <- set @"boundY0" state (Math.floor (Math.min y0 by0n))
+            _ <- set @"boundX1" state (Math.floor (Math.max x1 bx1n))
+            set @"boundY1" state (Math.floor (Math.max y1 by1n))
+        )
       toSyntax_ (refreshPackedRegion alive w h bx0n by0n bx1n by1n)
       done
+    syncLiveList state
     done
   markSceneDirty state
 

@@ -28,6 +28,8 @@ module Grid
   , packedIsAlive
   , bumpPackedNeighbors
   , setPackedAlive
+  , writeCellState
+  , stampPatternCells
   , refreshPackedAt
   , refreshPackedRegion
   , cellIdx
@@ -136,6 +138,70 @@ setPackedAlive grid i alive = do
   cur <- u8Get grid i
   setU8 grid i (bitAnd cur (number 0xFE) + alive)
 
+-- | Flat codegen drops @setU8@ inside @ifS@; keep click edits in FFI.
+writeCellState ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Bool
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+writeCellState alive species i live sid = do
+  toSyntax_ $
+    ffi
+      ( "(function(a,sp,i,live,sid){"
+          <> "if(live){a[i]=(a[i]&0xFE)|1;sp[i]=sid;}"
+          <> "else{a[i]=a[i]&0xFE;sp[i]=0;}"
+          <> "})"
+      )
+      ( arg alive
+          <: arg species
+          <: arg i
+          <: arg live
+          <: arg sid
+          <: RecNil
+      )
+  done
+
+-- | Stamp pattern cells; returns @\[added, bx0, by0, bx1, by1\]@.
+stampPatternCells ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f ('Array ('Array 'Number))
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (Expr f ('Array 'Number))
+stampPatternCells alive species cells gx gy sid w h =
+  bindExpr $
+    ffi
+      ( "(function(a,sp,cells,gx,gy,sid,w,h){"
+          <> "let added=0,bx0=1e9,by0=1e9,bx1=-1,by1=-1;"
+          <> "for(let k=0;k<cells.length;k++){"
+          <> "const c=cells[k],x=(gx+c[0])|0,y=(gy+c[1])|0;"
+          <> "if(x<0||y<0||x>=w||y>=h)continue;"
+          <> "const i=y*w+x;"
+          <> "if(!(a[i]&1))added++;"
+          <> "a[i]=(a[i]&0xFE)|1;sp[i]=sid;"
+          <> "if(x<bx0)bx0=x;if(y<by0)by0=y;"
+          <> "if(x>bx1)bx1=x;if(y>by1)by1=y;"
+          <> "}"
+          <> "return [added,bx0,by0,bx1,by1];"
+          <> "})"
+      )
+      ( arg alive
+          <: arg species
+          <: arg cells
+          <: arg gx
+          <: arg gy
+          <: arg sid
+          <: arg w
+          <: arg h
+          <: RecNil
+      )
+
 -- | Recompute packed neighbor count for one cell from live bits.
 refreshPackedAt ::
   Expr f 'Uint8Array
@@ -175,11 +241,15 @@ refreshPackedRegion ::
 refreshPackedRegion grid w h x0 y0 x1 y1 =
   ffi
     ( "((g,w,h,x0,y0,x1,y1)=>{"
+        <> "w=w|0;h=h|0;"
+        <> "if(w<=0||h<=0||!g)return;"
         <> "const xs=Math.max(0,Math.floor(x0)-1);"
         <> "const ys=Math.max(0,Math.floor(y0)-1);"
         <> "const xe=Math.min(w-1,Math.floor(x1)+1);"
         <> "const ye=Math.min(h-1,Math.floor(y1)+1);"
-        <> "for(let y=ys;y<=ye;y++){for(let x=xs;x<=xe;x++){"
+        <> "if(xs>xe||ys>ye)return;"
+        <> "for(let y=ys;y<=ye;y++){const row=y*w;"
+        <> "for(let x=xs;x<=xe;x++){"
         <> "let n=0;"
         <> "for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){"
         <> "if(!dx&&!dy)continue;"
@@ -187,8 +257,7 @@ refreshPackedRegion grid w h x0 y0 x1 y1 =
         <> "if(nx<0||ny<0||nx>=w||ny>=h)continue;"
         <> "if(g[ny*w+nx]&1)n++;"
         <> "}}"
-        <> "const i=y*w+x;"
-        <> "g[i]=(g[i]&1)+n*2;"
+        <> "g[row+x]=(g[row+x]&1)+n*2;"
         <> "}}})"
     )
     ( arg grid
@@ -201,13 +270,19 @@ refreshPackedRegion grid w h x0 y0 x1 y1 =
         <: RecNil
     )
 
+-- | Flat codegen on the Life program still elides @forRange_@ + @setU8@ here;
+--   keep the palette→RGBA copy in one FFI until that is fixed.
 initPaletteRgba ::
   Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)
-initPaletteRgba pal = do
-  rgba <- bindExpr (newByteArray (number (256 * 4)))
-  forRange_ (number 0) (number 256) $ \sid ->
-    syncPaletteRgbaSid pal rgba sid
-  pure rgba
+initPaletteRgba pal =
+  bindExpr $
+    ffi
+      ( "(pal=>{const n=256,r=new Uint8Array(n*4);"
+          <> "for(let s=0;s<n;s++){const b=s*3,p=s*4;"
+          <> "r[p]=pal[b];r[p+1]=pal[b+1];r[p+2]=pal[b+2];r[p+3]=255;}"
+          <> "return r;})"
+      )
+      (arg pal <: RecNil)
 
 syncPaletteRgbaSid ::
   Expr f 'Uint8Array
