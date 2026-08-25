@@ -28,6 +28,7 @@ import JShark (effectfulProgram, renderJSCompact)
 import JShark.Api
 import JShark.Generic (toObject)
 import qualified JShark.Array as Array
+import qualified JShark.Math as Math
 import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
 import JShark.Bun (evaluateEffectJSON)
 import JShark.Rec (Rec (..), (<:))
@@ -37,7 +38,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import qualified Data.Text as T
 import WorkerBridge (engineStepGeneration)
-import Types (zoomLevelLabels, zoomLevels)
+import Types (canvasH, canvasW, cellPx, zoomLevelLabels, zoomLevels)
 
 lifeTests :: TestTree
 lifeTests =
@@ -76,6 +77,9 @@ lifeTests =
               assertBool
                 "ascending"
                 (and (zipWith (<) zoomLevels (drop 1 zoomLevels)))
+          , lifeCase
+              "gridFromPointer inverts centerPan at canvas center"
+              testViewportGridCoord
           ]
       , testGroup
           "js engine"
@@ -272,6 +276,26 @@ testBlinkerPeriod2 = fromSyntax $ do
       (number 7)
   hCoords <- blinkerHorizontalCoords
   coordsMatch nextAlive w hCoords
+  done
+
+testViewportGridCoord :: forall f. Effect f 'Unit
+testViewportGridCoord = fromSyntax $ do
+  let
+    cw = number canvasW
+    ch = number canvasH
+    px = number (fromIntegral cellPx)
+    cx = number 512
+    cy = number 384
+    panX = cw / number 2 - cx * px
+    panY = ch / number 2 - cy * px
+    zoom = number 1
+    bufScale = number 1
+    localX = cw / number 2
+    localY = ch / number 2
+    gx = Math.floor ((localX * bufScale - panX) / zoom / px)
+    gy = Math.floor ((localY * bufScale - panY) / zoom / px)
+  LifeAssert.assertEqual cx gx
+  LifeAssert.assertEqual cy gy
   done
 
 testJsStepCell :: forall f. Effect f 'Unit

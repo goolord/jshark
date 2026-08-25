@@ -19,6 +19,7 @@ import Types
   , ink
   , lifeIndexHostId
   , lifeToolsId
+  , lifeToolsCollapseId
   , lifeStatCellsId
   , lifeStatEngineId
   , lifeStatFpsId
@@ -31,6 +32,7 @@ import Types
   , lifeTooltipSwatchId
   , lifeTypesListId
   , toggleToolSid
+  , eraserToolSid
   )
 
 -- | Shell page. The live board, tooltip, and index run inside a @blob:@
@@ -43,18 +45,13 @@ import Types
 --   filled in at boot so relative @app.js@ / static URLs still resolve
 --   against the host page.
 --
---   The source pane and shell @head@ extras live on the host page (not
---   in the blob frame) so @/static/@ assets load with a normal origin.
---   DevServer omits COOP/COEP on this shell so the blob frame is not
---   cross-origin isolated; Life workers stay on the main thread unless
---   that tradeoff is revisited.
-page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
-page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
+--   Fetched at runtime from @app.js@ so the blob iframe stays small.
+page :: T.Text -> T.Text -> Html ()
+page staticRoot scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
     title_ "JShark • Game of Life"
-    headExtra
     style_ shellCss
   body_ [class_ "life-shell"] $ do
     iframe_
@@ -64,7 +61,6 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
       , sandbox_ "allow-scripts"
       ]
       mempty
-    source
     script_ (bootJs (gameHtml staticRoot scriptSrc))
 
 gameHtml :: T.Text -> T.Text -> T.Text
@@ -79,7 +75,9 @@ gameDocument staticRoot scriptSrc = doctypehtml_ $ do
     title_ "JShark • Game of Life"
     toHtmlRaw ("<base href=\"%%LIFE_BASE%%\">" :: T.Text)
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/github-dark.min.css")]
     style_ toolsCss
+    style_ sourceCss
   body_ $ do
     main_ $ do
       h1_ "Conway's Game of Life"
@@ -98,7 +96,7 @@ gameDocument staticRoot scriptSrc = doctypehtml_ $ do
         span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
         span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
       p_ [class_ "help"] $
-        "Space to pause or resume. Shift+drag to pan; +/− (or numpad) to zoom. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle a cell, or drop a spaceship or methuselah. Hover within "
+        "Space to pause or resume. Shift+drag to pan; +/− (or numpad) to zoom. Toggling an empty cell pauses so it stays. The HUD picks the left-click tool: toggle, eraser, or drop a spaceship or methuselah. Hover within "
           <> toHtml (T.pack (show (hoverRadius * cellPx + cellPx)))
           <> "px of a species for its name. "
           <> "Emergent soup patterns are scanned every 45 generations: "
@@ -115,19 +113,101 @@ gameDocument staticRoot scriptSrc = doctypehtml_ $ do
         h2_ "Biomass Index"
         div_ [id_ lifeIndexHostId] $
           div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
+    lifeSourceSection
     script_ [src_ "js/pixi.min.js"] ("" :: Html ())
     script_ [src_ "js/catalog.js"] ("" :: Html ())
     script_ [src_ "js/LUTGenerator.js"] ("" :: Html ())
     script_ [src_ "js/LifeSimd.js"] ("" :: Html ())
     script_ [src_ "js/Main.js"] ("" :: Html ())
     script_ [src_ scriptSrc] ("" :: Html ())
+    script_ [src_ (staticRoot <> "/highlight.min.js")] ("" :: Html ())
+    sourceLoadScript scriptSrc
+    copyScript
+
+lifeSourceSection :: Html ()
+lifeSourceSection =
+  section_ [class_ "life-source"] $ do
+    div_ [class_ "life-source-header"] $ do
+      h2_ [class_ "life-source-title"] "Generated JavaScript"
+      button_
+        [ type_ "button"
+        , class_ "js-source-copy life-source-copy"
+        , makeAttribute "aria-label" "Copy generated JavaScript"
+        , makeAttribute "disabled" "true"
+        ]
+        $ do
+          span_ [class_ "life-source-copy-icon", makeAttribute "aria-hidden" "true"] "⎘"
+          span_ [class_ "life-source-copy-label"] "Copy source"
+    pre_ [class_ "life-source-pre"] $
+      code_ [class_ "language-javascript life-source-code"] "Loading source…"
+
+sourceLoadScript :: T.Text -> Html ()
+sourceLoadScript scriptSrc =
+  script_ $
+    "(function(){"
+      <> "var code=document.querySelector('.life-source-code');"
+      <> "var btn=document.querySelector('.life-source-copy');"
+      <> "if(!code)return;"
+      <> "fetch("
+      <> jsString scriptSrc
+      <> ")"
+      <> ".then(function(r){if(!r.ok)throw new Error('fetch');return r.text();})"
+      <> ".then(function(t){"
+      <> "code.textContent=t;"
+      <> "if(btn)btn.removeAttribute('disabled');"
+      <> "if(window.hljs){requestAnimationFrame(function(){hljs.highlightElement(code);});}"
+      <> "})"
+      <> ".catch(function(){"
+      <> "code.textContent='// Failed to load generated source';"
+      <> "});"
+      <> "})();"
+
+copyScript :: Html ()
+copyScript =
+  script_ $
+    "(function(){"
+      <> "document.querySelectorAll('.life-source').forEach(function(pane){"
+      <> "var btn=pane.querySelector('.js-source-copy');"
+      <> "var code=pane.querySelector('code');"
+      <> "if(!btn||!code)return;"
+      <> "var label=btn.querySelector('.life-source-copy-label');"
+      <> "btn.addEventListener('click',function(e){"
+      <> "e.preventDefault();"
+      <> "e.stopPropagation();"
+      <> "var text=code.textContent||'';"
+      <> "if(!text||text==='Loading source…')return;"
+      <> "function ok(){"
+      <> "if(label){label.textContent='Copied!';}else{btn.textContent='Copied!';}"
+      <> "btn.disabled=true;"
+      <> "btn.classList.add('is-copied');"
+      <> "setTimeout(function(){"
+      <> "if(label){label.textContent='Copy source';}else{btn.textContent='Copy';}"
+      <> "btn.disabled=false;btn.classList.remove('is-copied');"
+      <> "},1500);"
+      <> "}"
+      <> "function fail(){"
+      <> "if(label){label.textContent='Copy failed';}else{btn.textContent='Copy failed';}"
+      <> "setTimeout(function(){"
+      <> "if(label){label.textContent='Copy source';}else{btn.textContent='Copy source';}"
+      <> "},1500);"
+      <> "}"
+      <> "if(navigator.clipboard&&navigator.clipboard.writeText){"
+      <> "navigator.clipboard.writeText(text).then(ok).catch(function(){"
+      <> "try{var ta=document.createElement('textarea');"
+      <> "ta.value=text;ta.style.position='fixed';ta.style.left='-9999px';"
+      <> "document.body.appendChild(ta);ta.select();"
+      <> "document.execCommand('copy');document.body.removeChild(ta);ok();"
+      <> "}catch(e){fail();}});"
+      <> "}else{fail();}"
+      <> "});"
+      <> "});"
+      <> "})();"
 
 shellCss :: T.Text
 shellCss =
-  "html,body.life-shell{margin:0;background:#0f172a;height:100%}\
-  \body.life-shell{display:flex;flex-direction:column;min-height:100vh}\
-  \.life-frame{display:block;flex:0 0 auto;width:100%;height:85vh;max-height:85vh;border:0;background:#0f172a}\
-  \body.life-shell>.js-source{flex:0 0 auto;margin:0;padding:0 1rem 2rem;color:#cbd5e1}"
+  "html,body.life-shell{margin:0;padding:0;background:#0f172a;height:100%;overflow:hidden}\
+  \body.life-shell{display:block}\
+  \.life-frame{display:block;width:100%;height:100vh;border:0;background:#0f172a}"
 
 bootJs :: T.Text -> T.Text
 bootJs inner =
@@ -187,8 +267,19 @@ toolsHud =
     , makeAttribute "aria-label" "Placement tools"
     ]
     $ do
-      toolButton toggleToolSid "Toggle" [(1, 1)] (Just (3, 3)) True
-      mapM_ disturbButton disturbPatterns
+      button_
+        [ id_ lifeToolsCollapseId
+        , type_ "button"
+        , class_ "life-tools-collapse"
+        , makeAttribute "aria-expanded" "true"
+        , makeAttribute "aria-label" "Collapse tools"
+        , title_ "Collapse tools"
+        ]
+        "−"
+      div_ [class_ "life-tools-body"] $ do
+        toolButton toggleToolSid "Toggle" [(1, 1)] (Just (3, 3)) True
+        toolButton eraserToolSid "Eraser" [(1, 1)] (Just (3, 3)) False
+        mapM_ disturbButton disturbPatterns
 
 disturbButton :: PatternSpec -> Html ()
 disturbButton p =
@@ -223,6 +314,7 @@ toolPreview sid cells size =
   (minX, minY, w, h) = previewBox cells size
   onColor
     | sid == toggleToolSid = ink
+    | sid == eraserToolSid = "#f87171"
     | otherwise = rgbCss (speciesColor sid)
   cellSpan :: (Int, Int) -> Html ()
   cellSpan (x, y) =
@@ -278,10 +370,16 @@ toolsCss =
   \.life-stat-tick{left:50%;transform:translateX(-50%);top:54px}\
   \.life-stat-engine{left:50%;transform:translateX(-50%);top:72px}\
   \.life-tools{position:absolute;right:8px;bottom:8px;z-index:5;display:flex;\
-  \flex-wrap:wrap;justify-content:flex-end;gap:0.28rem;max-width:22rem;\
-  \padding:0.35rem;border-radius:6px;background:rgba(15,23,42,0.88);\
-  \border:1px solid #334155;box-shadow:0 2px 8px rgba(0,0,0,0.35);user-select:none;\
-  \pointer-events:none}\
+  \flex-direction:column;align-items:flex-end;gap:0.25rem;user-select:none;pointer-events:none}\
+  \.life-tools-collapse{appearance:none;pointer-events:auto;display:flex;align-items:center;\
+  \justify-content:center;width:1.65rem;height:1.65rem;padding:0;border:1px solid #334155;\
+  \border-radius:4px;background:#0f172a;color:#94a3b8;font:600 0.95rem system-ui,sans-serif;\
+  \cursor:pointer;line-height:1;box-shadow:0 2px 8px rgba(0,0,0,0.35)}\
+  \.life-tools-collapse:hover{border-color:#64748b;color:#e2e8f0}\
+  \.life-tools-body{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:0.28rem;max-width:22rem;\
+  \padding:0.35rem;border-radius:6px;background:rgba(15,23,42,0.88);border:1px solid #334155;\
+  \box-shadow:0 2px 8px rgba(0,0,0,0.35)}\
+  \.life-tools.is-collapsed .life-tools-body{display:none}\
   \.life-tool{appearance:none;display:flex;flex-direction:column;align-items:center;\
   \gap:0.2rem;width:3.35rem;padding:0.28rem 0.2rem 0.22rem;border:1px solid #334155;\
   \border-radius:4px;background:#0f172a;color:#cbd5e1;cursor:pointer;pointer-events:auto}\
@@ -293,3 +391,25 @@ toolsCss =
   \.life-tool-cell.is-on{background:var(--on,#e2e8f0)}\
   \.life-tool-name{font-size:0.58rem;line-height:1.1;max-width:3.1rem;overflow:hidden;\
   \text-overflow:ellipsis;white-space:nowrap;color:#94a3b8}"
+
+sourceCss :: T.Text
+sourceCss =
+  ".life-source{position:static;box-sizing:border-box;max-width:768px;margin:2.5rem auto 3rem;\
+  \padding:1.25rem 1rem 0;border-top:1px solid #334155;color:#cbd5e1;font-family:Georgia,serif;\
+  \text-align:left;clear:both}\
+  \.life-source-header{display:flex;align-items:center;justify-content:space-between;\
+  \gap:1rem;margin-bottom:0.85rem;flex-wrap:wrap}\
+  \.life-source-title{margin:0;font-size:1.15rem;font-weight:400;color:#e2e8f0}\
+  \.life-source-copy{display:inline-flex;align-items:center;gap:0.4rem;padding:0.45rem 0.95rem;\
+  \border:1px solid #0ea5e9;border-radius:6px;background:linear-gradient(180deg,#0ea5e9 0%,#0284c7 100%);\
+  \color:#f0f9ff;font:600 0.82rem system-ui,sans-serif;cursor:pointer;\
+  \box-shadow:0 1px 2px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.15);transition:filter 0.15s,transform 0.15s}\
+  \.life-source-copy:hover:not(:disabled){filter:brightness(1.08);transform:translateY(-1px)}\
+  \.life-source-copy:active:not(:disabled){transform:translateY(0)}\
+  \.life-source-copy:disabled{opacity:0.72;cursor:default;transform:none}\
+  \.life-source-copy.is-copied{background:linear-gradient(180deg,#22c55e 0%,#16a34a 100%);\
+  \border-color:#4ade80;color:#f0fdf4}\
+  \.life-source-copy-icon{font-size:1rem;line-height:1;opacity:0.92}\
+  \.life-source-pre{margin:0;max-height:32rem;overflow:auto;border-radius:8px;\
+  \border:1px solid #334155;background:#0b1220}\
+  \.life-source-code{font-size:0.82rem;line-height:1.45}"

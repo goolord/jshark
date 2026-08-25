@@ -12,7 +12,8 @@ module Pixi
   , newApplication
   , textureFromBuffer
   , setTextureNearest
-  , syncTexture
+  , uploadTextureFull
+  , uploadTextureRegion
   , newSprite
   , mountSprite
   , setSpriteViewport
@@ -55,14 +56,19 @@ newApplication canvas w h bg =
             ( "(view, width, height, backgroundColor) =>"
                 <> " new PIXI.Application({"
                 <> " view, width, height, backgroundColor,"
-                <> " antialias: false, autoStart: false, resolution: 1"
+                <> " antialias: false, autoStart: false, resolution: 1,"
+                <> " powerPreference:"
+                <> " (matchMedia('(prefers-reduced-motion: reduce)').matches"
+                <> " ? 'default' : 'high-performance'),"
+                <> " hello: false"
                 <> " })"
             )
             (ArgEffect canvas <: arg w <: arg h <: arg bg <: RecNil)
         )
     )
 
--- | @PIXI.Texture.fromBuffer@ for the full-world RGBA atlas.
+-- | @PIXI.Texture.fromBuffer@ — one RGBA texel per grid cell; the sprite
+-- scales it on the GPU (@cellPx@ × zoom).
 textureFromBuffer ::
   Expr f 'Uint8Array
   -> Expr f 'Number
@@ -94,27 +100,33 @@ setTextureNearest tex = do
       (ArgEffect tex <: RecNil)
   done
 
--- | Push CPU buffer edits to the GPU.
---
--- Full: @baseTexture.update()@. Partial: bind via @renderer.texture@ then one
--- @texSubImage2D@ for the dirty rect (same buffer as 'textureFromBuffer').
-syncTexture ::
+-- | Upload the full grid atlas (@baseTexture.update()@).
+uploadTextureFull ::
+  Effect f ('MutableObject Texture) -> EffectSyntax f (f 'Unit)
+uploadTextureFull tex = do
+  toSyntax_
+    $ discard
+    $ ffi
+      "((t) => { t.baseTexture.update(); })"
+      (ArgEffect tex <: RecNil)
+  done
+
+-- | Partial upload for a dirty rect (grid texel coordinates).
+uploadTextureRegion ::
   Effect f ('MutableObject Application)
   -> Effect f ('MutableObject Texture)
-  -> Expr f 'Bool
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-syncTexture app tex full x0 y0 x1 y1 fullW = do
+uploadTextureRegion app tex x0 y0 x1 y1 texW = do
   toSyntax_
     $ discard
     $ ffi
-        ( "(app, tex, full, x0, y0, x1, y1, fullW) => {"
+        ( "(app, tex, x0, y0, x1, y1, texW) => {"
             <> " const bt = tex.baseTexture;"
-            <> " if (full) { bt.update(); return; }"
             <> " const x = Math.floor(x0)|0, y = Math.floor(y0)|0;"
             <> " const w = Math.ceil(x1) - x, h = Math.ceil(y1) - y;"
             <> " if (w <= 0 || h <= 0) return;"
@@ -125,19 +137,18 @@ syncTexture app tex full x0 y0 x1 y1 fullW = do
             <> " if (!bound || !bound.texture) { bt.update(); return; }"
             <> " const gl = app.renderer.gl;"
             <> " gl.bindTexture(gl.TEXTURE_2D, bound.texture);"
-            <> " const off = (y * fullW + x) * 4;"
+            <> " const off = (y * texW + x) * 4;"
             <> " gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE,"
             <> "   buf.subarray(off, off + w * h * 4));"
             <> " }"
         )
         ( ArgEffect app
             <: ArgEffect tex
-            <: arg full
             <: arg x0
             <: arg y0
             <: arg x1
             <: arg y1
-            <: arg fullW
+            <: arg texW
             <: RecNil
         )
   done
@@ -169,19 +180,20 @@ mountSprite app sprite = do
       (ArgEffect app <: arg sprite <: RecNil)
   done
 
--- | Pan/zoom via GPU sprite transform (no CPU repaints on viewport moves).
+-- | Pan/zoom on the GPU: sprite scale = @cellPx × zoom@.
 setSpriteViewport ::
   Effect f ('MutableObject Sprite)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-setSpriteViewport sprite panX panY zoom = do
+setSpriteViewport sprite panX panY zoom cellPx = do
   toSyntax_
     $ discard
     $ ffi
-      "((s, px, py, z) => { s.scale.set(z, z); s.position.set(px, py); })"
-      (ArgEffect sprite <: arg panX <: arg panY <: arg zoom <: RecNil)
+      "((s, px, py, z, cp) => { s.scale.set(z * cp, z * cp); s.position.set(px, py); })"
+      (ArgEffect sprite <: arg panX <: arg panY <: arg zoom <: arg cellPx <: RecNil)
   done
 
 -- | @app.render()@.

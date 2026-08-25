@@ -15,6 +15,7 @@ module Engine
   , renderLife
   , togglePause
   , flipCell
+  , eraseCell
   , placePattern
   , markSceneDirty
   )
@@ -68,8 +69,8 @@ import Types
   , seedOy
   , seedW
   , soupRngSeed
-  , worldH
-  , worldW
+  , texH
+  , texW
   )
 import WorkerBridge
   ( engineCanStep
@@ -110,10 +111,10 @@ initLife app viewport = do
   set @"nextAlive" state nextAlive
   set @"nextSpecies" state nextSpecies
   set @"palette" state (uint8Array paletteBytes)
-  pixels <- bindExpr (newByteArray (number (worldW * worldH * 4)))
-  texture <- Pixi.textureFromBuffer pixels (number worldW) (number worldH)
-  texH <- hold (expr texture)
-  _ <- Pixi.setTextureNearest texH
+  pixels <- bindExpr (newByteArray (number (texW * texH * 4)))
+  texture <- Pixi.textureFromBuffer pixels (number texW) (number texH)
+  gridTex <- hold (expr texture)
+  _ <- Pixi.setTextureNearest gridTex
   sprite <- Pixi.newSprite texture
   _ <- Pixi.mountSprite app sprite
   _ <- setProp viewport "texture" texture
@@ -460,8 +461,6 @@ renderLife app viewport renderDirty state = do
     w
     h
     px
-    (number worldW)
-    (number worldH)
     cw
     ch
     panX
@@ -513,6 +512,29 @@ flipCell state gx gy = do
     syncLiveList state
     done
   markSceneDirty state
+
+eraseCell ::
+  Effect f (MutableObjectOf LifeState)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+eraseCell state gx gy = do
+  w <- pure (number (fromIntegral gridW))
+  h <- pure (number (fromIntegral gridH))
+  whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
+    alive <- state.alive
+    species <- state.species
+    let
+      i = cellIdx w gx gy
+    a <- u8Get alive i
+    pop0 <- state.pop
+    whenS (bitAnd a (number 1) .== 1) $ do
+      writeCellState alive species i false_ (number 0)
+      set @"pop" state (pop0 - 1)
+      toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
+      syncLiveList state
+      markSceneDirty state
+    done
 
 placePattern ::
   Effect f (MutableObjectOf LifeState)

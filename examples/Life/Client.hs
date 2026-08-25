@@ -58,7 +58,10 @@ import Types
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
+  , lifeToolsId
+  , lifeToolsCollapseId
   , toggleToolSid
+  , eraserToolSid
   , seedH
   , seedOx
   , seedOy
@@ -135,8 +138,11 @@ boot canvas app = do
   toolsMap <- initDisturbCatalog
   toolBtns <- Dom.lookupSelector (string ".life-tool")
   toolBtnsE <- bindExpr toolBtns
+  toolsTray <- Dom.lookupId (string lifeToolsId)
+  toolsCollapse <- Dom.lookupId (string lifeToolsCollapseId)
   wire canvas state tooltip tipRef toolRef toolsMap viewport
   wireTools toolRef toolBtnsE
+  wireToolsCollapse toolsTray toolsCollapse
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
@@ -672,13 +678,17 @@ applyClick state toolRef toolsMap gx gy = do
   ifS
     (sid .== number (fromIntegral toggleToolSid))
     (flipCell state gx gy)
-    ( do
-        hit <- Map.lookup toolsMap sid
-        toSyntax $
-          optionCaseE
-            hit
-            noOp
-            (\cells -> fromSyntax $ placePattern state cells gx gy sid)
+    ( ifS
+        (sid .== number (fromIntegral eraserToolSid))
+        (eraseCell state gx gy)
+        ( do
+            hit <- Map.lookup toolsMap sid
+            toSyntax $
+              optionCaseE
+                hit
+                noOp
+                (\cells -> fromSyntax $ placePattern state cells gx gy sid)
+        )
     )
 
 wireTools ::
@@ -717,6 +727,46 @@ selectTool toolRef btns sid = do
         "aria-pressed"
         (if_ on (string "true") (string "false"))
     done
+
+wireToolsCollapse ::
+  Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+wireToolsCollapse toolsTray collapseBtn = do
+  addEventListener "click" collapseBtn $ \_ ->
+    stmts $ do
+      toSyntax_ $
+        callMethod
+          toolsTray
+          "classList.toggle"
+          (arg (string "is-collapsed") <: RecNil)
+      collapsed <-
+        bindExpr $
+          ffi
+            "((el) => el.classList.contains('is-collapsed'))"
+            (ArgEffect toolsTray <: RecNil)
+      let
+        expanded = not_ collapsed
+      _ <-
+        Dom.setAttribute
+          collapseBtn
+          "aria-expanded"
+          (if_ expanded (string "true") (string "false"))
+      _ <-
+        Dom.setTextContent
+          collapseBtn
+          (if_ expanded (string "−") (string "+"))
+      _ <-
+        Dom.setAttribute
+          collapseBtn
+          "aria-label"
+          ( if_
+              expanded
+              (string "Collapse tools")
+              (string "Expand tools")
+          )
+      done
+  done
 
 updateHud ::
   Effect f (MutableObjectOf LifeState)

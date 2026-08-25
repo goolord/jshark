@@ -700,7 +700,7 @@ expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
     )
   done
 
--- | World RGBA atlas + WebGL sprite: CPU paints cells, GPU handles pan/zoom.
+-- | Grid-resolution atlas + GPU sprite scale: 1 texel/cell, pan/zoom on GPU.
 drawGridViewport ::
   Effect f ('MutableObject Pixi.Application)
   -> Expr f ('MutableObject Pixi.Sprite)
@@ -713,8 +713,6 @@ drawGridViewport ::
   -> Expr f ('Array 'Number)
   -> Expr f 'Bool
   -> Expr f 'Bool
-  -> Expr f 'Number
-  -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -740,8 +738,6 @@ drawGridViewport
   w
   h
   px
-  worldW
-  worldH
   cw
   ch
   panX
@@ -757,15 +753,15 @@ drawGridViewport
       whenS needsPaint $
         do
           let
-            scale = px
+            cellScale = px * zoomLevel
             visX0 =
-              Math.max (number 0) (Math.floor ((number 0 - panX) / (px * zoomLevel)) - number 1)
+              Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
             visX1 =
-              Math.min w (Math.ceil ((cw - panX) / (px * zoomLevel)) + number 1)
+              Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
             visY0 =
-              Math.max (number 0) (Math.floor ((number 0 - panY) / (px * zoomLevel)) - number 1)
+              Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
             visY1 =
-              Math.min h (Math.ceil ((ch - panY) / (px * zoomLevel)) + number 1)
+              Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
             bg =
               number 15
                 + shl (number 23) (number 8)
@@ -774,13 +770,13 @@ drawGridViewport
           toSyntax_ $
             paintGridCells
               pixels
-              worldW
-              worldH
+              w
+              h
               paletteRgba
               alive
               species
               w
-              scale
+              (number 1)
               (number 0)
               (number 0)
               bg
@@ -792,11 +788,11 @@ drawGridViewport
               visY0
               visY1
               renderDirty
+          gridTex <- hold (expr texture)
           isFull <- renderDirty.dirtyFull
-          texH <- hold (expr texture)
           ifS
             isFull
-            (Pixi.syncTexture app texH true_ (number 0) (number 0) (number 0) (number 0) worldW)
+            (Pixi.uploadTextureFull gridTex)
             ( do
                 painted <- renderDirty.dirtyPainted
                 whenS (not_ painted) $
@@ -810,10 +806,10 @@ drawGridViewport
                   iy0 <- renderDirty.dirtyCy0
                   ix1 <- renderDirty.dirtyCx1
                   iy1 <- renderDirty.dirtyCy1
-                  Pixi.syncTexture app texH false_ ix0 iy0 ix1 iy1 worldW
+                  Pixi.uploadTextureRegion app gridTex ix0 iy0 ix1 iy1 w
             )
       sprH <- hold (expr sprite)
-      Pixi.setSpriteViewport sprH panX panY zoomLevel
+      Pixi.setSpriteViewport sprH panX panY zoomLevel px
       Pixi.render app
   done
 

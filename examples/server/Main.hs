@@ -50,7 +50,7 @@ main = do
           "life"
           "Game of Life"
           ( \script static ->
-              Life.page static (sourceHead static) (sourcePane static lifeJs) script
+              Life.page static script
           )
           lifeJs
       ]

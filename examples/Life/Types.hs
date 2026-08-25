@@ -9,8 +9,8 @@ module Types
   , gridN
   , canvasW
   , canvasH
-  , worldW
-  , worldH
+  , texW
+  , texH
   , canvasBg
   , canvasBgPixi
   , canvasBgRgba
@@ -45,6 +45,7 @@ module Types
   , lifeTooltipSwatchId
   , lifeTooltipNameId
   , lifeToolsId
+  , lifeToolsCollapseId
   , lifeStatGenId
   , lifeStatCellsId
   , lifeStatFpsId
@@ -53,6 +54,7 @@ module Types
   , lifeStatTickId
   , lifeStatEngineId
   , toggleToolSid
+  , eraserToolSid
   , hoverRadius
   , zoomSteps
   , zoomLevels
@@ -90,13 +92,11 @@ canvasW, canvasH :: Double
 canvasW = 768
 canvasH = 576
 
--- | Full-world RGBA atlas side lengths (@cellPx@ per grid cell).
---
--- ~28 MiB CPU buffer at 1024×768×3 — trades memory for pan/zoom without
--- repainting the whole viewport each frame.
-worldW, worldH :: Double
-worldW = fromIntegral gridW * fromIntegral cellPx
-worldH = fromIntegral gridH * fromIntegral cellPx
+-- | Grid-resolution RGBA atlas (one texel per cell). ~3 MiB — the sprite
+-- scales it on the GPU so pan/zoom never repaints cells.
+texW, texH :: Double
+texW = fromIntegral gridW
+texH = fromIntegral gridH
 
 -- | Canvas background @#RRGGBB@ (also drives 'canvasBg' / 'canvasBgPixi').
 canvasBgHex :: Int
@@ -200,6 +200,9 @@ lifeTooltipNameId = "life-tooltip-name"
 lifeToolsId :: Text
 lifeToolsId = "life-tools"
 
+lifeToolsCollapseId :: Text
+lifeToolsCollapseId = "life-tools-collapse"
+
 lifeStatGenId :: Text
 lifeStatGenId = "life-stat-gen"
 
@@ -224,6 +227,10 @@ lifeStatEngineId = "life-stat-engine"
 -- | HUD default: left-click flips a single cell (species 'manualSpecies').
 toggleToolSid :: Int
 toggleToolSid = 0
+
+-- | Left-click clears live cells only (never births).
+eraserToolSid :: Int
+eraserToolSid = -1
 
 -- | Chebyshev cells around the cursor that still count as hovering a species.
 hoverRadius :: Int

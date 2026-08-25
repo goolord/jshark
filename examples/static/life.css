@@ -105,6 +105,39 @@ h1 {
   bottom: 8px;
   z-index: 5;
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  user-select: none;
+  pointer-events: none;
+}
+
+.life-tools-collapse {
+  appearance: none;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: #0f172a;
+  color: #94a3b8;
+  font: 600 0.95rem system-ui, sans-serif;
+  cursor: pointer;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.life-tools-collapse:hover {
+  border-color: #64748b;
+  color: #e2e8f0;
+}
+
+.life-tools-body {
+  display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.28rem;
@@ -114,8 +147,10 @@ h1 {
   background: rgba(15, 23, 42, 0.88);
   border: 1px solid #334155;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  user-select: none;
-  pointer-events: none;
+}
+
+.life-tools.is-collapsed .life-tools-body {
+  display: none;
 }
 
 .life-tool {
