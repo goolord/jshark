@@ -41,6 +41,7 @@ data-files:
   examples/Life/js/catalog.js
   examples/Life/js/LUTGenerator.js
   examples/Life/js/LifeSimd.js
+  examples/Life/js/pixi.min.js
   examples/Life/js/EngineWorker.js
   examples/Life/js/Main.js
   examples/Life/js/life-simd.wasm
@@ -201,6 +202,7 @@ library life
     Discover
     Names
     Page
+    Pixi
   hs-source-dirs:
     examples/Life
 

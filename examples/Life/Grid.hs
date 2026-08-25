@@ -41,10 +41,10 @@ where
 import GHC.Generics (Generic)
 import JShark.Api
 import qualified JShark.Array as Array
-import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf)
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
+import qualified Pixi
 
 data StepScratch = StepScratch
   { pop :: Double
@@ -700,10 +700,11 @@ expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
     )
   done
 
--- | RGBA buffer draw: batched cell paint + dirty @putImageData@ blit.
+-- | World RGBA atlas + WebGL sprite: CPU paints cells, GPU handles pan/zoom.
 drawGridViewport ::
-  Effect f ('MutableObject Canvas.Context2D)
-  -> Expr f ('MutableObject Canvas.ImageData)
+  Effect f ('MutableObject Pixi.Application)
+  -> Expr f ('MutableObject Pixi.Sprite)
+  -> Expr f ('MutableObject Pixi.Texture)
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -711,6 +712,9 @@ drawGridViewport ::
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
   -> Expr f 'Bool
+  -> Expr f 'Bool
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -722,18 +726,22 @@ drawGridViewport ::
   -> Effect f (MutableObjectOf RenderDirty)
   -> EffectSyntax f (f 'Unit)
 drawGridViewport
-  ctx
-  img
+  app
+  sprite
+  texture
   pixels
   paletteRgba
   alive
   species
   liveList
   changedList
-  fullRedraw
+  sceneDirty
+  viewportDirty
   w
   h
   px
+  worldW
+  worldH
   cw
   ch
   panX
@@ -741,61 +749,72 @@ drawGridViewport
   zoomLevel
   renderDirty = do
   let
-    scale = px * zoomLevel
-    visX0 = Math.max (number 0) (Math.floor ((number 0 - panX) / scale) - number 1)
-    visX1 = Math.min w (Math.ceil ((cw - panX) / scale) + number 1)
-    visY0 = Math.max (number 0) (Math.floor ((number 0 - panY) / scale) - number 1)
-    visY1 = Math.min h (Math.ceil ((ch - panY) / scale) + number 1)
-    bg =
-      number 15
-        + shl (number 23) (number 8)
-        + shl (number 42) (number 16)
-        + shl (number 255) (number 24)
-  toSyntax_ $
-    paintGridCells
-      pixels
-      cw
-      ch
-      paletteRgba
-      alive
-      species
-      w
-      scale
-      panX
-      panY
-      bg
-      liveList
-      changedList
-      fullRedraw
-      visX0
-      visX1
-      visY0
-      visY1
-      renderDirty
-  isFull <- renderDirty.dirtyFull
-  ifS
-    isFull
-    (Canvas.putImageData ctx img (number 0) (number 0))
-    ( whenS (Array.length changedList .> 0) $
+    cellChanged = Array.length changedList .> 0
+    needsPaint = sceneDirty .|| cellChanged
+    needsDraw = needsPaint .|| viewportDirty
+  whenS needsDraw $
+    do
+      whenS needsPaint $
         do
-          painted <- renderDirty.dirtyPainted
-          ix0 <- renderDirty.dirtyCx0
-          iy0 <- renderDirty.dirtyCy0
-          ix1 <- renderDirty.dirtyCx1
-          iy1 <- renderDirty.dirtyCy1
           let
-            dw = Math.ceil ix1 - Math.floor ix0
-            dh = Math.ceil iy1 - Math.floor iy0
-            blitX = Math.floor ix0
-            blitY = Math.floor iy0
-          whenS (not_ painted) $
-            toSyntax $
-              ffi
-                "(()=>{console.warn('[Life] changed cells produced no visible dirty rect');})"
-                RecNil
-          whenS (dw .> 0 .&& dh .> 0) $
-            Canvas.putImageDataRegion ctx img (number 0) (number 0) blitX blitY dw dh
-    )
+            scale = px
+            visX0 =
+              Math.max (number 0) (Math.floor ((number 0 - panX) / (px * zoomLevel)) - number 1)
+            visX1 =
+              Math.min w (Math.ceil ((cw - panX) / (px * zoomLevel)) + number 1)
+            visY0 =
+              Math.max (number 0) (Math.floor ((number 0 - panY) / (px * zoomLevel)) - number 1)
+            visY1 =
+              Math.min h (Math.ceil ((ch - panY) / (px * zoomLevel)) + number 1)
+            bg =
+              number 15
+                + shl (number 23) (number 8)
+                + shl (number 42) (number 16)
+                + shl (number 255) (number 24)
+          toSyntax_ $
+            paintGridCells
+              pixels
+              worldW
+              worldH
+              paletteRgba
+              alive
+              species
+              w
+              scale
+              (number 0)
+              (number 0)
+              bg
+              liveList
+              changedList
+              sceneDirty
+              visX0
+              visX1
+              visY0
+              visY1
+              renderDirty
+          isFull <- renderDirty.dirtyFull
+          texH <- hold (expr texture)
+          ifS
+            isFull
+            (Pixi.syncTexture app texH true_ (number 0) (number 0) (number 0) (number 0) worldW)
+            ( do
+                painted <- renderDirty.dirtyPainted
+                whenS (not_ painted) $
+                  toSyntax $
+                    ffi
+                      ( "(()=>{console.warn('[Life] changed cells produced no visible dirty rect');})"
+                      )
+                      RecNil
+                whenS painted $ do
+                  ix0 <- renderDirty.dirtyCx0
+                  iy0 <- renderDirty.dirtyCy0
+                  ix1 <- renderDirty.dirtyCx1
+                  iy1 <- renderDirty.dirtyCy1
+                  Pixi.syncTexture app texH false_ ix0 iy0 ix1 iy1 worldW
+            )
+      sprH <- hold (expr sprite)
+      Pixi.setSpriteViewport sprH panX panY zoomLevel
+      Pixi.render app
   done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number

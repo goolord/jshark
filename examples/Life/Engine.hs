@@ -39,9 +39,9 @@ import Grid
   )
 import JShark.Api
 import qualified JShark.Array as Array
-import qualified JShark.Canvas as Canvas
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
+import qualified Pixi
 import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)
 import Catalog (catalogInitialCells, stampCatalogCells)
 import Patterns
@@ -68,6 +68,8 @@ import Types
   , seedOy
   , seedW
   , soupRngSeed
+  , worldH
+  , worldW
   )
 import WorkerBridge
   ( engineCanStep
@@ -76,10 +78,10 @@ import WorkerBridge
   )
 
 initLife ::
-  Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Pixi.Application)
   -> Effect f ('MutableObject ())
   -> EffectSyntax f (Effect f (MutableObjectOf LifeState))
-initLife ctx viewport = do
+initLife app viewport = do
   state <- hold (newRecord @LifeState)
   set @"gen" state 0
   set @"paused" state false_
@@ -108,10 +110,14 @@ initLife ctx viewport = do
   set @"nextAlive" state nextAlive
   set @"nextSpecies" state nextSpecies
   set @"palette" state (uint8Array paletteBytes)
-  imgEffect <- Canvas.createImageData ctx (number canvasW) (number canvasH)
-  img <- bindExpr imgEffect
-  _ <- setProp viewport "img" img
-  pixels <- Canvas.imageDataBytes img
+  pixels <- bindExpr (newByteArray (number (worldW * worldH * 4)))
+  texture <- Pixi.textureFromBuffer pixels (number worldW) (number worldH)
+  texH <- hold (expr texture)
+  _ <- Pixi.setTextureNearest texH
+  sprite <- Pixi.newSprite texture
+  _ <- Pixi.mountSprite app sprite
+  _ <- setProp viewport "texture" texture
+  _ <- setProp viewport "sprite" sprite
   set @"rgbaPixels" state pixels
   pal <- state.palette
   paletteRgba <- initPaletteRgba pal
@@ -414,18 +420,19 @@ swapBuffers state = do
   set @"nextSpecies" state sp
 
 renderLife ::
-  Effect f ('MutableObject Canvas.Context2D)
+  Effect f ('MutableObject Pixi.Application)
   -> Effect f ('MutableObject ())
   -> Effect f (MutableObjectOf RenderDirty)
   -> Effect f (MutableObjectOf LifeState)
   -> EffectSyntax f (f 'Unit)
-renderLife ctx viewport renderDirty state = do
+renderLife app viewport renderDirty state = do
   w <- pure (number (fromIntegral gridW))
   h <- pure (number (fromIntegral gridH))
   px <- pure (number (fromIntegral cellPx))
   cw <- pure (number canvasW)
   ch <- pure (number canvasH)
-  img <- getProp viewport "img"
+  img <- getProp viewport "texture"
+  sprite <- getProp viewport "sprite"
   pixels <- state.rgbaPixels
   paletteRgba <- state.paletteRgba
   alive <- state.alive
@@ -438,9 +445,9 @@ renderLife ctx viewport renderDirty state = do
   zoom <- getProp viewport "zoom"
   renderValid <- getProp viewport "renderPanValid"
   viewportDirty <- pure (not_ renderValid)
-  fullRedraw <- pure (sceneDirty .|| viewportDirty)
   drawGridViewport
-    ctx
+    app
+    sprite
     img
     pixels
     paletteRgba
@@ -448,10 +455,13 @@ renderLife ctx viewport renderDirty state = do
     species
     liveList
     changedList
-    fullRedraw
+    sceneDirty
+    viewportDirty
     w
     h
     px
+    (number worldW)
+    (number worldH)
     cw
     ch
     panX

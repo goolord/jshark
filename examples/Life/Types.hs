@@ -9,7 +9,10 @@ module Types
   , gridN
   , canvasW
   , canvasH
+  , worldW
+  , worldH
   , canvasBg
+  , canvasBgPixi
   , canvasBgRgba
   , seedOx
   , seedOy
@@ -64,8 +67,11 @@ module Types
 where
 
 import Data.Array.Byte (ByteArray)
+import Data.Char (toLower)
+import qualified Data.Text as T
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import Numeric (showHex)
 
 boardId :: Text
 boardId = "life-board"
@@ -84,9 +90,33 @@ canvasW, canvasH :: Double
 canvasW = 768
 canvasH = 576
 
--- | Canvas background (#0f172a).
+-- | Full-world RGBA atlas side lengths (@cellPx@ per grid cell).
+--
+-- ~28 MiB CPU buffer at 1024×768×3 — trades memory for pan/zoom without
+-- repainting the whole viewport each frame.
+worldW, worldH :: Double
+worldW = fromIntegral gridW * fromIntegral cellPx
+worldH = fromIntegral gridH * fromIntegral cellPx
+
+-- | Canvas background @#RRGGBB@ (also drives 'canvasBg' / 'canvasBgPixi').
+canvasBgHex :: Int
+canvasBgHex = 0x0f172a
+
+hexColorText :: Int -> Text
+hexColorText n =
+  let
+    h = map toLower (showHex n "")
+    padded = replicate (max 0 (6 - length h)) '0' ++ h
+   in
+    "#" <> T.pack padded
+
+-- | CSS color for shell chrome ('canvasBgHex').
 canvasBg :: Text
-canvasBg = "#0f172a"
+canvasBg = hexColorText canvasBgHex
+
+-- | @PIXI.Application({ backgroundColor })@ ('canvasBgHex').
+canvasBgPixi :: Double
+canvasBgPixi = fromIntegral canvasBgHex
 
 -- | Initial soup and catalog stamps land in this central region.
 seedW, seedH :: Int

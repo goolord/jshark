@@ -25,9 +25,9 @@ import GHC.Generics (Generic)
 import Grid (RenderDirty (..), StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
 import JShark.Api
 import qualified JShark.Array as Array
-import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, toObject)
+import qualified Pixi
 import qualified JShark.Generic as G
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
@@ -40,6 +40,7 @@ import Names (lookupDisplayName)
 import Types
   ( LifeState
   , boardId
+  , canvasBgPixi
   , canvasH
   , canvasW
   , cellPx
@@ -79,20 +80,34 @@ data Fps = Fps
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
-  ctxOpt <- Canvas.getContext2d canvas
-  whenSomeE ctxOpt $ \ctx -> boot canvas ctx
+  pixiOk <- Pixi.pixiAvailable
+  whenS pixiOk $
+    do
+      app <-
+        Pixi.newApplication
+          canvas
+          (number canvasW)
+          (number canvasH)
+          (number canvasBgPixi)
+      boot canvas app
+  whenS (not_ pixiOk) $
+    do
+      toSyntax_ $
+        discard $
+          ffi
+            "(() => { console.error('[Life] PixiJS failed to load — check js/pixi.min.js'); })"
+            RecNil
+      done
 
 boot ::
   Effect f ('MutableObject Dom.DomElement)
-  -> Expr f ('MutableObject Canvas.Context2D)
+  -> Expr f ('MutableObject Pixi.Application)
   -> EffectSyntax f (f 'Unit)
-boot canvas ctx = do
-  ctxH <- hold (expr ctx)
-  _ <- Canvas.setCanvasWidth canvas (number canvasW)
-  _ <- Canvas.setCanvasHeight canvas (number canvasH)
+boot canvas app = do
+  appH <- hold (expr app)
   viewport <- initViewport
   renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))
-  state <- initLife ctxH viewport
+  state <- initLife appH viewport
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   registry <- initRegistry
   indexTracker <- initIndexTracker
@@ -129,7 +144,7 @@ boot canvas ctx = do
       stepLifeBudget state registry stepCtx now
     tickIndex state registry indexTracker seenSpecies typesList now
     renderStart <- performanceNow
-    renderLife ctxH viewport renderDirty state
+    renderLife appH viewport renderDirty state
     renderEnd <- performanceNow
     setEngineRenderMs (renderEnd - renderStart)
     lastHud <- getProp viewport "lastHudMs"

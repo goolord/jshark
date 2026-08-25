@@ -86,6 +86,7 @@ lifeEngineJs =
   [ ("js/catalog.js", "examples/Life/js/catalog.js")
   , ("js/LUTGenerator.js", "examples/Life/js/LUTGenerator.js")
   , ("js/LifeSimd.js", "examples/Life/js/LifeSimd.js")
+  , ("js/pixi.min.js", "examples/Life/js/pixi.min.js")
   , ("js/Main.js", "examples/Life/js/Main.js")
   , ("js/EngineWorker.js", "examples/Life/js/EngineWorker.js")
   , ("js/life-simd.wasm", "examples/Life/js/life-simd.wasm")
