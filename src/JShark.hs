@@ -1565,8 +1565,8 @@ keepExprCont ::
   -> (Stamp u -> Expr Stamp v)
   -> Stamp u
   -> Expr Stamp v
-keepExprCont t tag body md f
-  | mdSize md <= optSmall = reoptExpr t f
+keepExprCont t tag body _ f
+  | nodeCountExpr body <= optSmall = reoptExpr t f
   | otherwise = rebindExpr tag body
 
 keepEffCont ::
@@ -1577,8 +1577,8 @@ keepEffCont ::
   -> (Stamp u -> Effect Stamp v)
   -> Stamp u
   -> Effect Stamp v
-keepEffCont t tag body md f
-  | mdSize md <= optSmall = reoptEff t f
+keepEffCont t tag body _ f
+  | nodeCountEff body <= optSmall = reoptEff t f
   | otherwise = rebindEff tag body
 
 keepExprCont2 ::
@@ -3376,10 +3376,10 @@ elimLetFrom ::
 elimLetFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = elimExprUses
+      { elimCount = \tag' body' _ -> countExpr tag' body'
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
-      , elimSize = mdSize
+      , elimSize = \_ -> nodeCountExpr body
       , elimRebuild = Let x . rebindExpr tag
       , elimSplice = \t' -> optExpr t' (inlineExpr f x)
       , elimDropUnused = const True
@@ -3415,10 +3415,10 @@ elimBindFrom ::
 elimBindFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
-      { elimCount = elimEffUses
+      { elimCount = \tag' body' _ -> countEffect tag' body'
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
-      , elimSize = mdSize
+      , elimSize = \_ -> nodeCountEff body
       , elimRebuild = Bind x . rebindEff tag
       , elimSplice = \t' -> optEffect t' (inlineEff f x)
       , elimDropUnused = \_ -> not (isAliasBind x)

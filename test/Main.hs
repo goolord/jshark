@@ -16,7 +16,7 @@ import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 -- import ExampleTests (exampleTests)
-import LifeTests (lifeTests)
+
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
@@ -39,6 +39,7 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
+import LifeTests (lifeTests)
 import LucidTests (lucidDomTests)
 import Support
 import System.Directory
@@ -71,9 +72,9 @@ tests =
     , compilerTests
     , bunEvalTests
     , lucidDomTests
-    -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
-    -- , exampleTests
-    , lifeTests
+    , -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
+      -- , exampleTests
+      lifeTests
     ]
 
 bigIntTests :: TestTree
@@ -171,8 +172,8 @@ evaluatorTests =
         T.isInfixOf
           "$deepEqual"
           ( ( renderJS
-                  (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
-              )
+                (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
+            )
           )
           @?= True
     , testCase "GetField of FrozenLit evaluates" $
@@ -301,27 +302,27 @@ codegenTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( fromSyntax
-                        ( whenSomeE (ffi "opt" RecNil :: Effect f ('Option 'String)) $ \x ->
-                            Console.log x *> done
-                        )
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax
+                      ( whenSomeE (ffi "opt" RecNil :: Effect f ('Option 'String)) $ \x ->
+                          Console.log x *> done
+                      )
+                  )
+              )
         T.isInfixOf "opt()" js @?= True
         T.isInfixOf "=== null" js @?= True
     , testCase "loop0 is a recursive zero-arg function" $ do
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( fromSyntax
-                        ( loop0
-                            (\_ -> Console.log ("p" :: Expr f 'String) *> done)
-                            (\_ -> Console.log ("w" :: Expr f 'String) *> done)
-                        )
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax
+                      ( loop0
+                          (\_ -> Console.log ("p" :: Expr f 'String) *> done)
+                          (\_ -> Console.log ("w" :: Expr f 'String) *> done)
+                      )
+                  )
+              )
         T.isInfixOf "function" js @?= True
         T.isInfixOf "console.log(\"p\")" js @?= True
         T.isInfixOf "console.log(\"w\")" js @?= True
@@ -392,15 +393,15 @@ controlFlowTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( when_
-                        condE
-                        ( fromSyntax $ do
-                            _ <- toSyntax $ UnsafeObjectAssign (UnsafeObject "o") (expr (number 1))
-                            toSyntax $ UnsafeObjectAssign (UnsafeObject "p") (expr (number 2))
-                        )
-                    )
-                )
+              ( effectfulAST
+                  ( when_
+                      condE
+                      ( fromSyntax $ do
+                          _ <- toSyntax $ UnsafeObjectAssign (UnsafeObject "o") (expr (number 1))
+                          toSyntax $ UnsafeObjectAssign (UnsafeObject "p") (expr (number 2))
+                      )
+                  )
+              )
         T.isInfixOf "o = 1.0" js @?= True
         T.isInfixOf "p = 2.0" js @?= True
     , testCase "ifS of two CallMethods skips the result bind" $
@@ -455,19 +456,19 @@ controlFlowTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( fromSyntax $ do
-                        k <- toSyntax (ffi "key" RecNil)
-                        toSyntax
-                          ( stringCaseE
-                              (var k)
-                              [ ("a", discard (ffi "foo" RecNil))
-                              , ("b", discard (ffi "bar" RecNil))
-                              ]
-                              (discard (ffi "baz" RecNil))
-                          )
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      k <- toSyntax (ffi "key" RecNil)
+                      toSyntax
+                        ( stringCaseE
+                            (var k)
+                            [ ("a", discard (ffi "foo" RecNil))
+                            , ("b", discard (ffi "bar" RecNil))
+                            ]
+                            (discard (ffi "baz" RecNil))
+                        )
+                  )
+              )
         T.isInfixOf "switch (" js @?= True
         T.isInfixOf "case \"a\":" js @?= True
         T.isInfixOf "case \"b\":" js @?= True
@@ -479,17 +480,17 @@ controlFlowTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( fromSyntax $ do
-                        k <- toSyntax (ffi "key" RecNil)
-                        toSyntax
-                          ( stringCaseE
-                              (var k)
-                              [("a", expr (number 1))]
-                              (expr (number 0))
-                          )
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      k <- toSyntax (ffi "key" RecNil)
+                      toSyntax
+                        ( stringCaseE
+                            (var k)
+                            [("a", expr (number 1))]
+                            (expr (number 0))
+                        )
+                  )
+              )
         T.isInfixOf "let n" js @?= True
         T.isInfixOf "switch (" js @?= True
         T.isInfixOf "case \"a\":" js @?= True
@@ -501,17 +502,17 @@ controlFlowTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( fromSyntax $ do
-                        x <- toSyntax (ffi "val" RecNil)
-                        toSyntax
-                          ( stringCaseE
-                              (typeOf (var x))
-                              [("number", discard (ffi "foo" RecNil))]
-                              (discard (ffi "bar" RecNil))
-                          )
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      x <- toSyntax (ffi "val" RecNil)
+                      toSyntax
+                        ( stringCaseE
+                            (typeOf (var x))
+                            [("number", discard (ffi "foo" RecNil))]
+                            (discard (ffi "bar" RecNil))
+                        )
+                  )
+              )
         T.isInfixOf "switch (typeof " js @?= True
         T.isInfixOf " = typeof" js @?= False
         T.isInfixOf "case \"number\":" js @?= True
@@ -711,12 +712,12 @@ stdlibTests =
         let
           js =
             ( renderJS
-                  ( pureProgram
-                      ( toLambda
-                          (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a))
-                      )
-                  )
-              )
+                ( pureProgram
+                    ( toLambda
+                        (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a))
+                    )
+                )
+            )
         T.count "const $valueEq" js @?= 1
         T.count "const $arrayEq" js @?= 1
         T.count "const $deepEqual" js @?= 1
@@ -838,18 +839,18 @@ stdlibTests =
             people = [Person ("p" <> T.pack (show i)) (fromIntegral i) | i <- [1 .. 15 :: Int]]
             js =
               renderJS
-                  ( effectfulAST
-                      ( fromSyntax $ do
-                          c <- Dom.lookupId (string "c")
-                          ctx <- Canvas.getContext2d c
-                          toSyntax $
-                            Bind ctx $ \o ->
-                              optionCaseE (var o) noOp $ \_ ->
-                                stmts $ do
-                                  _ <- toSyntax (G.toObject (Group people))
-                                  done
-                      )
-                  )
+                ( effectfulAST
+                    ( fromSyntax $ do
+                        c <- Dom.lookupId (string "c")
+                        ctx <- Canvas.getContext2d c
+                        toSyntax $
+                          Bind ctx $ \o ->
+                            optionCaseE (var o) noOp $ \_ ->
+                              stmts $ do
+                                _ <- toSyntax (G.toObject (Group people))
+                                done
+                    )
+                )
             jsIdent = T.takeWhile (\c -> c == 'n' || isDigit c)
             ctxIds =
               [ i
@@ -1075,15 +1076,15 @@ stdlibTests =
         T.isInfixOf
           ".onclick ="
           ( renderJS
-                ( effectfulAST
-                    ( fromSyntax
-                        ( do
-                            el <- Dom.lookupId (string "b")
-                            onClick el $ \_ -> noOp
-                            toSyntax noOp
-                        )
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax
+                      ( do
+                          el <- Dom.lookupId (string "b")
+                          onClick el $ \_ -> noOp
+                          toSyntax noOp
+                      )
+                  )
+              )
           )
           @?= True
     , testCase "NaN .== NaN is false" $ do
@@ -1094,18 +1095,18 @@ stdlibTests =
         let
           js =
             renderJS
-                ( pureAST
-                    (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b)))
-                )
+              ( pureAST
+                  (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b)))
+              )
         T.count "const $valueEq" js @?= 0
         T.isInfixOf "===" js @?= True
     , testCase "bound Number .== uses === (not $valueEq)" $ do
         let
           js =
             renderJS
-                ( pureAST
-                    (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1))
-                )
+              ( pureAST
+                  (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1))
+              )
         T.isInfixOf "$valueEq" js @?= False
         T.isInfixOf "===" js @?= True
     , testCase "$valueEq helper includes null/object fast-path" $ do
@@ -1117,7 +1118,7 @@ stdlibTests =
         let
           js =
             renderJS
-                (pureAST (number 1 .== number 1))
+              (pureAST (number 1 .== number 1))
         T.isInfixOf "true" js @?= True
         T.isInfixOf "$valueEq" js @?= False
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
@@ -1434,9 +1435,9 @@ genericTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))
-                )
+              ( effectfulAST
+                  (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))
+              )
         T.isInfixOf ".tag" js @?= True
         T.isInfixOf "\"Red\"" js @?= True
         T.isInfixOf "===" js @?= True
@@ -1445,42 +1446,42 @@ genericTests =
         T.isInfixOf
           ".payload"
           ( renderJS
-                ( effectfulAST
-                    (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))
-                )
+              ( effectfulAST
+                  (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))
+              )
           )
           @?= True
     , testCase "whenTag n-ary payload fields are gettable" $
         T.isInfixOf
           "[\"0\"]"
           ( renderJS
-                ( effectfulAST
-                    ( fromSyntax $ do
-                        s <- hold (G.toSum (Rect 2 3))
-                        toSyntax $
-                          G.whenTag @"Rect"
-                            s
-                            ( \p -> fromSyntax $ do
-                                w <- Object.get @"0" (Lift p)
-                                yield w
-                            )
-                            (expr (number 0))
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      s <- hold (G.toSum (Rect 2 3))
+                      toSyntax $
+                        G.whenTag @"Rect"
+                          s
+                          ( \p -> fromSyntax $ do
+                              w <- Object.get @"0" (Lift p)
+                              yield w
+                          )
+                          (expr (number 0))
+                  )
+              )
           )
           @?= True
     , testCase "caseSum nullary checks every named tag" $ do
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( G.caseSum @Color (ffi "color" RecNil)
-                        $ G.on @"Red" (\_ -> expr (string "r"))
-                        $ G.on @"Green" (\_ -> expr (string "g"))
-                        $ G.on @"Blue" (\_ -> expr (string "b"))
-                        $ G.CaseEnd
-                    )
-                )
+              ( effectfulAST
+                  ( G.caseSum @Color (ffi "color" RecNil)
+                      $ G.on @"Red" (\_ -> expr (string "r"))
+                      $ G.on @"Green" (\_ -> expr (string "g"))
+                      $ G.on @"Blue" (\_ -> expr (string "b"))
+                      $ G.CaseEnd
+                  )
+              )
         T.isInfixOf ".tag" js @?= True
         T.isInfixOf "===" js @?= True
         T.isInfixOf "$valueEq" js @?= False
@@ -1492,12 +1493,12 @@ genericTests =
         let
           js =
             renderJS
-                ( effectfulAST
-                    ( G.caseSum @Color (ffi "color" RecNil)
-                        $ G.on @"Red" (\_ -> expr (string "r"))
-                        $ G.Case_ (\_ -> expr (string "other"))
-                    )
-                )
+              ( effectfulAST
+                  ( G.caseSum @Color (ffi "color" RecNil)
+                      $ G.on @"Red" (\_ -> expr (string "r"))
+                      $ G.Case_ (\_ -> expr (string "other"))
+                  )
+              )
         T.isInfixOf "\"Red\"" js @?= True
         T.isInfixOf "\"Green\"" js @?= False
         T.isInfixOf "\"Blue\"" js @?= False
@@ -1505,33 +1506,33 @@ genericTests =
         T.isInfixOf
           ".payload"
           ( renderJS
-                ( effectfulAST
-                    ( G.caseSum @Shape (ffi "shape" RecNil)
-                        $ G.on @"Circle" (\r -> expr r)
-                        $ G.on @"Rect" (\_ -> expr (number 0))
-                        $ G.CaseEnd
-                    )
-                )
+              ( effectfulAST
+                  ( G.caseSum @Shape (ffi "shape" RecNil)
+                      $ G.on @"Circle" (\r -> expr r)
+                      $ G.on @"Rect" (\_ -> expr (number 0))
+                      $ G.CaseEnd
+                  )
+              )
           )
           @?= True
     , testCase "caseSum n-ary payload fields are gettable" $
         T.isInfixOf
           "[\"0\"]"
           ( renderJS
-                ( effectfulAST
-                    ( fromSyntax $ do
-                        s <- hold (ffi "shape" RecNil)
-                        toSyntax
-                          $ G.caseSum @Shape s
-                          $ G.on @"Circle" (\_ -> expr (number 0))
-                          $ G.on @"Rect"
-                            ( \p -> fromSyntax $ do
-                                w <- Object.get @"0" (Lift p)
-                                yield w
-                            )
-                          $ G.CaseEnd
-                    )
-                )
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      s <- hold (ffi "shape" RecNil)
+                      toSyntax
+                        $ G.caseSum @Shape s
+                        $ G.on @"Circle" (\_ -> expr (number 0))
+                        $ G.on @"Rect"
+                          ( \p -> fromSyntax $ do
+                              w <- Object.get @"0" (Lift p)
+                              yield w
+                          )
+                        $ G.CaseEnd
+                  )
+              )
           )
           @?= True
     ]
@@ -1692,6 +1693,26 @@ optimizeTests =
               )
           )
           @?= "baz()"
+    , testCase "forRange array index uses the loop variable" $ do
+        let
+          eff =
+            fromSyntax $ do
+              coords <-
+                bindExpr $
+                  Array.fromEffects
+                    [ Array.fromEffects [expr (number 1), expr (number 1)]
+                    , Array.fromEffects [expr (number 2), expr (number 1)]
+                    ]
+              forRange_ (number 0) (Array.length coords) $ \k -> do
+                let
+                  cell = Array.index coords k
+                  x = Array.index cell 0
+                toSyntax_ $ ffi "sink" (arg x <: RecNil)
+                done
+          js = renderJS (effectfulAST eff)
+        T.isInfixOf "sink(2.0)" js @?= True
+        T.isInfixOf "sink(1.0)" js @?= True
+        T.count "sink(1.0)" js @?= 1
     ]
 
 -- | The IR optimizer runs instead of the PHOAS one above
