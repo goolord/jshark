@@ -22,11 +22,11 @@ import JShark.Rec (Rec (..), (<:))
 
 crossOriginIsolated :: EffectSyntax f (Expr f 'Bool)
 crossOriginIsolated =
-  bindExpr $ ffi "(()=>globalThis.crossOriginIsolated===true)()" RecNil
+  bindExpr $ ffi "(()=>globalThis.crossOriginIsolated===true)" RecNil
 
 hasSharedArrayBuffer :: EffectSyntax f (Expr f 'Bool)
 hasSharedArrayBuffer =
-  bindExpr $ ffi "(()=>typeof SharedArrayBuffer!=='undefined')()" RecNil
+  bindExpr $ ffi "(()=>typeof SharedArrayBuffer!=='undefined')" RecNil
 
 performanceNow :: EffectSyntax f (Expr f 'Number)
 performanceNow = bindExpr $ ffi "(()=>performance.now())" RecNil

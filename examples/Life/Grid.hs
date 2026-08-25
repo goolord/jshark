@@ -22,6 +22,7 @@ module Grid
   , expandBoundsForLive
   , drawGridViewport
   , initPaletteRgba
+  , syncPaletteRgbaSid
   , rebuildPackedCounts
   , rebuildLiveList
   , packedIsAlive
@@ -204,19 +205,26 @@ initPaletteRgba ::
   Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)
 initPaletteRgba pal = do
   rgba <- bindExpr (newByteArray (number (256 * 4)))
-  forRange_ (number 0) (number 256) $ \sid -> do
-    let
-      base = sid * number 3
-    r <- u8Get pal base
-    g <- u8Get pal (base + number 1)
-    b <- u8Get pal (base + number 2)
-    let
-      px = sid * number 4
-    setU8 rgba px r
-    setU8 rgba (px + number 1) g
-    setU8 rgba (px + number 2) b
-    setU8 rgba (px + number 3) (number 255)
+  forRange_ (number 0) (number 256) $ \sid ->
+    syncPaletteRgbaSid pal rgba sid
   pure rgba
+
+syncPaletteRgbaSid ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+syncPaletteRgbaSid pal rgba sid = do
+  let
+    base = sid * number 3
+    px = sid * number 4
+  r <- u8Get pal base
+  g <- u8Get pal (base + number 1)
+  b <- u8Get pal (base + number 2)
+  setU8 rgba px r
+  setU8 rgba (px + number 1) g
+  setU8 rgba (px + number 2) b
+  setU8 rgba (px + number 3) (number 255)
 
 rebuildLiveList ::
   Expr f 'Uint8Array

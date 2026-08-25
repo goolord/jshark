@@ -136,10 +136,10 @@ catalogJs =
       ]
 
 catalogKnown, catalogNames, catalogDisturb, catalogInitialCells :: forall f u. Effect f u
-catalogKnown = ffi "(()=>globalThis.__lifeCatalog().known)()" RecNil
-catalogNames = ffi "(()=>globalThis.__lifeCatalog().names)()" RecNil
-catalogDisturb = ffi "(()=>globalThis.__lifeCatalog().disturb)()" RecNil
-catalogInitialCells = ffi "(()=>globalThis.__lifeCatalog().initialCells)()" RecNil
+catalogKnown = ffi "(()=>globalThis.__lifeCatalog().known)" RecNil
+catalogNames = ffi "(()=>globalThis.__lifeCatalog().names)" RecNil
+catalogDisturb = ffi "(()=>globalThis.__lifeCatalog().disturb)" RecNil
+catalogInitialCells = ffi "(()=>globalThis.__lifeCatalog().initialCells)" RecNil
 
 stampCatalogCells ::
   Expr f 'Uint8Array
@@ -155,11 +155,11 @@ stampCatalogCells alive species cells =
 
 catalogPrefixes, catalogSuffixes, catalogNouns, catalogAdjectives, catalogVerbsIng ::
   forall f. Effect f ('Array 'String)
-catalogPrefixes = ffi "(()=>globalThis.__lifeCatalog().words.prefixes)()" RecNil
-catalogSuffixes = ffi "(()=>globalThis.__lifeCatalog().words.suffixes)()" RecNil
-catalogNouns = ffi "(()=>globalThis.__lifeCatalog().words.nouns)()" RecNil
-catalogAdjectives = ffi "(()=>globalThis.__lifeCatalog().words.adjectives)()" RecNil
-catalogVerbsIng = ffi "(()=>globalThis.__lifeCatalog().words.verbsIng)()" RecNil
+catalogPrefixes = ffi "(()=>globalThis.__lifeCatalog().words.prefixes)" RecNil
+catalogSuffixes = ffi "(()=>globalThis.__lifeCatalog().words.suffixes)" RecNil
+catalogNouns = ffi "(()=>globalThis.__lifeCatalog().words.nouns)" RecNil
+catalogAdjectives = ffi "(()=>globalThis.__lifeCatalog().words.adjectives)" RecNil
+catalogVerbsIng = ffi "(()=>globalThis.__lifeCatalog().words.verbsIng)" RecNil
 
 jsonString :: Text -> Text
 jsonString t =

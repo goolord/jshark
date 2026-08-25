@@ -35,6 +35,7 @@ import Grid
   , setU8
   , setPackedAlive
   , stepGrid
+  , syncPaletteRgbaSid
   , u8Get
   )
 import JShark.Api
@@ -208,10 +209,12 @@ maybeDiscover state registry = do
         nextD
     set @"nextDiscover" state (Math.floor nextOut)
     _ <- refreshTakenNames registry
+    paletteRgba <- state.paletteRgba
     forRange_ (number 0) (Array.length mintedArr) $ \i -> do
       sid <- pure (Array.index mintedArr i)
       nm <- uniqueNameSid sid registry
       _ <- recordDiscoveredName sid nm registry
+      _ <- syncPaletteRgbaSid pal paletteRgba sid
       set @"recentDiscover" state nm
 
 stepGeneration ::

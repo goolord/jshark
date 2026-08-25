@@ -10,7 +10,7 @@ module DevServer
   )
 where
 
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM_, when)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -29,6 +29,18 @@ import System.Directory
 import System.FilePath ((</>))
 import System.IO (hFlush, stdout)
 import Web.Scotty
+
+resolveDataFile :: FilePath -> IO FilePath
+resolveDataFile rel = do
+  installed <- getDataFileName rel
+  exists <- doesFileExist installed
+  if exists
+    then pure installed
+    else do
+      cwdOk <- doesFileExist rel
+      if cwdOk
+        then pure rel
+        else fail ("serve: missing data-file " <> rel)
 
 -- | One compiled example, mounted at @/<name>@ (or @<name>/@ on a static site).
 data Example = Example
@@ -211,9 +223,7 @@ staticAsset name = do
 
 lifeJsAsset :: (FilePath, FilePath) -> IO (FilePath, FilePath)
 lifeJsAsset (route, rel) = do
-  path <- getDataFileName rel
-  exists <- doesFileExist path
-  unless exists (fail ("serve: missing data-file " <> rel))
+  path <- resolveDataFile rel
   pure (route, path)
 
 lifeAssetType :: FilePath -> TL.Text

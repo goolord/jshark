@@ -123,15 +123,17 @@ shellCss =
 bootJs :: T.Text -> T.Text
 bootJs inner =
   T.concat
-    [ "(function(){"
+    [ "(()=>{"
     , "const frame=document.getElementById('life-frame');"
-    , "const base=new URL('./',document.baseURI).href;"
+    , "const pageUrl=new URL(document.baseURI);"
+    , "if(!pageUrl.pathname.endsWith('/')){pageUrl.pathname+='/';}"
+    , "const base=pageUrl.href;"
     , "const html="
     , jsString inner
     , ".split('%%LIFE_BASE%%').join(base);"
     , "const url=URL.createObjectURL(new Blob([html],{type:'text/html'}));"
     , "frame.src=url;"
-    , "frame.addEventListener('load',function(){URL.revokeObjectURL(url);frame.focus();},{once:true});"
+    , "frame.addEventListener('load',()=>{URL.revokeObjectURL(url);frame.focus();},{once:true});"
     , "})();"
     ]
 

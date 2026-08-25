@@ -75,6 +75,9 @@
   /** Step rows [y0, y1) with LUT chunking. */
   function stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1) {
     const simd = global.LifeSimd;
+    if (simd && simd.stepRegionLUT && simd.stepRegionLUT(LUT, gridA, gridB, w, h, y0, y1)) {
+      return;
+    }
     const yStart = Math.max(1, y0);
     const yStop = Math.min(h - 1, y1);
     for (let y = yStart; y < yStop; y++) {
