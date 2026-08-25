@@ -420,6 +420,7 @@ toolsCss =
   ".life-stage{position:relative;width:768px;max-width:100%;margin:1.5rem auto;overflow:visible}\
   \.life-stage canvas{display:block;margin:0;width:768px;max-width:100%;height:auto;aspect-ratio:768/576;\
   \image-rendering:pixelated;image-rendering:crisp-edges;cursor:crosshair}\
+  \#life-board{image-rendering:auto}\
   \.life-board-2d{position:absolute;inset:0;width:100%;height:auto;aspect-ratio:768/576;\
   \pointer-events:none;z-index:1;image-rendering:pixelated;image-rendering:crisp-edges}\
   \.life-eraser-ghost{position:absolute;inset:0;width:100%;height:auto;aspect-ratio:768/576;\

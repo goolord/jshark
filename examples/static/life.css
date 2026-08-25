@@ -42,6 +42,10 @@ h1 {
   image-rendering: crisp-edges;
 }
 
+#life-board {
+  image-rendering: auto;
+}
+
 .life-board-2d {
   position: absolute;
   inset: 0;

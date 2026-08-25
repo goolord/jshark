@@ -21,6 +21,7 @@ module Engine
   )
 where
 
+import Catalog (catalogInitialCells, stampCatalogCells)
 import Discover (Registry, discoverLife)
 import Grid
   ( RenderDirty (..)
@@ -41,14 +42,13 @@ import Grid
   , writeCellState
   )
 import JShark.Api
-import JShark.Dom (DomElement)
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
+import JShark.Dom (DomElement)
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
-import qualified Pixi
+import JShark.Rec (Rec (..), (<:))
+import JShark.Worker (performanceNow)
 import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)
-import Catalog (catalogInitialCells, stampCatalogCells)
 import Patterns
   ( initialBoundX0
   , initialBoundX1
@@ -57,6 +57,7 @@ import Patterns
   , initialPop
   , paletteBytes
   )
+import qualified Pixi
 import Types
   ( LifeState
   , canvasH
@@ -123,6 +124,7 @@ initLife app viewport = do
   _ <- Pixi.mountSprite app sprite
   _ <- setProp viewport "texture" texture
   _ <- setProp viewport "sprite" sprite
+  _ <- Pixi.installLifeShader app viewport sprite texture
   set @"rgbaPixels" state pixels
   pal <- state.palette
   paletteRgba <- initPaletteRgba pal
@@ -399,14 +401,16 @@ syncLiveList state = do
     h = number (fromIntegral gridH)
   rebuildLiveList alive w h x0 y0 x1 y1 liveList
 
-swapLiveLists :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+swapLiveLists ::
+  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 swapLiveLists state = do
   live <- state.liveList
   next <- state.nextLiveList
   set @"liveList" state next
   set @"nextLiveList" state live
 
-swapChangedLists :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+swapChangedLists ::
+  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 swapChangedLists state = do
   cur <- state.changedList
   next <- state.nextChangedList
@@ -431,6 +435,7 @@ renderLife ::
   -> Effect f ('MutableObject DomElement)
   -> EffectSyntax f (f 'Unit)
 renderLife viewport renderDirty state fallback = do
+  now <- performanceNow
   glLost <- getProp viewport "glLost"
   app <- getProp viewport "app"
   w <- pure (number (fromIntegral gridW))
@@ -475,6 +480,8 @@ renderLife viewport renderDirty state fallback = do
       panY
       zoom
       renderDirty
+      viewport
+      now
   whenS (glLost .!= 0) $
     drawGridFallback
       fallback

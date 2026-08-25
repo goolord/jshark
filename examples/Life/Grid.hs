@@ -725,6 +725,8 @@ drawGridViewport ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Effect f (MutableObjectOf RenderDirty)
+  -> Effect f ('MutableObject ())
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 drawGridViewport
   app
@@ -746,59 +748,56 @@ drawGridViewport
   panX
   panY
   zoomLevel
-  renderDirty = do
+  renderDirty
+  viewport
+  now = do
   let
     cellChanged = Array.length changedList .> 0
     needsPaint = sceneDirty .|| cellChanged
     needsDraw = needsPaint .|| viewportDirty
-  whenS needsDraw $
+    -- Dead cells get A=0 so the SDF can read liveness from atlas alpha.
+    bg =
+      number 15
+        + shl (number 23) (number 8)
+        + shl (number 42) (number 16)
+  whenS needsPaint $
     do
-      whenS needsPaint $
-        do
-          let
-            cellScale = px * zoomLevel
-            visX0 =
-              Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
-            visX1 =
-              Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
-            visY0 =
-              Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
-            visY1 =
-              Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
-            bg =
-              number 15
-                + shl (number 23) (number 8)
-                + shl (number 42) (number 16)
-                + shl (number 255) (number 24)
-          toSyntax_ $
-            paintGridCells
-              pixels
-              w
-              h
-              paletteRgba
-              alive
-              species
-              w
-              (number 1)
-              (number 0)
-              (number 0)
-              bg
-              liveList
-              changedList
-              sceneDirty
-              visX0
-              visX1
-              visY0
-              visY1
-              renderDirty
-          done
-      sprH <- hold (expr sprite)
-      gridTex <- hold (expr texture)
-      Pixi.setSpriteViewport sprH panX panY zoomLevel px
-      ifS
-        needsPaint
-        (Pixi.uploadAndRender app gridTex)
-        (Pixi.render app)
+      let
+        cellScale = px * zoomLevel
+        visX0 =
+          Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1)
+        visX1 =
+          Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1)
+        visY0 =
+          Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1)
+        visY1 =
+          Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1)
+      toSyntax_ $
+        paintGridCells
+          pixels
+          w
+          h
+          paletteRgba
+          alive
+          species
+          w
+          (number 1)
+          (number 0)
+          (number 0)
+          bg
+          liveList
+          changedList
+          sceneDirty
+          visX0
+          visX1
+          visY0
+          visY1
+          renderDirty
+      done
+  sprH <- hold (expr sprite)
+  gridTex <- hold (expr texture)
+  whenS needsDraw $ Pixi.setSpriteViewport sprH panX panY zoomLevel px
+  Pixi.presentGrid app viewport gridTex now needsPaint needsDraw
   done
 
 -- | CPU fallback when WebGL is lost or unavailable: paint the atlas, then
@@ -857,7 +856,6 @@ drawGridFallback
       number 15
         + shl (number 23) (number 8)
         + shl (number 42) (number 16)
-        + shl (number 255) (number 24)
   whenS needsPaint $ do
     toSyntax_ $
       paintGridCells
