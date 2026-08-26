@@ -159,7 +159,7 @@ library jshark-lucid
     Haskell2010
 
 common example-lib
-  import: warnings, lucid-dep
+  import: warnings, lucid-dep, llvm
   default-language:
     Haskell2010
   build-depends:
@@ -256,7 +256,7 @@ executable build-hvm2-demo-wasm
     Haskell2010
 
 executable examples
-  import: warnings, lucid-dep
+  import: warnings, lucid-dep, llvm
   main-is:
     Main.hs
   other-modules:

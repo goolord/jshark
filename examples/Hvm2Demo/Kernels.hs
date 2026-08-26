@@ -5,6 +5,7 @@
 module Kernels
   ( canvasW
   , canvasH
+  , resolutionPresets
   , blockPx
   , maxIter
   , zoomRate
@@ -26,11 +27,25 @@ where
 import JShark.Api
 import JShark.Types (ClosedExpr, Hvm2KernelEntry (..))
 
+resolutionPresets :: [(Int, Int, String)]
+resolutionPresets =
+  [ (320, 240, "320×240")
+  , (480, 360, "480×360")
+  , (640, 480, "640×480")
+  , (800, 600, "800×600")
+  , (960, 720, "960×720")
+  , (1280, 960, "1280×960")
+  , (1600, 1200, "1600×1200")
+  , (1920, 1080, "1920×1080")
+  , (2560, 1440, "2560×1440")
+  , (3840, 2160, "3840×2160")
+  ]
+
 canvasW, canvasH, blockPx, maxIter :: Int
-canvasW = 320
-canvasH = 240
+canvasW = 640
+canvasH = 480
 blockPx = 2
-maxIter = 64
+maxIter = 256
 
 zoomRate, initialCenterRe, initialCenterIm, initialScale :: Double
 zoomRate = 0.988

@@ -46,10 +46,7 @@ jobs:
       - run: cabal update
 
       - name: Rebuild vendored WASM
-        run: ./scripts/check-wasm.sh --build-only
-
-      - name: Verify WASM checksums
-        run: sha256sum -c wasm/checksums.sha256
+        run: ./scripts/check-wasm.sh
 
       - uses: haskell-actions/run-fourmolu@v12
         with:

@@ -65,11 +65,11 @@ console.log("max", 2.0, 9.0);
 cabal build
 cabal test          # bun on PATH for the JS-vs-interpreter checks
 cabal run examples  # http://localhost:3000
-./scripts/check-wasm.sh  # rebuild vendored WASM + verify checksums
+./scripts/check-wasm.sh  # rebuild vendored WASM binaries
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests and
-`master` pushes: Fourmolu, WASM checksums, `cabal test`, then GitHub Pages
+`master` pushes: rebuild vendored WASM, Fourmolu, `cabal test`, then GitHub Pages
 deploy on `master` only. Optional Nix shell: `nix develop` pins GHC, Zig,
 Bun, LLVM 20, and Fourmolu (`flake.nix`).
 

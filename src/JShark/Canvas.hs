@@ -11,6 +11,7 @@ module JShark.Canvas
   , ImageData
   , TextMetrics
   , getContext2d
+  , getContext2dDesync
   , canvasWidth
   , canvasHeight
   , setCanvasWidth
@@ -75,10 +76,30 @@ type instance Field TextMetrics "width" = 'Number
 getContext2d ::
   Effect f ('MutableObject DomElement)
   -> EffectSyntax f (Effect f ('Option ('MutableObject Context2D)))
-getContext2d el =
+getContext2d el = getContext2dWith el false_
+
+-- | Like 'getContext2d' with @desynchronized: true@ (and @alpha: false@).
+-- Decouples canvas writes from the compositor so frame timing reflects
+-- compute cost instead of display refresh.
+getContext2dDesync ::
+  Effect f ('MutableObject DomElement)
+  -> EffectSyntax f (Effect f ('Option ('MutableObject Context2D)))
+getContext2dDesync el = getContext2dWith el true_
+
+getContext2dWith ::
+  Effect f ('MutableObject DomElement)
+  -> Expr f 'Bool
+  -> EffectSyntax f (Effect f ('Option ('MutableObject Context2D)))
+getContext2dWith el desync =
   hold $
     Bind
-      (callMethod el "getContext" (arg (string "2d") <: RecNil))
+      ( ffi
+          ( "(el,d)=>el.getContext('2d',"
+              <> "{desynchronized:!!d,alpha:false,willReadFrequently:false}"
+              <> ")"
+          )
+          (ArgEffect el <: arg desync <: RecNil)
+      )
       (\x -> Lift (unsafeNullable (Var x)))
 
 -- | @HTMLCanvasElement.width@ / @height@ (drawing buffer, not CSS).

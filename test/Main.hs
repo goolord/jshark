@@ -1050,7 +1050,20 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = document.getElementById(\"c\").getContext(\"2d\");\n(n0 === null ? \"no\" : \"ok\")"
+          @?= "const n0 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(document.getElementById(\"c\"), false);\n(n0 === null ? \"no\" : \"ok\")"
+    , testCase "Canvas.getContext2dDesync requests desynchronized context" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      c <- Dom.lookupId (string "c")
+                      ctx <- Canvas.getContext2dDesync c
+                      toSyntax
+                        (Bind ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok"))))
+                  )
+              )
+          )
+          @?= "const n0 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(document.getElementById(\"c\"), true);\n(n0 === null ? \"no\" : \"ok\")"
     , testCase
         "optionCaseE of getContext plus a large object array tests that context"
         $ do
@@ -1074,7 +1087,8 @@ stdlibTests =
             ctxIds =
               [ i
               | chunk <- T.splitOn "const " js
-              , T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
+              , T.isInfixOf "getContext('2d'" (T.takeWhile (/= ';') chunk)
+                || T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
               , let
                   i = jsIdent chunk
               , not (T.null i)

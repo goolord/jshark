@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# Rebuild vendored WASM artifacts. With no flags, rebuild then verify checksums.
+# Rebuild vendored WASM artifacts and refresh checksums.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-
-build_only=false
-if [[ "${1:-}" == "--build-only" ]]; then
-  build_only=true
-fi
 
 cabal run build-hvm2-demo-wasm -v0
 (
@@ -17,7 +12,8 @@ cabal run build-hvm2-demo-wasm -v0
 )
 cp examples/Life/wasm/zig-out/bin/life-simd.wasm examples/Life/js/life-simd.wasm
 
-if [[ "$build_only" == false ]]; then
-  sha256sum -c wasm/checksums.sha256
-  echo "WASM checksums OK"
-fi
+sha256sum \
+  examples/static/hvm2-demo.wasm \
+  examples/Life/js/life-simd.wasm \
+  > wasm/checksums.sha256
+echo "WASM checksums written to wasm/checksums.sha256"

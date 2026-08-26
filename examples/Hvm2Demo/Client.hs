@@ -10,13 +10,15 @@
 -- | Mandelbrot zoom canvas driven by pure 'Kernels' and HVM2 WASM.
 module Client (mainJS) where
 
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
+import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
-import JShark.Promise (Promise, promiseCatch, promiseThen)
+import JShark.Promise (promiseCatch, promiseThen)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Kernels
@@ -32,70 +34,188 @@ import Kernels
   , zoomRate
   , zoomReferenceMs
   )
-import Page (benchId, boardId, modeJsId, modeWasmId, statusId)
+import Page
+  ( benchId
+  , boardId
+  , metricBackendId
+  , metricCenterId
+  , metricFpsId
+  , metricFrameMsId
+  , metricFrameNumId
+  , metricKernelId
+  , metricScaleId
+  , modeHvm2Id
+  , modeJsId
+  , modeWasmId
+  , pauseId
+  , resSelectId
+  , statusId
+  )
 
+-- | @labMode@: 0 = JS reference, 1 = WASM SIMD grid, 2 = HVM2 net reduction.
 data LabState = LabState
   { labFrame :: Double
-  , labWasm :: Bool
+  , labMode :: Double
+  , labWasmReady :: Bool
+  , labWasmFailed :: Bool
   , labTickMs :: Double
   , labCenterRe :: Double
   , labCenterIm :: Double
   , labScale :: Double
   , labPrevMs :: Double
   , labFps :: Double
+  , labFrameMs :: Double
+  , labKernelMs :: Double
+  , labWidth :: Double
+  , labHeight :: Double
+  , labPaused :: Bool
   }
   deriving Generic
 
 wasmLoaderFFI :: String
 wasmLoaderFFI =
-  "url=>(async()=>{"
-    ++ "if(!globalThis.WebAssembly)throw new Error(\"WebAssembly unavailable\");"
-    ++ "const r=await fetch(url);"
-    ++ "if(!r.ok)throw new Error(\"HVM2 wasm fetch failed: \"+url);"
-    ++ "const b=await r.arrayBuffer();"
-    ++ "const{instance:i}=await WebAssembly.instantiate(b,{});"
-    ++ "globalThis.__jsharkHvm2={exports:i.exports}"
-    ++ "})()"
+  "(url,workerUrl)=>{"
+    ++ "const load=globalThis.__jsharkHvm2Load;"
+    ++ "if(typeof load!=='function'){"
+    ++ "return Promise.reject(new Error('HVM2 loader missing (hvm2-wasm.js)'));"
+    ++ "}"
+    ++ "return load(url,workerUrl);"
+    ++ "}"
 
 initMandelJsFFI :: String
 initMandelJsFFI =
   "()=>{globalThis.__jsharkMandelJs=" ++ mandelJsSource ++ "}"
+
+gridBackendLabelFFI :: String
+gridBackendLabelFFI =
+  "(mode)=>{"
+    ++ "const b=globalThis.__jsharkGridBackend||'js';"
+    ++ "const m=mode|0;"
+    ++ "const h=globalThis.__jsharkHvm2;"
+    ++ "let s;"
+    ++ "if(m===0){"
+    ++ "s=b==='js'?'JS ref':'JS ref (unexpected '+b+')';"
+    ++ "}else if(m===1){"
+    ++ "if(b==='wasm-simd')s='WASM SIMD';"
+    ++ "else if(b==='wasm-scalar')s='WASM requested · scalar fallback';"
+    ++ "else if(b==='wasm-simd-fail')s='WASM requested · grid failed';"
+    ++ "else s='WASM requested · JS fallback';"
+    ++ "}else{"
+    ++ "if(b==='hvm2')s='HVM2 net (f24)';"
+    ++ "else if(b==='hvm2-fail:no-export')s='export missing';"
+    ++ "else if(b==='hvm2-fail:trap')s='wasm trap (OOB)';"
+    ++ "else if(b==='hvm2-fail:zero'){"
+    ++ "const lk=globalThis.__jsharkHvm2LastK??0;"
+    ++ "if(lk===-11)s='boot failed (book)';"
+    ++ "else if(lk===-12)s='boot failed (net)';"
+    ++ "else if(lk===-15)s='wasm trap (OOB)';"
+    ++ "else if(lk===-2)s='def jshark_grid missing';"
+    ++ "else if(lk===-13)s='normalize stuck';"
+    ++ "else if(lk===-14)s='normalize budget';"
+    ++ "else if(lk>0&&lk<999999)s='grid incomplete ('+lk+' cells)';"
+    ++ "else s='grid returned 0';"
+    ++ "}"
+    ++ "else if(b==='wasm-scalar')s='wasm scalar fallback';"
+    ++ "else s='JS fallback';"
+    ++ "}"
+    ++ "if(h?.loadNote)s+=' · '+h.loadNote;"
+    ++ "if(h?.blocking&&b==='hvm2')s+=' · main thread blocks during normalize';"
+    ++ "return s;"
+    ++ "}"
+
+gridBackendFallbackFFI :: String
+gridBackendFallbackFFI =
+  "(mode)=>{"
+    ++ "const b=globalThis.__jsharkGridBackend||'js';"
+    ++ "const m=mode|0;"
+    ++ "if(m===2)return b!=='hvm2';"
+    ++ "if(m===1)return b!=='wasm-simd';"
+    ++ "return b!=='js';"
+    ++ "}"
+
+updateMetricsFFI :: String
+updateMetricsFFI =
+  "(k,f,fps,fn,sc,re,im,bk,err,warn)=>{"
+    ++ "const fix=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
+    ++ "fix('"
+    ++ T.unpack metricKernelId
+    ++ "',Number(k).toFixed(1));"
+    ++ "fix('"
+    ++ T.unpack metricFrameMsId
+    ++ "',Number(f).toFixed(1));"
+    ++ "fix('"
+    ++ T.unpack metricFpsId
+    ++ "',String(Math.round(fps)).padStart(3,'\\u00a0'));"
+    ++ "fix('"
+    ++ T.unpack metricFrameNumId
+    ++ "',String(Math.trunc(fn)).padStart(5,'\\u00a0'));"
+    ++ "fix('"
+    ++ T.unpack metricScaleId
+    ++ "',Number(sc).toExponential(3));"
+    ++ "fix('"
+    ++ T.unpack metricCenterId
+    ++ "',Number(re).toFixed(6)+'+'+Number(im).toFixed(6)+'i');"
+    ++ "const be=document.getElementById('"
+    ++ T.unpack metricBackendId
+    ++ "');"
+    ++ "if(be){"
+    ++ "be.textContent=bk;"
+    ++ "be.classList.toggle('error',!!err);"
+    ++ "be.classList.toggle('warn',!!warn&&!err);"
+    ++ "}"
+    ++ "}"
+
+-- | Optimizer drops bare @whenS@ outside callbacks; @forEach_@ preserves it.
+once_ :: EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+once_ body = forEach_ (Array.singleton (number 0)) $ \_ -> body
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
   status <- Dom.lookupId (string statusId)
   modeWasm <- Dom.lookupId (string modeWasmId)
+  modeHvm2 <- Dom.lookupId (string modeHvm2Id)
   modeJs <- Dom.lookupId (string modeJsId)
   benchBtn <- Dom.lookupId (string benchId)
-  ctxOpt <- Canvas.getContext2d canvas
+  resSelect <- Dom.lookupId (string resSelectId)
+  pauseBtn <- Dom.lookupId (string pauseId)
+  ctxOpt <- Canvas.getContext2dDesync canvas
   whenSomeE ctxOpt $ \ctx -> do
     ctxH <- hold (expr ctx)
     st <- hold (newRecord @LabState)
     set @"labFrame" st 0
-    set @"labWasm" st false_
+    set @"labMode" st 0
+    set @"labWasmReady" st false_
+    set @"labWasmFailed" st false_
     set @"labTickMs" st (number (-1))
     set @"labCenterRe" st (number initialCenterRe)
     set @"labCenterIm" st (number initialCenterIm)
     set @"labScale" st (number initialScale)
     set @"labPrevMs" st (number (-1))
     set @"labFps" st 0
+    set @"labFrameMs" st 0
+    set @"labKernelMs" st 0
+    set @"labWidth" st (number (fromIntegral canvasW))
+    set @"labHeight" st (number (fromIntegral canvasH))
+    set @"labPaused" st false_
     _ <- toSyntax_ $ ffi initMandelJsFFI (RecNil)
     wasmUrl <- getProp canvas "dataset.wasm"
-    let
-      loadP =
-        ffi wasmLoaderFFI (arg wasmUrl <: RecNil) ::
-          Effect f ('MutableObject (Promise 'Unit))
+    workerUrl <- getProp canvas "dataset.worker"
+    boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st
+    activateMode modeWasm modeHvm2 modeJs 0
+    loadP <- hold $ ffi wasmLoaderFFI (arg wasmUrl <: arg workerUrl <: RecNil)
     promiseCatch loadP $ \_ ->
       stmts $ do
-        set @"labWasm" st false_
-        setStatus status (string "WASM unavailable, JS reference only")
-        boot ctxH status modeWasm modeJs benchBtn st
+        set @"labWasmReady" st false_
+        set @"labWasmFailed" st true_
+        done
     promiseThen loadP $ \_ ->
       stmts $ do
-        set @"labWasm" st true_
-        setStatus status (string "WASM ready")
-        boot ctxH status modeWasm modeJs benchBtn st
+        set @"labMode" st 1
+        set @"labWasmReady" st true_
+        set @"labWasmFailed" st false_
+        activateMode modeWasm modeHvm2 modeJs 1
+        done
     done
 
 boot ::
@@ -104,48 +224,149 @@ boot ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f (MutableObjectOf LabState)
   -> EffectSyntax f (f 'Unit)
-boot ctxH status modeWasm modeJs benchBtn st = do
-  wireControls modeWasm modeJs benchBtn st status
+boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st = do
+  wireControls
+    modeWasm
+    modeHvm2
+    modeJs
+    benchBtn
+    canvas
+    resSelect
+    pauseBtn
+    st
+    status
   Timers.foreverTick $ \now -> do
-    tickFrame st now
-    paint ctxH st status
+    paused <- st.labPaused
+    sourceOpen <-
+      bindExpr $
+        ffi "(()=>!!document.querySelector('.js-source[open]'))" RecNil
+    once_ $
+      whenS (not_ paused .&& not_ sourceOpen) $ do
+        tickFrame st now
+        paint ctxH st status
   done
 
 wireControls ::
   Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f (MutableObjectOf LabState)
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-wireControls modeWasm modeJs benchBtn st status = do
+wireControls modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st status = do
+  -- Direct FFI (not whenS/ifS): the optimizer strips conditional bodies
+  -- inside event callbacks. Modes 1 and 2 both need the wasm module.
+  let
+    selectMode m =
+      ffi
+        ( "(st,wasm,hvm2,js)=>{"
+            <> "const m="
+            <> show (m :: Int)
+            <> ";"
+            <> "if(m>0&&!st.labWasmReady)return;"
+            <> "st.labMode=m;"
+            <> "[wasm,hvm2,js].forEach(b=>b.classList.remove('active'));"
+            <> "if(m===0)js.classList.add('active');"
+            <> "else if(m===1)wasm.classList.add('active');"
+            <> "else hvm2.classList.add('active');"
+            <> "}"
+        )
+        ( ArgEffect st
+            <: ArgEffect modeWasm
+            <: ArgEffect modeHvm2
+            <: ArgEffect modeJs
+            <: RecNil
+        )
   addEventListener "click" modeWasm $ \_ ->
     stmts $ do
-      set @"labWasm" st true_
-      setActive modeWasm modeJs
+      toSyntax_ $ selectMode 1
+      done
+  addEventListener "click" modeHvm2 $ \_ ->
+    stmts $ do
+      toSyntax_ $ selectMode 2
       done
   addEventListener "click" modeJs $ \_ ->
     stmts $ do
-      set @"labWasm" st false_
-      setActive modeJs modeWasm
+      toSyntax_ $ selectMode 0
       done
   addEventListener "click" benchBtn $ \_ ->
     stmts $ do
       runBench st status
       done
+  addEventListener "change" resSelect $ \_ ->
+    stmts $ do
+      v <- Dom.getValue resSelect
+      toSyntax_ $
+        ffi
+          ( "(st,canvas,v)=>{"
+              <> "const p=v.split('x').map(Number);"
+              <> "const w=p[0],h=p[1];"
+              <> "if(!w||!h)return;"
+              <> "canvas.width=w;"
+              <> "canvas.height=h;"
+              <> "st.labWidth=w;"
+              <> "st.labHeight=h;"
+              <> "st.labFrame=0;"
+              <> "}"
+          )
+          ( ArgEffect st
+              <: ArgEffect canvas
+              <: arg v
+              <: RecNil
+          )
+      done
+  addEventListener "click" pauseBtn $ \_ ->
+    stmts $ do
+      toSyntax_ $
+        ffi
+          ( "(st,btn)=>{"
+              <> "st.labPaused=!st.labPaused;"
+              <> "if(st.labPaused){"
+              <> "btn.textContent='resume';"
+              <> "btn.classList.add('active');"
+              <> "}else{"
+              <> "btn.textContent='pause';"
+              <> "btn.classList.remove('active');"
+              <> "st.labPrevMs=performance.now();"
+              <> "}"
+              <> "}"
+          )
+          (ArgEffect st <: ArgEffect pauseBtn <: RecNil)
+      done
   done
 
-setActive ::
+activateMode ::
   Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Int
   -> EffectSyntax f (f 'Unit)
-setActive on off = do
+activateMode modeWasm modeHvm2 modeJs which = do
   toSyntax_ $
     ffi
-      "(on,off)=>{on.classList.add('active');off.classList.remove('active')}"
-      (ArgEffect on <: ArgEffect off <: RecNil)
+      ( "(wasm,hvm2,js,which)=>{"
+          <> "[wasm,hvm2,js].forEach(b=>b.classList.remove('active'));"
+          <> "if(which===0)js.classList.add('active');"
+          <> "else if(which===1)wasm.classList.add('active');"
+          <> "else hvm2.classList.add('active');"
+          <> "}"
+      )
+      ( ArgEffect modeWasm
+          <: ArgEffect modeHvm2
+          <: ArgEffect modeJs
+          <: arg (number (fromIntegral which))
+          <: RecNil
+      )
   done
 
 tickFrame ::
@@ -154,22 +375,16 @@ tickFrame ::
   -> EffectSyntax f (f 'Unit)
 tickFrame st now = do
   prev <- st.labPrevMs
-  prevFps <- st.labFps
   f <- st.labFrame
   scale <- st.labScale
   let
     delta = Math.max (now - prev) (number 0)
-    instant =
-      if_ (prev .>= number 0 .&& delta .> number 0) (number 1000 / delta) (number 0)
-    smoothed =
-      if_ (prev .>= number 0) (prevFps * number 0.85 + instant * number 0.15) instant
     dt = Math.min delta (number 100)
   zoomFactor <- bindExpr $ zoomScaleFactor dt
   let
     shrunk = scale * zoomFactor
     nextScale =
       if_ (shrunk .< number minScale) (number initialScale) shrunk
-  set @"labFps" st smoothed
   set @"labPrevMs" st now
   set @"labFrame" st (f + 1)
   set @"labScale" st nextScale
@@ -192,23 +407,46 @@ paint ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
 paint ctx st status = do
-  wasmOn <- st.labWasm
+  frameT0 <- bindExpr $ ffi "performance.now" RecNil
+  mode <- st.labMode
   centerRe <- st.labCenterRe
   centerIm <- st.labCenterIm
   scale <- st.labScale
+  w <- st.labWidth
+  h <- st.labHeight
   let
-    w = number (fromIntegral canvasW)
-    h = number (fromIntegral canvasH)
     blk = number (fromIntegral blockPx)
     blocksX = Math.floor (w / blk)
     blocksY = Math.floor (h / blk)
   set @"fillStyle" ctx (string "#07080f")
   Canvas.fillRect ctx 0 0 w h
+  kernelT0 <- bindExpr $ ffi "performance.now" RecNil
   grid <-
     bindExpr $
-      sampleGrid wasmOn centerRe centerIm scale w h blk blocksX blocksY
+      sampleGrid mode centerRe centerIm scale w h blk blocksX blocksY
+  kernelT1 <- bindExpr $ ffi "performance.now" RecNil
   blitGrid ctx grid blocksX blocksY blk w h
-  fpsLine status st wasmOn centerRe centerIm scale
+  frameT1 <- bindExpr $ ffi "performance.now" RecNil
+  let
+    kernelMs = kernelT1 - kernelT0
+    frameMs = frameT1 - frameT0
+  set @"labKernelMs" st kernelMs
+  set @"labFrameMs" st frameMs
+  updateFrameFps st frameMs
+  fpsLine status st mode centerRe centerIm scale
+  done
+
+updateFrameFps ::
+  Effect f (MutableObjectOf LabState)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+updateFrameFps st frameMs = do
+  prevFps <- st.labFps
+  let
+    instant =
+      if_ (frameMs .> number 0) (number 1000 / frameMs) (number 0)
+    smoothed = prevFps * number 0.85 + instant * number 0.15
+  set @"labFps" st smoothed
   done
 
 blitGrid ::
@@ -267,8 +505,11 @@ blitGrid ctx grid blocksX blocksY blk w h = do
       )
   done
 
+-- | @mode@: 0 = JS loop, 1 = WASM SIMD grid, 2 = HVM2 net reduction of the
+-- Bend-compiled @jshark_grid@ def. Both wasm paths fall back to the scalar
+-- exports and then the JS loop if their batched export is unavailable.
 sampleGrid ::
-  Expr f 'Bool
+  Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -278,20 +519,59 @@ sampleGrid ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Effect f ('Array 'Number)
-sampleGrid wasmOn centerRe centerIm scale w h blk blocksX blocksY =
+sampleGrid mode centerRe centerIm scale w h blk blocksX blocksY =
   ffi
-    ( "(wasmOn,centerRe,centerIm,scale,w,h,blk,bxN,byN)=>{"
+    ( "(mode,centerRe,centerIm,scale,w,h,blk,bxN,byN)=>{"
+        <> "const setBackend=b=>{globalThis.__jsharkGridBackend=b;};"
+        <> "const ex=globalThis.__jsharkHvm2?.exports;"
+        <> "const mem=ex?.memory;"
+        <> "let hvm2Fail=null;"
+        <> "if(mode===2&&mem){"
+        <> "const hg=ex?.mandel_hvm2_grid;"
+        <> "if(typeof hg!=='function'){hvm2Fail='no-export';}"
+        <> "else{"
+        <> "try{"
+        <> "const ptr=hg(centerRe,centerIm,scale,w,h,blk,bxN,byN);"
+        <> "if(typeof ex?.jshark_hvm2_last_k==='function'){"
+        <> "globalThis.__jsharkHvm2LastK=ex.jshark_hvm2_last_k();"
+        <> "}"
+        <> "if(ptr){"
+        <> "setBackend('hvm2');"
+        <> "return new Int32Array(mem.buffer,ptr,bxN*byN);"
+        <> "}"
+        <> "hvm2Fail='zero';"
+        <> "}catch(_){"
+        <> "globalThis.__jsharkHvm2LastK=-15;"
+        <> "hvm2Fail='trap';"
+        <> "}"
+        <> "}"
+        <> "}"
+        <> "const gridFn=ex?.mandel_grid;"
+        <> "if((mode===1)&&typeof gridFn==='function'&&mem){"
+        <> "const ptr=gridFn(centerRe,centerIm,scale,w,h,blk,bxN,byN);"
+        <> "if(ptr){"
+        <> "setBackend('wasm-simd');"
+        <> "return new Int32Array(mem.buffer,ptr,bxN*byN);"
+        <> "}"
+        <> "if(mode===1)setBackend('wasm-simd-fail');"
+        <> "}"
         <> "const out=new Array(bxN*byN);"
         <> "const half=blk/2;"
         <> "const buf=new ArrayBuffer(8);"
         <> "const f64=new Float64Array(buf);"
         <> "const i64=new BigInt64Array(buf);"
         <> "const pack=x=>{f64[0]=+x;return i64[0];};"
-        <> "const wasm64=globalThis.__jsharkHvm2?.exports?.mandel_f64;"
-        <> "const wasm=globalThis.__jsharkHvm2?.exports?.mandel;"
+        <> "const wasm64=ex?.mandel_f64;"
+        <> "const wasm=ex?.mandel;"
         <> "const js=globalThis.__jsharkMandelJs;"
-        <> "const useWasm64=wasmOn&&typeof wasm64==='function';"
-        <> "const useWasmI64=wasmOn&&!useWasm64&&typeof wasm==='function';"
+        <> "const useWasm64=mode>=1&&typeof wasm64==='function';"
+        <> "const useWasmI64=mode>=1&&!useWasm64&&typeof wasm==='function';"
+        <> "if(hvm2Fail){"
+        <> "setBackend(hvm2Fail==='no-export'?'hvm2-fail:no-export':"
+        <> "hvm2Fail==='trap'?'hvm2-fail:trap':'hvm2-fail:zero');"
+        <> "}else if(mode===1){"
+        <> "setBackend(useWasm64||useWasmI64?'wasm-scalar':'js');"
+        <> "}else{setBackend('js');}"
         <> "let k=0;"
         <> "for(let by=0;by<byN;by++){"
         <> "for(let bx=0;bx<bxN;bx++){"
@@ -312,7 +592,7 @@ sampleGrid wasmOn centerRe centerIm scale w h blk blocksX blocksY =
         <> "return out;"
         <> "}"
     )
-    ( arg wasmOn
+    ( arg mode
         <: arg centerRe
         <: arg centerIm
         <: arg scale
@@ -327,97 +607,193 @@ sampleGrid wasmOn centerRe centerIm scale w h blk blocksX blocksY =
 fpsLine ::
   Effect f ('MutableObject Dom.DomElement)
   -> Effect f (MutableObjectOf LabState)
-  -> Expr f 'Bool
+  -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-fpsLine status st wasmOn centerRe centerIm scale = do
+fpsLine status st modeN centerRe centerIm scale = do
   frameN <- st.labFrame
   fps <- st.labFps
+  frameMs <- st.labFrameMs
+  kernelMs <- st.labKernelMs
+  failed <- get @"labWasmFailed" st
+  backendLabel <-
+    bindExpr $ ffi gridBackendLabelFFI (arg modeN <: RecNil)
+  fallback <-
+    bindExpr $ ffi gridBackendFallbackFFI (arg modeN <: RecNil)
   let
-    mode =
-      if_ wasmOn (string "WASM native") (string "JS ref")
-    fpsTxt = toString (Math.round fps)
-  setStatus
+    hvm2Err = modeN .== number 2 .&& fallback
+    wasmWarn = modeN .== number 1 .&& fallback
+    isErr = failed .|| hvm2Err
+  toSyntax_ $
+    ffi
+      updateMetricsFFI
+      ( arg kernelMs
+          <: arg frameMs
+          <: arg fps
+          <: arg frameN
+          <: arg scale
+          <: arg centerRe
+          <: arg centerIm
+          <: arg backendLabel
+          <: arg isErr
+          <: arg (wasmWarn .&& not_ isErr)
+          <: RecNil
+      )
+  setStatusDisplay
     status
-    ( fpsTxt
-        <> string " fps · "
-        <> mode
-        <> string " · frame "
-        <> toString frameN
-        <> string " · scale "
-        <> toString scale
-        <> string " · c="
-        <> toString centerRe
-        <> string "+"
-        <> toString centerIm
-        <> string "i"
+    false_
+    false_
+    ( if_
+        failed
+        (string "WASM unavailable — JS reference")
+        (string "")
     )
 
-setStatus ::
+setStatusDisplay ::
   Effect f ('MutableObject Dom.DomElement)
+  -> Expr f 'Bool
+  -> Expr f 'Bool
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
-setStatus el msg = do
-  _ <- Dom.setTextContent el msg
+setStatusDisplay el isErr isWarn msg = do
+  toSyntax_ $
+    ffi
+      ( "(el,err,warn,msg)=>{"
+          <> "el.textContent=msg;"
+          <> "el.classList.toggle('error',!!err);"
+          <> "el.classList.toggle('warn',!!warn&&!err);"
+          <> "}"
+      )
+      (ArgEffect el <: arg isErr <: arg isWarn <: arg msg <: RecNil)
   done
 
+-- | Three-lane bench on the identical frame workload: JS reference loop,
+-- WASM SIMD grid (averaged over 'benchReps'), and one full HVM2 net
+-- reduction of the Bend book. All reported as per-frame milliseconds.
 runBench ::
   Effect f (MutableObjectOf LabState)
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
 runBench st status = do
-  wasmOn <- st.labWasm
   centerRe <- st.labCenterRe
   centerIm <- st.labCenterIm
-  ms <-
-    bindExpr $
-      benchMandel wasmOn centerRe centerIm (number (-0.5)) (number 0)
-  setStatus
+  scale <- st.labScale
+  w <- st.labWidth
+  h <- st.labHeight
+  let
+    blk = number (fromIntegral blockPx)
+    blocksX = Math.floor (w / blk)
+    blocksY = Math.floor (h / blk)
+  res <- bindExpr $ benchCompare centerRe centerIm scale w h
+  let
+    jsMs = Array.index res 0
+    wasmMs = Array.index res 1
+    speedup = Array.index res 2
+    hvm2Ms = Array.index res 3
+    wasmOk = wasmMs .>= number 0
+    hvm2Ok = hvm2Ms .>= number 0
+    gridTxt =
+      string "per "
+        <> toString blocksX
+        <> string "×"
+        <> toString blocksY
+        <> string " frame: "
+    wasmTxt =
+      if_
+        wasmOk
+        ( string " · WASM SIMD "
+            <> toString wasmMs
+            <> string " ms ("
+            <> toString speedup
+            <> string "× vs JS)"
+        )
+        (string " · WASM unavailable")
+    hvm2Txt =
+      if_
+        hvm2Ok
+        ( string " · HVM2 net "
+            <> toString hvm2Ms
+            <> string " ms"
+        )
+        (string " · HVM2 unavailable")
+  setStatusDisplay
     status
-    ( string "bench 50k× mandel → "
-        <> toString ms
-        <> string " ms ("
-        <> if_ wasmOn (string "WASM native") (string "JS ref")
-        <> string ")"
+    (not_ wasmOk)
+    false_
+    ( string "bench "
+        <> gridTxt
+        <> string "JS "
+        <> toString jsMs
+        <> string " ms"
+        <> wasmTxt
+        <> hvm2Txt
     )
+  done
 
-benchMandel ::
-  Expr f 'Bool
+benchReps :: Int
+benchReps = 20
+
+benchCompare ::
+  Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f 'Number
-benchMandel wasmOn cr ci cr2 ci2 =
+  -> Effect f ('Array 'Number)
+benchCompare cr ci scale w h =
   ffi
-    ( "(wasmOn,cr,ci,cr2,ci2)=>{"
+    ( "(cr,ci,scale,w,h)=>{"
+        <> "const blk="
+        <> show blockPx
+        <> ",reps="
+        <> show benchReps
+        <> ";"
+        <> "const bxN=Math.floor(w/blk),byN=Math.floor(h/blk);"
+        <> "const js=globalThis.__jsharkMandelJs;"
+        <> "const ex=globalThis.__jsharkHvm2?.exports;"
+        <> "const grid=ex?.mandel_grid;"
+        <> "const mem=ex?.memory;"
+        <> "const half=blk/2,invW=1/w,invH=1/h,halfW=w*0.5,halfH=h*0.5;"
+        <> "const r1=x=>Math.round(x*10)/10;"
+        <> "let sink=0;"
         <> "const t0=performance.now();"
-        <> "const buf=new ArrayBuffer(8);"
-        <> "const f64=new Float64Array(buf);"
-        <> "const i64=new BigInt64Array(buf);"
-        <> "const pack=x=>{f64[0]=+x;return i64[0];};"
-        <> "const step=globalThis.__jsharkMandelJs;"
-        <> "const wasm64=globalThis.__jsharkHvm2?.exports?.mandel_f64;"
-        <> "const wasm=globalThis.__jsharkHvm2?.exports?.mandel;"
-        <> "if(wasmOn&&typeof wasm64==='function'){"
-        <> "for(let i=0;i<50000;i++)wasm64(cr+cr2*0.001*i,ci+ci2*0.001*i);"
-        <> "}else if(wasmOn){"
-        <> "const f=wasm;"
-        <> "if(typeof f!=='function')return -1;"
-        <> "for(let i=0;i<50000;i++)f(pack(cr+cr2*0.001*i),pack(ci+ci2*0.001*i));"
-        <> "}else{"
-        <> "if(typeof step!=='function')return -1;"
-        <> "for(let i=0;i<50000;i++)step(cr+cr2*0.001*i,ci+ci2*0.001*i);"
+        <> "for(let r=0;r<reps;r++){"
+        <> "for(let by=0;by<byN;by++){for(let bx=0;bx<bxN;bx++){"
+        <> "const cr2=cr+(bx*blk+half-halfW)*scale*invW;"
+        <> "const ci2=ci+(by*blk+half-halfH)*scale*invH;"
+        <> "sink+=js(cr2,ci2);"
+        <> "}}}"
+        <> "const jsMs=performance.now()-t0;"
+        <> "let wasmMs=-1;"
+        <> "if(typeof grid==='function'&&mem){"
+        <> "const t1=performance.now();"
+        <> "let ptr=0;"
+        <> "for(let r=0;r<reps;r++)ptr=grid(cr,ci,scale,w,h,blk,bxN,byN);"
+        <> "wasmMs=performance.now()-t1;"
+        <> "if(ptr)sink+=new Int32Array(mem.buffer,ptr,1)[0];"
         <> "}"
-        <> "return performance.now()-t0;"
+        <> "let hvmMs=-1;"
+        <> "const hg=ex?.mandel_hvm2_grid;"
+        <> "if(typeof hg==='function'&&mem){"
+        <> "const t2=performance.now();"
+        <> "try{"
+        <> "const p=hg(cr,ci,scale,w,h,blk,bxN,byN);"
+        <> "if(p){hvmMs=performance.now()-t2;"
+        <> "sink+=new Int32Array(mem.buffer,p,1)[0];}"
+        <> "}catch(_){}"
+        <> "}"
+        <> "globalThis.__jsharkBenchSink=sink;"
+        <> "const sp=wasmMs>0?r1(jsMs/wasmMs):0;"
+        <> "return[r1(jsMs/reps),wasmMs<0?-1:r1(wasmMs/reps),sp,"
+        <> "hvmMs<0?-1:r1(hvmMs)];"
         <> "}"
     )
-    ( arg wasmOn
-        <: arg cr
+    ( arg cr
         <: arg ci
-        <: arg cr2
-        <: arg ci2
+        <: arg scale
+        <: arg w
+        <: arg h
         <: RecNil
     )

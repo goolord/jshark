@@ -38,11 +38,28 @@ hvm2Tests =
     , testCase "bendDefNames skips main" $
         bendDefNames "def inc(x): return x\ndef main(): return 0\n"
           @?= ["inc"]
-    , testCase "emitKernelExportsC names WASM exports" $
+    , testCase "emitKernelWasmBridge names WASM exports" $
         let
-          shim = emitKernelExportsC [("double", 1)]
+          bridge = emitKernelWasmBridge maxIter [("mandel", 2)]
          in
-          T.isInfixOf "export_name(\"double\")" shim @?= True
+          do
+            T.isInfixOf "export_name(\"mandel\")" bridge @?= True
+            T.isInfixOf "export_name(\"mandel_f64\")" bridge @?= True
+            T.isInfixOf "export_name(\"mandel_grid\")" bridge @?= True
+            -- true HVM2 execution: net reduction of the Bend-compiled book
+            T.isInfixOf "export_name(\"mandel_hvm2_grid\")" bridge @?= True
+            T.isInfixOf "jshark_hvm2_def_id(\"jshark_grid\")" bridge @?= True
+            T.isInfixOf "export_name(\"jshark_worker_eval\")" bridge @?= True
+            T.isInfixOf "export_name(\"jshark_tpc\")" bridge @?= True
+            T.isInfixOf "import_name(\"spawn_eval\")" bridge @?= True
+            T.isInfixOf "import_name(\"eval_done\")" bridge @?= True
+    , testCase "bend demo kernels pass bend check (no or/and)" $
+        case bendModule hvm2Entries of
+          Left bendErr -> assertFailure (show bendErr)
+          Right bend -> do
+            T.isInfixOf " or " bend @?= False
+            T.isInfixOf " and " bend @?= False
+            T.isInfixOf " + " bend @?= True
     , testCase "pureAST emits callable HVM2 export ref" $
         let
           js =
@@ -92,13 +109,35 @@ hvm2Tests =
           Right bend -> do
             T.isInfixOf "def mandel" bend @?= True
             T.isInfixOf "def main():" bend @?= True
-            T.isInfixOf "rec6(0, 0, 0)" bend @?= True
-            T.isInfixOf "rec6(0)(0)(0)" bend @?= False
+            T.isInfixOf "rec6(0.0, 0.0, 0.0)" bend @?= True
+            T.isInfixOf "rec6(0.0)(0.0)(0.0)" bend @?= False
+            -- JS numbers are floats; kernels must be f24 end to end.
+            T.isInfixOf "def mandel(a2: f24, a4: f24) -> f24:" bend @?= True
+    , testCase "bend module main is a parallel bend + fold sweep" $
+        case bendModule hvm2Entries of
+          Left bendErr -> assertFailure (show bendErr)
+          Right bend -> do
+            T.isInfixOf "def main():" bend @?= True
+            T.isInfixOf "type ParTree:" bend @?= True
+            T.isInfixOf "fold t:" bend @?= True
+            T.isInfixOf "bend lo = 0, hi = 4096:" bend @?= True
+            T.isInfixOf
+              "ParTree/Leaf(f24/to_u24(mandel((u24/to_f24(lo % 64) / 32.0) - 2.0, (u24/to_f24(lo / 64) / 32.0) - 1.0)))"
+              bend
+              @?= True
+            -- The whole-frame HVM2 driver for the WASM bridge is emitted…
+            T.isInfixOf "def jshark_grid(cRe, cIm, scale, w, h, blk, bxN, byN):" bend
+              @?= True
+            -- …but bridged by hand, so it is not a scalar export; the tree
+            -- defs are local to main, so no stray WASM exports either.
+            bendDefNames bend @?= ["mandel"]
     , testCase "mandelJsSource matches maxIter" $
         T.pack (show maxIter) `T.isInfixOf` T.pack mandelJsSource @?= True
-    , testCase "mandel shims use maxIter" $ do
-        shims <- T.pack <$> readFile "examples/Hvm2Demo/shims.c"
-        T.pack ("MANDEL_MAX_ITER " <> show maxIter) `T.isInfixOf` shims @?= True
+    , testCase "mandel bend module uses maxIter" $
+        case bendModule hvm2Entries of
+          Left bendErr -> assertFailure (show bendErr)
+          Right bend ->
+            T.pack (show maxIter) `T.isInfixOf` bend @?= True
     , testCase "applyCompilerArgs enables hvm2 warnings" $
         configWarnHvm2Candidates
           (applyCompilerArgs ["--warn-hvm2-candidates"] readableConfig)

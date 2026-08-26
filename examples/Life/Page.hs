@@ -187,8 +187,9 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
 
 lifeSourceSection :: Html ()
 lifeSourceSection =
-  section_ [class_ "life-source"] $ do
-    div_ [class_ "life-source-header"] $ do
+  details_ [class_ "life-source"] $ do
+    summary_ [class_ "life-source-summary"] $ do
+      span_ [class_ "life-source-chevron", makeAttribute "aria-hidden" "true"] "▸"
       h2_ [class_ "life-source-title"] "Generated JavaScript"
       button_
         [ type_ "button"
@@ -198,15 +199,28 @@ lifeSourceSection =
         ]
         "Copy source"
     pre_ [class_ "life-source-pre"] $
-      code_ [class_ "language-javascript life-source-code"] "Loading source…"
+      code_ [class_ "language-javascript life-source-code"] "Expand to load source…"
 
 sourceLoadScript :: T.Text -> Html ()
 sourceLoadScript scriptSrc =
   script_ $
     "(function(){"
+      <> "var pane=document.querySelector('.life-source');"
       <> "var code=document.querySelector('.life-source-code');"
       <> "var btn=document.querySelector('.life-source-copy');"
-      <> "if(!code)return;"
+      <> "if(!pane||!code)return;"
+      <> "var loaded=false;"
+      <> "function maybeHighlight(el){"
+      <> "if(!el||el.dataset.highlighted)return;"
+      <> "var t=el.textContent||'';"
+      <> "if(t.length>32768){el.dataset.highlighted='skip';return;}"
+      <> "if(window.hljs){hljs.highlightElement(el);}"
+      <> "el.dataset.highlighted='1';"
+      <> "}"
+      <> "function load(){"
+      <> "if(loaded)return;"
+      <> "loaded=true;"
+      <> "code.textContent='Loading source…';"
       <> "fetch("
       <> jsString scriptSrc
       <> ")"
@@ -214,11 +228,13 @@ sourceLoadScript scriptSrc =
       <> ".then(function(t){"
       <> "code.textContent=t;"
       <> "if(btn)btn.removeAttribute('disabled');"
-      <> "if(window.hljs){requestAnimationFrame(function(){hljs.highlightElement(code);});}"
+      <> "requestAnimationFrame(function(){maybeHighlight(code);});"
       <> "})"
       <> ".catch(function(){"
       <> "code.textContent='// Failed to load generated source';"
       <> "});"
+      <> "}"
+      <> "pane.addEventListener('toggle',function(){if(pane.open)load();});"
       <> "})();"
 
 copyScript :: Html ()
@@ -233,7 +249,7 @@ copyScript =
       <> "e.preventDefault();"
       <> "e.stopPropagation();"
       <> "var text=code.textContent||'';"
-      <> "if(!text||text==='Loading source…')return;"
+      <> "if(!text||text==='Loading source…'||text==='Expand to load source…')return;"
       <> "function ok(){"
       <> "btn.textContent='Copied';"
       <> "btn.disabled=true;"
@@ -277,6 +293,16 @@ jsString t =
     '\x2029' -> "\\u2029"
     _ -> T.singleton c
 
+debugRow :: T.Text -> T.Text -> Bool -> Html ()
+debugRow valId label wide =
+  div_
+    ( [class_ "life-debug-row"]
+        <> [class_ "life-debug-row-wide" | wide]
+    )
+    $ do
+      span_ [class_ "dbg-k"] (toHtml label)
+      span_ [id_ valId, class_ "dbg-v"] "0"
+
 debugMenu :: Html ()
 debugMenu =
   div_
@@ -301,12 +327,12 @@ debugMenu =
         , makeAttribute "aria-live" "polite"
         ]
         $ do
-          span_ [id_ lifeStatGenId, class_ "life-debug-row"] mempty
-          span_ [id_ lifeStatCellsId, class_ "life-debug-row"] mempty
-          span_ [id_ lifeStatFpsId, class_ "life-debug-row"] mempty
-          span_ [id_ lifeStatZoomId, class_ "life-debug-row"] mempty
-          span_ [id_ lifeStatTickId, class_ "life-debug-row"] mempty
-          span_ [id_ lifeStatEngineId, class_ "life-debug-row"] mempty
+          debugRow lifeStatGenId "Gen" False
+          debugRow lifeStatCellsId "Cells" False
+          debugRow lifeStatFpsId "FPS" False
+          debugRow lifeStatZoomId "Zoom" False
+          debugRow lifeStatTickId "Tick" False
+          debugRow lifeStatEngineId "Engine" True
 
 settingsMenu :: Html ()
 settingsMenu =
@@ -553,7 +579,11 @@ toolsCss =
        \padding:0.4rem 0.5rem;border-radius:6px;background:rgba(15,23,42,0.92);border:1px solid #334155;\
        \box-shadow:0 2px 8px rgba(0,0,0,0.35);font:0.78rem system-ui,sans-serif;color:#cbd5e1}\
        \.life-panel.is-collapsed .life-panel-body{display:none}\
-       \.life-debug-row{white-space:nowrap;font-variant-numeric:tabular-nums}\
+       \.life-debug-row{display:grid;grid-template-columns:4.25rem minmax(5ch,1fr);\
+       \gap:0.35rem;align-items:baseline;white-space:nowrap;font-variant-numeric:tabular-nums}\
+       \.life-debug-row-wide .dbg-v{text-align:left;overflow:hidden;text-overflow:ellipsis}\
+       \.dbg-k{color:#64748b}\
+       \.dbg-v{color:#cbd5e1;text-align:right}\
        \.life-settings-row{display:flex;align-items:center;justify-content:space-between;gap:0.6rem}\
        \.life-settings-label{color:#94a3b8}\
        \.life-settings-value{font-variant-numeric:tabular-nums}\
@@ -592,15 +622,18 @@ toolsCss =
 sourceCss :: T.Text
 sourceCss =
   ".life-source{position:static;box-sizing:border-box;max-width:768px;margin:2.5rem auto 3rem;\
-  \padding:1.25rem 1rem 0;border-top:1px solid #334155;color:#cbd5e1;font-family:Georgia,serif;\
+  \padding:0 1rem 0;border-top:1px solid #334155;color:#cbd5e1;font-family:Georgia,serif;\
   \text-align:left;clear:both}\
-  \.life-source-header{display:flex;align-items:center;justify-content:space-between;\
-  \gap:1rem;margin-bottom:0.85rem;flex-wrap:wrap}\
-  \.life-source-title{margin:0;font-size:1.15rem;font-weight:400;color:#e2e8f0}\
-  \.life-source-copy{appearance:none;padding:0.25rem 0.55rem;border:1px solid #334155;\
+  \.life-source-summary{display:flex;align-items:center;gap:0.65rem;cursor:pointer;list-style:none;\
+  \padding:1.25rem 0 0.85rem}\
+  \.life-source-summary::-webkit-details-marker{display:none}\
+  \.life-source-chevron{flex:0 0 auto;color:#94a3b8;transition:transform 0.15s ease}\
+  \.life-source[open]>.life-source-summary .life-source-chevron{transform:rotate(90deg)}\
+  \.life-source-title{margin:0;flex:1 1 auto;min-width:0;font-size:1.15rem;font-weight:400;color:#e2e8f0}\
+  \.life-source-copy{appearance:none;flex:0 0 auto;padding:0.25rem 0.55rem;border:1px solid #334155;\
   \border-radius:4px;background:#0f172a;color:#cbd5e1;font:0.78rem system-ui,sans-serif;cursor:pointer}\
   \.life-source-copy:hover:not(:disabled){border-color:#64748b;color:#e2e8f0}\
   \.life-source-copy:disabled{opacity:0.6;cursor:default}\
-  \.life-source-pre{margin:0;max-height:32rem;overflow:auto;border-radius:8px;\
-  \border:1px solid #334155;background:#0b1220}\
+  \.life-source-pre{margin:0 0 3rem;max-height:32rem;overflow:auto;overscroll-behavior:contain;\
+  \contain:content;content-visibility:auto;border-radius:8px;border:1px solid #334155;background:#0b1220}\
   \.life-source-code{font-size:0.82rem;line-height:1.45}"

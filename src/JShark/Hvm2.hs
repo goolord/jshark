@@ -19,6 +19,8 @@ module JShark.Hvm2
   , bendDefNames
   , bendDefExports
   , emitKernelExportsC
+  , emitKernelWasmBridge
+  , sanitizeKernelCForWasm
   )
 where
 
@@ -33,6 +35,8 @@ import JShark.EmitBend
   , emitBendKernel
   , emitBendModuleFromDefs
   , emitKernelExportsC
+  , emitKernelWasmBridge
+  , sanitizeKernelCForWasm
   )
 import JShark.Types
   ( ClosedExpr
@@ -82,9 +86,10 @@ bendModuleFromTree e = bendModule (collectHvm2Kernels e)
 compileHvm2GenC ::
   Hvm2Config
   -> FilePath
+  -> Int
   -> Text
   -> IO (Either Hvm2Error FilePath)
-compileHvm2GenC cfg outDir bendSrc = do
+compileHvm2GenC cfg outDir maxIter bendSrc = do
   createDirectoryIfMissing True outDir
   let
     bendPath = outDir </> "kernel.bend"
@@ -92,10 +97,28 @@ compileHvm2GenC cfg outDir bendSrc = do
     exportsPath = outDir </> "kernel_exports.c"
   T.writeFile bendPath bendSrc
   T.writeFile exportsPath (emitKernelExportsC (bendDefExports bendSrc))
-  genRes <- readProcessWithExitCode (hvm2BendExe cfg) ["gen-c", bendPath] ""
+  -- All bend optimization passes that preserve callable-by-name defs.
+  -- @prune@ is deliberately absent: it deletes defs unreachable from main,
+  -- and the WASM bridge invokes @jshark_grid@ by name at runtime.
+  let
+    bendOpts =
+      concatMap
+        (\o -> ["-O", o])
+        ["eta", "merge", "inline", "linearize-matches", "float-combinators"]
+  genRes <-
+    readProcessWithExitCode
+      (hvm2BendExe cfg)
+      (["gen-c"] <> bendOpts <> [bendPath])
+      ""
   case genRes of
     (ExitSuccess, out, _) -> do
-      T.writeFile cPath (T.pack out)
+      let
+        exports = bendDefExports bendSrc
+        kernelC =
+          sanitizeKernelCForWasm (T.pack out)
+            <> "\n"
+            <> emitKernelWasmBridge maxIter exports
+      T.writeFile cPath kernelC
       pure (Right cPath)
     (ExitFailure code, out, err) ->
       pure $
@@ -112,10 +135,11 @@ compileHvm2GenC cfg outDir bendSrc = do
 compileHvm2Wasm ::
   Hvm2Config
   -> FilePath
+  -> Int
   -> Text
   -> IO (Either Hvm2Error FilePath)
-compileHvm2Wasm cfg outDir bendSrc = do
-  cRes <- compileHvm2GenC cfg outDir bendSrc
+compileHvm2Wasm cfg outDir maxIter bendSrc = do
+  cRes <- compileHvm2GenC cfg outDir maxIter bendSrc
   case cRes of
     Left err -> pure (Left err)
     Right cPath -> do
@@ -135,6 +159,7 @@ compileHvm2Wasm cfg outDir bendSrc = do
           , "--build-file"
           , absBuildFile
           , "-Doptimize=ReleaseFast"
+          , "-Dtpc-l2=0"
           , "-Dkernel-c=" ++ absCPath
           , "-Dexports-c=" ++ absExportsPath
           , "--prefix"

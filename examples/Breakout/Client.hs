@@ -19,7 +19,7 @@ import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, SumOf)
 import qualified JShark.Generic as G
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..))
+import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Types
   ( Ball
@@ -28,6 +28,7 @@ import Types
   , ballFill
   , ballR
   , bannerFill
+  , boardFill
   , boardId
   , brickCount
   , brickH
@@ -55,13 +56,14 @@ data Once = Once
 data Fps = Fps
   { lastMs :: Double
   , fps :: Double
+  , frameMs :: Double
   }
   deriving Generic
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
-  ctxOpt <- Canvas.getContext2d canvas
+  ctxOpt <- Canvas.getContext2dDesync canvas
   whenSomeE ctxOpt $ \ctx -> boot canvas ctx
 
 boot ::
@@ -73,12 +75,14 @@ boot canvas ctx = do
   _ <- Canvas.setCanvasWidth canvas (number canvasW)
   _ <- Canvas.setCanvasHeight canvas (number canvasH)
   state <- hold (G.toObject startGame)
-  meter <- hold (G.toObject (Fps (-1) 0))
+  meter <- hold (G.toObject (Fps (-1) 0 0))
   wire canvas state
-  Timers.foreverFrame $ \now -> do
-    tickFps meter now
+  Timers.foreverFrame $ \_ -> do
+    t0 <- bindExpr $ ffi "performance.now" RecNil
     step state
     paint ctxH state meter
+    t1 <- bindExpr $ ffi "performance.now" RecNil
+    updateFrameMeter meter (t1 - t0)
 
 wire ::
   Effect f ('MutableObject Dom.DomElement)
@@ -250,21 +254,21 @@ bounceFloor state b bx0 ddy px0 r h ny =
         do
           set @"dy" b (negate ddy)
           done
-    once_ $
-      whenS (ny .>= r .&& ny .> (h - r)) $
-        ifS
-          (overlapsPaddle bx0 px0)
-          ( do
-              set @"dx" b (paddleKick bx0 px0)
-              ddy1 <- b.dy
-              set @"dy" b (negate (abs ddy1))
-          )
-          ( do
-              lv <- state.lives
-              set @"lives" state (lv - 1)
-              lv1 <- state.lives
-              ifS (lv1 .<= 0) (setPhase state Lose) (resetBall state)
-          )
+    once_
+      $ whenS (ny .>= r .&& ny .> (h - r))
+      $ ifS
+        (overlapsPaddle bx0 px0)
+        ( do
+            set @"dx" b (paddleKick bx0 px0)
+            ddy1 <- b.dy
+            set @"dy" b (negate (abs ddy1))
+        )
+        ( do
+            lv <- state.lives
+            set @"lives" state (lv - 1)
+            lv1 <- state.lives
+            ifS (lv1 .<= 0) (setPhase state Lose) (resetBall state)
+        )
     done
 
 resetBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
@@ -280,7 +284,8 @@ paint ::
   -> Effect f (MutableObjectOf Fps)
   -> EffectSyntax f (f 'Unit)
 paint ctx state meter = do
-  _ <- Canvas.clearRect ctx 0 0 (number canvasW) (number canvasH)
+  fill ctx (string boardFill)
+  _ <- Canvas.fillRect ctx 0 0 (number canvasW) (number canvasH)
   sequence_
     [ drawBricks ctx state
     , drawBall ctx state
@@ -346,15 +351,33 @@ drawHud ctx state meter = do
   sc <- state.score
   lv <- state.lives
   n <- meter.fps
-  set @"font" ctx (string "16px Georgia")
+  ms <- meter.frameMs
+  scoreTxt <-
+    bindExpr $
+      ffi
+        "(sc)=>('Score '+String(sc).padStart(4,'\\u00a0'))"
+        (arg sc <: RecNil)
+  fpsTxt <-
+    bindExpr $
+      ffi
+        ( "(fps,ms)=>"
+            ++ "'FPS '+String(Math.round(fps)).padStart(3,'\\u00a0')"
+            ++ "+' ('+String(Math.round(ms)).padStart(4,'\\u00a0')+'ms)'"
+        )
+        (arg n <: arg ms <: RecNil)
+  livesTxt <-
+    bindExpr $
+      ffi
+        "(lv)=>('Lives '+String(lv).padStart(2,'\\u00a0'))"
+        (arg lv <: RecNil)
+  set @"font" ctx (string "16px ui-monospace, monospace")
   fill ctx (string ink)
-  _ <- Canvas.fillText ctx (string "Score: " <> toString sc) 8 20
+  _ <- Canvas.fillText ctx scoreTxt 8 20
   set @"textAlign" ctx (string "center")
-  _ <-
-    Canvas.fillText ctx (string "FPS: " <> toString n) (number (canvasW / 2)) 20
+  _ <- Canvas.fillText ctx fpsTxt (number (canvasW / 2)) 20
+  set @"textAlign" ctx (string "right")
+  _ <- Canvas.fillText ctx livesTxt (number (canvasW - 8)) 20
   set @"textAlign" ctx (string "left")
-  _ <-
-    Canvas.fillText ctx (string "Lives: " <> toString lv) (number (canvasW - 80)) 20
   done
 
 drawBanner ::
@@ -388,15 +411,17 @@ bannerText ctx msg = do
       (number (canvasH / 2 + 28))
   done
 
-tickFps ::
+updateFrameMeter ::
   Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
-tickFps meter now = do
-  prev <- meter.lastMs
+updateFrameMeter meter elapsedMs = do
+  prevFps <- meter.fps
   let
-    dt = now - prev
-  whenS (prev .>= 0 .&& dt .<= 250) $
-    set @"fps" meter (Math.round (number 1000 / Math.max 1 dt))
-  set @"lastMs" meter now
+    instant =
+      if_ (elapsedMs .> number 0) (number 1000 / elapsedMs) (number 0)
+    smoothed = prevFps * number 0.85 + instant * number 0.15
+  set @"frameMs" meter elapsedMs
+  set @"fps" meter (Math.round smoothed)
+  done
 
 -- Helpers -----------------------------------------------------------------
 

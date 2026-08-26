@@ -13,10 +13,13 @@ import JShark.Compiler
   , isCompilerFlag
   , readableConfig
   )
+import JShark.Hvm2 (bendModule)
 import JShark.Types (fromSyntax)
+import Kernels (hvm2Entries, mandelJsSource)
 import qualified Life
-import SourcePane (sourceHead, sourcePane)
+import SourcePane (hvm2SourcePanes, sourceHead, sourcePane)
 import qualified Synth
+import qualified Data.Text as T
 import System.Environment (getArgs)
 import System.Exit (die)
 import qualified TodoMvc
@@ -35,6 +38,11 @@ main = do
       , ("synth (source)", fromSyntax Synth.mainJS)
       , ("hvm2-demo (source)", fromSyntax Hvm2Demo.mainJS)
       ]
+  hvm2Bend <-
+    case bendModule hvm2Entries of
+      Left err -> die ("hvm2-demo bend: " <> show err)
+      Right bend -> pure bend
+  let hvm2MandelJs = T.pack mandelJsSource
   [breakoutJs, todoJs, synthJs, lifeJs, hvm2Js] <-
     compileEffectsLabeled
       (applyCompilerArgs progressFlags defaultCompilerConfig)
@@ -94,11 +102,16 @@ main = do
           "hvm2-demo"
           "HVM2 Lab"
           ( \script static ->
-              Hvm2Demo.page
-                static
-                (sourceHead static)
-                (sourcePane static hvm2Src)
-                script
+              let
+                demoBase =
+                  if "/" `T.isPrefixOf` script then "/hvm2-demo" else ""
+               in
+                Hvm2Demo.page
+                  static
+                  demoBase
+                  (sourceHead static)
+                  (hvm2SourcePanes static hvm2Src hvm2Bend hvm2MandelJs)
+                  script
           )
           hvm2Js
           (Just hvm2Src)

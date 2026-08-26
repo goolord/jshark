@@ -1289,18 +1289,18 @@ updateHud
     let
       zoomIdx = nearestZoomIndex levels indices zoom
       zoomLabel = Array.index labels zoomIdx
-    _ <- Dom.setTextContent statGen (string "Gen: " <> toString gen)
-    _ <- Dom.setTextContent statCells (string "Cells: " <> toString pop)
-    _ <- Dom.setTextContent statFps (string "FPS: " <> toString fpsN)
+    _ <- Dom.setTextContent statGen (toString gen)
+    _ <- Dom.setTextContent statCells (toString pop)
     _ <-
       Dom.setTextContent
-        statZoom
-        (string "Zoom: " <> zoomLabel <> string "%")
+        statFps
+        (toString (Math.round fpsN))
+    _ <- Dom.setTextContent statZoom (zoomLabel <> string "%")
     _ <-
       Dom.setTextContent
         statTick
-        (string "Tick: " <> toString (Math.round tickMs) <> string "ms")
-    _ <- Dom.setTextContent statEngine (string "Engine: " <> mode)
+        (toString (Math.round tickMs) <> string "ms")
+    _ <- Dom.setTextContent statEngine mode
     _ <- Dom.setTextContent settingsZoom (zoomLabel <> string "%")
     done
 

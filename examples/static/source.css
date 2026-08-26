@@ -12,8 +12,8 @@
 .js-source-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  justify-content: flex-start;
+  gap: 0.5rem;
   cursor: pointer;
   padding: 0.4rem 0;
   color: #94a3b8;
@@ -24,8 +24,23 @@
   display: none;
 }
 
+.js-source-chevron {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 1em;
+  color: #94a3b8;
+  font-size: 0.95em;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.js-source[open] > .js-source-summary .js-source-chevron {
+  transform: rotate(90deg);
+}
+
 .js-source-label {
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 .js-source-copy {
@@ -54,9 +69,24 @@
   margin: 0.5rem 0 0;
   max-height: 28rem;
   overflow: auto;
+  overscroll-behavior: contain;
+  contain: content;
+  content-visibility: auto;
   border-radius: 6px;
 }
 
 .js-source code {
   font-size: 0.85rem;
+}
+
+.source-stack {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0 1rem 3rem;
+}
+
+.source-stack .js-source {
+  margin: 0;
+  padding: 0 0 0.75rem;
+  max-width: none;
 }

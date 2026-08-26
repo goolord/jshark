@@ -28,6 +28,7 @@ module Types
   , layoutBricks
   , startGame
   , boardId
+  , boardFill
   , ballFill
   , ink
   , bannerFill
@@ -66,10 +67,11 @@ startLives = 3
 boardId :: Text
 boardId = "board"
 
-ballFill, ink, bannerFill :: Text
+ballFill, ink, bannerFill, boardFill :: Text
 ballFill = "#0369a1"
 ink = "#0c4a6e"
 bannerFill = "#0f172a"
+boardFill = "#e2e8f0"
 
 data Phase = Play | Win | Lose
   deriving (Eq, Generic)

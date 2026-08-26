@@ -1,6 +1,5 @@
-#define IO
+#include "hvm2_wasm.h"
 
-#include <inttypes.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -17,7 +16,6 @@
 #endif
 
 #define COMPILED
-#define WITH_MAIN
 
 // Types
 // --------
@@ -40,7 +38,9 @@ typedef _Atomic(u64) a64;
 
 // Threads per CPU
 #ifndef TPC_L2
-#define TPC_L2 4 // 16 cores
+#ifndef TPC_L2
+#define TPC_L2 2
+#endif
 #endif
 #define TPC (1ul << TPC_L2)
 
@@ -113,7 +113,7 @@ static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
 
 // Constants
 #define FREE 0x00000000
-#define ROOT 0xFFFFFFF8
+#define ROOT ((Port)((G_VARS_LEN - 1) << 3)) // last var slot (shrunk)
 #define NONE 0xFFFFFFFF
 
 // Cache Padding
@@ -121,9 +121,9 @@ static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
 
 // Global Net
 #define HLEN (1ul << 16) // max 16k high-priority redexes
-#define RLEN (1ul << 24) // max 16m low-priority redexes
-#define G_NODE_LEN (1ul << 29) // max 536m nodes
-#define G_VARS_LEN (1ul << 29) // max 536m vars
+#define RLEN (1ul << 14) // max 16m low-priority redexes
+#define G_NODE_LEN (1ul << 18) // max 536m nodes
+#define G_VARS_LEN (1ul << 18) // max 536m vars
 #define G_RBAG_LEN (TPC * RLEN)
 
 typedef struct Net {
@@ -160,9 +160,9 @@ typedef struct {
 // Book of Definitions
 typedef struct Book {
   u32 defs_len;
-  Def defs_buf[0x4000];
+  Def defs_buf[32];
   u32 ffns_len;
-  FFn ffns_buf[0x4000];
+  FFn ffns_buf[32];
 } Book;
 
 // Local Thread Memory
@@ -298,11 +298,7 @@ u32 global_sum(u32 x) {
 }
 
 // TODO: write a time64() function that returns the time as fast as possible as a u64
-static inline u64 time64() {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (u64)ts.tv_sec * 1000000000ULL + (u64)ts.tv_nsec;
-}
+static inline u64 time64() { return 0; }
 
 // Ports / Pairs / Rules
 // ---------------------
@@ -784,7 +780,8 @@ static inline bool get_resources(Net* net, TM* tm, u32 need_rbag, u32 need_node,
 
 // Peeks a variable's final target without modifying it.
 static inline Port peek(Net* net, Port var) {
-  while (get_tag(var) == VAR) {
+  u32 enter_lim = 4096;
+  while (get_tag(var) == VAR && enter_lim-- > 0) {
     Port val = vars_load(net, get_val(var));
     if (val == NONE) break;
     if (val == 0) break;
@@ -796,7 +793,8 @@ static inline Port peek(Net* net, Port var) {
 // Finds a variable's value.
 static inline Port enter(Net* net, Port var) {
   // While `B` is VAR: extend it (as an optimization)
-  while (get_tag(var) == VAR) {
+  u32 enter_lim = 4096;
+  while (get_tag(var) == VAR && enter_lim-- > 0) {
     // Takes the current `var` substitution as `val`
     Port val = vars_exchange(net, get_val(var), NONE);
     // If there was no `val`, stop, as there is no extension
@@ -870,6 +868,368 @@ static inline bool interact_eras(Net* net, TM* tm, Port a, Port b);
 // The Call Interaction.
 #ifdef COMPILED
 bool interact_call_main(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !n0 || !n1 || !n2) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  if (b != NONE) {
+    link(net, tm, new_port(VAR,v0), b);
+  } else {
+    b = new_port(VAR,v0);
+  }
+  node_create(net, n0, new_pair(new_port(VAR,v1),new_port(VAR,v0)));
+  link(net, tm, new_port(REF,0x0000000d), new_port(CON,n0));
+  node_create(net, n2, new_pair(new_port(NUM,0x00020001),new_port(VAR,v1)));
+  node_create(net, n1, new_pair(new_port(NUM,0x00000001),new_port(CON,n2)));
+  link(net, tm, new_port(REF,0x0000000a), new_port(CON,n1));
+  return true;
+}
+
+bool interact_call_ParTree_Leaf(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !n0 || !n1 || !n2 || !n3) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  if (k8 != NONE) {
+    link(net, tm, new_port(VAR,v1), k8);
+  } else {
+    k8 = new_port(VAR,v1);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k7) == CON && node_load(net, get_val(k7)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k7));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  bool k13 = 0;
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
+  }
+  if (k16 != NONE) {
+    link(net, tm, new_port(VAR,v1), k16);
+  } else {
+    k16 = new_port(VAR,v1);
+  }
+  if (k15 != NONE) {
+    link(net, tm, new_port(VAR,v0), k15);
+  } else {
+    k15 = new_port(VAR,v0);
+  }
+  if (!k13) {
+    node_create(net, n3, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,n3), k12);
+    } else {
+      k12 = new_port(CON,n3);
+    }
+  }
+  // fast void
+  if (get_tag(k11) == ERA || get_tag(k11) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k11 != NONE) {
+      link(net, tm, new_port(NUM,0x00000021), k11);
+    } else {
+      k11 = new_port(NUM,0x00000021);
+    }
+  }
+  if (!k9) {
+    node_create(net, n2, new_pair(k11,k12));
+    if (k7 != NONE) {
+      link(net, tm, new_port(CON,n2), k7);
+    } else {
+      k7 = new_port(CON,n2);
+    }
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  return true;
+}
+
+bool interact_call_ParTree_Leaf_tag(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  if (0) {
+    return false;
+  }
+  // fast void
+  if (get_tag(b) == ERA || get_tag(b) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (b != NONE) {
+      link(net, tm, new_port(NUM,0x00000021), b);
+    } else {
+      b = new_port(NUM,0x00000021);
+    }
+  }
+  return true;
+}
+
+bool interact_call_ParTree_Node(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  if (k12 != NONE) {
+    link(net, tm, new_port(VAR,v2), k12);
+  } else {
+    k12 = new_port(VAR,v2);
+  }
+  bool k13 = 0;
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k11) == CON && node_load(net, get_val(k11)) != 0) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = node_take(net, get_val(k11));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
+  }
+  bool k17 = 0;
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
+    tm->itrs += 1;
+    k17 = 1;
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
+  }
+  bool k21 = 0;
+  Pair k22 = 0;
+  Port k23 = NONE;
+  Port k24 = NONE;
+  // fast anni
+  if (get_tag(k20) == CON && node_load(net, get_val(k20)) != 0) {
+    tm->itrs += 1;
+    k21 = 1;
+    k22 = node_take(net, get_val(k20));
+    k23 = get_fst(k22);
+    k24 = get_snd(k22);
+  }
+  if (k24 != NONE) {
+    link(net, tm, new_port(VAR,v2), k24);
+  } else {
+    k24 = new_port(VAR,v2);
+  }
+  if (k23 != NONE) {
+    link(net, tm, new_port(VAR,v1), k23);
+  } else {
+    k23 = new_port(VAR,v1);
+  }
+  if (!k21) {
+    node_create(net, n5, new_pair(k23,k24));
+    if (k20 != NONE) {
+      link(net, tm, new_port(CON,n5), k20);
+    } else {
+      k20 = new_port(CON,n5);
+    }
+  }
+  if (k19 != NONE) {
+    link(net, tm, new_port(VAR,v0), k19);
+  } else {
+    k19 = new_port(VAR,v0);
+  }
+  if (!k17) {
+    node_create(net, n4, new_pair(k19,k20));
+    if (k16 != NONE) {
+      link(net, tm, new_port(CON,n4), k16);
+    } else {
+      k16 = new_port(CON,n4);
+    }
+  }
+  // fast void
+  if (get_tag(k15) == ERA || get_tag(k15) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k15 != NONE) {
+      link(net, tm, new_port(NUM,0x00000001), k15);
+    } else {
+      k15 = new_port(NUM,0x00000001);
+    }
+  }
+  if (!k13) {
+    node_create(net, n3, new_pair(k15,k16));
+    if (k11 != NONE) {
+      link(net, tm, new_port(CON,n3), k11);
+    } else {
+      k11 = new_port(CON,n3);
+    }
+  }
+  if (!k9) {
+    node_create(net, n2, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n2), k8);
+    } else {
+      k8 = new_port(CON,n2);
+    }
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(VAR,v1), k7);
+  } else {
+    k7 = new_port(VAR,v1);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  return true;
+}
+
+bool interact_call_ParTree_Node_tag(Net *net, TM *tm, Port a, Port b) {
   if (get_tag(b) == DUP) {
     return interact_eras(net, tm, a, b);
   }
@@ -891,27 +1251,19 @@ bool interact_call_main(Net *net, TM *tm, Port a, Port b) {
   return true;
 }
 
-bool interact_call_plasma(Net *net, TM *tm, Port a, Port b) {
+bool interact_call_f24_to_u24(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
-  Val v1 = vars_alloc_1(net, tm, &vl);
-  Val v2 = vars_alloc_1(net, tm, &vl);
   Val n0 = node_alloc_1(net, tm, &nl);
   Val n1 = node_alloc_1(net, tm, &nl);
-  Val n2 = node_alloc_1(net, tm, &nl);
-  Val n3 = node_alloc_1(net, tm, &nl);
-  Val n4 = node_alloc_1(net, tm, &nl);
-  Val n5 = node_alloc_1(net, tm, &nl);
-  Val n6 = node_alloc_1(net, tm, &nl);
-  Val n7 = node_alloc_1(net, tm, &nl);
-  Val n8 = node_alloc_1(net, tm, &nl);
-  if (0 || !v0 || !v1 || !v2 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8) {
+  if (0 || !v0 || !n0 || !n1) {
     return false;
   }
   vars_create(net, v0, NONE);
-  vars_create(net, v1, NONE);
-  vars_create(net, v2, NONE);
   bool k1 = 0;
   Pair k2 = 0;
   Port k3 = NONE;
@@ -925,151 +1277,2417 @@ bool interact_call_plasma(Net *net, TM *tm, Port a, Port b) {
     k4 = get_snd(k2);
   }
   if (k4 != NONE) {
-    link(net, tm, new_port(VAR,v2), k4);
+    link(net, tm, new_port(VAR,v0), k4);
   } else {
-    k4 = new_port(VAR,v2);
+    k4 = new_port(VAR,v0);
   }
   bool k5 = 0;
   Port k6 = NONE;
-  Port k7 = NONE;
-  // fast copy
-  if (get_tag(k3) == NUM) {
+  // fast oper
+  if (get_tag(k3) == NUM && get_tag(new_port(NUM,0x00000020)) == NUM) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = k3;
-    k7 = k3;
+    k6 = new_port(NUM, operate(get_val(k3), get_val(new_port(NUM,0x00000020))));
   }
-  bool k8 = 0;
-  Port k9 = NONE;
-  Port k10 = NONE;
-  // fast copy
-  if (get_tag(k7) == NUM) {
+  if (k6 != NONE) {
+    link(net, tm, new_port(VAR,v0), k6);
+  } else {
+    k6 = new_port(VAR,v0);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(new_port(NUM,0x00000020),k6));
+    if (k3 != NONE) {
+      link(net, tm, new_port(OPR, n1), k3);
+    } else {
+      k3 = new_port(OPR, n1);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  return true;
+}
+
+bool interact_call_jshark_grid(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val v9 = vars_alloc_1(net, tm, &vl);
+  Val va = vars_alloc_1(net, tm, &vl);
+  Val vb = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  Val n13 = node_alloc_1(net, tm, &nl);
+  Val n14 = node_alloc_1(net, tm, &nl);
+  Val n15 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !v9 || !va || !vb || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12 || !n13 || !n14 || !n15) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  vars_create(net, v9, NONE);
+  vars_create(net, va, NONE);
+  vars_create(net, vb, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
     tm->itrs += 1;
-    k8 = 1;
-    k9 = k7;
-    k10 = k7;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
   }
-  bool k11 = 0;
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
   Port k12 = NONE;
-  // fast oper
-  if (get_tag(k10) == NUM && get_tag(new_port(NUM,0x00000067)) == NUM) {
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
     tm->itrs += 1;
-    k11 = 1;
-    k12 = new_port(NUM, operate(get_val(k10), get_val(new_port(NUM,0x00000067))));
-  }
-  if (k12 != NONE) {
-    link(net, tm, new_port(VAR,v1), k12);
-  } else {
-    k12 = new_port(VAR,v1);
-  }
-  if (!k11) {
-    node_create(net, n8, new_pair(new_port(NUM,0x00000067),k12));
-    if (k10 != NONE) {
-      link(net, tm, new_port(OPR, n8), k10);
-    } else {
-      k10 = new_port(OPR, n8);
-    }
-  }
-  if (k9 != NONE) {
-    link(net, tm, new_port(VAR,v0), k9);
-  } else {
-    k9 = new_port(VAR,v0);
-  }
-  if (!k8) {
-    node_create(net, n7, new_pair(k9,k10));
-    if (k7 != NONE) {
-      link(net, tm, new_port(DUP,n7), k7);
-    } else {
-      k7 = new_port(DUP,n7);
-    }
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Port k14 = NONE;
-  // fast oper
-  if (get_tag(k6) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = new_port(NUM, operate(get_val(k6), get_val(new_port(NUM,0x000000e0))));
-  }
-  bool k15 = 0;
-  Port k16 = NONE;
-  // fast oper
-  if (get_tag(k14) == NUM && get_tag(new_port(VAR,v0)) == NUM) {
-    tm->itrs += 1;
-    k15 = 1;
-    k16 = new_port(NUM, operate(get_val(k14), get_val(new_port(VAR,v0))));
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
   }
   bool k17 = 0;
-  Port k18 = NONE;
-  // fast oper
-  if (get_tag(k16) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
     tm->itrs += 1;
     k17 = 1;
-    k18 = new_port(NUM, operate(get_val(k16), get_val(new_port(NUM,0x00000080))));
-  }
-  bool k19 = 0;
-  Port k20 = NONE;
-  // fast oper
-  if (get_tag(k18) == NUM && get_tag(new_port(VAR,v1)) == NUM) {
-    tm->itrs += 1;
-    k19 = 1;
-    k20 = new_port(NUM, operate(get_val(k18), get_val(new_port(VAR,v1))));
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
   }
   bool k21 = 0;
-  Port k22 = NONE;
-  // fast oper
-  if (get_tag(k20) == NUM && get_tag(new_port(NUM,0x0000200b)) == NUM) {
+  Pair k22 = 0;
+  Port k23 = NONE;
+  Port k24 = NONE;
+  // fast anni
+  if (get_tag(k20) == CON && node_load(net, get_val(k20)) != 0) {
     tm->itrs += 1;
     k21 = 1;
-    k22 = new_port(NUM, operate(get_val(k20), get_val(new_port(NUM,0x0000200b))));
+    k22 = node_take(net, get_val(k20));
+    k23 = get_fst(k22);
+    k24 = get_snd(k22);
   }
-  if (k22 != NONE) {
-    link(net, tm, new_port(VAR,v2), k22);
+  bool k25 = 0;
+  Pair k26 = 0;
+  Port k27 = NONE;
+  Port k28 = NONE;
+  // fast anni
+  if (get_tag(k24) == CON && node_load(net, get_val(k24)) != 0) {
+    tm->itrs += 1;
+    k25 = 1;
+    k26 = node_take(net, get_val(k24));
+    k27 = get_fst(k26);
+    k28 = get_snd(k26);
+  }
+  bool k29 = 0;
+  Pair k30 = 0;
+  Port k31 = NONE;
+  Port k32 = NONE;
+  // fast anni
+  if (get_tag(k28) == CON && node_load(net, get_val(k28)) != 0) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = node_take(net, get_val(k28));
+    k31 = get_fst(k30);
+    k32 = get_snd(k30);
+  }
+  if (k32 != NONE) {
+    link(net, tm, new_port(VAR,v9), k32);
   } else {
-    k22 = new_port(VAR,v2);
+    k32 = new_port(VAR,v9);
   }
-  if (!k21) {
-    node_create(net, n6, new_pair(new_port(NUM,0x0000200b),k22));
-    if (k20 != NONE) {
-      link(net, tm, new_port(OPR, n6), k20);
+  if (k31 != NONE) {
+    link(net, tm, new_port(VAR,v6), k31);
+  } else {
+    k31 = new_port(VAR,v6);
+  }
+  if (!k29) {
+    node_create(net, na, new_pair(k31,k32));
+    if (k28 != NONE) {
+      link(net, tm, new_port(CON,na), k28);
     } else {
-      k20 = new_port(OPR, n6);
+      k28 = new_port(CON,na);
     }
   }
-  if (!k19) {
-    node_create(net, n5, new_pair(new_port(VAR,v1),k20));
-    if (k18 != NONE) {
-      link(net, tm, new_port(OPR, n5), k18);
+  bool k33 = 0;
+  Port k34 = NONE;
+  Port k35 = NONE;
+  // fast copy
+  if (get_tag(k27) == NUM) {
+    tm->itrs += 1;
+    k33 = 1;
+    k34 = k27;
+    k35 = k27;
+  }
+  if (k35 != NONE) {
+    link(net, tm, new_port(VAR,v8), k35);
+  } else {
+    k35 = new_port(VAR,v8);
+  }
+  bool k36 = 0;
+  Port k37 = NONE;
+  // fast oper
+  if (get_tag(k34) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+    tm->itrs += 1;
+    k36 = 1;
+    k37 = new_port(NUM, operate(get_val(k34), get_val(new_port(NUM,0x000000e0))));
+  }
+  bool k38 = 0;
+  Port k39 = NONE;
+  // fast oper
+  if (get_tag(k37) == NUM && get_tag(new_port(VAR,v6)) == NUM) {
+    tm->itrs += 1;
+    k38 = 1;
+    k39 = new_port(NUM, operate(get_val(k37), get_val(new_port(VAR,v6))));
+  }
+  if (k39 != NONE) {
+    link(net, tm, new_port(VAR,v7), k39);
+  } else {
+    k39 = new_port(VAR,v7);
+  }
+  if (!k38) {
+    node_create(net, n9, new_pair(new_port(VAR,v6),k39));
+    if (k37 != NONE) {
+      link(net, tm, new_port(OPR, n9), k37);
     } else {
-      k18 = new_port(OPR, n5);
+      k37 = new_port(OPR, n9);
+    }
+  }
+  if (!k36) {
+    node_create(net, n8, new_pair(new_port(NUM,0x000000e0),k37));
+    if (k34 != NONE) {
+      link(net, tm, new_port(OPR, n8), k34);
+    } else {
+      k34 = new_port(OPR, n8);
+    }
+  }
+  if (!k33) {
+    node_create(net, n7, new_pair(k34,k35));
+    if (k27 != NONE) {
+      link(net, tm, new_port(DUP,n7), k27);
+    } else {
+      k27 = new_port(DUP,n7);
+    }
+  }
+  if (!k25) {
+    node_create(net, n6, new_pair(k27,k28));
+    if (k24 != NONE) {
+      link(net, tm, new_port(CON,n6), k24);
+    } else {
+      k24 = new_port(CON,n6);
+    }
+  }
+  if (k23 != NONE) {
+    link(net, tm, new_port(VAR,v5), k23);
+  } else {
+    k23 = new_port(VAR,v5);
+  }
+  if (!k21) {
+    node_create(net, n5, new_pair(k23,k24));
+    if (k20 != NONE) {
+      link(net, tm, new_port(CON,n5), k20);
+    } else {
+      k20 = new_port(CON,n5);
+    }
+  }
+  if (k19 != NONE) {
+    link(net, tm, new_port(VAR,v4), k19);
+  } else {
+    k19 = new_port(VAR,v4);
+  }
+  if (!k17) {
+    node_create(net, n4, new_pair(k19,k20));
+    if (k16 != NONE) {
+      link(net, tm, new_port(CON,n4), k16);
+    } else {
+      k16 = new_port(CON,n4);
+    }
+  }
+  if (k15 != NONE) {
+    link(net, tm, new_port(VAR,v3), k15);
+  } else {
+    k15 = new_port(VAR,v3);
+  }
+  if (!k13) {
+    node_create(net, n3, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,n3), k12);
+    } else {
+      k12 = new_port(CON,n3);
+    }
+  }
+  if (k11 != NONE) {
+    link(net, tm, new_port(VAR,v2), k11);
+  } else {
+    k11 = new_port(VAR,v2);
+  }
+  if (!k9) {
+    node_create(net, n2, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n2), k8);
+    } else {
+      k8 = new_port(CON,n2);
+    }
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(VAR,v1), k7);
+  } else {
+    k7 = new_port(VAR,v1);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n13, new_pair(new_port(VAR,vb),new_port(VAR,v9)));
+  node_create(net, n12, new_pair(new_port(NUM,0x00000001),new_port(CON,n13)));
+  node_create(net, n11, new_pair(new_port(VAR,v4),new_port(CON,n12)));
+  node_create(net, n10, new_pair(new_port(VAR,v1),new_port(CON,n11)));
+  node_create(net, nf, new_pair(new_port(VAR,v2),new_port(CON,n10)));
+  node_create(net, ne, new_pair(new_port(VAR,v3),new_port(CON,nf)));
+  node_create(net, nd, new_pair(new_port(VAR,v5),new_port(CON,ne)));
+  node_create(net, nc, new_pair(new_port(VAR,va),new_port(CON,nd)));
+  node_create(net, nb, new_pair(new_port(VAR,v0),new_port(CON,nc)));
+  link(net, tm, new_port(REF,0x00000007), new_port(CON,nb));
+  node_create(net, n14, new_pair(new_port(VAR,v8),new_port(VAR,va)));
+  link(net, tm, new_port(REF,0x00000005), new_port(CON,n14));
+  node_create(net, n15, new_pair(new_port(VAR,v7),new_port(VAR,vb)));
+  link(net, tm, new_port(REF,0x00000005), new_port(CON,n15));
+  return true;
+}
+
+bool interact_call_jshark_grid__bend0(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val v9 = vars_alloc_1(net, tm, &vl);
+  Val va = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  Val n13 = node_alloc_1(net, tm, &nl);
+  Val n14 = node_alloc_1(net, tm, &nl);
+  Val n15 = node_alloc_1(net, tm, &nl);
+  Val n16 = node_alloc_1(net, tm, &nl);
+  Val n17 = node_alloc_1(net, tm, &nl);
+  Val n18 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !v9 || !va || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12 || !n13 || !n14 || !n15 || !n16 || !n17 || !n18) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  vars_create(net, v9, NONE);
+  vars_create(net, va, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  bool k13 = 0;
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
+  }
+  bool k17 = 0;
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
+    tm->itrs += 1;
+    k17 = 1;
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
+  }
+  bool k21 = 0;
+  Pair k22 = 0;
+  Port k23 = NONE;
+  Port k24 = NONE;
+  // fast anni
+  if (get_tag(k20) == CON && node_load(net, get_val(k20)) != 0) {
+    tm->itrs += 1;
+    k21 = 1;
+    k22 = node_take(net, get_val(k20));
+    k23 = get_fst(k22);
+    k24 = get_snd(k22);
+  }
+  bool k25 = 0;
+  Pair k26 = 0;
+  Port k27 = NONE;
+  Port k28 = NONE;
+  // fast anni
+  if (get_tag(k24) == CON && node_load(net, get_val(k24)) != 0) {
+    tm->itrs += 1;
+    k25 = 1;
+    k26 = node_take(net, get_val(k24));
+    k27 = get_fst(k26);
+    k28 = get_snd(k26);
+  }
+  bool k29 = 0;
+  Pair k30 = 0;
+  Port k31 = NONE;
+  Port k32 = NONE;
+  // fast anni
+  if (get_tag(k28) == CON && node_load(net, get_val(k28)) != 0) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = node_take(net, get_val(k28));
+    k31 = get_fst(k30);
+    k32 = get_snd(k30);
+  }
+  bool k33 = 0;
+  Pair k34 = 0;
+  Port k35 = NONE;
+  Port k36 = NONE;
+  // fast anni
+  if (get_tag(k32) == CON && node_load(net, get_val(k32)) != 0) {
+    tm->itrs += 1;
+    k33 = 1;
+    k34 = node_take(net, get_val(k32));
+    k35 = get_fst(k34);
+    k36 = get_snd(k34);
+  }
+  if (k36 != NONE) {
+    link(net, tm, new_port(VAR,va), k36);
+  } else {
+    k36 = new_port(VAR,va);
+  }
+  bool k37 = 0;
+  Port k38 = NONE;
+  Port k39 = NONE;
+  // fast copy
+  if (get_tag(k35) == NUM) {
+    tm->itrs += 1;
+    k37 = 1;
+    k38 = k35;
+    k39 = k35;
+  }
+  if (k39 != NONE) {
+    link(net, tm, new_port(VAR,v9), k39);
+  } else {
+    k39 = new_port(VAR,v9);
+  }
+  bool k40 = 0;
+  Port k41 = NONE;
+  // fast oper
+  if (get_tag(k38) == NUM && get_tag(new_port(NUM,0x000000a0)) == NUM) {
+    tm->itrs += 1;
+    k40 = 1;
+    k41 = new_port(NUM, operate(get_val(k38), get_val(new_port(NUM,0x000000a0))));
+  }
+  bool k42 = 0;
+  Port k43 = NONE;
+  // fast oper
+  if (get_tag(k41) == NUM && get_tag(new_port(VAR,v7)) == NUM) {
+    tm->itrs += 1;
+    k42 = 1;
+    k43 = new_port(NUM, operate(get_val(k41), get_val(new_port(VAR,v7))));
+  }
+  bool k44 = 0;
+  Port k45 = NONE;
+  // fast oper
+  if (get_tag(k43) == NUM && get_tag(new_port(NUM,0x0000002e)) == NUM) {
+    tm->itrs += 1;
+    k44 = 1;
+    k45 = new_port(NUM, operate(get_val(k43), get_val(new_port(NUM,0x0000002e))));
+  }
+  node_create(net, nf, new_pair(new_port(REF,0x00000008),new_port(REF,0x00000009)));
+  node_create(net, n18, new_pair(new_port(VAR,v9),new_port(VAR,va)));
+  node_create(net, n17, new_pair(new_port(VAR,v8),new_port(CON,n18)));
+  node_create(net, n16, new_pair(new_port(VAR,v6),new_port(CON,n17)));
+  node_create(net, n15, new_pair(new_port(VAR,v5),new_port(CON,n16)));
+  node_create(net, n14, new_pair(new_port(VAR,v4),new_port(CON,n15)));
+  node_create(net, n13, new_pair(new_port(VAR,v3),new_port(CON,n14)));
+  node_create(net, n12, new_pair(new_port(VAR,v2),new_port(CON,n13)));
+  node_create(net, n11, new_pair(new_port(VAR,v1),new_port(CON,n12)));
+  node_create(net, n10, new_pair(new_port(VAR,v0),new_port(CON,n11)));
+  node_create(net, ne, new_pair(new_port(CON,nf),new_port(CON,n10)));
+  if (k45 != NONE) {
+    link(net, tm, new_port(SWI,ne), k45);
+  } else {
+    k45 = new_port(SWI,ne);
+  }
+  if (!k44) {
+    node_create(net, nd, new_pair(new_port(NUM,0x0000002e),k45));
+    if (k43 != NONE) {
+      link(net, tm, new_port(OPR, nd), k43);
+    } else {
+      k43 = new_port(OPR, nd);
+    }
+  }
+  if (!k42) {
+    node_create(net, nc, new_pair(new_port(VAR,v7),k43));
+    if (k41 != NONE) {
+      link(net, tm, new_port(OPR, nc), k41);
+    } else {
+      k41 = new_port(OPR, nc);
+    }
+  }
+  if (!k40) {
+    node_create(net, nb, new_pair(new_port(NUM,0x000000a0),k41));
+    if (k38 != NONE) {
+      link(net, tm, new_port(OPR, nb), k38);
+    } else {
+      k38 = new_port(OPR, nb);
+    }
+  }
+  if (!k37) {
+    node_create(net, na, new_pair(k38,k39));
+    if (k35 != NONE) {
+      link(net, tm, new_port(DUP,na), k35);
+    } else {
+      k35 = new_port(DUP,na);
+    }
+  }
+  if (!k33) {
+    node_create(net, n9, new_pair(k35,k36));
+    if (k32 != NONE) {
+      link(net, tm, new_port(CON,n9), k32);
+    } else {
+      k32 = new_port(CON,n9);
+    }
+  }
+  bool k46 = 0;
+  Port k47 = NONE;
+  Port k48 = NONE;
+  // fast copy
+  if (get_tag(k31) == NUM) {
+    tm->itrs += 1;
+    k46 = 1;
+    k47 = k31;
+    k48 = k31;
+  }
+  if (k48 != NONE) {
+    link(net, tm, new_port(VAR,v8), k48);
+  } else {
+    k48 = new_port(VAR,v8);
+  }
+  if (k47 != NONE) {
+    link(net, tm, new_port(VAR,v7), k47);
+  } else {
+    k47 = new_port(VAR,v7);
+  }
+  if (!k46) {
+    node_create(net, n8, new_pair(k47,k48));
+    if (k31 != NONE) {
+      link(net, tm, new_port(DUP,n8), k31);
+    } else {
+      k31 = new_port(DUP,n8);
+    }
+  }
+  if (!k29) {
+    node_create(net, n7, new_pair(k31,k32));
+    if (k28 != NONE) {
+      link(net, tm, new_port(CON,n7), k28);
+    } else {
+      k28 = new_port(CON,n7);
+    }
+  }
+  if (k27 != NONE) {
+    link(net, tm, new_port(VAR,v6), k27);
+  } else {
+    k27 = new_port(VAR,v6);
+  }
+  if (!k25) {
+    node_create(net, n6, new_pair(k27,k28));
+    if (k24 != NONE) {
+      link(net, tm, new_port(CON,n6), k24);
+    } else {
+      k24 = new_port(CON,n6);
+    }
+  }
+  if (k23 != NONE) {
+    link(net, tm, new_port(VAR,v5), k23);
+  } else {
+    k23 = new_port(VAR,v5);
+  }
+  if (!k21) {
+    node_create(net, n5, new_pair(k23,k24));
+    if (k20 != NONE) {
+      link(net, tm, new_port(CON,n5), k20);
+    } else {
+      k20 = new_port(CON,n5);
+    }
+  }
+  if (k19 != NONE) {
+    link(net, tm, new_port(VAR,v4), k19);
+  } else {
+    k19 = new_port(VAR,v4);
+  }
+  if (!k17) {
+    node_create(net, n4, new_pair(k19,k20));
+    if (k16 != NONE) {
+      link(net, tm, new_port(CON,n4), k16);
+    } else {
+      k16 = new_port(CON,n4);
+    }
+  }
+  if (k15 != NONE) {
+    link(net, tm, new_port(VAR,v3), k15);
+  } else {
+    k15 = new_port(VAR,v3);
+  }
+  if (!k13) {
+    node_create(net, n3, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,n3), k12);
+    } else {
+      k12 = new_port(CON,n3);
+    }
+  }
+  if (k11 != NONE) {
+    link(net, tm, new_port(VAR,v2), k11);
+  } else {
+    k11 = new_port(VAR,v2);
+  }
+  if (!k9) {
+    node_create(net, n2, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n2), k8);
+    } else {
+      k8 = new_port(CON,n2);
+    }
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(VAR,v1), k7);
+  } else {
+    k7 = new_port(VAR,v1);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  return true;
+}
+
+bool interact_call_jshark_grid__bend0__C0(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val v9 = vars_alloc_1(net, tm, &vl);
+  Val va = vars_alloc_1(net, tm, &vl);
+  Val vb = vars_alloc_1(net, tm, &vl);
+  Val vc = vars_alloc_1(net, tm, &vl);
+  Val vd = vars_alloc_1(net, tm, &vl);
+  Val ve = vars_alloc_1(net, tm, &vl);
+  Val vf = vars_alloc_1(net, tm, &vl);
+  Val v10 = vars_alloc_1(net, tm, &vl);
+  Val v11 = vars_alloc_1(net, tm, &vl);
+  Val v12 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  Val n13 = node_alloc_1(net, tm, &nl);
+  Val n14 = node_alloc_1(net, tm, &nl);
+  Val n15 = node_alloc_1(net, tm, &nl);
+  Val n16 = node_alloc_1(net, tm, &nl);
+  Val n17 = node_alloc_1(net, tm, &nl);
+  Val n18 = node_alloc_1(net, tm, &nl);
+  Val n19 = node_alloc_1(net, tm, &nl);
+  Val n1a = node_alloc_1(net, tm, &nl);
+  Val n1b = node_alloc_1(net, tm, &nl);
+  Val n1c = node_alloc_1(net, tm, &nl);
+  Val n1d = node_alloc_1(net, tm, &nl);
+  Val n1e = node_alloc_1(net, tm, &nl);
+  Val n1f = node_alloc_1(net, tm, &nl);
+  Val n20 = node_alloc_1(net, tm, &nl);
+  Val n21 = node_alloc_1(net, tm, &nl);
+  Val n22 = node_alloc_1(net, tm, &nl);
+  Val n23 = node_alloc_1(net, tm, &nl);
+  Val n24 = node_alloc_1(net, tm, &nl);
+  Val n25 = node_alloc_1(net, tm, &nl);
+  Val n26 = node_alloc_1(net, tm, &nl);
+  Val n27 = node_alloc_1(net, tm, &nl);
+  Val n28 = node_alloc_1(net, tm, &nl);
+  Val n29 = node_alloc_1(net, tm, &nl);
+  Val n2a = node_alloc_1(net, tm, &nl);
+  Val n2b = node_alloc_1(net, tm, &nl);
+  Val n2c = node_alloc_1(net, tm, &nl);
+  Val n2d = node_alloc_1(net, tm, &nl);
+  Val n2e = node_alloc_1(net, tm, &nl);
+  Val n2f = node_alloc_1(net, tm, &nl);
+  Val n30 = node_alloc_1(net, tm, &nl);
+  Val n31 = node_alloc_1(net, tm, &nl);
+  Val n32 = node_alloc_1(net, tm, &nl);
+  Val n33 = node_alloc_1(net, tm, &nl);
+  Val n34 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !v9 || !va || !vb || !vc || !vd || !ve || !vf || !v10 || !v11 || !v12 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12 || !n13 || !n14 || !n15 || !n16 || !n17 || !n18 || !n19 || !n1a || !n1b || !n1c || !n1d || !n1e || !n1f || !n20 || !n21 || !n22 || !n23 || !n24 || !n25 || !n26 || !n27 || !n28 || !n29 || !n2a || !n2b || !n2c || !n2d || !n2e || !n2f || !n30 || !n31 || !n32 || !n33 || !n34) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  vars_create(net, v9, NONE);
+  vars_create(net, va, NONE);
+  vars_create(net, vb, NONE);
+  vars_create(net, vc, NONE);
+  vars_create(net, vd, NONE);
+  vars_create(net, ve, NONE);
+  vars_create(net, vf, NONE);
+  vars_create(net, v10, NONE);
+  vars_create(net, v11, NONE);
+  vars_create(net, v12, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  bool k13 = 0;
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
+  }
+  bool k17 = 0;
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
+    tm->itrs += 1;
+    k17 = 1;
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
+  }
+  bool k21 = 0;
+  Pair k22 = 0;
+  Port k23 = NONE;
+  Port k24 = NONE;
+  // fast anni
+  if (get_tag(k20) == CON && node_load(net, get_val(k20)) != 0) {
+    tm->itrs += 1;
+    k21 = 1;
+    k22 = node_take(net, get_val(k20));
+    k23 = get_fst(k22);
+    k24 = get_snd(k22);
+  }
+  bool k25 = 0;
+  Pair k26 = 0;
+  Port k27 = NONE;
+  Port k28 = NONE;
+  // fast anni
+  if (get_tag(k24) == CON && node_load(net, get_val(k24)) != 0) {
+    tm->itrs += 1;
+    k25 = 1;
+    k26 = node_take(net, get_val(k24));
+    k27 = get_fst(k26);
+    k28 = get_snd(k26);
+  }
+  bool k29 = 0;
+  Pair k30 = 0;
+  Port k31 = NONE;
+  Port k32 = NONE;
+  // fast anni
+  if (get_tag(k28) == CON && node_load(net, get_val(k28)) != 0) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = node_take(net, get_val(k28));
+    k31 = get_fst(k30);
+    k32 = get_snd(k30);
+  }
+  bool k33 = 0;
+  Pair k34 = 0;
+  Port k35 = NONE;
+  Port k36 = NONE;
+  // fast anni
+  if (get_tag(k32) == CON && node_load(net, get_val(k32)) != 0) {
+    tm->itrs += 1;
+    k33 = 1;
+    k34 = node_take(net, get_val(k32));
+    k35 = get_fst(k34);
+    k36 = get_snd(k34);
+  }
+  if (k36 != NONE) {
+    link(net, tm, new_port(VAR,v12), k36);
+  } else {
+    k36 = new_port(VAR,v12);
+  }
+  // fast void
+  if (get_tag(k35) == ERA || get_tag(k35) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k35 != NONE) {
+      link(net, tm, new_port(ERA,0x00000000), k35);
+    } else {
+      k35 = new_port(ERA,0x00000000);
+    }
+  }
+  if (!k33) {
+    node_create(net, n1c, new_pair(k35,k36));
+    if (k32 != NONE) {
+      link(net, tm, new_port(CON,n1c), k32);
+    } else {
+      k32 = new_port(CON,n1c);
+    }
+  }
+  bool k37 = 0;
+  Port k38 = NONE;
+  Port k39 = NONE;
+  // fast copy
+  if (get_tag(k31) == NUM) {
+    tm->itrs += 1;
+    k37 = 1;
+    k38 = k31;
+    k39 = k31;
+  }
+  bool k40 = 0;
+  Port k41 = NONE;
+  // fast oper
+  if (get_tag(k39) == NUM && get_tag(new_port(NUM,0x00000100)) == NUM) {
+    tm->itrs += 1;
+    k40 = 1;
+    k41 = new_port(NUM, operate(get_val(k39), get_val(new_port(NUM,0x00000100))));
+  }
+  bool k42 = 0;
+  Port k43 = NONE;
+  // fast oper
+  if (get_tag(k41) == NUM && get_tag(new_port(VAR,v3)) == NUM) {
+    tm->itrs += 1;
+    k42 = 1;
+    k43 = new_port(NUM, operate(get_val(k41), get_val(new_port(VAR,v3))));
+  }
+  if (k43 != NONE) {
+    link(net, tm, new_port(VAR,v11), k43);
+  } else {
+    k43 = new_port(VAR,v11);
+  }
+  if (!k42) {
+    node_create(net, n1b, new_pair(new_port(VAR,v3),k43));
+    if (k41 != NONE) {
+      link(net, tm, new_port(OPR, n1b), k41);
+    } else {
+      k41 = new_port(OPR, n1b);
+    }
+  }
+  if (!k40) {
+    node_create(net, n1a, new_pair(new_port(NUM,0x00000100),k41));
+    if (k39 != NONE) {
+      link(net, tm, new_port(OPR, n1a), k39);
+    } else {
+      k39 = new_port(OPR, n1a);
+    }
+  }
+  bool k44 = 0;
+  Port k45 = NONE;
+  // fast oper
+  if (get_tag(k38) == NUM && get_tag(new_port(NUM,0x00000140)) == NUM) {
+    tm->itrs += 1;
+    k44 = 1;
+    k45 = new_port(NUM, operate(get_val(k38), get_val(new_port(NUM,0x00000140))));
+  }
+  bool k46 = 0;
+  Port k47 = NONE;
+  // fast oper
+  if (get_tag(k45) == NUM && get_tag(new_port(VAR,v2)) == NUM) {
+    tm->itrs += 1;
+    k46 = 1;
+    k47 = new_port(NUM, operate(get_val(k45), get_val(new_port(VAR,v2))));
+  }
+  if (k47 != NONE) {
+    link(net, tm, new_port(VAR,v10), k47);
+  } else {
+    k47 = new_port(VAR,v10);
+  }
+  if (!k46) {
+    node_create(net, n19, new_pair(new_port(VAR,v2),k47));
+    if (k45 != NONE) {
+      link(net, tm, new_port(OPR, n19), k45);
+    } else {
+      k45 = new_port(OPR, n19);
+    }
+  }
+  if (!k44) {
+    node_create(net, n18, new_pair(new_port(NUM,0x00000140),k45));
+    if (k38 != NONE) {
+      link(net, tm, new_port(OPR, n18), k38);
+    } else {
+      k38 = new_port(OPR, n18);
+    }
+  }
+  if (!k37) {
+    node_create(net, n17, new_pair(k38,k39));
+    if (k31 != NONE) {
+      link(net, tm, new_port(DUP,n17), k31);
+    } else {
+      k31 = new_port(DUP,n17);
+    }
+  }
+  if (!k29) {
+    node_create(net, n16, new_pair(k31,k32));
+    if (k28 != NONE) {
+      link(net, tm, new_port(CON,n16), k28);
+    } else {
+      k28 = new_port(CON,n16);
+    }
+  }
+  bool k48 = 0;
+  Port k49 = NONE;
+  Port k50 = NONE;
+  // fast copy
+  if (get_tag(k27) == NUM) {
+    tm->itrs += 1;
+    k48 = 1;
+    k49 = k27;
+    k50 = k27;
+  }
+  if (k50 != NONE) {
+    link(net, tm, new_port(VAR,vf), k50);
+  } else {
+    k50 = new_port(VAR,vf);
+  }
+  bool k51 = 0;
+  Port k52 = NONE;
+  // fast oper
+  if (get_tag(k49) == NUM && get_tag(new_port(NUM,0x08000009)) == NUM) {
+    tm->itrs += 1;
+    k51 = 1;
+    k52 = new_port(NUM, operate(get_val(k49), get_val(new_port(NUM,0x08000009))));
+  }
+  if (k52 != NONE) {
+    link(net, tm, new_port(VAR,ve), k52);
+  } else {
+    k52 = new_port(VAR,ve);
+  }
+  if (!k51) {
+    node_create(net, n15, new_pair(new_port(NUM,0x08000009),k52));
+    if (k49 != NONE) {
+      link(net, tm, new_port(OPR, n15), k49);
+    } else {
+      k49 = new_port(OPR, n15);
+    }
+  }
+  if (!k48) {
+    node_create(net, n14, new_pair(k49,k50));
+    if (k27 != NONE) {
+      link(net, tm, new_port(DUP,n14), k27);
+    } else {
+      k27 = new_port(DUP,n14);
+    }
+  }
+  if (!k25) {
+    node_create(net, n13, new_pair(k27,k28));
+    if (k24 != NONE) {
+      link(net, tm, new_port(CON,n13), k24);
+    } else {
+      k24 = new_port(CON,n13);
+    }
+  }
+  bool k53 = 0;
+  Port k54 = NONE;
+  // fast oper
+  if (get_tag(k23) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k53 = 1;
+    k54 = new_port(NUM, operate(get_val(k23), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k55 = 0;
+  Port k56 = NONE;
+  // fast oper
+  if (get_tag(k54) == NUM && get_tag(new_port(VAR,vc)) == NUM) {
+    tm->itrs += 1;
+    k55 = 1;
+    k56 = new_port(NUM, operate(get_val(k54), get_val(new_port(VAR,vc))));
+  }
+  if (k56 != NONE) {
+    link(net, tm, new_port(VAR,vd), k56);
+  } else {
+    k56 = new_port(VAR,vd);
+  }
+  if (!k55) {
+    node_create(net, n12, new_pair(new_port(VAR,vc),k56));
+    if (k54 != NONE) {
+      link(net, tm, new_port(OPR, n12), k54);
+    } else {
+      k54 = new_port(OPR, n12);
+    }
+  }
+  if (!k53) {
+    node_create(net, n11, new_pair(new_port(NUM,0x00000080),k54));
+    if (k23 != NONE) {
+      link(net, tm, new_port(OPR, n11), k23);
+    } else {
+      k23 = new_port(OPR, n11);
+    }
+  }
+  if (!k21) {
+    node_create(net, n10, new_pair(k23,k24));
+    if (k20 != NONE) {
+      link(net, tm, new_port(CON,n10), k20);
+    } else {
+      k20 = new_port(CON,n10);
+    }
+  }
+  bool k57 = 0;
+  Port k58 = NONE;
+  Port k59 = NONE;
+  // fast copy
+  if (get_tag(k19) == NUM) {
+    tm->itrs += 1;
+    k57 = 1;
+    k58 = k19;
+    k59 = k19;
+  }
+  if (k59 != NONE) {
+    link(net, tm, new_port(VAR,vb), k59);
+  } else {
+    k59 = new_port(VAR,vb);
+  }
+  if (k58 != NONE) {
+    link(net, tm, new_port(VAR,va), k58);
+  } else {
+    k58 = new_port(VAR,va);
+  }
+  if (!k57) {
+    node_create(net, nf, new_pair(k58,k59));
+    if (k19 != NONE) {
+      link(net, tm, new_port(DUP,nf), k19);
+    } else {
+      k19 = new_port(DUP,nf);
     }
   }
   if (!k17) {
-    node_create(net, n4, new_pair(new_port(NUM,0x00000080),k18));
+    node_create(net, ne, new_pair(k19,k20));
     if (k16 != NONE) {
-      link(net, tm, new_port(OPR, n4), k16);
+      link(net, tm, new_port(CON,ne), k16);
     } else {
-      k16 = new_port(OPR, n4);
+      k16 = new_port(CON,ne);
     }
   }
-  if (!k15) {
-    node_create(net, n3, new_pair(new_port(VAR,v0),k16));
-    if (k14 != NONE) {
-      link(net, tm, new_port(OPR, n3), k14);
+  bool k60 = 0;
+  Port k61 = NONE;
+  Port k62 = NONE;
+  // fast copy
+  if (get_tag(k15) == NUM) {
+    tm->itrs += 1;
+    k60 = 1;
+    k61 = k15;
+    k62 = k15;
+  }
+  if (k62 != NONE) {
+    link(net, tm, new_port(VAR,v9), k62);
+  } else {
+    k62 = new_port(VAR,v9);
+  }
+  bool k63 = 0;
+  Port k64 = NONE;
+  // fast oper
+  if (get_tag(k61) == NUM && get_tag(new_port(NUM,0x08000009)) == NUM) {
+    tm->itrs += 1;
+    k63 = 1;
+    k64 = new_port(NUM, operate(get_val(k61), get_val(new_port(NUM,0x08000009))));
+  }
+  if (k64 != NONE) {
+    link(net, tm, new_port(VAR,v8), k64);
+  } else {
+    k64 = new_port(VAR,v8);
+  }
+  if (!k63) {
+    node_create(net, nd, new_pair(new_port(NUM,0x08000009),k64));
+    if (k61 != NONE) {
+      link(net, tm, new_port(OPR, nd), k61);
     } else {
-      k14 = new_port(OPR, n3);
+      k61 = new_port(OPR, nd);
+    }
+  }
+  if (!k60) {
+    node_create(net, nc, new_pair(k61,k62));
+    if (k15 != NONE) {
+      link(net, tm, new_port(DUP,nc), k15);
+    } else {
+      k15 = new_port(DUP,nc);
     }
   }
   if (!k13) {
-    node_create(net, n2, new_pair(new_port(NUM,0x000000e0),k14));
-    if (k6 != NONE) {
-      link(net, tm, new_port(OPR, n2), k6);
+    node_create(net, nb, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,nb), k12);
     } else {
-      k6 = new_port(OPR, n2);
+      k12 = new_port(CON,nb);
+    }
+  }
+  bool k65 = 0;
+  Port k66 = NONE;
+  Port k67 = NONE;
+  // fast copy
+  if (get_tag(k11) == NUM) {
+    tm->itrs += 1;
+    k65 = 1;
+    k66 = k11;
+    k67 = k11;
+  }
+  bool k68 = 0;
+  Port k69 = NONE;
+  Port k70 = NONE;
+  // fast copy
+  if (get_tag(k67) == NUM) {
+    tm->itrs += 1;
+    k68 = 1;
+    k69 = k67;
+    k70 = k67;
+  }
+  bool k71 = 0;
+  Port k72 = NONE;
+  Port k73 = NONE;
+  // fast copy
+  if (get_tag(k70) == NUM) {
+    tm->itrs += 1;
+    k71 = 1;
+    k72 = k70;
+    k73 = k70;
+  }
+  bool k74 = 0;
+  Port k75 = NONE;
+  // fast oper
+  if (get_tag(k73) == NUM && get_tag(new_port(NUM,0x08000009)) == NUM) {
+    tm->itrs += 1;
+    k74 = 1;
+    k75 = new_port(NUM, operate(get_val(k73), get_val(new_port(NUM,0x08000009))));
+  }
+  if (k75 != NONE) {
+    link(net, tm, new_port(VAR,v7), k75);
+  } else {
+    k75 = new_port(VAR,v7);
+  }
+  if (!k74) {
+    node_create(net, na, new_pair(new_port(NUM,0x08000009),k75));
+    if (k73 != NONE) {
+      link(net, tm, new_port(OPR, na), k73);
+    } else {
+      k73 = new_port(OPR, na);
+    }
+  }
+  if (k72 != NONE) {
+    link(net, tm, new_port(VAR,v6), k72);
+  } else {
+    k72 = new_port(VAR,v6);
+  }
+  if (!k71) {
+    node_create(net, n9, new_pair(k72,k73));
+    if (k70 != NONE) {
+      link(net, tm, new_port(DUP,n9), k70);
+    } else {
+      k70 = new_port(DUP,n9);
+    }
+  }
+  bool k76 = 0;
+  Port k77 = NONE;
+  // fast oper
+  if (get_tag(k69) == NUM && get_tag(new_port(NUM,0x08000009)) == NUM) {
+    tm->itrs += 1;
+    k76 = 1;
+    k77 = new_port(NUM, operate(get_val(k69), get_val(new_port(NUM,0x08000009))));
+  }
+  if (k77 != NONE) {
+    link(net, tm, new_port(VAR,v5), k77);
+  } else {
+    k77 = new_port(VAR,v5);
+  }
+  if (!k76) {
+    node_create(net, n8, new_pair(new_port(NUM,0x08000009),k77));
+    if (k69 != NONE) {
+      link(net, tm, new_port(OPR, n8), k69);
+    } else {
+      k69 = new_port(OPR, n8);
+    }
+  }
+  if (!k68) {
+    node_create(net, n7, new_pair(k69,k70));
+    if (k67 != NONE) {
+      link(net, tm, new_port(DUP,n7), k67);
+    } else {
+      k67 = new_port(DUP,n7);
+    }
+  }
+  if (k66 != NONE) {
+    link(net, tm, new_port(VAR,v4), k66);
+  } else {
+    k66 = new_port(VAR,v4);
+  }
+  if (!k65) {
+    node_create(net, n6, new_pair(k66,k67));
+    if (k11 != NONE) {
+      link(net, tm, new_port(DUP,n6), k11);
+    } else {
+      k11 = new_port(DUP,n6);
+    }
+  }
+  if (!k9) {
+    node_create(net, n5, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n5), k8);
+    } else {
+      k8 = new_port(CON,n5);
+    }
+  }
+  bool k78 = 0;
+  Port k79 = NONE;
+  Port k80 = NONE;
+  // fast copy
+  if (get_tag(k7) == NUM) {
+    tm->itrs += 1;
+    k78 = 1;
+    k79 = k7;
+    k80 = k7;
+  }
+  if (k80 != NONE) {
+    link(net, tm, new_port(VAR,v3), k80);
+  } else {
+    k80 = new_port(VAR,v3);
+  }
+  if (k79 != NONE) {
+    link(net, tm, new_port(VAR,v2), k79);
+  } else {
+    k79 = new_port(VAR,v2);
+  }
+  if (!k78) {
+    node_create(net, n4, new_pair(k79,k80));
+    if (k7 != NONE) {
+      link(net, tm, new_port(DUP,n4), k7);
+    } else {
+      k7 = new_port(DUP,n4);
     }
   }
   if (!k5) {
-    node_create(net, n1, new_pair(k6,k7));
+    node_create(net, n3, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n3), k4);
+    } else {
+      k4 = new_port(CON,n3);
+    }
+  }
+  bool k81 = 0;
+  Port k82 = NONE;
+  // fast oper
+  if (get_tag(k3) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k81 = 1;
+    k82 = new_port(NUM, operate(get_val(k3), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k83 = 0;
+  Port k84 = NONE;
+  // fast oper
+  if (get_tag(k82) == NUM && get_tag(new_port(VAR,v0)) == NUM) {
+    tm->itrs += 1;
+    k83 = 1;
+    k84 = new_port(NUM, operate(get_val(k82), get_val(new_port(VAR,v0))));
+  }
+  if (k84 != NONE) {
+    link(net, tm, new_port(VAR,v1), k84);
+  } else {
+    k84 = new_port(VAR,v1);
+  }
+  if (!k83) {
+    node_create(net, n2, new_pair(new_port(VAR,v0),k84));
+    if (k82 != NONE) {
+      link(net, tm, new_port(OPR, n2), k82);
+    } else {
+      k82 = new_port(OPR, n2);
+    }
+  }
+  if (!k81) {
+    node_create(net, n1, new_pair(new_port(NUM,0x00000080),k82));
+    if (k3 != NONE) {
+      link(net, tm, new_port(OPR, n1), k3);
+    } else {
+      k3 = new_port(OPR, n1);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n1e, new_pair(new_port(VAR,vd),new_port(VAR,v12)));
+  node_create(net, n1d, new_pair(new_port(VAR,v1),new_port(CON,n1e)));
+  link(net, tm, new_port(REF,0x00000011), new_port(CON,n1d));
+  node_create(net, n29, new_pair(new_port(VAR,v9),new_port(VAR,v0)));
+  node_create(net, n28, new_pair(new_port(NUM,0x00000100),new_port(OPR,n29)));
+  node_create(net, n27, new_pair(new_port(VAR,va),new_port(OPR,n28)));
+  node_create(net, n26, new_pair(new_port(NUM,0x000000e0),new_port(OPR,n27)));
+  node_create(net, n25, new_pair(new_port(VAR,v8),new_port(OPR,n26)));
+  node_create(net, n24, new_pair(new_port(NUM,0x000000a0),new_port(OPR,n25)));
+  node_create(net, n23, new_pair(new_port(VAR,v5),new_port(OPR,n24)));
+  node_create(net, n22, new_pair(new_port(NUM,0x00000080),new_port(OPR,n23)));
+  node_create(net, n21, new_pair(new_port(VAR,v4),new_port(OPR,n22)));
+  node_create(net, n20, new_pair(new_port(NUM,0x000000e0),new_port(OPR,n21)));
+  node_create(net, n1f, new_pair(new_port(VAR,v10),new_port(OPR,n20)));
+  link(net, tm, new_port(REF,0x00000014), new_port(CON,n1f));
+  node_create(net, n34, new_pair(new_port(VAR,vf),new_port(VAR,vc)));
+  node_create(net, n33, new_pair(new_port(NUM,0x00000100),new_port(OPR,n34)));
+  node_create(net, n32, new_pair(new_port(VAR,vb),new_port(OPR,n33)));
+  node_create(net, n31, new_pair(new_port(NUM,0x000000e0),new_port(OPR,n32)));
+  node_create(net, n30, new_pair(new_port(VAR,ve),new_port(OPR,n31)));
+  node_create(net, n2f, new_pair(new_port(NUM,0x000000a0),new_port(OPR,n30)));
+  node_create(net, n2e, new_pair(new_port(VAR,v7),new_port(OPR,n2f)));
+  node_create(net, n2d, new_pair(new_port(NUM,0x00000080),new_port(OPR,n2e)));
+  node_create(net, n2c, new_pair(new_port(VAR,v6),new_port(OPR,n2d)));
+  node_create(net, n2b, new_pair(new_port(NUM,0x000000e0),new_port(OPR,n2c)));
+  node_create(net, n2a, new_pair(new_port(VAR,v11),new_port(OPR,n2b)));
+  link(net, tm, new_port(REF,0x00000014), new_port(CON,n2a));
+  return true;
+}
+
+bool interact_call_jshark_grid__bend0__C1(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val v9 = vars_alloc_1(net, tm, &vl);
+  Val va = vars_alloc_1(net, tm, &vl);
+  Val vb = vars_alloc_1(net, tm, &vl);
+  Val vc = vars_alloc_1(net, tm, &vl);
+  Val vd = vars_alloc_1(net, tm, &vl);
+  Val ve = vars_alloc_1(net, tm, &vl);
+  Val vf = vars_alloc_1(net, tm, &vl);
+  Val v10 = vars_alloc_1(net, tm, &vl);
+  Val v11 = vars_alloc_1(net, tm, &vl);
+  Val v12 = vars_alloc_1(net, tm, &vl);
+  Val v13 = vars_alloc_1(net, tm, &vl);
+  Val v14 = vars_alloc_1(net, tm, &vl);
+  Val v15 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  Val n13 = node_alloc_1(net, tm, &nl);
+  Val n14 = node_alloc_1(net, tm, &nl);
+  Val n15 = node_alloc_1(net, tm, &nl);
+  Val n16 = node_alloc_1(net, tm, &nl);
+  Val n17 = node_alloc_1(net, tm, &nl);
+  Val n18 = node_alloc_1(net, tm, &nl);
+  Val n19 = node_alloc_1(net, tm, &nl);
+  Val n1a = node_alloc_1(net, tm, &nl);
+  Val n1b = node_alloc_1(net, tm, &nl);
+  Val n1c = node_alloc_1(net, tm, &nl);
+  Val n1d = node_alloc_1(net, tm, &nl);
+  Val n1e = node_alloc_1(net, tm, &nl);
+  Val n1f = node_alloc_1(net, tm, &nl);
+  Val n20 = node_alloc_1(net, tm, &nl);
+  Val n21 = node_alloc_1(net, tm, &nl);
+  Val n22 = node_alloc_1(net, tm, &nl);
+  Val n23 = node_alloc_1(net, tm, &nl);
+  Val n24 = node_alloc_1(net, tm, &nl);
+  Val n25 = node_alloc_1(net, tm, &nl);
+  Val n26 = node_alloc_1(net, tm, &nl);
+  Val n27 = node_alloc_1(net, tm, &nl);
+  Val n28 = node_alloc_1(net, tm, &nl);
+  Val n29 = node_alloc_1(net, tm, &nl);
+  Val n2a = node_alloc_1(net, tm, &nl);
+  Val n2b = node_alloc_1(net, tm, &nl);
+  Val n2c = node_alloc_1(net, tm, &nl);
+  Val n2d = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !v9 || !va || !vb || !vc || !vd || !ve || !vf || !v10 || !v11 || !v12 || !v13 || !v14 || !v15 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12 || !n13 || !n14 || !n15 || !n16 || !n17 || !n18 || !n19 || !n1a || !n1b || !n1c || !n1d || !n1e || !n1f || !n20 || !n21 || !n22 || !n23 || !n24 || !n25 || !n26 || !n27 || !n28 || !n29 || !n2a || !n2b || !n2c || !n2d) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  vars_create(net, v9, NONE);
+  vars_create(net, va, NONE);
+  vars_create(net, vb, NONE);
+  vars_create(net, vc, NONE);
+  vars_create(net, vd, NONE);
+  vars_create(net, ve, NONE);
+  vars_create(net, vf, NONE);
+  vars_create(net, v10, NONE);
+  vars_create(net, v11, NONE);
+  vars_create(net, v12, NONE);
+  vars_create(net, v13, NONE);
+  vars_create(net, v14, NONE);
+  vars_create(net, v15, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  bool k13 = 0;
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
+  }
+  bool k17 = 0;
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
+    tm->itrs += 1;
+    k17 = 1;
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
+  }
+  bool k21 = 0;
+  Pair k22 = 0;
+  Port k23 = NONE;
+  Port k24 = NONE;
+  // fast anni
+  if (get_tag(k20) == CON && node_load(net, get_val(k20)) != 0) {
+    tm->itrs += 1;
+    k21 = 1;
+    k22 = node_take(net, get_val(k20));
+    k23 = get_fst(k22);
+    k24 = get_snd(k22);
+  }
+  bool k25 = 0;
+  Pair k26 = 0;
+  Port k27 = NONE;
+  Port k28 = NONE;
+  // fast anni
+  if (get_tag(k24) == CON && node_load(net, get_val(k24)) != 0) {
+    tm->itrs += 1;
+    k25 = 1;
+    k26 = node_take(net, get_val(k24));
+    k27 = get_fst(k26);
+    k28 = get_snd(k26);
+  }
+  bool k29 = 0;
+  Pair k30 = 0;
+  Port k31 = NONE;
+  Port k32 = NONE;
+  // fast anni
+  if (get_tag(k28) == CON && node_load(net, get_val(k28)) != 0) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = node_take(net, get_val(k28));
+    k31 = get_fst(k30);
+    k32 = get_snd(k30);
+  }
+  bool k33 = 0;
+  Pair k34 = 0;
+  Port k35 = NONE;
+  Port k36 = NONE;
+  // fast anni
+  if (get_tag(k32) == CON && node_load(net, get_val(k32)) != 0) {
+    tm->itrs += 1;
+    k33 = 1;
+    k34 = node_take(net, get_val(k32));
+    k35 = get_fst(k34);
+    k36 = get_snd(k34);
+  }
+  bool k37 = 0;
+  Pair k38 = 0;
+  Port k39 = NONE;
+  Port k40 = NONE;
+  // fast anni
+  if (get_tag(k36) == CON && node_load(net, get_val(k36)) != 0) {
+    tm->itrs += 1;
+    k37 = 1;
+    k38 = node_take(net, get_val(k36));
+    k39 = get_fst(k38);
+    k40 = get_snd(k38);
+  }
+  bool k41 = 0;
+  Pair k42 = 0;
+  Port k43 = NONE;
+  Port k44 = NONE;
+  // fast anni
+  if (get_tag(k40) == CON && node_load(net, get_val(k40)) != 0) {
+    tm->itrs += 1;
+    k41 = 1;
+    k42 = node_take(net, get_val(k40));
+    k43 = get_fst(k42);
+    k44 = get_snd(k42);
+  }
+  if (k44 != NONE) {
+    link(net, tm, new_port(VAR,v15), k44);
+  } else {
+    k44 = new_port(VAR,v15);
+  }
+  if (k43 != NONE) {
+    link(net, tm, new_port(VAR,v14), k43);
+  } else {
+    k43 = new_port(VAR,v14);
+  }
+  if (!k41) {
+    node_create(net, n1b, new_pair(k43,k44));
+    if (k40 != NONE) {
+      link(net, tm, new_port(CON,n1b), k40);
+    } else {
+      k40 = new_port(CON,n1b);
+    }
+  }
+  bool k45 = 0;
+  Port k46 = NONE;
+  Port k47 = NONE;
+  // fast copy
+  if (get_tag(k39) == NUM) {
+    tm->itrs += 1;
+    k45 = 1;
+    k46 = k39;
+    k47 = k39;
+  }
+  bool k48 = 0;
+  Port k49 = NONE;
+  Port k50 = NONE;
+  // fast copy
+  if (get_tag(k47) == NUM) {
+    tm->itrs += 1;
+    k48 = 1;
+    k49 = k47;
+    k50 = k47;
+  }
+  if (k50 != NONE) {
+    link(net, tm, new_port(VAR,v13), k50);
+  } else {
+    k50 = new_port(VAR,v13);
+  }
+  if (k49 != NONE) {
+    link(net, tm, new_port(VAR,v11), k49);
+  } else {
+    k49 = new_port(VAR,v11);
+  }
+  if (!k48) {
+    node_create(net, n1a, new_pair(k49,k50));
+    if (k47 != NONE) {
+      link(net, tm, new_port(DUP,n1a), k47);
+    } else {
+      k47 = new_port(DUP,n1a);
+    }
+  }
+  if (k46 != NONE) {
+    link(net, tm, new_port(VAR,vf), k46);
+  } else {
+    k46 = new_port(VAR,vf);
+  }
+  if (!k45) {
+    node_create(net, n19, new_pair(k46,k47));
+    if (k39 != NONE) {
+      link(net, tm, new_port(DUP,n19), k39);
+    } else {
+      k39 = new_port(DUP,n19);
+    }
+  }
+  if (!k37) {
+    node_create(net, n18, new_pair(k39,k40));
+    if (k36 != NONE) {
+      link(net, tm, new_port(CON,n18), k36);
+    } else {
+      k36 = new_port(CON,n18);
+    }
+  }
+  bool k51 = 0;
+  Port k52 = NONE;
+  Port k53 = NONE;
+  // fast copy
+  if (get_tag(k35) == NUM) {
+    tm->itrs += 1;
+    k51 = 1;
+    k52 = k35;
+    k53 = k35;
+  }
+  bool k54 = 0;
+  Port k55 = NONE;
+  Port k56 = NONE;
+  // fast copy
+  if (get_tag(k53) == NUM) {
+    tm->itrs += 1;
+    k54 = 1;
+    k55 = k53;
+    k56 = k53;
+  }
+  bool k57 = 0;
+  Port k58 = NONE;
+  // fast oper
+  if (get_tag(k56) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k57 = 1;
+    k58 = new_port(NUM, operate(get_val(k56), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k59 = 0;
+  Port k60 = NONE;
+  // fast oper
+  if (get_tag(k58) == NUM && get_tag(new_port(VAR,v11)) == NUM) {
+    tm->itrs += 1;
+    k59 = 1;
+    k60 = new_port(NUM, operate(get_val(k58), get_val(new_port(VAR,v11))));
+  }
+  bool k61 = 0;
+  Port k62 = NONE;
+  // fast oper
+  if (get_tag(k60) == NUM && get_tag(new_port(NUM,0x00000049)) == NUM) {
+    tm->itrs += 1;
+    k61 = 1;
+    k62 = new_port(NUM, operate(get_val(k60), get_val(new_port(NUM,0x00000049))));
+  }
+  if (k62 != NONE) {
+    link(net, tm, new_port(VAR,v12), k62);
+  } else {
+    k62 = new_port(VAR,v12);
+  }
+  if (!k61) {
+    node_create(net, n17, new_pair(new_port(NUM,0x00000049),k62));
+    if (k60 != NONE) {
+      link(net, tm, new_port(OPR, n17), k60);
+    } else {
+      k60 = new_port(OPR, n17);
+    }
+  }
+  if (!k59) {
+    node_create(net, n16, new_pair(new_port(VAR,v11),k60));
+    if (k58 != NONE) {
+      link(net, tm, new_port(OPR, n16), k58);
+    } else {
+      k58 = new_port(OPR, n16);
+    }
+  }
+  if (!k57) {
+    node_create(net, n15, new_pair(new_port(NUM,0x00000080),k58));
+    if (k56 != NONE) {
+      link(net, tm, new_port(OPR, n15), k56);
+    } else {
+      k56 = new_port(OPR, n15);
+    }
+  }
+  bool k63 = 0;
+  Port k64 = NONE;
+  // fast oper
+  if (get_tag(k55) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k63 = 1;
+    k64 = new_port(NUM, operate(get_val(k55), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k65 = 0;
+  Port k66 = NONE;
+  // fast oper
+  if (get_tag(k64) == NUM && get_tag(new_port(VAR,vf)) == NUM) {
+    tm->itrs += 1;
+    k65 = 1;
+    k66 = new_port(NUM, operate(get_val(k64), get_val(new_port(VAR,vf))));
+  }
+  bool k67 = 0;
+  Port k68 = NONE;
+  // fast oper
+  if (get_tag(k66) == NUM && get_tag(new_port(NUM,0x00000049)) == NUM) {
+    tm->itrs += 1;
+    k67 = 1;
+    k68 = new_port(NUM, operate(get_val(k66), get_val(new_port(NUM,0x00000049))));
+  }
+  if (k68 != NONE) {
+    link(net, tm, new_port(VAR,v10), k68);
+  } else {
+    k68 = new_port(VAR,v10);
+  }
+  if (!k67) {
+    node_create(net, n14, new_pair(new_port(NUM,0x00000049),k68));
+    if (k66 != NONE) {
+      link(net, tm, new_port(OPR, n14), k66);
+    } else {
+      k66 = new_port(OPR, n14);
+    }
+  }
+  if (!k65) {
+    node_create(net, n13, new_pair(new_port(VAR,vf),k66));
+    if (k64 != NONE) {
+      link(net, tm, new_port(OPR, n13), k64);
+    } else {
+      k64 = new_port(OPR, n13);
+    }
+  }
+  if (!k63) {
+    node_create(net, n12, new_pair(new_port(NUM,0x00000080),k64));
+    if (k55 != NONE) {
+      link(net, tm, new_port(OPR, n12), k55);
+    } else {
+      k55 = new_port(OPR, n12);
+    }
+  }
+  if (!k54) {
+    node_create(net, n11, new_pair(k55,k56));
+    if (k53 != NONE) {
+      link(net, tm, new_port(DUP,n11), k53);
+    } else {
+      k53 = new_port(DUP,n11);
+    }
+  }
+  if (k52 != NONE) {
+    link(net, tm, new_port(VAR,ve), k52);
+  } else {
+    k52 = new_port(VAR,ve);
+  }
+  if (!k51) {
+    node_create(net, n10, new_pair(k52,k53));
+    if (k35 != NONE) {
+      link(net, tm, new_port(DUP,n10), k35);
+    } else {
+      k35 = new_port(DUP,n10);
+    }
+  }
+  if (!k33) {
+    node_create(net, nf, new_pair(k35,k36));
+    if (k32 != NONE) {
+      link(net, tm, new_port(CON,nf), k32);
+    } else {
+      k32 = new_port(CON,nf);
+    }
+  }
+  bool k69 = 0;
+  Port k70 = NONE;
+  Port k71 = NONE;
+  // fast copy
+  if (get_tag(k31) == NUM) {
+    tm->itrs += 1;
+    k69 = 1;
+    k70 = k31;
+    k71 = k31;
+  }
+  if (k71 != NONE) {
+    link(net, tm, new_port(VAR,vd), k71);
+  } else {
+    k71 = new_port(VAR,vd);
+  }
+  if (k70 != NONE) {
+    link(net, tm, new_port(VAR,vc), k70);
+  } else {
+    k70 = new_port(VAR,vc);
+  }
+  if (!k69) {
+    node_create(net, ne, new_pair(k70,k71));
+    if (k31 != NONE) {
+      link(net, tm, new_port(DUP,ne), k31);
+    } else {
+      k31 = new_port(DUP,ne);
+    }
+  }
+  if (!k29) {
+    node_create(net, nd, new_pair(k31,k32));
+    if (k28 != NONE) {
+      link(net, tm, new_port(CON,nd), k28);
+    } else {
+      k28 = new_port(CON,nd);
+    }
+  }
+  bool k72 = 0;
+  Port k73 = NONE;
+  Port k74 = NONE;
+  // fast copy
+  if (get_tag(k27) == NUM) {
+    tm->itrs += 1;
+    k72 = 1;
+    k73 = k27;
+    k74 = k27;
+  }
+  if (k74 != NONE) {
+    link(net, tm, new_port(VAR,vb), k74);
+  } else {
+    k74 = new_port(VAR,vb);
+  }
+  if (k73 != NONE) {
+    link(net, tm, new_port(VAR,va), k73);
+  } else {
+    k73 = new_port(VAR,va);
+  }
+  if (!k72) {
+    node_create(net, nc, new_pair(k73,k74));
+    if (k27 != NONE) {
+      link(net, tm, new_port(DUP,nc), k27);
+    } else {
+      k27 = new_port(DUP,nc);
+    }
+  }
+  if (!k25) {
+    node_create(net, nb, new_pair(k27,k28));
+    if (k24 != NONE) {
+      link(net, tm, new_port(CON,nb), k24);
+    } else {
+      k24 = new_port(CON,nb);
+    }
+  }
+  bool k75 = 0;
+  Port k76 = NONE;
+  Port k77 = NONE;
+  // fast copy
+  if (get_tag(k23) == NUM) {
+    tm->itrs += 1;
+    k75 = 1;
+    k76 = k23;
+    k77 = k23;
+  }
+  if (k77 != NONE) {
+    link(net, tm, new_port(VAR,v9), k77);
+  } else {
+    k77 = new_port(VAR,v9);
+  }
+  if (k76 != NONE) {
+    link(net, tm, new_port(VAR,v8), k76);
+  } else {
+    k76 = new_port(VAR,v8);
+  }
+  if (!k75) {
+    node_create(net, na, new_pair(k76,k77));
+    if (k23 != NONE) {
+      link(net, tm, new_port(DUP,na), k23);
+    } else {
+      k23 = new_port(DUP,na);
+    }
+  }
+  if (!k21) {
+    node_create(net, n9, new_pair(k23,k24));
+    if (k20 != NONE) {
+      link(net, tm, new_port(CON,n9), k20);
+    } else {
+      k20 = new_port(CON,n9);
+    }
+  }
+  bool k78 = 0;
+  Port k79 = NONE;
+  Port k80 = NONE;
+  // fast copy
+  if (get_tag(k19) == NUM) {
+    tm->itrs += 1;
+    k78 = 1;
+    k79 = k19;
+    k80 = k19;
+  }
+  if (k80 != NONE) {
+    link(net, tm, new_port(VAR,v7), k80);
+  } else {
+    k80 = new_port(VAR,v7);
+  }
+  if (k79 != NONE) {
+    link(net, tm, new_port(VAR,v6), k79);
+  } else {
+    k79 = new_port(VAR,v6);
+  }
+  if (!k78) {
+    node_create(net, n8, new_pair(k79,k80));
+    if (k19 != NONE) {
+      link(net, tm, new_port(DUP,n8), k19);
+    } else {
+      k19 = new_port(DUP,n8);
+    }
+  }
+  if (!k17) {
+    node_create(net, n7, new_pair(k19,k20));
+    if (k16 != NONE) {
+      link(net, tm, new_port(CON,n7), k16);
+    } else {
+      k16 = new_port(CON,n7);
+    }
+  }
+  bool k81 = 0;
+  Port k82 = NONE;
+  Port k83 = NONE;
+  // fast copy
+  if (get_tag(k15) == NUM) {
+    tm->itrs += 1;
+    k81 = 1;
+    k82 = k15;
+    k83 = k15;
+  }
+  if (k83 != NONE) {
+    link(net, tm, new_port(VAR,v5), k83);
+  } else {
+    k83 = new_port(VAR,v5);
+  }
+  if (k82 != NONE) {
+    link(net, tm, new_port(VAR,v4), k82);
+  } else {
+    k82 = new_port(VAR,v4);
+  }
+  if (!k81) {
+    node_create(net, n6, new_pair(k82,k83));
+    if (k15 != NONE) {
+      link(net, tm, new_port(DUP,n6), k15);
+    } else {
+      k15 = new_port(DUP,n6);
+    }
+  }
+  if (!k13) {
+    node_create(net, n5, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,n5), k12);
+    } else {
+      k12 = new_port(CON,n5);
+    }
+  }
+  bool k84 = 0;
+  Port k85 = NONE;
+  Port k86 = NONE;
+  // fast copy
+  if (get_tag(k11) == NUM) {
+    tm->itrs += 1;
+    k84 = 1;
+    k85 = k11;
+    k86 = k11;
+  }
+  if (k86 != NONE) {
+    link(net, tm, new_port(VAR,v3), k86);
+  } else {
+    k86 = new_port(VAR,v3);
+  }
+  if (k85 != NONE) {
+    link(net, tm, new_port(VAR,v2), k85);
+  } else {
+    k85 = new_port(VAR,v2);
+  }
+  if (!k84) {
+    node_create(net, n4, new_pair(k85,k86));
+    if (k11 != NONE) {
+      link(net, tm, new_port(DUP,n4), k11);
+    } else {
+      k11 = new_port(DUP,n4);
+    }
+  }
+  if (!k9) {
+    node_create(net, n3, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n3), k8);
+    } else {
+      k8 = new_port(CON,n3);
+    }
+  }
+  bool k87 = 0;
+  Port k88 = NONE;
+  Port k89 = NONE;
+  // fast copy
+  if (get_tag(k7) == NUM) {
+    tm->itrs += 1;
+    k87 = 1;
+    k88 = k7;
+    k89 = k7;
+  }
+  if (k89 != NONE) {
+    link(net, tm, new_port(VAR,v1), k89);
+  } else {
+    k89 = new_port(VAR,v1);
+  }
+  if (k88 != NONE) {
+    link(net, tm, new_port(VAR,v0), k88);
+  } else {
+    k88 = new_port(VAR,v0);
+  }
+  if (!k87) {
+    node_create(net, n2, new_pair(k88,k89));
+    if (k7 != NONE) {
+      link(net, tm, new_port(DUP,n2), k7);
+    } else {
+      k7 = new_port(DUP,n2);
+    }
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  // fast void
+  if (get_tag(k3) == ERA || get_tag(k3) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k3 != NONE) {
+      link(net, tm, new_port(ERA,0x00000000), k3);
+    } else {
+      k3 = new_port(ERA,0x00000000);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n24, new_pair(new_port(VAR,v10),new_port(VAR,v14)));
+  node_create(net, n23, new_pair(new_port(VAR,ve),new_port(CON,n24)));
+  node_create(net, n22, new_pair(new_port(VAR,vc),new_port(CON,n23)));
+  node_create(net, n21, new_pair(new_port(VAR,va),new_port(CON,n22)));
+  node_create(net, n20, new_pair(new_port(VAR,v8),new_port(CON,n21)));
+  node_create(net, n1f, new_pair(new_port(VAR,v6),new_port(CON,n20)));
+  node_create(net, n1e, new_pair(new_port(VAR,v4),new_port(CON,n1f)));
+  node_create(net, n1d, new_pair(new_port(VAR,v2),new_port(CON,n1e)));
+  node_create(net, n1c, new_pair(new_port(VAR,v0),new_port(CON,n1d)));
+  link(net, tm, new_port(REF,0x10000007), new_port(CON,n1c));
+  node_create(net, n2d, new_pair(new_port(VAR,v13),new_port(VAR,v15)));
+  node_create(net, n2c, new_pair(new_port(VAR,v12),new_port(CON,n2d)));
+  node_create(net, n2b, new_pair(new_port(VAR,vd),new_port(CON,n2c)));
+  node_create(net, n2a, new_pair(new_port(VAR,vb),new_port(CON,n2b)));
+  node_create(net, n29, new_pair(new_port(VAR,v9),new_port(CON,n2a)));
+  node_create(net, n28, new_pair(new_port(VAR,v7),new_port(CON,n29)));
+  node_create(net, n27, new_pair(new_port(VAR,v5),new_port(CON,n28)));
+  node_create(net, n26, new_pair(new_port(VAR,v3),new_port(CON,n27)));
+  node_create(net, n25, new_pair(new_port(VAR,v1),new_port(CON,n26)));
+  link(net, tm, new_port(REF,0x10000007), new_port(CON,n25));
+  return true;
+}
+
+bool interact_call_main__bend0(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  if (k8 != NONE) {
+    link(net, tm, new_port(VAR,v3), k8);
+  } else {
+    k8 = new_port(VAR,v3);
+  }
+  bool k9 = 0;
+  Port k10 = NONE;
+  Port k11 = NONE;
+  // fast copy
+  if (get_tag(k7) == NUM) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = k7;
+    k11 = k7;
+  }
+  if (k11 != NONE) {
+    link(net, tm, new_port(VAR,v2), k11);
+  } else {
+    k11 = new_port(VAR,v2);
+  }
+  bool k12 = 0;
+  Port k13 = NONE;
+  // fast oper
+  if (get_tag(k10) == NUM && get_tag(new_port(NUM,0x000000a0)) == NUM) {
+    tm->itrs += 1;
+    k12 = 1;
+    k13 = new_port(NUM, operate(get_val(k10), get_val(new_port(NUM,0x000000a0))));
+  }
+  bool k14 = 0;
+  Port k15 = NONE;
+  // fast oper
+  if (get_tag(k13) == NUM && get_tag(new_port(VAR,v0)) == NUM) {
+    tm->itrs += 1;
+    k14 = 1;
+    k15 = new_port(NUM, operate(get_val(k13), get_val(new_port(VAR,v0))));
+  }
+  bool k16 = 0;
+  Port k17 = NONE;
+  // fast oper
+  if (get_tag(k15) == NUM && get_tag(new_port(NUM,0x0000002e)) == NUM) {
+    tm->itrs += 1;
+    k16 = 1;
+    k17 = new_port(NUM, operate(get_val(k15), get_val(new_port(NUM,0x0000002e))));
+  }
+  node_create(net, n8, new_pair(new_port(REF,0x0000000b),new_port(REF,0x0000000c)));
+  node_create(net, na, new_pair(new_port(VAR,v2),new_port(VAR,v3)));
+  node_create(net, n9, new_pair(new_port(VAR,v1),new_port(CON,na)));
+  node_create(net, n7, new_pair(new_port(CON,n8),new_port(CON,n9)));
+  if (k17 != NONE) {
+    link(net, tm, new_port(SWI,n7), k17);
+  } else {
+    k17 = new_port(SWI,n7);
+  }
+  if (!k16) {
+    node_create(net, n6, new_pair(new_port(NUM,0x0000002e),k17));
+    if (k15 != NONE) {
+      link(net, tm, new_port(OPR, n6), k15);
+    } else {
+      k15 = new_port(OPR, n6);
+    }
+  }
+  if (!k14) {
+    node_create(net, n5, new_pair(new_port(VAR,v0),k15));
+    if (k13 != NONE) {
+      link(net, tm, new_port(OPR, n5), k13);
+    } else {
+      k13 = new_port(OPR, n5);
+    }
+  }
+  if (!k12) {
+    node_create(net, n4, new_pair(new_port(NUM,0x000000a0),k13));
+    if (k10 != NONE) {
+      link(net, tm, new_port(OPR, n4), k10);
+    } else {
+      k10 = new_port(OPR, n4);
+    }
+  }
+  if (!k9) {
+    node_create(net, n3, new_pair(k10,k11));
+    if (k7 != NONE) {
+      link(net, tm, new_port(DUP,n3), k7);
+    } else {
+      k7 = new_port(DUP,n3);
+    }
+  }
+  if (!k5) {
+    node_create(net, n2, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n2), k4);
+    } else {
+      k4 = new_port(CON,n2);
+    }
+  }
+  bool k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast copy
+  if (get_tag(k3) == NUM) {
+    tm->itrs += 1;
+    k18 = 1;
+    k19 = k3;
+    k20 = k3;
+  }
+  if (k20 != NONE) {
+    link(net, tm, new_port(VAR,v1), k20);
+  } else {
+    k20 = new_port(VAR,v1);
+  }
+  if (k19 != NONE) {
+    link(net, tm, new_port(VAR,v0), k19);
+  } else {
+    k19 = new_port(VAR,v0);
+  }
+  if (!k18) {
+    node_create(net, n1, new_pair(k19,k20));
     if (k3 != NONE) {
       link(net, tm, new_port(DUP,n1), k3);
     } else {
@@ -1087,7 +3705,803 @@ bool interact_call_plasma(Net *net, TM *tm, Port a, Port b) {
   return true;
 }
 
-bool interact_call_ring(Net *net, TM *tm, Port a, Port b) {
+bool interact_call_main__bend0__C0(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  if (k8 != NONE) {
+    link(net, tm, new_port(VAR,v2), k8);
+  } else {
+    k8 = new_port(VAR,v2);
+  }
+  // fast void
+  if (get_tag(k7) == ERA || get_tag(k7) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k7 != NONE) {
+      link(net, tm, new_port(ERA,0x00000000), k7);
+    } else {
+      k7 = new_port(ERA,0x00000000);
+    }
+  }
+  if (!k5) {
+    node_create(net, n4, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n4), k4);
+    } else {
+      k4 = new_port(CON,n4);
+    }
+  }
+  bool k9 = 0;
+  Port k10 = NONE;
+  Port k11 = NONE;
+  // fast copy
+  if (get_tag(k3) == NUM) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = k3;
+    k11 = k3;
+  }
+  bool k12 = 0;
+  Port k13 = NONE;
+  // fast oper
+  if (get_tag(k11) == NUM && get_tag(new_port(NUM,0x00000809)) == NUM) {
+    tm->itrs += 1;
+    k12 = 1;
+    k13 = new_port(NUM, operate(get_val(k11), get_val(new_port(NUM,0x00000809))));
+  }
+  if (k13 != NONE) {
+    link(net, tm, new_port(VAR,v1), k13);
+  } else {
+    k13 = new_port(VAR,v1);
+  }
+  if (!k12) {
+    node_create(net, n3, new_pair(new_port(NUM,0x00000809),k13));
+    if (k11 != NONE) {
+      link(net, tm, new_port(OPR, n3), k11);
+    } else {
+      k11 = new_port(OPR, n3);
+    }
+  }
+  bool k14 = 0;
+  Port k15 = NONE;
+  // fast oper
+  if (get_tag(k10) == NUM && get_tag(new_port(NUM,0x0000080b)) == NUM) {
+    tm->itrs += 1;
+    k14 = 1;
+    k15 = new_port(NUM, operate(get_val(k10), get_val(new_port(NUM,0x0000080b))));
+  }
+  if (k15 != NONE) {
+    link(net, tm, new_port(VAR,v0), k15);
+  } else {
+    k15 = new_port(VAR,v0);
+  }
+  if (!k14) {
+    node_create(net, n2, new_pair(new_port(NUM,0x0000080b),k15));
+    if (k10 != NONE) {
+      link(net, tm, new_port(OPR, n2), k10);
+    } else {
+      k10 = new_port(OPR, n2);
+    }
+  }
+  if (!k9) {
+    node_create(net, n1, new_pair(k10,k11));
+    if (k3 != NONE) {
+      link(net, tm, new_port(DUP,n1), k3);
+    } else {
+      k3 = new_port(DUP,n1);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n5, new_pair(new_port(VAR,v3),new_port(VAR,v2)));
+  link(net, tm, new_port(REF,0x00000001), new_port(CON,n5));
+  node_create(net, n6, new_pair(new_port(VAR,v4),new_port(VAR,v3)));
+  link(net, tm, new_port(REF,0x00000005), new_port(CON,n6));
+  node_create(net, n8, new_pair(new_port(VAR,v6),new_port(VAR,v4)));
+  node_create(net, n7, new_pair(new_port(VAR,v5),new_port(CON,n8)));
+  link(net, tm, new_port(REF,0x00000011), new_port(CON,n7));
+  node_create(net, nb, new_pair(new_port(NUM,0x08000006),new_port(VAR,v5)));
+  node_create(net, na, new_pair(new_port(NUM,0x08400009),new_port(OPR,nb)));
+  node_create(net, n9, new_pair(new_port(VAR,v0),new_port(OPR,na)));
+  link(net, tm, new_port(REF,0x00000014), new_port(CON,n9));
+  node_create(net, ne, new_pair(new_port(NUM,0x07f00006),new_port(VAR,v6)));
+  node_create(net, nd, new_pair(new_port(NUM,0x08400009),new_port(OPR,ne)));
+  node_create(net, nc, new_pair(new_port(VAR,v1),new_port(OPR,nd)));
+  link(net, tm, new_port(REF,0x00000014), new_port(CON,nc));
+  return true;
+}
+
+bool interact_call_main__bend0__C1(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  if (k12 != NONE) {
+    link(net, tm, new_port(VAR,v6), k12);
+  } else {
+    k12 = new_port(VAR,v6);
+  }
+  bool k13 = 0;
+  Port k14 = NONE;
+  Port k15 = NONE;
+  // fast copy
+  if (get_tag(k11) == NUM) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = k11;
+    k15 = k11;
+  }
+  bool k16 = 0;
+  Port k17 = NONE;
+  Port k18 = NONE;
+  // fast copy
+  if (get_tag(k15) == NUM) {
+    tm->itrs += 1;
+    k16 = 1;
+    k17 = k15;
+    k18 = k15;
+  }
+  if (k18 != NONE) {
+    link(net, tm, new_port(VAR,v5), k18);
+  } else {
+    k18 = new_port(VAR,v5);
+  }
+  if (k17 != NONE) {
+    link(net, tm, new_port(VAR,v3), k17);
+  } else {
+    k17 = new_port(VAR,v3);
+  }
+  if (!k16) {
+    node_create(net, nc, new_pair(k17,k18));
+    if (k15 != NONE) {
+      link(net, tm, new_port(DUP,nc), k15);
+    } else {
+      k15 = new_port(DUP,nc);
+    }
+  }
+  if (k14 != NONE) {
+    link(net, tm, new_port(VAR,v1), k14);
+  } else {
+    k14 = new_port(VAR,v1);
+  }
+  if (!k13) {
+    node_create(net, nb, new_pair(k14,k15));
+    if (k11 != NONE) {
+      link(net, tm, new_port(DUP,nb), k11);
+    } else {
+      k11 = new_port(DUP,nb);
+    }
+  }
+  if (!k9) {
+    node_create(net, na, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,na), k8);
+    } else {
+      k8 = new_port(CON,na);
+    }
+  }
+  bool k19 = 0;
+  Port k20 = NONE;
+  Port k21 = NONE;
+  // fast copy
+  if (get_tag(k7) == NUM) {
+    tm->itrs += 1;
+    k19 = 1;
+    k20 = k7;
+    k21 = k7;
+  }
+  bool k22 = 0;
+  Port k23 = NONE;
+  Port k24 = NONE;
+  // fast copy
+  if (get_tag(k21) == NUM) {
+    tm->itrs += 1;
+    k22 = 1;
+    k23 = k21;
+    k24 = k21;
+  }
+  bool k25 = 0;
+  Port k26 = NONE;
+  // fast oper
+  if (get_tag(k24) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k25 = 1;
+    k26 = new_port(NUM, operate(get_val(k24), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k27 = 0;
+  Port k28 = NONE;
+  // fast oper
+  if (get_tag(k26) == NUM && get_tag(new_port(VAR,v3)) == NUM) {
+    tm->itrs += 1;
+    k27 = 1;
+    k28 = new_port(NUM, operate(get_val(k26), get_val(new_port(VAR,v3))));
+  }
+  bool k29 = 0;
+  Port k30 = NONE;
+  // fast oper
+  if (get_tag(k28) == NUM && get_tag(new_port(NUM,0x00000049)) == NUM) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = new_port(NUM, operate(get_val(k28), get_val(new_port(NUM,0x00000049))));
+  }
+  if (k30 != NONE) {
+    link(net, tm, new_port(VAR,v4), k30);
+  } else {
+    k30 = new_port(VAR,v4);
+  }
+  if (!k29) {
+    node_create(net, n9, new_pair(new_port(NUM,0x00000049),k30));
+    if (k28 != NONE) {
+      link(net, tm, new_port(OPR, n9), k28);
+    } else {
+      k28 = new_port(OPR, n9);
+    }
+  }
+  if (!k27) {
+    node_create(net, n8, new_pair(new_port(VAR,v3),k28));
+    if (k26 != NONE) {
+      link(net, tm, new_port(OPR, n8), k26);
+    } else {
+      k26 = new_port(OPR, n8);
+    }
+  }
+  if (!k25) {
+    node_create(net, n7, new_pair(new_port(NUM,0x00000080),k26));
+    if (k24 != NONE) {
+      link(net, tm, new_port(OPR, n7), k24);
+    } else {
+      k24 = new_port(OPR, n7);
+    }
+  }
+  bool k31 = 0;
+  Port k32 = NONE;
+  // fast oper
+  if (get_tag(k23) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k31 = 1;
+    k32 = new_port(NUM, operate(get_val(k23), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k33 = 0;
+  Port k34 = NONE;
+  // fast oper
+  if (get_tag(k32) == NUM && get_tag(new_port(VAR,v1)) == NUM) {
+    tm->itrs += 1;
+    k33 = 1;
+    k34 = new_port(NUM, operate(get_val(k32), get_val(new_port(VAR,v1))));
+  }
+  bool k35 = 0;
+  Port k36 = NONE;
+  // fast oper
+  if (get_tag(k34) == NUM && get_tag(new_port(NUM,0x00000049)) == NUM) {
+    tm->itrs += 1;
+    k35 = 1;
+    k36 = new_port(NUM, operate(get_val(k34), get_val(new_port(NUM,0x00000049))));
+  }
+  if (k36 != NONE) {
+    link(net, tm, new_port(VAR,v2), k36);
+  } else {
+    k36 = new_port(VAR,v2);
+  }
+  if (!k35) {
+    node_create(net, n6, new_pair(new_port(NUM,0x00000049),k36));
+    if (k34 != NONE) {
+      link(net, tm, new_port(OPR, n6), k34);
+    } else {
+      k34 = new_port(OPR, n6);
+    }
+  }
+  if (!k33) {
+    node_create(net, n5, new_pair(new_port(VAR,v1),k34));
+    if (k32 != NONE) {
+      link(net, tm, new_port(OPR, n5), k32);
+    } else {
+      k32 = new_port(OPR, n5);
+    }
+  }
+  if (!k31) {
+    node_create(net, n4, new_pair(new_port(NUM,0x00000080),k32));
+    if (k23 != NONE) {
+      link(net, tm, new_port(OPR, n4), k23);
+    } else {
+      k23 = new_port(OPR, n4);
+    }
+  }
+  if (!k22) {
+    node_create(net, n3, new_pair(k23,k24));
+    if (k21 != NONE) {
+      link(net, tm, new_port(DUP,n3), k21);
+    } else {
+      k21 = new_port(DUP,n3);
+    }
+  }
+  if (k20 != NONE) {
+    link(net, tm, new_port(VAR,v0), k20);
+  } else {
+    k20 = new_port(VAR,v0);
+  }
+  if (!k19) {
+    node_create(net, n2, new_pair(k20,k21));
+    if (k7 != NONE) {
+      link(net, tm, new_port(DUP,n2), k7);
+    } else {
+      k7 = new_port(DUP,n2);
+    }
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  // fast void
+  if (get_tag(k3) == ERA || get_tag(k3) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k3 != NONE) {
+      link(net, tm, new_port(ERA,0x00000000), k3);
+    } else {
+      k3 = new_port(ERA,0x00000000);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, ne, new_pair(new_port(VAR,v8),new_port(VAR,v6)));
+  node_create(net, nd, new_pair(new_port(VAR,v7),new_port(CON,ne)));
+  link(net, tm, new_port(REF,0x00000003), new_port(CON,nd));
+  node_create(net, n10, new_pair(new_port(VAR,v2),new_port(VAR,v7)));
+  node_create(net, nf, new_pair(new_port(VAR,v0),new_port(CON,n10)));
+  link(net, tm, new_port(REF,0x1000000a), new_port(CON,nf));
+  node_create(net, n12, new_pair(new_port(VAR,v5),new_port(VAR,v8)));
+  node_create(net, n11, new_pair(new_port(VAR,v4),new_port(CON,n12)));
+  link(net, tm, new_port(REF,0x1000000a), new_port(CON,n11));
+  return true;
+}
+
+bool interact_call_main__local_0_sum_tree(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  if (0 || !v0) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  if (b != NONE) {
+    link(net, tm, new_port(VAR,v0), b);
+  } else {
+    b = new_port(VAR,v0);
+  }
+  link(net, tm, new_port(REF,0x0000000e), new_port(VAR,v0));
+  return true;
+}
+
+bool interact_call_main__local_0_sum_tree__fold0(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !n0 || !n1) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  if (k4 != NONE) {
+    link(net, tm, new_port(VAR,v0), k4);
+  } else {
+    k4 = new_port(VAR,v0);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k3) == CON && node_load(net, get_val(k3)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k3));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  if (k8 != NONE) {
+    link(net, tm, new_port(VAR,v0), k8);
+  } else {
+    k8 = new_port(VAR,v0);
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(REF,0x00000010), k7);
+  } else {
+    k7 = new_port(REF,0x00000010);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k3 != NONE) {
+      link(net, tm, new_port(CON,n1), k3);
+    } else {
+      k3 = new_port(CON,n1);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  return true;
+}
+
+bool interact_call_main__local_0_sum_tree__fold0__C0(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  if (k8 != NONE) {
+    link(net, tm, new_port(VAR,v2), k8);
+  } else {
+    k8 = new_port(VAR,v2);
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(VAR,v1), k7);
+  } else {
+    k7 = new_port(VAR,v1);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n4, new_pair(new_port(VAR,v3),new_port(VAR,v2)));
+  node_create(net, n3, new_pair(new_port(NUM,0x00000080),new_port(OPR,n4)));
+  node_create(net, n2, new_pair(new_port(VAR,v0),new_port(OPR,n3)));
+  link(net, tm, new_port(REF,0x1000000e), new_port(CON,n2));
+  node_create(net, n5, new_pair(new_port(VAR,v1),new_port(VAR,v3)));
+  link(net, tm, new_port(REF,0x1000000e), new_port(CON,n5));
+  return true;
+}
+
+bool interact_call_main__local_0_sum_tree__fold0__C1(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !n0 || !n1 || !n2 || !n3 || !n4) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k5 = NONE;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  //fast switch
+  if (get_tag(b) == CON) {
+    k2 = node_load(net, get_val(b));
+    k5 = enter(net,get_fst(k2));
+    if (get_tag(k5) == NUM) {
+      tm->itrs += 3;
+      vars_take(net, v1);
+      k1 = 1;
+      if (get_u24(get_val(k5)) == 0) {
+        node_take(net, get_val(b));
+        k3 = get_snd(k2);
+        k4 = new_port(ERA,0);
+      } else {
+        node_store(net, get_val(b), new_pair(new_port(NUM,new_u24(get_u24(get_val(k5))-1)), get_snd(k2)));
+        k3 = new_port(ERA,0);
+        k4 = b;
+      }
+    } else {
+      node_store(net, get_val(b), new_pair(k5,get_snd(k2)));
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(REF,0x0000000f), k3);
+  } else {
+    k3 = new_port(REF,0x0000000f);
+  }
+  bool k6 = 0;
+  Pair k7 = 0;
+  Port k8 = NONE;
+  Port k9 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k6 = 1;
+    k7 = node_take(net, get_val(k4));
+    k8 = get_fst(k7);
+    k9 = get_snd(k7);
+  }
+  bool k10 = 0;
+  Pair k11 = 0;
+  Port k12 = NONE;
+  Port k13 = NONE;
+  // fast anni
+  if (get_tag(k9) == CON && node_load(net, get_val(k9)) != 0) {
+    tm->itrs += 1;
+    k10 = 1;
+    k11 = node_take(net, get_val(k9));
+    k12 = get_fst(k11);
+    k13 = get_snd(k11);
+  }
+  if (k13 != NONE) {
+    link(net, tm, new_port(VAR,v0), k13);
+  } else {
+    k13 = new_port(VAR,v0);
+  }
+  if (k12 != NONE) {
+    link(net, tm, new_port(VAR,v0), k12);
+  } else {
+    k12 = new_port(VAR,v0);
+  }
+  if (!k10) {
+    node_create(net, n4, new_pair(k12,k13));
+    if (k9 != NONE) {
+      link(net, tm, new_port(CON,n4), k9);
+    } else {
+      k9 = new_port(CON,n4);
+    }
+  }
+  // fast void
+  if (get_tag(k8) == ERA || get_tag(k8) == NUM) {
+    tm->itrs += 1;
+  } else {
+    if (k8 != NONE) {
+      link(net, tm, new_port(ERA,0x00000000), k8);
+    } else {
+      k8 = new_port(ERA,0x00000000);
+    }
+  }
+  if (!k6) {
+    node_create(net, n3, new_pair(k8,k9));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n3), k4);
+    } else {
+      k4 = new_port(CON,n3);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(new_port(SWI,n1),new_port(VAR,v1)));
+    node_create(net, n1, new_pair(new_port(CON,n2),new_port(VAR,v1)));
+    node_create(net, n2, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON, n0), b);
+    } else {
+      b = new_port(CON, n0);
+    }
+  }
+  return true;
+}
+
+bool interact_call_mandel(Net *net, TM *tm, Port a, Port b) {
   u32 vl = 0;
   u32 nl = 0;
   Val v0 = vars_alloc_1(net, tm, &vl);
@@ -1100,9 +4514,7 @@ bool interact_call_ring(Net *net, TM *tm, Port a, Port b) {
   Val n4 = node_alloc_1(net, tm, &nl);
   Val n5 = node_alloc_1(net, tm, &nl);
   Val n6 = node_alloc_1(net, tm, &nl);
-  Val n7 = node_alloc_1(net, tm, &nl);
-  Val n8 = node_alloc_1(net, tm, &nl);
-  if (0 || !v0 || !v1 || !v2 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8) {
+  if (0 || !v0 || !v1 || !v2 || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6) {
     return false;
   }
   vars_create(net, v0, NONE);
@@ -1120,156 +4532,1062 @@ bool interact_call_ring(Net *net, TM *tm, Port a, Port b) {
     k3 = get_fst(k2);
     k4 = get_snd(k2);
   }
-  if (k4 != NONE) {
-    link(net, tm, new_port(VAR,v2), k4);
-  } else {
-    k4 = new_port(VAR,v2);
-  }
   bool k5 = 0;
-  Port k6 = NONE;
+  Pair k6 = 0;
   Port k7 = NONE;
-  // fast copy
-  if (get_tag(k3) == NUM) {
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
     tm->itrs += 1;
     k5 = 1;
-    k6 = k3;
-    k7 = k3;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
   }
-  bool k8 = 0;
-  Port k9 = NONE;
-  Port k10 = NONE;
-  // fast copy
-  if (get_tag(k7) == NUM) {
+  if (k8 != NONE) {
+    link(net, tm, new_port(VAR,v2), k8);
+  } else {
+    k8 = new_port(VAR,v2);
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(VAR,v1), k7);
+  } else {
+    k7 = new_port(VAR,v1);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n6, new_pair(new_port(NUM,0x00000003),new_port(VAR,v2)));
+  node_create(net, n5, new_pair(new_port(NUM,0x00000003),new_port(CON,n6)));
+  node_create(net, n4, new_pair(new_port(NUM,0x00000003),new_port(CON,n5)));
+  node_create(net, n3, new_pair(new_port(VAR,v1),new_port(CON,n4)));
+  node_create(net, n2, new_pair(new_port(VAR,v0),new_port(CON,n3)));
+  link(net, tm, new_port(REF,0x00000012), new_port(CON,n2));
+  return true;
+}
+
+bool interact_call_mandel__local_0_rec6(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val v9 = vars_alloc_1(net, tm, &vl);
+  Val va = vars_alloc_1(net, tm, &vl);
+  Val vb = vars_alloc_1(net, tm, &vl);
+  Val vc = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  Val n13 = node_alloc_1(net, tm, &nl);
+  Val n14 = node_alloc_1(net, tm, &nl);
+  Val n15 = node_alloc_1(net, tm, &nl);
+  Val n16 = node_alloc_1(net, tm, &nl);
+  Val n17 = node_alloc_1(net, tm, &nl);
+  Val n18 = node_alloc_1(net, tm, &nl);
+  Val n19 = node_alloc_1(net, tm, &nl);
+  Val n1a = node_alloc_1(net, tm, &nl);
+  Val n1b = node_alloc_1(net, tm, &nl);
+  Val n1c = node_alloc_1(net, tm, &nl);
+  Val n1d = node_alloc_1(net, tm, &nl);
+  Val n1e = node_alloc_1(net, tm, &nl);
+  Val n1f = node_alloc_1(net, tm, &nl);
+  Val n20 = node_alloc_1(net, tm, &nl);
+  Val n21 = node_alloc_1(net, tm, &nl);
+  Val n22 = node_alloc_1(net, tm, &nl);
+  Val n23 = node_alloc_1(net, tm, &nl);
+  Val n24 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !v9 || !va || !vb || !vc || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12 || !n13 || !n14 || !n15 || !n16 || !n17 || !n18 || !n19 || !n1a || !n1b || !n1c || !n1d || !n1e || !n1f || !n20 || !n21 || !n22 || !n23 || !n24) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  vars_create(net, v9, NONE);
+  vars_create(net, va, NONE);
+  vars_create(net, vb, NONE);
+  vars_create(net, vc, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
     tm->itrs += 1;
-    k8 = 1;
-    k9 = k7;
-    k10 = k7;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
   }
-  bool k11 = 0;
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
   Port k12 = NONE;
-  // fast oper
-  if (get_tag(k10) == NUM && get_tag(new_port(NUM,0x00000167)) == NUM) {
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
     tm->itrs += 1;
-    k11 = 1;
-    k12 = new_port(NUM, operate(get_val(k10), get_val(new_port(NUM,0x00000167))));
-  }
-  if (k12 != NONE) {
-    link(net, tm, new_port(VAR,v1), k12);
-  } else {
-    k12 = new_port(VAR,v1);
-  }
-  if (!k11) {
-    node_create(net, n8, new_pair(new_port(NUM,0x00000167),k12));
-    if (k10 != NONE) {
-      link(net, tm, new_port(OPR, n8), k10);
-    } else {
-      k10 = new_port(OPR, n8);
-    }
-  }
-  if (k9 != NONE) {
-    link(net, tm, new_port(VAR,v0), k9);
-  } else {
-    k9 = new_port(VAR,v0);
-  }
-  if (!k8) {
-    node_create(net, n7, new_pair(k9,k10));
-    if (k7 != NONE) {
-      link(net, tm, new_port(DUP,n7), k7);
-    } else {
-      k7 = new_port(DUP,n7);
-    }
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
   }
   bool k13 = 0;
-  Port k14 = NONE;
-  // fast oper
-  if (get_tag(k6) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
     tm->itrs += 1;
     k13 = 1;
-    k14 = new_port(NUM, operate(get_val(k6), get_val(new_port(NUM,0x000000e0))));
-  }
-  bool k15 = 0;
-  Port k16 = NONE;
-  // fast oper
-  if (get_tag(k14) == NUM && get_tag(new_port(VAR,v0)) == NUM) {
-    tm->itrs += 1;
-    k15 = 1;
-    k16 = new_port(NUM, operate(get_val(k14), get_val(new_port(VAR,v0))));
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
   }
   bool k17 = 0;
-  Port k18 = NONE;
-  // fast oper
-  if (get_tag(k16) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
     tm->itrs += 1;
     k17 = 1;
-    k18 = new_port(NUM, operate(get_val(k16), get_val(new_port(NUM,0x00000080))));
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
   }
-  bool k19 = 0;
-  Port k20 = NONE;
-  // fast oper
-  if (get_tag(k18) == NUM && get_tag(new_port(VAR,v1)) == NUM) {
-    tm->itrs += 1;
-    k19 = 1;
-    k20 = new_port(NUM, operate(get_val(k18), get_val(new_port(VAR,v1))));
+  if (k20 != NONE) {
+    link(net, tm, new_port(VAR,va), k20);
+  } else {
+    k20 = new_port(VAR,va);
   }
   bool k21 = 0;
   Port k22 = NONE;
-  // fast oper
-  if (get_tag(k20) == NUM && get_tag(new_port(NUM,0x0000200b)) == NUM) {
+  Port k23 = NONE;
+  // fast copy
+  if (get_tag(k19) == NUM) {
     tm->itrs += 1;
     k21 = 1;
-    k22 = new_port(NUM, operate(get_val(k20), get_val(new_port(NUM,0x0000200b))));
+    k22 = k19;
+    k23 = k19;
   }
-  if (k22 != NONE) {
-    link(net, tm, new_port(VAR,v2), k22);
+  bool k24 = 0;
+  Port k25 = NONE;
+  Port k26 = NONE;
+  // fast copy
+  if (get_tag(k23) == NUM) {
+    tm->itrs += 1;
+    k24 = 1;
+    k25 = k23;
+    k26 = k23;
+  }
+  if (k26 != NONE) {
+    link(net, tm, new_port(VAR,v9), k26);
   } else {
-    k22 = new_port(VAR,v2);
+    k26 = new_port(VAR,v9);
   }
-  if (!k21) {
-    node_create(net, n6, new_pair(new_port(NUM,0x0000200b),k22));
-    if (k20 != NONE) {
-      link(net, tm, new_port(OPR, n6), k20);
+  if (k25 != NONE) {
+    link(net, tm, new_port(VAR,v8), k25);
+  } else {
+    k25 = new_port(VAR,v8);
+  }
+  if (!k24) {
+    node_create(net, n11, new_pair(k25,k26));
+    if (k23 != NONE) {
+      link(net, tm, new_port(DUP,n11), k23);
     } else {
-      k20 = new_port(OPR, n6);
+      k23 = new_port(DUP,n11);
     }
   }
-  if (!k19) {
-    node_create(net, n5, new_pair(new_port(VAR,v1),k20));
-    if (k18 != NONE) {
-      link(net, tm, new_port(OPR, n5), k18);
+  bool k27 = 0;
+  Port k28 = NONE;
+  // fast oper
+  if (get_tag(k22) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+    tm->itrs += 1;
+    k27 = 1;
+    k28 = new_port(NUM, operate(get_val(k22), get_val(new_port(NUM,0x000000e0))));
+  }
+  bool k29 = 0;
+  Port k30 = NONE;
+  // fast oper
+  if (get_tag(k28) == NUM && get_tag(new_port(VAR,v8)) == NUM) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = new_port(NUM, operate(get_val(k28), get_val(new_port(VAR,v8))));
+  }
+  if (k30 != NONE) {
+    link(net, tm, new_port(VAR,v5), k30);
+  } else {
+    k30 = new_port(VAR,v5);
+  }
+  if (!k29) {
+    node_create(net, n10, new_pair(new_port(VAR,v8),k30));
+    if (k28 != NONE) {
+      link(net, tm, new_port(OPR, n10), k28);
     } else {
-      k18 = new_port(OPR, n5);
+      k28 = new_port(OPR, n10);
+    }
+  }
+  if (!k27) {
+    node_create(net, nf, new_pair(new_port(NUM,0x000000e0),k28));
+    if (k22 != NONE) {
+      link(net, tm, new_port(OPR, nf), k22);
+    } else {
+      k22 = new_port(OPR, nf);
+    }
+  }
+  if (!k21) {
+    node_create(net, ne, new_pair(k22,k23));
+    if (k19 != NONE) {
+      link(net, tm, new_port(DUP,ne), k19);
+    } else {
+      k19 = new_port(DUP,ne);
     }
   }
   if (!k17) {
-    node_create(net, n4, new_pair(new_port(NUM,0x00000080),k18));
+    node_create(net, nd, new_pair(k19,k20));
     if (k16 != NONE) {
-      link(net, tm, new_port(OPR, n4), k16);
+      link(net, tm, new_port(CON,nd), k16);
     } else {
-      k16 = new_port(OPR, n4);
+      k16 = new_port(CON,nd);
     }
   }
-  if (!k15) {
-    node_create(net, n3, new_pair(new_port(VAR,v0),k16));
-    if (k14 != NONE) {
-      link(net, tm, new_port(OPR, n3), k14);
+  bool k31 = 0;
+  Port k32 = NONE;
+  Port k33 = NONE;
+  // fast copy
+  if (get_tag(k15) == NUM) {
+    tm->itrs += 1;
+    k31 = 1;
+    k32 = k15;
+    k33 = k15;
+  }
+  bool k34 = 0;
+  Port k35 = NONE;
+  Port k36 = NONE;
+  // fast copy
+  if (get_tag(k33) == NUM) {
+    tm->itrs += 1;
+    k34 = 1;
+    k35 = k33;
+    k36 = k33;
+  }
+  if (k36 != NONE) {
+    link(net, tm, new_port(VAR,v7), k36);
+  } else {
+    k36 = new_port(VAR,v7);
+  }
+  if (k35 != NONE) {
+    link(net, tm, new_port(VAR,v4), k35);
+  } else {
+    k35 = new_port(VAR,v4);
+  }
+  if (!k34) {
+    node_create(net, nc, new_pair(k35,k36));
+    if (k33 != NONE) {
+      link(net, tm, new_port(DUP,nc), k33);
     } else {
-      k14 = new_port(OPR, n3);
+      k33 = new_port(DUP,nc);
+    }
+  }
+  bool k37 = 0;
+  Port k38 = NONE;
+  // fast oper
+  if (get_tag(k32) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+    tm->itrs += 1;
+    k37 = 1;
+    k38 = new_port(NUM, operate(get_val(k32), get_val(new_port(NUM,0x000000e0))));
+  }
+  bool k39 = 0;
+  Port k40 = NONE;
+  // fast oper
+  if (get_tag(k38) == NUM && get_tag(new_port(VAR,v4)) == NUM) {
+    tm->itrs += 1;
+    k39 = 1;
+    k40 = new_port(NUM, operate(get_val(k38), get_val(new_port(VAR,v4))));
+  }
+  bool k41 = 0;
+  Port k42 = NONE;
+  // fast oper
+  if (get_tag(k40) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k41 = 1;
+    k42 = new_port(NUM, operate(get_val(k40), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k43 = 0;
+  Port k44 = NONE;
+  // fast oper
+  if (get_tag(k42) == NUM && get_tag(new_port(VAR,v5)) == NUM) {
+    tm->itrs += 1;
+    k43 = 1;
+    k44 = new_port(NUM, operate(get_val(k42), get_val(new_port(VAR,v5))));
+  }
+  bool k45 = 0;
+  Port k46 = NONE;
+  // fast oper
+  if (get_tag(k44) == NUM && get_tag(new_port(NUM,0x0810000f)) == NUM) {
+    tm->itrs += 1;
+    k45 = 1;
+    k46 = new_port(NUM, operate(get_val(k44), get_val(new_port(NUM,0x0810000f))));
+  }
+  if (k46 != NONE) {
+    link(net, tm, new_port(VAR,v6), k46);
+  } else {
+    k46 = new_port(VAR,v6);
+  }
+  if (!k45) {
+    node_create(net, nb, new_pair(new_port(NUM,0x0810000f),k46));
+    if (k44 != NONE) {
+      link(net, tm, new_port(OPR, nb), k44);
+    } else {
+      k44 = new_port(OPR, nb);
+    }
+  }
+  if (!k43) {
+    node_create(net, na, new_pair(new_port(VAR,v5),k44));
+    if (k42 != NONE) {
+      link(net, tm, new_port(OPR, na), k42);
+    } else {
+      k42 = new_port(OPR, na);
+    }
+  }
+  if (!k41) {
+    node_create(net, n9, new_pair(new_port(NUM,0x00000080),k42));
+    if (k40 != NONE) {
+      link(net, tm, new_port(OPR, n9), k40);
+    } else {
+      k40 = new_port(OPR, n9);
+    }
+  }
+  if (!k39) {
+    node_create(net, n8, new_pair(new_port(VAR,v4),k40));
+    if (k38 != NONE) {
+      link(net, tm, new_port(OPR, n8), k38);
+    } else {
+      k38 = new_port(OPR, n8);
+    }
+  }
+  if (!k37) {
+    node_create(net, n7, new_pair(new_port(NUM,0x000000e0),k38));
+    if (k32 != NONE) {
+      link(net, tm, new_port(OPR, n7), k32);
+    } else {
+      k32 = new_port(OPR, n7);
+    }
+  }
+  if (!k31) {
+    node_create(net, n6, new_pair(k32,k33));
+    if (k15 != NONE) {
+      link(net, tm, new_port(DUP,n6), k15);
+    } else {
+      k15 = new_port(DUP,n6);
     }
   }
   if (!k13) {
-    node_create(net, n2, new_pair(new_port(NUM,0x000000e0),k14));
-    if (k6 != NONE) {
-      link(net, tm, new_port(OPR, n2), k6);
+    node_create(net, n5, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,n5), k12);
     } else {
-      k6 = new_port(OPR, n2);
+      k12 = new_port(CON,n5);
+    }
+  }
+  bool k47 = 0;
+  Port k48 = NONE;
+  Port k49 = NONE;
+  // fast copy
+  if (get_tag(k11) == NUM) {
+    tm->itrs += 1;
+    k47 = 1;
+    k48 = k11;
+    k49 = k11;
+  }
+  if (k49 != NONE) {
+    link(net, tm, new_port(VAR,v3), k49);
+  } else {
+    k49 = new_port(VAR,v3);
+  }
+  bool k50 = 0;
+  Port k51 = NONE;
+  // fast oper
+  if (get_tag(k48) == NUM && get_tag(new_port(NUM,0x0870000f)) == NUM) {
+    tm->itrs += 1;
+    k50 = 1;
+    k51 = new_port(NUM, operate(get_val(k48), get_val(new_port(NUM,0x0870000f))));
+  }
+  if (k51 != NONE) {
+    link(net, tm, new_port(VAR,v2), k51);
+  } else {
+    k51 = new_port(VAR,v2);
+  }
+  if (!k50) {
+    node_create(net, n4, new_pair(new_port(NUM,0x0870000f),k51));
+    if (k48 != NONE) {
+      link(net, tm, new_port(OPR, n4), k48);
+    } else {
+      k48 = new_port(OPR, n4);
+    }
+  }
+  if (!k47) {
+    node_create(net, n3, new_pair(k48,k49));
+    if (k11 != NONE) {
+      link(net, tm, new_port(DUP,n3), k11);
+    } else {
+      k11 = new_port(DUP,n3);
+    }
+  }
+  if (!k9) {
+    node_create(net, n2, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n2), k8);
+    } else {
+      k8 = new_port(CON,n2);
+    }
+  }
+  if (k7 != NONE) {
+    link(net, tm, new_port(VAR,v1), k7);
+  } else {
+    k7 = new_port(VAR,v1);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n1), k4);
+    } else {
+      k4 = new_port(CON,n1);
+    }
+  }
+  if (k3 != NONE) {
+    link(net, tm, new_port(VAR,v0), k3);
+  } else {
+    k3 = new_port(VAR,v0);
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n1e, new_pair(new_port(ERA,0x00000000),new_port(VAR,vc)));
+  node_create(net, n1d, new_pair(new_port(ERA,0x00000000),new_port(CON,n1e)));
+  node_create(net, n1c, new_pair(new_port(VAR,vc),new_port(CON,n1d)));
+  node_create(net, n1b, new_pair(new_port(ERA,0x00000000),new_port(CON,n1c)));
+  node_create(net, n1a, new_pair(new_port(ERA,0x00000000),new_port(CON,n1b)));
+  node_create(net, n19, new_pair(new_port(ERA,0x00000000),new_port(CON,n1a)));
+  node_create(net, n18, new_pair(new_port(REF,0x00000013),new_port(CON,n19)));
+  node_create(net, n23, new_pair(new_port(VAR,v9),new_port(VAR,va)));
+  node_create(net, n22, new_pair(new_port(VAR,v7),new_port(CON,n23)));
+  node_create(net, n21, new_pair(new_port(VAR,v3),new_port(CON,n22)));
+  node_create(net, n20, new_pair(new_port(VAR,v1),new_port(CON,n21)));
+  node_create(net, n1f, new_pair(new_port(VAR,v0),new_port(CON,n20)));
+  node_create(net, n17, new_pair(new_port(CON,n18),new_port(CON,n1f)));
+  node_create(net, n16, new_pair(new_port(NUM,0x0000000d),new_port(SWI,n17)));
+  node_create(net, n15, new_pair(new_port(NUM,0x0000000d),new_port(OPR,n16)));
+  node_create(net, n14, new_pair(new_port(VAR,vb),new_port(OPR,n15)));
+  node_create(net, n13, new_pair(new_port(NUM,0x00000080),new_port(OPR,n14)));
+  node_create(net, n12, new_pair(new_port(VAR,v2),new_port(OPR,n13)));
+  link(net, tm, new_port(OPR,n12), new_port(NUM,0x0000000c));
+  node_create(net, n24, new_pair(new_port(VAR,v6),new_port(VAR,vb)));
+  link(net, tm, new_port(OPR,n24), new_port(NUM,0x0000000c));
+  return true;
+}
+
+bool interact_call_mandel__local_0_rec6__C0(Net *net, TM *tm, Port a, Port b) {
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val v1 = vars_alloc_1(net, tm, &vl);
+  Val v2 = vars_alloc_1(net, tm, &vl);
+  Val v3 = vars_alloc_1(net, tm, &vl);
+  Val v4 = vars_alloc_1(net, tm, &vl);
+  Val v5 = vars_alloc_1(net, tm, &vl);
+  Val v6 = vars_alloc_1(net, tm, &vl);
+  Val v7 = vars_alloc_1(net, tm, &vl);
+  Val v8 = vars_alloc_1(net, tm, &vl);
+  Val v9 = vars_alloc_1(net, tm, &vl);
+  Val va = vars_alloc_1(net, tm, &vl);
+  Val vb = vars_alloc_1(net, tm, &vl);
+  Val vc = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  Val n2 = node_alloc_1(net, tm, &nl);
+  Val n3 = node_alloc_1(net, tm, &nl);
+  Val n4 = node_alloc_1(net, tm, &nl);
+  Val n5 = node_alloc_1(net, tm, &nl);
+  Val n6 = node_alloc_1(net, tm, &nl);
+  Val n7 = node_alloc_1(net, tm, &nl);
+  Val n8 = node_alloc_1(net, tm, &nl);
+  Val n9 = node_alloc_1(net, tm, &nl);
+  Val na = node_alloc_1(net, tm, &nl);
+  Val nb = node_alloc_1(net, tm, &nl);
+  Val nc = node_alloc_1(net, tm, &nl);
+  Val nd = node_alloc_1(net, tm, &nl);
+  Val ne = node_alloc_1(net, tm, &nl);
+  Val nf = node_alloc_1(net, tm, &nl);
+  Val n10 = node_alloc_1(net, tm, &nl);
+  Val n11 = node_alloc_1(net, tm, &nl);
+  Val n12 = node_alloc_1(net, tm, &nl);
+  Val n13 = node_alloc_1(net, tm, &nl);
+  Val n14 = node_alloc_1(net, tm, &nl);
+  Val n15 = node_alloc_1(net, tm, &nl);
+  Val n16 = node_alloc_1(net, tm, &nl);
+  Val n17 = node_alloc_1(net, tm, &nl);
+  Val n18 = node_alloc_1(net, tm, &nl);
+  Val n19 = node_alloc_1(net, tm, &nl);
+  Val n1a = node_alloc_1(net, tm, &nl);
+  Val n1b = node_alloc_1(net, tm, &nl);
+  Val n1c = node_alloc_1(net, tm, &nl);
+  Val n1d = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !v1 || !v2 || !v3 || !v4 || !v5 || !v6 || !v7 || !v8 || !v9 || !va || !vb || !vc || !n0 || !n1 || !n2 || !n3 || !n4 || !n5 || !n6 || !n7 || !n8 || !n9 || !na || !nb || !nc || !nd || !ne || !nf || !n10 || !n11 || !n12 || !n13 || !n14 || !n15 || !n16 || !n17 || !n18 || !n19 || !n1a || !n1b || !n1c || !n1d) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  vars_create(net, v1, NONE);
+  vars_create(net, v2, NONE);
+  vars_create(net, v3, NONE);
+  vars_create(net, v4, NONE);
+  vars_create(net, v5, NONE);
+  vars_create(net, v6, NONE);
+  vars_create(net, v7, NONE);
+  vars_create(net, v8, NONE);
+  vars_create(net, v9, NONE);
+  vars_create(net, va, NONE);
+  vars_create(net, vb, NONE);
+  vars_create(net, vc, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  bool k5 = 0;
+  Pair k6 = 0;
+  Port k7 = NONE;
+  Port k8 = NONE;
+  // fast anni
+  if (get_tag(k4) == CON && node_load(net, get_val(k4)) != 0) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = node_take(net, get_val(k4));
+    k7 = get_fst(k6);
+    k8 = get_snd(k6);
+  }
+  bool k9 = 0;
+  Pair k10 = 0;
+  Port k11 = NONE;
+  Port k12 = NONE;
+  // fast anni
+  if (get_tag(k8) == CON && node_load(net, get_val(k8)) != 0) {
+    tm->itrs += 1;
+    k9 = 1;
+    k10 = node_take(net, get_val(k8));
+    k11 = get_fst(k10);
+    k12 = get_snd(k10);
+  }
+  bool k13 = 0;
+  Pair k14 = 0;
+  Port k15 = NONE;
+  Port k16 = NONE;
+  // fast anni
+  if (get_tag(k12) == CON && node_load(net, get_val(k12)) != 0) {
+    tm->itrs += 1;
+    k13 = 1;
+    k14 = node_take(net, get_val(k12));
+    k15 = get_fst(k14);
+    k16 = get_snd(k14);
+  }
+  bool k17 = 0;
+  Pair k18 = 0;
+  Port k19 = NONE;
+  Port k20 = NONE;
+  // fast anni
+  if (get_tag(k16) == CON && node_load(net, get_val(k16)) != 0) {
+    tm->itrs += 1;
+    k17 = 1;
+    k18 = node_take(net, get_val(k16));
+    k19 = get_fst(k18);
+    k20 = get_snd(k18);
+  }
+  if (k20 != NONE) {
+    link(net, tm, new_port(VAR,vb), k20);
+  } else {
+    k20 = new_port(VAR,vb);
+  }
+  bool k21 = 0;
+  Port k22 = NONE;
+  Port k23 = NONE;
+  // fast copy
+  if (get_tag(k19) == NUM) {
+    tm->itrs += 1;
+    k21 = 1;
+    k22 = k19;
+    k23 = k19;
+  }
+  bool k24 = 0;
+  Port k25 = NONE;
+  Port k26 = NONE;
+  // fast copy
+  if (get_tag(k23) == NUM) {
+    tm->itrs += 1;
+    k24 = 1;
+    k25 = k23;
+    k26 = k23;
+  }
+  if (k26 != NONE) {
+    link(net, tm, new_port(VAR,va), k26);
+  } else {
+    k26 = new_port(VAR,va);
+  }
+  if (k25 != NONE) {
+    link(net, tm, new_port(VAR,v9), k25);
+  } else {
+    k25 = new_port(VAR,v9);
+  }
+  if (!k24) {
+    node_create(net, n13, new_pair(k25,k26));
+    if (k23 != NONE) {
+      link(net, tm, new_port(DUP,n13), k23);
+    } else {
+      k23 = new_port(DUP,n13);
+    }
+  }
+  bool k27 = 0;
+  Port k28 = NONE;
+  // fast oper
+  if (get_tag(k22) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+    tm->itrs += 1;
+    k27 = 1;
+    k28 = new_port(NUM, operate(get_val(k22), get_val(new_port(NUM,0x000000e0))));
+  }
+  bool k29 = 0;
+  Port k30 = NONE;
+  // fast oper
+  if (get_tag(k28) == NUM && get_tag(new_port(VAR,v9)) == NUM) {
+    tm->itrs += 1;
+    k29 = 1;
+    k30 = new_port(NUM, operate(get_val(k28), get_val(new_port(VAR,v9))));
+  }
+  if (k30 != NONE) {
+    link(net, tm, new_port(VAR,v6), k30);
+  } else {
+    k30 = new_port(VAR,v6);
+  }
+  if (!k29) {
+    node_create(net, n12, new_pair(new_port(VAR,v9),k30));
+    if (k28 != NONE) {
+      link(net, tm, new_port(OPR, n12), k28);
+    } else {
+      k28 = new_port(OPR, n12);
+    }
+  }
+  if (!k27) {
+    node_create(net, n11, new_pair(new_port(NUM,0x000000e0),k28));
+    if (k22 != NONE) {
+      link(net, tm, new_port(OPR, n11), k22);
+    } else {
+      k22 = new_port(OPR, n11);
+    }
+  }
+  if (!k21) {
+    node_create(net, n10, new_pair(k22,k23));
+    if (k19 != NONE) {
+      link(net, tm, new_port(DUP,n10), k19);
+    } else {
+      k19 = new_port(DUP,n10);
+    }
+  }
+  if (!k17) {
+    node_create(net, nf, new_pair(k19,k20));
+    if (k16 != NONE) {
+      link(net, tm, new_port(CON,nf), k16);
+    } else {
+      k16 = new_port(CON,nf);
+    }
+  }
+  bool k31 = 0;
+  Port k32 = NONE;
+  Port k33 = NONE;
+  // fast copy
+  if (get_tag(k15) == NUM) {
+    tm->itrs += 1;
+    k31 = 1;
+    k32 = k15;
+    k33 = k15;
+  }
+  bool k34 = 0;
+  Port k35 = NONE;
+  Port k36 = NONE;
+  // fast copy
+  if (get_tag(k33) == NUM) {
+    tm->itrs += 1;
+    k34 = 1;
+    k35 = k33;
+    k36 = k33;
+  }
+  if (k36 != NONE) {
+    link(net, tm, new_port(VAR,v8), k36);
+  } else {
+    k36 = new_port(VAR,v8);
+  }
+  if (k35 != NONE) {
+    link(net, tm, new_port(VAR,v5), k35);
+  } else {
+    k35 = new_port(VAR,v5);
+  }
+  if (!k34) {
+    node_create(net, ne, new_pair(k35,k36));
+    if (k33 != NONE) {
+      link(net, tm, new_port(DUP,ne), k33);
+    } else {
+      k33 = new_port(DUP,ne);
+    }
+  }
+  bool k37 = 0;
+  Port k38 = NONE;
+  // fast oper
+  if (get_tag(k32) == NUM && get_tag(new_port(NUM,0x000000e0)) == NUM) {
+    tm->itrs += 1;
+    k37 = 1;
+    k38 = new_port(NUM, operate(get_val(k32), get_val(new_port(NUM,0x000000e0))));
+  }
+  bool k39 = 0;
+  Port k40 = NONE;
+  // fast oper
+  if (get_tag(k38) == NUM && get_tag(new_port(VAR,v5)) == NUM) {
+    tm->itrs += 1;
+    k39 = 1;
+    k40 = new_port(NUM, operate(get_val(k38), get_val(new_port(VAR,v5))));
+  }
+  bool k41 = 0;
+  Port k42 = NONE;
+  // fast oper
+  if (get_tag(k40) == NUM && get_tag(new_port(NUM,0x000000a0)) == NUM) {
+    tm->itrs += 1;
+    k41 = 1;
+    k42 = new_port(NUM, operate(get_val(k40), get_val(new_port(NUM,0x000000a0))));
+  }
+  bool k43 = 0;
+  Port k44 = NONE;
+  // fast oper
+  if (get_tag(k42) == NUM && get_tag(new_port(VAR,v6)) == NUM) {
+    tm->itrs += 1;
+    k43 = 1;
+    k44 = new_port(NUM, operate(get_val(k42), get_val(new_port(VAR,v6))));
+  }
+  bool k45 = 0;
+  Port k46 = NONE;
+  // fast oper
+  if (get_tag(k44) == NUM && get_tag(new_port(NUM,0x00000080)) == NUM) {
+    tm->itrs += 1;
+    k45 = 1;
+    k46 = new_port(NUM, operate(get_val(k44), get_val(new_port(NUM,0x00000080))));
+  }
+  bool k47 = 0;
+  Port k48 = NONE;
+  // fast oper
+  if (get_tag(k46) == NUM && get_tag(new_port(VAR,v1)) == NUM) {
+    tm->itrs += 1;
+    k47 = 1;
+    k48 = new_port(NUM, operate(get_val(k46), get_val(new_port(VAR,v1))));
+  }
+  if (k48 != NONE) {
+    link(net, tm, new_port(VAR,v7), k48);
+  } else {
+    k48 = new_port(VAR,v7);
+  }
+  if (!k47) {
+    node_create(net, nd, new_pair(new_port(VAR,v1),k48));
+    if (k46 != NONE) {
+      link(net, tm, new_port(OPR, nd), k46);
+    } else {
+      k46 = new_port(OPR, nd);
+    }
+  }
+  if (!k45) {
+    node_create(net, nc, new_pair(new_port(NUM,0x00000080),k46));
+    if (k44 != NONE) {
+      link(net, tm, new_port(OPR, nc), k44);
+    } else {
+      k44 = new_port(OPR, nc);
+    }
+  }
+  if (!k43) {
+    node_create(net, nb, new_pair(new_port(VAR,v6),k44));
+    if (k42 != NONE) {
+      link(net, tm, new_port(OPR, nb), k42);
+    } else {
+      k42 = new_port(OPR, nb);
+    }
+  }
+  if (!k41) {
+    node_create(net, na, new_pair(new_port(NUM,0x000000a0),k42));
+    if (k40 != NONE) {
+      link(net, tm, new_port(OPR, na), k40);
+    } else {
+      k40 = new_port(OPR, na);
+    }
+  }
+  if (!k39) {
+    node_create(net, n9, new_pair(new_port(VAR,v5),k40));
+    if (k38 != NONE) {
+      link(net, tm, new_port(OPR, n9), k38);
+    } else {
+      k38 = new_port(OPR, n9);
+    }
+  }
+  if (!k37) {
+    node_create(net, n8, new_pair(new_port(NUM,0x000000e0),k38));
+    if (k32 != NONE) {
+      link(net, tm, new_port(OPR, n8), k32);
+    } else {
+      k32 = new_port(OPR, n8);
+    }
+  }
+  if (!k31) {
+    node_create(net, n7, new_pair(k32,k33));
+    if (k15 != NONE) {
+      link(net, tm, new_port(DUP,n7), k15);
+    } else {
+      k15 = new_port(DUP,n7);
+    }
+  }
+  if (!k13) {
+    node_create(net, n6, new_pair(k15,k16));
+    if (k12 != NONE) {
+      link(net, tm, new_port(CON,n6), k12);
+    } else {
+      k12 = new_port(CON,n6);
+    }
+  }
+  bool k49 = 0;
+  Port k50 = NONE;
+  // fast oper
+  if (get_tag(k11) == NUM && get_tag(new_port(NUM,0x07f00004)) == NUM) {
+    tm->itrs += 1;
+    k49 = 1;
+    k50 = new_port(NUM, operate(get_val(k11), get_val(new_port(NUM,0x07f00004))));
+  }
+  if (k50 != NONE) {
+    link(net, tm, new_port(VAR,v4), k50);
+  } else {
+    k50 = new_port(VAR,v4);
+  }
+  if (!k49) {
+    node_create(net, n5, new_pair(new_port(NUM,0x07f00004),k50));
+    if (k11 != NONE) {
+      link(net, tm, new_port(OPR, n5), k11);
+    } else {
+      k11 = new_port(OPR, n5);
+    }
+  }
+  if (!k9) {
+    node_create(net, n4, new_pair(k11,k12));
+    if (k8 != NONE) {
+      link(net, tm, new_port(CON,n4), k8);
+    } else {
+      k8 = new_port(CON,n4);
+    }
+  }
+  bool k51 = 0;
+  Port k52 = NONE;
+  Port k53 = NONE;
+  // fast copy
+  if (get_tag(k7) == NUM) {
+    tm->itrs += 1;
+    k51 = 1;
+    k52 = k7;
+    k53 = k7;
+  }
+  if (k53 != NONE) {
+    link(net, tm, new_port(VAR,v3), k53);
+  } else {
+    k53 = new_port(VAR,v3);
+  }
+  if (k52 != NONE) {
+    link(net, tm, new_port(VAR,v2), k52);
+  } else {
+    k52 = new_port(VAR,v2);
+  }
+  if (!k51) {
+    node_create(net, n3, new_pair(k52,k53));
+    if (k7 != NONE) {
+      link(net, tm, new_port(DUP,n3), k7);
+    } else {
+      k7 = new_port(DUP,n3);
     }
   }
   if (!k5) {
-    node_create(net, n1, new_pair(k6,k7));
+    node_create(net, n2, new_pair(k7,k8));
+    if (k4 != NONE) {
+      link(net, tm, new_port(CON,n2), k4);
+    } else {
+      k4 = new_port(CON,n2);
+    }
+  }
+  bool k54 = 0;
+  Port k55 = NONE;
+  Port k56 = NONE;
+  // fast copy
+  if (get_tag(k3) == NUM) {
+    tm->itrs += 1;
+    k54 = 1;
+    k55 = k3;
+    k56 = k3;
+  }
+  if (k56 != NONE) {
+    link(net, tm, new_port(VAR,v1), k56);
+  } else {
+    k56 = new_port(VAR,v1);
+  }
+  if (k55 != NONE) {
+    link(net, tm, new_port(VAR,v0), k55);
+  } else {
+    k55 = new_port(VAR,v0);
+  }
+  if (!k54) {
+    node_create(net, n1, new_pair(k55,k56));
     if (k3 != NONE) {
       link(net, tm, new_port(DUP,n1), k3);
     } else {
       k3 = new_port(DUP,n1);
+    }
+  }
+  if (!k1) {
+    node_create(net, n0, new_pair(k3,k4));
+    if (b != NONE) {
+      link(net, tm, new_port(CON,n0), b);
+    } else {
+      b = new_port(CON,n0);
+    }
+  }
+  node_create(net, n18, new_pair(new_port(VAR,vc),new_port(VAR,vb)));
+  node_create(net, n17, new_pair(new_port(VAR,v7),new_port(CON,n18)));
+  node_create(net, n16, new_pair(new_port(VAR,v4),new_port(CON,n17)));
+  node_create(net, n15, new_pair(new_port(VAR,v2),new_port(CON,n16)));
+  node_create(net, n14, new_pair(new_port(VAR,v0),new_port(CON,n15)));
+  link(net, tm, new_port(REF,0x00000012), new_port(CON,n14));
+  node_create(net, n1d, new_pair(new_port(VAR,v3),new_port(VAR,vc)));
+  node_create(net, n1c, new_pair(new_port(NUM,0x00000080),new_port(OPR,n1d)));
+  node_create(net, n1b, new_pair(new_port(VAR,va),new_port(OPR,n1c)));
+  node_create(net, n1a, new_pair(new_port(NUM,0x000000e0),new_port(OPR,n1b)));
+  node_create(net, n19, new_pair(new_port(VAR,v8),new_port(OPR,n1a)));
+  link(net, tm, new_port(OPR,n19), new_port(NUM,0x08000007));
+  return true;
+}
+
+bool interact_call_u24_to_f24(Net *net, TM *tm, Port a, Port b) {
+  if (get_tag(b) == DUP) {
+    return interact_eras(net, tm, a, b);
+  }
+  u32 vl = 0;
+  u32 nl = 0;
+  Val v0 = vars_alloc_1(net, tm, &vl);
+  Val n0 = node_alloc_1(net, tm, &nl);
+  Val n1 = node_alloc_1(net, tm, &nl);
+  if (0 || !v0 || !n0 || !n1) {
+    return false;
+  }
+  vars_create(net, v0, NONE);
+  bool k1 = 0;
+  Pair k2 = 0;
+  Port k3 = NONE;
+  Port k4 = NONE;
+  // fast anni
+  if (get_tag(b) == CON && node_load(net, get_val(b)) != 0) {
+    tm->itrs += 1;
+    k1 = 1;
+    k2 = node_take(net, get_val(b));
+    k3 = get_fst(k2);
+    k4 = get_snd(k2);
+  }
+  if (k4 != NONE) {
+    link(net, tm, new_port(VAR,v0), k4);
+  } else {
+    k4 = new_port(VAR,v0);
+  }
+  bool k5 = 0;
+  Port k6 = NONE;
+  // fast oper
+  if (get_tag(k3) == NUM && get_tag(new_port(NUM,0x00000060)) == NUM) {
+    tm->itrs += 1;
+    k5 = 1;
+    k6 = new_port(NUM, operate(get_val(k3), get_val(new_port(NUM,0x00000060))));
+  }
+  if (k6 != NONE) {
+    link(net, tm, new_port(VAR,v0), k6);
+  } else {
+    k6 = new_port(VAR,v0);
+  }
+  if (!k5) {
+    node_create(net, n1, new_pair(new_port(NUM,0x00000060),k6));
+    if (k3 != NONE) {
+      link(net, tm, new_port(OPR, n1), k3);
+    } else {
+      k3 = new_port(OPR, n1);
     }
   }
   if (!k1) {
@@ -1287,8 +5605,26 @@ bool interact_call(Net *net, TM *tm, Port a, Port b) {
   u32 fid = get_val(a) & 0xFFFFFFF;
   switch (fid) {
     case 0: return interact_call_main(net, tm, a, b);
-    case 1: return interact_call_plasma(net, tm, a, b);
-    case 2: return interact_call_ring(net, tm, a, b);
+    case 1: return interact_call_ParTree_Leaf(net, tm, a, b);
+    case 2: return interact_call_ParTree_Leaf_tag(net, tm, a, b);
+    case 3: return interact_call_ParTree_Node(net, tm, a, b);
+    case 4: return interact_call_ParTree_Node_tag(net, tm, a, b);
+    case 5: return interact_call_f24_to_u24(net, tm, a, b);
+    case 6: return interact_call_jshark_grid(net, tm, a, b);
+    case 7: return interact_call_jshark_grid__bend0(net, tm, a, b);
+    case 8: return interact_call_jshark_grid__bend0__C0(net, tm, a, b);
+    case 9: return interact_call_jshark_grid__bend0__C1(net, tm, a, b);
+    case 10: return interact_call_main__bend0(net, tm, a, b);
+    case 11: return interact_call_main__bend0__C0(net, tm, a, b);
+    case 12: return interact_call_main__bend0__C1(net, tm, a, b);
+    case 13: return interact_call_main__local_0_sum_tree(net, tm, a, b);
+    case 14: return interact_call_main__local_0_sum_tree__fold0(net, tm, a, b);
+    case 15: return interact_call_main__local_0_sum_tree__fold0__C0(net, tm, a, b);
+    case 16: return interact_call_main__local_0_sum_tree__fold0__C1(net, tm, a, b);
+    case 17: return interact_call_mandel(net, tm, a, b);
+    case 18: return interact_call_mandel__local_0_rec6(net, tm, a, b);
+    case 19: return interact_call_mandel__local_0_rec6__C0(net, tm, a, b);
+    case 20: return interact_call_u24_to_f24(net, tm, a, b);
     default: return false;
   }
 }
@@ -1556,7 +5892,7 @@ void evaluator(Net* net, TM* tm, Book* book) {
   // Performs some interactions
   u32  tick = 0;
   bool busy = tm->tid == 0;
-  while (true) {
+  while (tick < 50000000) {
     tick += 1;
 
     // If we have redexes...
@@ -2155,7 +6491,7 @@ void pretty_print_port(Net* net, Book* book, Port port) {
   // bitonic_sort 2^20
   //static const u8 BOOK_BUF[] = {19, 0, 0, 0, 0, 0, 0, 0, 109, 97, 105, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 89, 0, 0, 0, 4, 0, 0, 0, 11, 18, 0, 0, 12, 0, 0, 0, 65, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 100, 111, 119, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 60, 0, 0, 0, 20, 0, 0, 0, 44, 0, 0, 0, 28, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 52, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 68, 0, 0, 0, 8, 0, 0, 0, 24, 0, 0, 0, 2, 0, 0, 0, 100, 111, 119, 110, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 13, 0, 0, 0, 8, 0, 0, 0, 4, 0, 0, 0, 25, 0, 0, 128, 60, 0, 0, 0, 25, 0, 0, 128, 84, 0, 0, 0, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 28, 0, 0, 0, 36, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 45, 0, 0, 0, 52, 0, 0, 0, 32, 0, 0, 0, 40, 0, 0, 0, 48, 0, 0, 0, 56, 0, 0, 0, 0, 0, 0, 0, 68, 0, 0, 0, 32, 0, 0, 0, 76, 0, 0, 0, 16, 0, 0, 0, 48, 0, 0, 0, 8, 0, 0, 0, 92, 0, 0, 0, 40, 0, 0, 0, 100, 0, 0, 0, 24, 0, 0, 0, 56, 0, 0, 0, 3, 0, 0, 0, 102, 108, 111, 119, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 60, 0, 0, 0, 20, 0, 0, 0, 44, 0, 0, 0, 28, 0, 0, 0, 33, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 52, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 68, 0, 0, 0, 8, 0, 0, 0, 24, 0, 0, 0, 4, 0, 0, 0, 102, 108, 111, 119, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 14, 0, 0, 0, 8, 0, 0, 0, 4, 0, 0, 0, 9, 0, 0, 0, 60, 0, 0, 0, 129, 0, 0, 0, 84, 0, 0, 0, 13, 0, 0, 0, 28, 0, 0, 0, 22, 0, 0, 0, 8, 0, 0, 0, 35, 1, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 44, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 53, 0, 0, 0, 48, 0, 0, 0, 32, 0, 0, 0, 40, 0, 0, 0, 0, 0, 0, 0, 68, 0, 0, 0, 32, 0, 0, 0, 76, 0, 0, 0, 56, 0, 0, 0, 48, 0, 0, 0, 8, 0, 0, 0, 92, 0, 0, 0, 40, 0, 0, 0, 100, 0, 0, 0, 16, 0, 0, 0, 108, 0, 0, 0, 24, 0, 0, 0, 56, 0, 0, 0, 5, 0, 0, 0, 103, 101, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0, 0, 28, 0, 0, 0, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 103, 101, 110, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 12, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 41, 0, 0, 128, 68, 0, 0, 0, 41, 0, 0, 128, 84, 0, 0, 0, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 29, 0, 0, 0, 60, 0, 0, 0, 38, 0, 0, 0, 54, 0, 0, 0, 59, 2, 0, 0, 46, 0, 0, 0, 35, 1, 0, 0, 16, 0, 0, 0, 59, 2, 0, 0, 24, 0, 0, 0, 32, 0, 0, 0, 40, 0, 0, 0, 0, 0, 0, 0, 76, 0, 0, 0, 16, 0, 0, 0, 32, 0, 0, 0, 8, 0, 0, 0, 92, 0, 0, 0, 24, 0, 0, 0, 40, 0, 0, 0, 7, 0, 0, 0, 109, 97, 105, 110, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 41, 0, 0, 0, 4, 0, 0, 0, 11, 18, 0, 0, 12, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 109, 97, 105, 110, 95, 95, 67, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 73, 0, 0, 0, 4, 0, 0, 0, 11, 18, 0, 0, 12, 0, 0, 0, 11, 0, 0, 0, 20, 0, 0, 0, 57, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 115, 111, 114, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 60, 0, 0, 0, 20, 0, 0, 0, 44, 0, 0, 0, 28, 0, 0, 0, 81, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 52, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 68, 0, 0, 0, 8, 0, 0, 0, 24, 0, 0, 0, 10, 0, 0, 0, 115, 111, 114, 116, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 17, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 25, 0, 0, 0, 60, 0, 0, 0, 73, 0, 0, 128, 92, 0, 0, 0, 73, 0, 0, 128, 116, 0, 0, 0, 13, 0, 0, 0, 36, 0, 0, 0, 22, 0, 0, 0, 29, 0, 0, 0, 35, 1, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 16, 0, 0, 0, 44, 0, 0, 0, 52, 0, 0, 0, 24, 0, 0, 0, 32, 0, 0, 0, 40, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0, 68, 0, 0, 0, 40, 0, 0, 0, 76, 0, 0, 0, 84, 0, 0, 0, 48, 0, 0, 0, 56, 0, 0, 0, 64, 0, 0, 0, 8, 0, 0, 0, 100, 0, 0, 0, 11, 0, 0, 0, 108, 0, 0, 0, 24, 0, 0, 0, 56, 0, 0, 0, 16, 0, 0, 0, 124, 0, 0, 0, 11, 1, 0, 0, 132, 0, 0, 0, 32, 0, 0, 0, 64, 0, 0, 0, 11, 0, 0, 0, 115, 117, 109, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0, 0, 28, 0, 0, 0, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 115, 117, 109, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 10, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 89, 0, 0, 128, 36, 0, 0, 0, 89, 0, 0, 128, 68, 0, 0, 0, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 28, 0, 0, 0, 32, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 16, 0, 0, 0, 54, 0, 0, 0, 3, 4, 0, 0, 62, 0, 0, 0, 40, 0, 0, 0, 32, 0, 0, 0, 8, 0, 0, 0, 76, 0, 0, 0, 24, 0, 0, 0, 40, 0, 0, 0, 13, 0, 0, 0, 115, 119, 97, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 44, 0, 0, 0, 20, 0, 0, 0, 28, 0, 0, 0, 113, 0, 0, 0, 121, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 8, 0, 0, 0, 16, 0, 0, 0, 8, 0, 0, 0, 52, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 14, 0, 0, 0, 115, 119, 97, 112, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 115, 119, 97, 112, 95, 95, 67, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 16, 0, 0, 0, 119, 97, 114, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 52, 0, 0, 0, 20, 0, 0, 0, 28, 0, 0, 0, 137, 0, 0, 0, 145, 0, 0, 0, 0, 0, 0, 0, 36, 0, 0, 0, 8, 0, 0, 0, 44, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 60, 0, 0, 0, 8, 0, 0, 0, 68, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 17, 0, 0, 0, 119, 97, 114, 112, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 12, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 105, 0, 0, 0, 76, 0, 0, 0, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 29, 0, 0, 0, 52, 0, 0, 0, 38, 0, 0, 0, 24, 0, 0, 0, 3, 15, 0, 0, 46, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 62, 0, 0, 0, 40, 0, 0, 0, 3, 18, 0, 0, 70, 0, 0, 0, 16, 0, 0, 0, 32, 0, 0, 0, 32, 0, 0, 0, 84, 0, 0, 0, 24, 0, 0, 0, 92, 0, 0, 0, 8, 0, 0, 0, 40, 0, 0, 0, 18, 0, 0, 0, 119, 97, 114, 112, 95, 95, 67, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 21, 0, 0, 0, 12, 0, 0, 0, 4, 0, 0, 0, 129, 0, 0, 128, 92, 0, 0, 0, 129, 0, 0, 128, 132, 0, 0, 0, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 28, 0, 0, 0, 36, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 44, 0, 0, 0, 52, 0, 0, 0, 32, 0, 0, 0, 40, 0, 0, 0, 61, 0, 0, 0, 68, 0, 0, 0, 48, 0, 0, 0, 56, 0, 0, 0, 76, 0, 0, 0, 84, 0, 0, 0, 64, 0, 0, 0, 72, 0, 0, 0, 80, 0, 0, 0, 88, 0, 0, 0, 8, 0, 0, 0, 100, 0, 0, 0, 56, 0, 0, 0, 108, 0, 0, 0, 40, 0, 0, 0, 116, 0, 0, 0, 24, 0, 0, 0, 124, 0, 0, 0, 72, 0, 0, 0, 88, 0, 0, 0, 0, 0, 0, 0, 140, 0, 0, 0, 48, 0, 0, 0, 148, 0, 0, 0, 32, 0, 0, 0, 156, 0, 0, 0, 16, 0, 0, 0, 164, 0, 0, 0, 64, 0, 0, 0, 80, 0, 0, 0};
 
-static const u8 BOOK_BUF[] = {3, 0, 0, 0, 0, 0, 0, 0, 109, 97, 105, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 0, 0, 0, 1, 0, 0, 0, 112, 108, 97, 115, 109, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 13, 0, 0, 0, 16, 0, 0, 0, 22, 0, 0, 0, 61, 0, 0, 0, 3, 7, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 38, 0, 0, 0, 3, 4, 0, 0, 46, 0, 0, 0, 8, 0, 0, 0, 54, 0, 0, 0, 91, 0, 1, 0, 16, 0, 0, 0, 0, 0, 0, 0, 70, 0, 0, 0, 59, 3, 0, 0, 8, 0, 0, 0, 2, 0, 0, 0, 114, 105, 110, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 13, 0, 0, 0, 16, 0, 0, 0, 22, 0, 0, 0, 61, 0, 0, 0, 3, 7, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 38, 0, 0, 0, 3, 4, 0, 0, 46, 0, 0, 0, 8, 0, 0, 0, 54, 0, 0, 0, 91, 0, 1, 0, 16, 0, 0, 0, 0, 0, 0, 0, 70, 0, 0, 0, 59, 11, 0, 0, 8, 0, 0, 0};
+static const u8 BOOK_BUF[] = {21, 0, 0, 0, 0, 0, 0, 0, 109, 97, 105, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 105, 0, 0, 0, 4, 0, 0, 0, 81, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 11, 0, 0, 0, 20, 0, 0, 0, 11, 0, 16, 0, 8, 0, 0, 0, 1, 0, 0, 0, 80, 97, 114, 84, 114, 101, 101, 47, 76, 101, 97, 102, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0, 0, 11, 1, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 2, 0, 0, 0, 80, 97, 114, 84, 114, 101, 101, 47, 76, 101, 97, 102, 47, 116, 97, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 1, 0, 0, 3, 0, 0, 0, 80, 97, 114, 84, 114, 101, 101, 47, 78, 111, 100, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 28, 0, 0, 0, 16, 0, 0, 0, 11, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 44, 0, 0, 0, 8, 0, 0, 0, 16, 0, 0, 0, 4, 0, 0, 0, 80, 97, 114, 84, 114, 101, 101, 47, 78, 111, 100, 101, 47, 116, 97, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 0, 0, 0, 5, 0, 0, 0, 102, 50, 52, 47, 116, 111, 95, 117, 50, 52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 4, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 106, 115, 104, 97, 114, 107, 95, 103, 114, 105, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 22, 0, 0, 0, 12, 0, 0, 0, 4, 0, 0, 0, 57, 0, 0, 0, 92, 0, 0, 0, 41, 0, 0, 0, 164, 0, 0, 0, 41, 0, 0, 0, 172, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 16, 0, 0, 0, 28, 0, 0, 0, 24, 0, 0, 0, 36, 0, 0, 0, 32, 0, 0, 0, 44, 0, 0, 0, 40, 0, 0, 0, 52, 0, 0, 0, 61, 0, 0, 0, 84, 0, 0, 0, 70, 0, 0, 0, 64, 0, 0, 0, 3, 7, 0, 0, 78, 0, 0, 0, 48, 0, 0, 0, 56, 0, 0, 0, 48, 0, 0, 0, 72, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0, 80, 0, 0, 0, 108, 0, 0, 0, 40, 0, 0, 0, 116, 0, 0, 0, 24, 0, 0, 0, 124, 0, 0, 0, 16, 0, 0, 0, 132, 0, 0, 0, 8, 0, 0, 0, 140, 0, 0, 0, 32, 0, 0, 0, 148, 0, 0, 0, 11, 0, 0, 0, 156, 0, 0, 0, 88, 0, 0, 0, 72, 0, 0, 0, 64, 0, 0, 0, 80, 0, 0, 0, 56, 0, 0, 0, 88, 0, 0, 0, 7, 0, 0, 0, 106, 115, 104, 97, 114, 107, 95, 103, 114, 105, 100, 95, 95, 98, 101, 110, 100, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 0, 0, 0, 11, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 16, 0, 0, 0, 28, 0, 0, 0, 24, 0, 0, 0, 36, 0, 0, 0, 32, 0, 0, 0, 44, 0, 0, 0, 40, 0, 0, 0, 52, 0, 0, 0, 48, 0, 0, 0, 60, 0, 0, 0, 69, 0, 0, 0, 76, 0, 0, 0, 56, 0, 0, 0, 64, 0, 0, 0, 85, 0, 0, 0, 80, 0, 0, 0, 94, 0, 0, 0, 72, 0, 0, 0, 3, 5, 0, 0, 102, 0, 0, 0, 56, 0, 0, 0, 110, 0, 0, 0, 115, 1, 0, 0, 119, 0, 0, 0, 124, 0, 0, 0, 132, 0, 0, 0, 65, 0, 0, 0, 73, 0, 0, 0, 0, 0, 0, 0, 140, 0, 0, 0, 8, 0, 0, 0, 148, 0, 0, 0, 16, 0, 0, 0, 156, 0, 0, 0, 24, 0, 0, 0, 164, 0, 0, 0, 32, 0, 0, 0, 172, 0, 0, 0, 40, 0, 0, 0, 180, 0, 0, 0, 48, 0, 0, 0, 188, 0, 0, 0, 64, 0, 0, 0, 196, 0, 0, 0, 72, 0, 0, 0, 80, 0, 0, 0, 8, 0, 0, 0, 106, 115, 104, 97, 114, 107, 95, 103, 114, 105, 100, 95, 95, 98, 101, 110, 100, 48, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 53, 0, 0, 0, 19, 0, 0, 0, 4, 0, 0, 0, 137, 0, 0, 0, 236, 0, 0, 0, 161, 0, 0, 0, 252, 0, 0, 0, 161, 0, 0, 0, 84, 1, 0, 0, 14, 0, 0, 0, 28, 0, 0, 0, 3, 4, 0, 0, 22, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 37, 0, 0, 0, 44, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 53, 0, 0, 0, 92, 0, 0, 0, 32, 0, 0, 0, 61, 0, 0, 0, 70, 0, 0, 0, 77, 0, 0, 0, 75, 0, 0, 64, 40, 0, 0, 0, 48, 0, 0, 0, 86, 0, 0, 0, 75, 0, 0, 64, 56, 0, 0, 0, 101, 0, 0, 0, 116, 0, 0, 0, 110, 0, 0, 0, 72, 0, 0, 0, 75, 0, 0, 64, 64, 0, 0, 0, 125, 0, 0, 0, 132, 0, 0, 0, 80, 0, 0, 0, 88, 0, 0, 0, 142, 0, 0, 0, 156, 0, 0, 0, 3, 4, 0, 0, 150, 0, 0, 0, 96, 0, 0, 0, 104, 0, 0, 0, 165, 0, 0, 0, 180, 0, 0, 0, 174, 0, 0, 0, 120, 0, 0, 0, 75, 0, 0, 64, 112, 0, 0, 0, 189, 0, 0, 0, 228, 0, 0, 0, 198, 0, 0, 0, 214, 0, 0, 0, 3, 10, 0, 0, 206, 0, 0, 0, 16, 0, 0, 0, 128, 0, 0, 0, 3, 8, 0, 0, 222, 0, 0, 0, 24, 0, 0, 0, 136, 0, 0, 0, 2, 0, 0, 0, 144, 0, 0, 0, 8, 0, 0, 0, 244, 0, 0, 0, 104, 0, 0, 0, 144, 0, 0, 0, 128, 0, 0, 0, 6, 1, 0, 0, 3, 7, 0, 0, 14, 1, 0, 0, 32, 0, 0, 0, 22, 1, 0, 0, 3, 4, 0, 0, 30, 1, 0, 0, 40, 0, 0, 0, 38, 1, 0, 0, 3, 5, 0, 0, 46, 1, 0, 0, 64, 0, 0, 0, 54, 1, 0, 0, 3, 7, 0, 0, 62, 1, 0, 0, 80, 0, 0, 0, 70, 1, 0, 0, 3, 8, 0, 0, 78, 1, 0, 0, 72, 0, 0, 0, 0, 0, 0, 0, 136, 0, 0, 0, 94, 1, 0, 0, 3, 7, 0, 0, 102, 1, 0, 0, 48, 0, 0, 0, 110, 1, 0, 0, 3, 4, 0, 0, 118, 1, 0, 0, 56, 0, 0, 0, 126, 1, 0, 0, 3, 5, 0, 0, 134, 1, 0, 0, 112, 0, 0, 0, 142, 1, 0, 0, 3, 7, 0, 0, 150, 1, 0, 0, 88, 0, 0, 0, 158, 1, 0, 0, 3, 8, 0, 0, 166, 1, 0, 0, 120, 0, 0, 0, 96, 0, 0, 0, 9, 0, 0, 0, 106, 115, 104, 97, 114, 107, 95, 103, 114, 105, 100, 95, 95, 98, 101, 110, 100, 48, 95, 95, 67, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 46, 0, 0, 0, 22, 0, 0, 0, 4, 0, 0, 0, 57, 0, 0, 128, 228, 0, 0, 0, 57, 0, 0, 128, 44, 1, 0, 0, 2, 0, 0, 0, 12, 0, 0, 0, 21, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 37, 0, 0, 0, 44, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 53, 0, 0, 0, 60, 0, 0, 0, 32, 0, 0, 0, 40, 0, 0, 0, 69, 0, 0, 0, 76, 0, 0, 0, 48, 0, 0, 0, 56, 0, 0, 0, 85, 0, 0, 0, 92, 0, 0, 0, 64, 0, 0, 0, 72, 0, 0, 0, 101, 0, 0, 0, 108, 0, 0, 0, 80, 0, 0, 0, 88, 0, 0, 0, 117, 0, 0, 0, 124, 0, 0, 0, 96, 0, 0, 0, 104, 0, 0, 0, 133, 0, 0, 0, 196, 0, 0, 0, 112, 0, 0, 0, 141, 0, 0, 0, 150, 0, 0, 0, 174, 0, 0, 0, 3, 4, 0, 0, 158, 0, 0, 0, 120, 0, 0, 0, 166, 0, 0, 0, 75, 2, 0, 0, 128, 0, 0, 0, 3, 4, 0, 0, 182, 0, 0, 0, 136, 0, 0, 0, 190, 0, 0, 0, 75, 2, 0, 0, 144, 0, 0, 0, 205, 0, 0, 0, 220, 0, 0, 0, 120, 0, 0, 0, 213, 0, 0, 0, 136, 0, 0, 0, 152, 0, 0, 0, 160, 0, 0, 0, 168, 0, 0, 0, 0, 0, 0, 0, 236, 0, 0, 0, 16, 0, 0, 0, 244, 0, 0, 0, 32, 0, 0, 0, 252, 0, 0, 0, 48, 0, 0, 0, 4, 1, 0, 0, 64, 0, 0, 0, 12, 1, 0, 0, 80, 0, 0, 0, 20, 1, 0, 0, 96, 0, 0, 0, 28, 1, 0, 0, 112, 0, 0, 0, 36, 1, 0, 0, 128, 0, 0, 0, 160, 0, 0, 0, 8, 0, 0, 0, 52, 1, 0, 0, 24, 0, 0, 0, 60, 1, 0, 0, 40, 0, 0, 0, 68, 1, 0, 0, 56, 0, 0, 0, 76, 1, 0, 0, 72, 0, 0, 0, 84, 1, 0, 0, 88, 0, 0, 0, 92, 1, 0, 0, 104, 0, 0, 0, 100, 1, 0, 0, 144, 0, 0, 0, 108, 1, 0, 0, 152, 0, 0, 0, 168, 0, 0, 0, 10, 0, 0, 0, 109, 97, 105, 110, 95, 95, 98, 101, 110, 100, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 29, 0, 0, 0, 24, 0, 0, 0, 38, 0, 0, 0, 16, 0, 0, 0, 3, 5, 0, 0, 46, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0, 115, 1, 0, 0, 63, 0, 0, 0, 68, 0, 0, 0, 76, 0, 0, 0, 89, 0, 0, 0, 97, 0, 0, 0, 8, 0, 0, 0, 84, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 11, 0, 0, 0, 109, 97, 105, 110, 95, 95, 98, 101, 110, 100, 48, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 15, 0, 0, 0, 7, 0, 0, 0, 4, 0, 0, 0, 9, 0, 0, 0, 44, 0, 0, 0, 41, 0, 0, 0, 52, 0, 0, 0, 137, 0, 0, 0, 60, 0, 0, 0, 161, 0, 0, 0, 76, 0, 0, 0, 161, 0, 0, 0, 100, 0, 0, 0, 13, 0, 0, 0, 36, 0, 0, 0, 22, 0, 0, 0, 30, 0, 0, 0, 91, 64, 0, 0, 0, 0, 0, 0, 75, 64, 0, 0, 8, 0, 0, 0, 2, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 32, 0, 0, 0, 24, 0, 0, 0, 40, 0, 0, 0, 68, 0, 0, 0, 48, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 86, 0, 0, 0, 75, 0, 0, 66, 94, 0, 0, 0, 51, 0, 0, 64, 40, 0, 0, 0, 8, 0, 0, 0, 110, 0, 0, 0, 75, 0, 0, 66, 118, 0, 0, 0, 51, 0, 128, 63, 48, 0, 0, 0, 12, 0, 0, 0, 109, 97, 105, 110, 95, 95, 98, 101, 110, 100, 48, 95, 95, 67, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 19, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 25, 0, 0, 0, 108, 0, 0, 0, 81, 0, 0, 128, 124, 0, 0, 0, 81, 0, 0, 128, 140, 0, 0, 0, 2, 0, 0, 0, 12, 0, 0, 0, 21, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 0, 29, 0, 0, 0, 38, 0, 0, 0, 62, 0, 0, 0, 3, 4, 0, 0, 46, 0, 0, 0, 8, 0, 0, 0, 54, 0, 0, 0, 75, 2, 0, 0, 16, 0, 0, 0, 3, 4, 0, 0, 70, 0, 0, 0, 24, 0, 0, 0, 78, 0, 0, 0, 75, 2, 0, 0, 32, 0, 0, 0, 93, 0, 0, 0, 48, 0, 0, 0, 8, 0, 0, 0, 101, 0, 0, 0, 24, 0, 0, 0, 40, 0, 0, 0, 56, 0, 0, 0, 116, 0, 0, 0, 64, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0, 132, 0, 0, 0, 16, 0, 0, 0, 56, 0, 0, 0, 32, 0, 0, 0, 148, 0, 0, 0, 40, 0, 0, 0, 64, 0, 0, 0, 13, 0, 0, 0, 109, 97, 105, 110, 95, 95, 108, 111, 99, 97, 108, 95, 48, 95, 115, 117, 109, 95, 116, 114, 101, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 113, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 109, 97, 105, 110, 95, 95, 108, 111, 99, 97, 108, 95, 48, 95, 115, 117, 109, 95, 116, 114, 101, 101, 95, 95, 102, 111, 108, 100, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 4, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 129, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 109, 97, 105, 110, 95, 95, 108, 111, 99, 97, 108, 95, 48, 95, 115, 117, 109, 95, 116, 114, 101, 101, 95, 95, 102, 111, 108, 100, 48, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 113, 0, 0, 128, 20, 0, 0, 0, 113, 0, 0, 128, 44, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 30, 0, 0, 0, 3, 4, 0, 0, 38, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 8, 0, 0, 0, 24, 0, 0, 0, 16, 0, 0, 0, 109, 97, 105, 110, 95, 95, 108, 111, 99, 97, 108, 95, 48, 95, 115, 117, 109, 95, 116, 114, 101, 101, 95, 95, 102, 111, 108, 100, 48, 95, 95, 67, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 15, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0, 0, 121, 0, 0, 0, 28, 0, 0, 0, 2, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 0, 0, 0, 109, 97, 110, 100, 101, 108, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 7, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 145, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 28, 0, 0, 0, 8, 0, 0, 0, 36, 0, 0, 0, 27, 0, 0, 0, 44, 0, 0, 0, 27, 0, 0, 0, 52, 0, 0, 0, 27, 0, 0, 0, 16, 0, 0, 0, 18, 0, 0, 0, 109, 97, 110, 100, 101, 108, 95, 95, 108, 111, 99, 97, 108, 95, 48, 95, 114, 101, 99, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 37, 0, 0, 0, 13, 0, 0, 0, 4, 0, 0, 0, 150, 0, 0, 0, 99, 0, 0, 0, 38, 1, 0, 0, 99, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 29, 0, 0, 0, 44, 0, 0, 0, 38, 0, 0, 0, 24, 0, 0, 0, 123, 0, 128, 67, 16, 0, 0, 0, 53, 0, 0, 0, 108, 0, 0, 0, 62, 0, 0, 0, 101, 0, 0, 0, 3, 7, 0, 0, 70, 0, 0, 0, 32, 0, 0, 0, 78, 0, 0, 0, 3, 4, 0, 0, 86, 0, 0, 0, 40, 0, 0, 0, 94, 0, 0, 0, 123, 0, 128, 64, 48, 0, 0, 0, 32, 0, 0, 0, 56, 0, 0, 0, 117, 0, 0, 0, 80, 0, 0, 0, 126, 0, 0, 0, 141, 0, 0, 0, 3, 7, 0, 0, 134, 0, 0, 0, 64, 0, 0, 0, 40, 0, 0, 0, 64, 0, 0, 0, 72, 0, 0, 0, 16, 0, 0, 0, 158, 0, 0, 0, 3, 4, 0, 0, 166, 0, 0, 0, 88, 0, 0, 0, 174, 0, 0, 0, 107, 0, 0, 0, 182, 0, 0, 0, 107, 0, 0, 0, 191, 0, 0, 0, 196, 0, 0, 0, 252, 0, 0, 0, 153, 0, 0, 0, 204, 0, 0, 0, 2, 0, 0, 0, 212, 0, 0, 0, 2, 0, 0, 0, 220, 0, 0, 0, 2, 0, 0, 0, 228, 0, 0, 0, 96, 0, 0, 0, 236, 0, 0, 0, 2, 0, 0, 0, 244, 0, 0, 0, 2, 0, 0, 0, 96, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 0, 8, 0, 0, 0, 12, 1, 0, 0, 24, 0, 0, 0, 20, 1, 0, 0, 56, 0, 0, 0, 28, 1, 0, 0, 72, 0, 0, 0, 80, 0, 0, 0, 48, 0, 0, 0, 88, 0, 0, 0, 19, 0, 0, 0, 109, 97, 110, 100, 101, 108, 95, 95, 108, 111, 99, 97, 108, 95, 48, 95, 114, 101, 99, 54, 95, 95, 67, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 30, 0, 0, 0, 13, 0, 0, 0, 4, 0, 0, 0, 145, 0, 0, 0, 164, 0, 0, 0, 206, 0, 0, 0, 59, 0, 0, 64, 13, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 29, 0, 0, 0, 36, 0, 0, 0, 16, 0, 0, 0, 24, 0, 0, 0, 46, 0, 0, 0, 52, 0, 0, 0, 35, 0, 128, 63, 32, 0, 0, 0, 61, 0, 0, 0, 124, 0, 0, 0, 70, 0, 0, 0, 117, 0, 0, 0, 3, 7, 0, 0, 78, 0, 0, 0, 40, 0, 0, 0, 86, 0, 0, 0, 3, 5, 0, 0, 94, 0, 0, 0, 48, 0, 0, 0, 102, 0, 0, 0, 3, 4, 0, 0, 110, 0, 0, 0, 8, 0, 0, 0, 56, 0, 0, 0, 40, 0, 0, 0, 64, 0, 0, 0, 133, 0, 0, 0, 88, 0, 0, 0, 142, 0, 0, 0, 157, 0, 0, 0, 3, 7, 0, 0, 150, 0, 0, 0, 72, 0, 0, 0, 48, 0, 0, 0, 72, 0, 0, 0, 80, 0, 0, 0, 0, 0, 0, 0, 172, 0, 0, 0, 16, 0, 0, 0, 180, 0, 0, 0, 32, 0, 0, 0, 188, 0, 0, 0, 56, 0, 0, 0, 196, 0, 0, 0, 96, 0, 0, 0, 88, 0, 0, 0, 64, 0, 0, 0, 214, 0, 0, 0, 3, 7, 0, 0, 222, 0, 0, 0, 80, 0, 0, 0, 230, 0, 0, 0, 3, 4, 0, 0, 238, 0, 0, 0, 24, 0, 0, 0, 96, 0, 0, 0, 20, 0, 0, 0, 117, 50, 52, 47, 116, 111, 95, 102, 50, 52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 4, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0};
 
 #ifdef IO
 void do_run_io(Net* net, Book* book, Port port);
@@ -2222,816 +6558,375 @@ int main() {
 #endif
 
 
-#include <dlfcn.h>
-#include <errno.h>
-#include <stdio.h>
+/* --- JShark HVM2 WASM bridge (auto-generated) --- */
+typedef int64_t jshark_hvm2_i64;
 
+#define JSHARK_MANDEL_MAX_ITER 256
 
-// Readback: λ-Encoded Ctr
-typedef struct Ctr {
-  u32  tag;
-  u32  args_len;
-  Port args_buf[16];
-} Ctr;
-
-// Readback: Tuples
-typedef struct Tup {
-  u32  elem_len;
-  Port elem_buf[8];
-} Tup;
-
-// Readback: λ-Encoded Str (UTF-32), null-terminated
-// FIXME: this is actually ASCII :|
-typedef struct Str {
-  u32  len;
-  char *buf;
-} Str;
-
-// Readback: λ-Encoded list of bytes
-typedef struct Bytes {
-  u32  len;
-  char *buf;
-} Bytes;
-
-// IO Magic Number
-#define IO_MAGIC_0 0xD0CA11
-#define IO_MAGIC_1 0xFF1FF1
-
-// IO Tags
-#define IO_DONE 0
-#define IO_CALL 1
-
-// Result Tags = Result<T, E>
-#define RESULT_OK  0
-#define RESULT_ERR 1
-
-// IOError = {
-//   Type,           -- a type error
-//   Name,           -- invalid io func name
-//   Inner {val: T}, -- an error while calling an io func
-// }
-#define IO_ERR_TYPE 0
-#define IO_ERR_NAME 1
-#define IO_ERR_INNER 2
-
-typedef struct IOError {
-  u32 tag;
-  Port val;
-} IOError;
-
-// List Tags
-#define LIST_NIL  0
-#define LIST_CONS 1
-
-// Readback
-// --------
-
-// Reads back a λ-Encoded constructor from device to host.
-// Encoding: λt ((((t TAG) arg0) arg1) ...)
-Ctr readback_ctr(Net* net, Book* book, Port port) {
-  Ctr ctr;
-  ctr.tag = -1;
-  ctr.args_len = 0;
-
-  // Loads root lambda
-  Port lam_port = expand(net, book, port);
-  if (get_tag(lam_port) != CON) return ctr;
-  Pair lam_node = node_load(net, get_val(lam_port));
-
-  // Loads first application
-  Port app_port = expand(net, book, get_fst(lam_node));
-  if (get_tag(app_port) != CON) return ctr;
-  Pair app_node = node_load(net, get_val(app_port));
-
-  // Loads first argument (as the tag)
-  Port arg_port = expand(net, book, get_fst(app_node));
-  if (get_tag(arg_port) != NUM) return ctr;
-  ctr.tag = get_u24(get_val(arg_port));
-
-  // Loads remaining arguments
-  while (true) {
-    app_port = expand(net, book, get_snd(app_node));
-    if (get_tag(app_port) != CON) break;
-    app_node = node_load(net, get_val(app_port));
-    arg_port = expand(net, book, get_fst(app_node));
-    ctr.args_buf[ctr.args_len++] = arg_port;
+static jshark_hvm2_i64 jshark_mandel_iter(double cr, double ci) {
+  int n = 0;
+  double zr = 0.0;
+  double zi = 0.0;
+  while (n < JSHARK_MANDEL_MAX_ITER && (zr * zr + zi * zi) < 4.0) {
+    double nzr = zr * zr - zi * zi + cr;
+    double nzi = 2.0 * zr * zi + ci;
+    zr = nzr;
+    zi = nzi;
+    n++;
   }
-
-  return ctr;
+  return (jshark_hvm2_i64)n;
 }
 
-// Reads back a tuple of at most `size` elements. Tuples are
-// (right-nested con nodes) (CON 1 (CON 2 (CON 3 (...))))
-// The provided `port` should be `expanded` before calling.
-extern Tup readback_tup(Net* net, Book* book, Port port, u32 size) {
-  Tup tup;
-  tup.elem_len = 0;
-
-  // Loads remaining arguments
-  while (get_tag(port) == CON && (tup.elem_len + 1 < size)) {
-    Pair node = node_load(net, get_val(port));
-    tup.elem_buf[tup.elem_len++] = expand(net, book, get_fst(node));
-
-    port = expand(net, book, get_snd(node));
-  }
-
-  tup.elem_buf[tup.elem_len++] = port;
-
-  return tup;
+static double jshark_i64_to_f64(jshark_hvm2_i64 x) {
+  union { jshark_hvm2_i64 i; double d; } u;
+  u.i = x;
+  return u.d;
 }
 
-// Converts a Port into a list of bytes.
-// Encoding:
-// - λt (t NIL)
-// - λt (((t CONS) head) tail)
-Bytes readback_bytes(Net* net, Book* book, Port port) {
-  Bytes bytes;
-  u32 capacity = 256;
-  bytes.buf = (char*) malloc(sizeof(char) * capacity);
-  bytes.len = 0;
+/* Batched grid: one JS->WASM call per frame instead of one per pixel,
+ * so kernel timing reflects compute, not boundary-crossing overhead. */
+#define JSHARK_GRID_CAP (1 << 17)
+static int32_t jshark_grid_buf[JSHARK_GRID_CAP];
 
-  // Readback loop
-  while (true) {
-    // Normalizes the net
-    normalize(net, book);
+/* SIMD128 quad kernel: four pixels via two interleaved f64x2 vectors.
+ * A warmed-up JS JIT matches scalar WASM on this loop; vectorization
+ * plus the ILP from two independent dependency chains is the edge JS
+ * cannot replicate. Arithmetic order mirrors jshark_mandel_iter so
+ * results stay bit-identical to the scalar path. */
+#ifdef __wasm_simd128__
+#include <wasm_simd128.h>
+static void jshark_mandel_quad(double cr0, double cr1, double cr2,
+    double cr3, double ci, int32_t *out) {
+  v128_t crA = wasm_f64x2_make(cr0, cr1);
+  v128_t crB = wasm_f64x2_make(cr2, cr3);
+  v128_t civ = wasm_f64x2_splat(ci);
+  v128_t zrA = wasm_f64x2_splat(0.0);
+  v128_t ziA = zrA;
+  v128_t zrB = zrA;
+  v128_t ziB = zrA;
+  v128_t four = wasm_f64x2_splat(4.0);
+  v128_t two = wasm_f64x2_splat(2.0);
+  v128_t itA = wasm_i64x2_splat(0);
+  v128_t itB = itA;
+  for (int k = 0; k < JSHARK_MANDEL_MAX_ITER; k++) {
+    v128_t zr2A = wasm_f64x2_mul(zrA, zrA);
+    v128_t zi2A = wasm_f64x2_mul(ziA, ziA);
+    v128_t zr2B = wasm_f64x2_mul(zrB, zrB);
+    v128_t zi2B = wasm_f64x2_mul(ziB, ziB);
+    v128_t actA = wasm_f64x2_lt(wasm_f64x2_add(zr2A, zi2A), four);
+    v128_t actB = wasm_f64x2_lt(wasm_f64x2_add(zr2B, zi2B), four);
+    if (!wasm_v128_any_true(wasm_v128_or(actA, actB))) break;
+    /* active lanes are all-ones (-1); subtracting increments them */
+    itA = wasm_i64x2_sub(itA, actA);
+    itB = wasm_i64x2_sub(itB, actB);
+    v128_t nzrA = wasm_f64x2_add(wasm_f64x2_sub(zr2A, zi2A), crA);
+    v128_t nziA = wasm_f64x2_add(
+        wasm_f64x2_mul(wasm_f64x2_mul(two, zrA), ziA), civ);
+    v128_t nzrB = wasm_f64x2_add(wasm_f64x2_sub(zr2B, zi2B), crB);
+    v128_t nziB = wasm_f64x2_add(
+        wasm_f64x2_mul(wasm_f64x2_mul(two, zrB), ziB), civ);
+    zrA = wasm_v128_bitselect(nzrA, zrA, actA);
+    ziA = wasm_v128_bitselect(nziA, ziA, actA);
+    zrB = wasm_v128_bitselect(nzrB, zrB, actB);
+    ziB = wasm_v128_bitselect(nziB, ziB, actB);
+  }
+  out[0] = (int32_t)wasm_i64x2_extract_lane(itA, 0);
+  out[1] = (int32_t)wasm_i64x2_extract_lane(itA, 1);
+  out[2] = (int32_t)wasm_i64x2_extract_lane(itB, 0);
+  out[3] = (int32_t)wasm_i64x2_extract_lane(itB, 1);
+}
+#endif
 
-    // Reads the λ-Encoded Ctr
-    Ctr ctr = readback_ctr(net, book, peek(net, port));
+/* --- true HVM2 execution ---
+ * Runs the Bend-compiled book itself (interaction-net reduction), not
+ * the C fast path above. One long-lived net is booted lazily and reset
+ * between calls by clearing only the high-water region each run used.
+ * jshark_parallel_normalize() drives all TPC slots (browser wasm uses
+ * shared memory + Web Workers when COOP/COEP is enabled). */
+static Book* jshark_hvm2_book = NULL;
+static Net* jshark_hvm2_net = NULL;
+static int jshark_hvm2_last_k = 0;
+static Book jshark_hvm2_book_storage;
+static Net jshark_hvm2_net_storage;
 
-    // Reads string layer
-    switch (ctr.tag) {
-      case LIST_NIL: {
-        break;
+static int jshark_hvm2_boot(void) {
+  if (jshark_hvm2_book) { return jshark_hvm2_net != NULL; }
+  alloc_static_tms();
+  jshark_hvm2_book = &jshark_hvm2_book_storage;
+  memset(jshark_hvm2_book, 0, sizeof(Book));
+  if (!book_load(jshark_hvm2_book, (u32*)BOOK_BUF)) {
+    jshark_hvm2_last_k = -11;
+    jshark_hvm2_book = NULL;
+    return 0;
+  }
+  jshark_hvm2_net = &jshark_hvm2_net_storage;
+  memset(jshark_hvm2_net, 0, sizeof(Net));
+  return 1;
+}
+
+static u32 jshark_hvm2_def_id(const char* name) {
+  Book* book = jshark_hvm2_book;
+  if (!book) { return 0xFFFFFFFF; }
+  for (u32 i = 0; i < 32; ++i) {
+    const char* dn = book->defs_buf[i].name;
+    if (dn[0] == 0) { continue; }
+    u32 j = 0;
+    while (name[j] != 0 && dn[j] != 0 && name[j] == dn[j]) { j++; }
+    if (name[j] == 0 && dn[j] == 0) { return i; }
+  }
+  return 0xFFFFFFFF;
+}
+
+static void jshark_hvm2_reset(void) {
+  Net* net = jshark_hvm2_net;
+  TM* t0 = tm[0];
+  u32 nhw = t0->nput + 16;
+  u32 vhw = t0->vput + 16;
+  if (nhw > G_NODE_LEN) { nhw = G_NODE_LEN; }
+  if (vhw > G_VARS_LEN) { vhw = G_VARS_LEN; }
+  memset((void*)net->node_buf, 0, sizeof(net->node_buf[0]) * (u64)nhw);
+  memset((void*)net->vars_buf, 0, sizeof(net->vars_buf[0]) * (u64)vhw);
+  memset((void*)net->rbag_buf, 0, sizeof(net->rbag_buf));
+  vars_create(net, get_val(ROOT), 0);
+  atomic_store(&net->itrs, 0);
+  atomic_store(&net->idle, 0);
+  for (u32 ti = 0; ti < TPC; ++ti) {
+    TM* t = tm[ti];
+    t->itrs = 0;
+    t->nput = 1;
+    t->vput = 1;
+    t->rput = 0;
+    t->hput = 0;
+    t->sidx = 0;
+  }
+}
+
+/* Applies an 8-ary def to f24 args and normalizes:
+ *   @def ~ (a0 (a1 ... (a7 ROOT)))
+ * then walks the resulting balanced tuple tree (CON = branch, NUM =
+ * leaf) in order into jshark_grid_buf. Returns leaves written, or -1. */
+__attribute__((import_module("jshark"), import_name("spawn_eval")))
+void jshark_import_spawn_eval(u32 tid, u32 net_ptr, u32 book_ptr);
+
+__attribute__((import_module("jshark"), import_name("wait_evals")))
+void jshark_import_wait_evals(u32 count);
+
+__attribute__((import_module("jshark"), import_name("eval_done")))
+void jshark_import_eval_done(void);
+
+static void jshark_parallel_normalize(Net* net, Book* book, u32 budget);
+
+/* Single-thread wasm: skip evaluator idle/steal loop (can spin
+ * forever when interact re-queues a stuck redex). */
+static void jshark_wasm_normalize(Net* net, Book* book, u32 budget) {
+  TM* t0 = tm[0];
+  while (rbag_len(net, t0) > 0) {
+    if (budget-- == 0) {
+      jshark_hvm2_last_k = -14;
+      return;
+    }
+    if (!interact(net, t0, book)) {
+      jshark_hvm2_last_k = -13;
+      return;
+    }
+  }
+}
+
+static u32 jshark_norm_budget(int cells) {
+  u32 cap = (u32)(cells > 0 ? cells : 0);
+  u32 b = cap * 8192u + 65536u;
+  if (b < 200000u) { b = 200000u; }
+  if (b > 50000000u) { b = 50000000u; }
+  return b;
+}
+
+#define JSHARK_HVM2_TILE_W 4
+#define JSHARK_HVM2_TILE_H 5
+
+static int jshark_hvm2_blit_tile(
+    int nx, int ny, int tx0, int ty0, int tw, int th) {
+  for (int row = 0; row < th; row++) {
+    for (int col = 0; col < tw; col++) {
+      jshark_grid_buf[(ty0 + row) * nx + (tx0 + col)] =
+          jshark_grid_buf[row * tw + col];
+    }
+  }
+  return 1;
+}
+
+static int jshark_hvm2_run_grid(u32 fid, const double* args, int cap) {
+  Net* net = jshark_hvm2_net;
+  jshark_hvm2_last_k = 0;
+  jshark_hvm2_reset();
+  vars_create(net, get_val(ROOT), NONE);
+  for (int i = 0; i < 8; ++i) {
+    Port cont = (i == 7) ? ROOT : new_port(CON, (u32)(i + 2));
+    Port argp = new_port(NUM, new_f24((float)args[i]));
+    node_create(net, (u32)(i + 1), new_pair(argp, cont));
+  }
+  net->rbag_buf[0] = 0;
+  push_redex(net, tm[0], new_pair(new_port(REF, fid), new_port(CON, 1)));
+  jshark_parallel_normalize(net, jshark_hvm2_book, jshark_norm_budget(cap));
+  if (jshark_hvm2_last_k < 0) { return jshark_hvm2_last_k; }
+  Port stack[64];
+  int sp = 0;
+  int k = 0;
+  int walk_lim = cap * 32 + 128;
+  stack[sp++] = ROOT;
+  while (sp > 0) {
+    if (--walk_lim <= 0) { return -1; }
+    Port p = enter(net, stack[--sp]);
+    if (get_tag(p) == CON) {
+      if (sp + 2 > 64) { return -1; }
+      Pair nd = node_load(net, get_val(p));
+      stack[sp++] = get_snd(nd);
+      stack[sp++] = get_fst(nd);
+      continue;
+    }
+    if (get_tag(p) == NUM) {
+      Numb nb = get_val(p);
+      u32 ty = get_typ(nb);
+      int32_t v = (ty == TY_F24) ? (int32_t)get_f24(nb)
+                                 : (int32_t)get_u24(nb);
+      if (k >= cap) { return -1; }
+      jshark_grid_buf[k++] = v;
+      continue;
+    }
+    return -1;
+  }
+  return k;
+}
+
+static void jshark_parallel_normalize(Net* net, Book* book, u32 budget) {
+#if TPC <= 1
+  jshark_wasm_normalize(net, book, budget);
+#else
+  u32 spawned = 0;
+  for (u32 t = 1; t < TPC; ++t) {
+    jshark_import_spawn_eval(t, (u32)(uintptr_t)net, (u32)(uintptr_t)book);
+    spawned++;
+  }
+  evaluator(net, tm[0], book);
+  jshark_import_wait_evals(spawned);
+#endif
+}
+
+__attribute__((export_name("jshark_worker_eval")))
+void jshark_worker_eval(u32 tid, u32 net_ptr, u32 book_ptr) {
+  evaluator((Net*)(uintptr_t)net_ptr, tm[tid], (Book*)(uintptr_t)book_ptr);
+  jshark_import_eval_done();
+}
+
+__attribute__((export_name("jshark_tpc")))
+u32 jshark_export_tpc(void) { return (u32)TPC; }
+
+__attribute__((export_name("mandel")))
+jshark_hvm2_i64 jshark_export_mandel(jshark_hvm2_i64 a0, jshark_hvm2_i64 a1) {
+  return jshark_mandel_iter(jshark_i64_to_f64(a0), jshark_i64_to_f64(a1));
+}
+
+__attribute__((export_name("mandel_f64")))
+double jshark_export_mandel_f64(double a0, double a1) {
+  return (double)jshark_mandel_iter(a0, a1);
+}
+
+__attribute__((export_name("mandel_grid")))
+int32_t jshark_export_mandel_grid(double centerRe, double centerIm, double scale,
+    double w, double h, double blk, double bxN, double byN) {
+  int nx = (int)bxN;
+  int ny = (int)byN;
+  if (nx <= 0 || ny <= 0 || nx * ny > JSHARK_GRID_CAP) { return 0; }
+  double half = blk * 0.5;
+  double invW = 1.0 / w;
+  double invH = 1.0 / h;
+  double halfW = w * 0.5;
+  double halfH = h * 0.5;
+  for (int by = 0; by < ny; by++) {
+    double ci = centerIm + ((double)by * blk + half - halfH) * scale * invH;
+    int32_t *row = &jshark_grid_buf[by * nx];
+    int bx = 0;
+#ifdef __wasm_simd128__
+    for (; bx + 3 < nx; bx += 4) {
+      double cr0 = centerRe + ((double)bx * blk + half - halfW) * scale * invW;
+      double cr1 =
+          centerRe + ((double)(bx + 1) * blk + half - halfW) * scale * invW;
+      double cr2 =
+          centerRe + ((double)(bx + 2) * blk + half - halfW) * scale * invW;
+      double cr3 =
+          centerRe + ((double)(bx + 3) * blk + half - halfW) * scale * invW;
+      jshark_mandel_quad(cr0, cr1, cr2, cr3, ci, &row[bx]);
+    }
+#endif
+    for (; bx < nx; bx++) {
+      double cr = centerRe + ((double)bx * blk + half - halfW) * scale * invW;
+      row[bx] = (int32_t)jshark_mandel_iter(cr, ci);
+    }
+  }
+  return (int32_t)(uintptr_t)jshark_grid_buf;
+}
+
+/* Same grid contract, but computed by HVM2 reducing the Bend-compiled
+ * jshark_grid def: interaction-net execution end to end (f24 math). */
+__attribute__((export_name("mandel_hvm2_grid")))
+int32_t jshark_export_mandel_hvm2_grid(double centerRe, double centerIm, double scale,
+    double w, double h, double blk, double bxN, double byN) {
+  int nx = (int)bxN;
+  int ny = (int)byN;
+  if (nx <= 0 || ny <= 0 || nx * ny > JSHARK_GRID_CAP) {
+    jshark_hvm2_last_k = -4;
+    return 0;
+  }
+  if (!jshark_hvm2_boot()) {
+    if (jshark_hvm2_last_k == 0) { jshark_hvm2_last_k = -1; }
+    return 0;
+  }
+  u32 fid = jshark_hvm2_def_id("jshark_grid");
+  if (fid == 0xFFFFFFFF) {
+    jshark_hvm2_last_k = -2;
+    return 0;
+  }
+  int total = nx * ny;
+  if (total <= JSHARK_HVM2_TILE_W * JSHARK_HVM2_TILE_H) {
+    double args[8] = {centerRe, centerIm, scale, w, h, blk, bxN, byN};
+    int k = jshark_hvm2_run_grid(fid, args, total);
+    jshark_hvm2_last_k = k;
+    if (k != total) { return 0; }
+    return (int32_t)(uintptr_t)jshark_grid_buf;
+  }
+  for (int ty0 = 0; ty0 < ny; ty0 += JSHARK_HVM2_TILE_H) {
+    int th = ny - ty0;
+    if (th > JSHARK_HVM2_TILE_H) { th = JSHARK_HVM2_TILE_H; }
+    for (int tx0 = 0; tx0 < nx; tx0 += JSHARK_HVM2_TILE_W) {
+      int tw = nx - tx0;
+      if (tw > JSHARK_HVM2_TILE_W) { tw = JSHARK_HVM2_TILE_W; }
+      int cells = tw * th;
+      double tileW = (double)tw * blk;
+      double tileH = (double)th * blk;
+      double tileCenterRe = centerRe
+          + ((((double)tx0 * blk) + (tileW * 0.5)) - (w * 0.5)) * scale / w;
+      double tileCenterIm = centerIm
+          + ((((double)ty0 * blk) + (tileH * 0.5)) - (h * 0.5)) * scale / h;
+      double targs[8] = {
+          tileCenterRe, tileCenterIm, scale, tileW, tileH, blk,
+          (double)tw, (double)th};
+      int k = jshark_hvm2_run_grid(fid, targs, cells);
+      if (k != cells) {
+        jshark_hvm2_last_k = k;
+        return 0;
       }
-      case LIST_CONS: {
-        if (ctr.args_len != 2) break;
-        if (get_tag(ctr.args_buf[0]) != NUM) break;
-
-        if (bytes.len == capacity - 1) {
-          capacity *= 2;
-          bytes.buf = realloc(bytes.buf, capacity);
-        }
-
-        bytes.buf[bytes.len++] = get_u24(get_val(ctr.args_buf[0]));
-        boot_redex(net, new_pair(ctr.args_buf[1], ROOT));
-        port = ROOT;
-        continue;
-      }
-    }
-    break;
-  }
-
-  return bytes;
-}
-
-// Converts a Port into a UTF-32 (truncated to 24 bits) null-terminated string.
-// Since unicode scalars can fit in 21 bits, HVM's u24
-// integers can contain any unicode scalar value.
-// Encoding:
-// - λt (t NIL)
-// - λt (((t CONS) head) tail)
-Str readback_str(Net* net, Book* book, Port port) {
-  // readback_bytes is guaranteed to return a buffer with a capacity of at least one more
-  // than the number of bytes read, so we can null-terminate it.
-  Bytes bytes = readback_bytes(net, book, port);
-
-  Str str;
-  str.len = bytes.len;
-  str.buf = bytes.buf;
-  str.buf[str.len] = 0;
-
-  return str;
-}
-
-/// Returns a λ-Encoded Ctr for a NIL: λt (t NIL)
-/// A previous call to `get_resources(tm, 0, 2, 1)` is required.
-Port inject_nil(Net* net) {
-  u32 v1 = tm[0]->vloc[0];
-
-  u32 n1 = tm[0]->nloc[0];
-  u32 n2 = tm[0]->nloc[1];
-
-  vars_create(net, v1, NONE);
-  Port var = new_port(VAR, v1);
-
-  node_create(net, n1, new_pair(new_port(NUM, new_u24(LIST_NIL)), var));
-  node_create(net, n2, new_pair(new_port(CON, n1), var));
-
-  return new_port(CON, n2);
-}
-
-/// Returns a λ-Encoded Ctr for a CONS: λt (((t CONS) head) tail)
-/// A previous call to `get_resources(tm, 0, 4, 1)` is required.
-Port inject_cons(Net* net, Port head, Port tail) {
-  u32 v1 = tm[0]->vloc[0];
-
-  u32 n1 = tm[0]->nloc[0];
-  u32 n2 = tm[0]->nloc[1];
-  u32 n3 = tm[0]->nloc[2];
-  u32 n4 = tm[0]->nloc[3];
-
-  vars_create(net, v1, NONE);
-  Port var = new_port(VAR, v1);
-
-  node_create(net, n1, new_pair(tail, var));
-  node_create(net, n2, new_pair(head, new_port(CON, n1)));
-  node_create(net, n3, new_pair(new_port(NUM, new_u24(LIST_CONS)), new_port(CON, n2)));
-  node_create(net, n4, new_pair(new_port(CON, n3), var));
-
-  return new_port(CON, n4);
-}
-
-// Converts a list of bytes to a Port.
-// Encoding:
-// - λt (t NIL)
-// - λt (((t CONS) head) tail)
-Port inject_bytes(Net* net, Bytes *bytes) {
-  // Allocate all resources up front:
-  // - NIL needs  2 nodes & 1 var
-  // - CONS needs 4 nodes & 1 var
-  u32 len = bytes->len;
-  if (!get_resources(net, tm[0], 0, 2, 1)) {
-    fprintf(stderr, "inject_bytes: failed to get resources\n");
-    return new_port(ERA, 0);
-  }
-  Port port = inject_nil(net);
-
-  // TODO: batch-allocate these (within the limits of TM)
-  for (u32 i = 0; i < len; i++) {
-    if (!get_resources(net, tm[0], 0, 4, 1)) {
-      fprintf(stderr, "inject_bytes: failed to get resources\n");
-      return new_port(ERA, 0);
-    }
-    Port byte = new_port(NUM, new_u24(bytes->buf[len - i - 1]));
-    port = inject_cons(net, byte, port);
-  }
-
-  return port;
-}
-
-/// Returns a λ-Encoded Ctr for a RESULT_OK: λt ((t RESULT_OK) val)
-Port inject_ok(Net* net, Port val) {
-  if (!get_resources(net, tm[0], 0, 3, 1)) {
-    fprintf(stderr, "inject_ok: failed to get resources\n");
-    return new_port(ERA, 0);
-  }
-
-  u32 v1 = tm[0]->vloc[0];
-
-  u32 n1 = tm[0]->nloc[0];
-  u32 n2 = tm[0]->nloc[1];
-  u32 n3 = tm[0]->nloc[2];
-
-  vars_create(net, v1, NONE);
-  Port var = new_port(VAR, v1);
-
-  node_create(net, n1, new_pair(val, var));
-  node_create(net, n2, new_pair(new_port(NUM, new_u24(RESULT_OK)), new_port(CON, n1)));
-  node_create(net, n3, new_pair(new_port(CON, n2), var));
-
-  return new_port(CON, n3);
-}
-
-/// Returns a λ-Encoded Ctr for a RESULT_ERR: λt ((t RESULT_ERR) err)
-Port inject_err(Net* net, Port err) {
-  if (!get_resources(net, tm[0], 0, 3, 1)) {
-    fprintf(stderr, "inject_err: failed to get resources\n");
-    return new_port(ERA, 0);
-  }
-
-  u32 v1 = tm[0]->vloc[0];
-
-  u32 n1 = tm[0]->nloc[0];
-  u32 n2 = tm[0]->nloc[1];
-  u32 n3 = tm[0]->nloc[2];
-
-  vars_create(net, v1, NONE);
-  Port var = new_port(VAR, v1);
-
-  node_create(net, n1, new_pair(err, var));
-  node_create(net, n2, new_pair(new_port(NUM, new_u24(RESULT_ERR)), new_port(CON, n1)));
-  node_create(net, n3, new_pair(new_port(CON, n2), var));
-
-  return new_port(CON, n3);
-}
-
-/// Returns a λ-Encoded Ctr for a Result/Err(IOError(..))
-Port inject_io_err(Net* net, IOError err) {
-  if (err.tag <= IO_ERR_NAME) {
-    if (!get_resources(net, tm[0], 0, 2, 1)) {
-      fprintf(stderr, "inject_io_err: failed to get resources\n");
-      return new_port(ERA, 0);
-    }
-
-    u32 v1 = tm[0]->vloc[0];
-
-    u32 n1 = tm[0]->nloc[0];
-    u32 n2 = tm[0]->nloc[1];
-
-    vars_create(net, v1, NONE);
-    Port var = new_port(VAR, v1);
-
-    node_create(net, n1, new_pair(new_port(NUM, new_u24(err.tag)), var));
-    node_create(net, n2, new_pair(new_port(CON, n1), var));
-
-    return inject_err(net, new_port(CON, n2));
-  }
-
-  if (!get_resources(net, tm[0], 0, 3, 1)) {
-    fprintf(stderr, "inject_io_err: failed to get resources\n");
-    return new_port(ERA, 0);
-  }
-
-  u32 v1 = tm[0]->vloc[0];
-
-  u32 n1 = tm[0]->nloc[0];
-  u32 n2 = tm[0]->nloc[1];
-  u32 n3 = tm[0]->nloc[2];
-
-  vars_create(net, v1, NONE);
-  Port var = new_port(VAR, v1);
-
-  node_create(net, n1, new_pair(err.val, var));
-  node_create(net, n2, new_pair(new_port(NUM, new_u24(IO_ERR_INNER)), new_port(CON, n1)));
-  node_create(net, n3, new_pair(new_port(CON, n2), var));
-
-  return inject_err(net, new_port(CON, n3));
-}
-
-/// Returns a λ-Encoded Ctr for a Result/Err(IOError/Type)
-Port inject_io_err_type(Net* net) {
-  IOError io_error = {
-    .tag = IO_ERR_TYPE,
-  };
-
-  return inject_io_err(net, io_error);
-}
-
-/// Returns a λ-Encoded Ctr for a Result/Err(IOError/Name)
-Port inject_io_err_name(Net* net) {
-  IOError io_error = {
-    .tag = IO_ERR_NAME,
-  };
-
-  return inject_io_err(net, io_error);
-}
-
-/// Returns a λ-Encoded Ctr for a Result/Err(IOError/Inner(val))
-Port inject_io_err_inner(Net* net, Port val) {
-  IOError io_error = {
-    .tag = IO_ERR_INNER,
-    .val = val,
-  };
-
-  return inject_io_err(net, io_error);
-}
-
-/// Returns a λ-Encoded Ctr for an Result<T, IOError<String>>
-/// `err` must be `NUL`-terminated.
-Port inject_io_err_str(Net* net, char* err) {
-  Bytes err_bytes;
-  err_bytes.buf = err;
-  err_bytes.len = strlen(err_bytes.buf);
-  Port err_port = inject_bytes(net, &err_bytes);
-
-  return inject_io_err_inner(net, err_port);
-}
-
-// Primitive IO Fns
-// -----------------
-
-// Open file pointers. Indices into this array
-// are used as "file descriptors".
-// Indices 0 1 and 2 are reserved.
-// - 0 -> stdin
-// - 1 -> stdout
-// - 2 -> stderr
-static FILE* FILE_POINTERS[256];
-
-// Open dylibs handles. Indices into this array
-// are used as opaque loadedd object "handles".
-static void* DYLIBS[256];
-
-// Converts a NUM port (file descriptor) to file pointer.
-FILE* readback_file(Port port) {
-  if (get_tag(port) != NUM) {
-    fprintf(stderr, "non-num where file descriptor was expected: %i\n", get_tag(port));
-    return NULL;
-  }
-
-  u32 idx = get_u24(get_val(port));
-
-  if (idx == 0) return stdin;
-  if (idx == 1) return stdout;
-  if (idx == 2) return stderr;
-
-  FILE* fp = FILE_POINTERS[idx];
-  if (fp == NULL) {
-    return NULL;
-  }
-
-  return fp;
-}
-
-// Converts a NUM port (dylib handle) to an opaque dylib object.
-void* readback_dylib(Port port) {
-  if (get_tag(port) != NUM) {
-    fprintf(stderr, "non-num where dylib handle was expected: %i\n", get_tag(port));
-    return NULL;
-  }
-
-  u32 idx = get_u24(get_val(port));
-
-  void* dl = DYLIBS[idx];
-  if (dl == NULL) {
-    fprintf(stderr, "invalid dylib handle\n");
-    return NULL;
-  }
-
-  return dl;
-}
-
-// Reads from a file a specified number of bytes.
-// `argm` is a tuple of (file_descriptor, num_bytes).
-// Returns: Result<Bytes, IOError<i24>>
-Port io_read(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 2);
-  if (tup.elem_len != 2) {
-    return inject_io_err_type(net);
-  }
-
-  FILE* fp = readback_file(tup.elem_buf[0]);
-  u32 num_bytes = get_u24(get_val(tup.elem_buf[1]));
-
-  if (fp == NULL) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(EBADF)));
-  }
-
-  /// Read a string.
-  Bytes bytes;
-  bytes.buf = (char*) malloc(sizeof(char) * num_bytes);
-  bytes.len = fread(bytes.buf, sizeof(char), num_bytes, fp);
-
-  if ((bytes.len != num_bytes) && ferror(fp)) {
-    free(bytes.buf);
-    return inject_io_err_inner(net, new_port(NUM, new_i24(ferror(fp))));
-  }
-
-  // Convert it to a port.
-  Port ret = inject_bytes(net, &bytes);
-  free(bytes.buf);
-
-  return inject_ok(net, ret);
-}
-
-// Opens a file with the provided mode.
-// `argm` is a tuple (CON node) of the
-// file name and mode as strings.
-// Returns: Result<File, IOError<i24>>
-Port io_open(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 2);
-  if (tup.elem_len != 2) {
-    return inject_io_err_type(net);
-  }
-
-  Str name = readback_str(net, book, tup.elem_buf[0]);
-  Str mode = readback_str(net, book, tup.elem_buf[1]);
-
-  for (u32 fd = 3; fd < sizeof(FILE_POINTERS); fd++) {
-    if (FILE_POINTERS[fd] == NULL) {
-      FILE_POINTERS[fd] = fopen(name.buf, mode.buf);
-
-      free(name.buf);
-      free(mode.buf);
-
-      if (FILE_POINTERS[fd] == NULL) {
-        return inject_io_err_inner(net, new_port(NUM, new_i24(errno)));
-      }
-
-      return inject_ok(net, new_port(NUM, new_u24(fd)));
-    }
-  }
-
-  free(name.buf);
-  free(mode.buf);
-
-  // too many open files
-  return inject_io_err_inner(net, new_port(NUM, new_i24(EMFILE)));
-}
-
-// Closes a file, reclaiming the file descriptor.
-// Returns: Result<*, IOError<i24>>
-Port io_close(Net* net, Book* book, Port argm) {
-  FILE* fp = readback_file(argm);
-  if (fp == NULL) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(EBADF)));
-  }
-
-  if (fclose(fp) != 0) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(ferror(fp))));
-  }
-
-  FILE_POINTERS[get_u24(get_val(argm))] = NULL;
-
-  return inject_ok(net, new_port(ERA, 0));
-}
-
-// Writes a list of bytes to a file.
-// `argm` is a tuple (CON node) of the
-// file descriptor and list of bytes to write.
-// Returns: Result<*, IOError<i24>>
-Port io_write(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 2);
-  if (tup.elem_len != 2) {
-    return inject_io_err_type(net);
-  }
-
-  FILE* fp = readback_file(tup.elem_buf[0]);
-  Bytes bytes = readback_bytes(net, book, tup.elem_buf[1]);
-
-  if (fp == NULL) {
-    free(bytes.buf);
-
-    return inject_io_err_inner(net, new_port(NUM, new_i24(EBADF)));
-  }
-
-  if (fwrite(bytes.buf, sizeof(char), bytes.len, fp) != bytes.len) {
-    free(bytes.buf);
-
-    return inject_io_err_inner(net, new_port(NUM, new_i24(ferror(fp))));
-  }
-
-  free(bytes.buf);
-
-  return inject_ok(net, new_port(ERA, 0));
-}
-
-// Flushes an output stream.
-// Returns: Result<*, IOError<i24>>
-Port io_flush(Net* net, Book* book, Port argm) {
-  FILE* fp = readback_file(argm);
-  if (fp == NULL) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(EBADF)));
-  }
-
-  if (fflush(fp) != 0) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(ferror(fp))));
-  }
-
-  return inject_ok(net, new_port(ERA, 0));
-}
-
-// Seeks to a position in a file.
-// `argm` is a 3-tuple (CON fd (CON offset whence)), where
-// - fd is a file descriptor
-// - offset is a signed byte offset
-// - whence is what that offset is relative to:
-//    - 0 (SEEK_SET): beginning of file
-//    - 1 (SEEK_CUR): current position of the file pointer
-//    - 2 (SEEK_END): end of the file
-// Returns: Result<*, IOError<i24>>
-Port io_seek(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 3);
-  if (tup.elem_len != 3) {
-    return inject_io_err_type(net);
-  }
-
-  FILE* fp = readback_file(tup.elem_buf[0]);
-  i32 offset = get_i24(get_val(tup.elem_buf[1]));
-  u32 whence = get_i24(get_val(tup.elem_buf[2]));
-
-  if (fp == NULL) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(EBADF)));
-  }
-
-  int cwhence;
-  switch (whence) {
-    case 0: cwhence = SEEK_SET; break;
-    case 1: cwhence = SEEK_CUR; break;
-    case 2: cwhence = SEEK_END; break;
-    default:
-      return inject_io_err_type(net);
-  }
-
-  if (fseek(fp, offset, cwhence) != 0) {
-    return inject_io_err_inner(net, new_port(NUM, new_i24(ferror(fp))));
-  }
-
-  return inject_ok(net, new_port(ERA, 0));
-}
-
-// Returns the current time as a tuple of the high
-// and low 24 bits of a 48-bit nanosecond timestamp.
-// Returns: Result<(u24, u24), IOError<*>>
-Port io_get_time(Net* net, Book* book, Port argm) {
-  // Get the current time in nanoseconds
-  u64 time_ns = time64();
-  // Encode the time as a 64-bit unsigned integer
-  u32 time_hi = (u32)(time_ns >> 24) & 0xFFFFFFF;
-  u32 time_lo = (u32)(time_ns & 0xFFFFFFF);
-  // Allocate a node to store the time
-  u32 lps = 0;
-  u32 loc = node_alloc_1(net, tm[0], &lps);
-  node_create(net, loc, new_pair(new_port(NUM, new_u24(time_hi)), new_port(NUM, new_u24(time_lo))));
-
-  return inject_ok(net, new_port(CON, loc));
-}
-
-// Sleeps.
-// `argm` is a tuple (CON node) of the high and low
-// 24 bits for a 48-bit duration in nanoseconds.
-// Returns: Result<*, IOError<*>>
-Port io_sleep(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 2);
-  if (tup.elem_len != 2) {
-    return inject_io_err_type(net);
-  }
-
-  // Get the sleep duration node
-  Pair dur_node = node_load(net, get_val(argm));
-  // Get the high and low 24-bit parts of the duration
-  u32 dur_hi = get_u24(get_val(tup.elem_buf[0]));
-  u32 dur_lo = get_u24(get_val(tup.elem_buf[1]));
-  // Combine into a 48-bit duration in nanoseconds
-  u64 dur_ns = (((u64)dur_hi) << 24) | dur_lo;
-  // Sleep for the specified duration
-  struct timespec ts;
-  ts.tv_sec = dur_ns / 1000000000;
-  ts.tv_nsec = dur_ns % 1000000000;
-  nanosleep(&ts, NULL);
-
-  return inject_ok(net, new_port(ERA, 0));
-}
-
-// Opens a dylib at the provided path.
-// `argm` is a tuple of `filename` and `lazy`.
-// `filename` is a λ-encoded string.
-// `lazy` is a `bool` indicating if functions should be lazily loaded.
-// Returns: Result<Dylib, IOError<String>>
-Port io_dl_open(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 2);
-  Str str = readback_str(net, book, tup.elem_buf[0]);
-  u32 lazy = get_u24(get_val(tup.elem_buf[1]));
-
-  int flags = lazy ? RTLD_LAZY : RTLD_NOW;
-
-  for (u32 dl = 0; dl < sizeof(DYLIBS); dl++) {
-    if (DYLIBS[dl] == NULL) {
-      DYLIBS[dl] = dlopen(str.buf, flags);
-
-      free(str.buf);
-
-      if (DYLIBS[dl] == NULL) {
-        return inject_io_err_str(net, dlerror());
-      }
-
-      return inject_ok(net, new_port(NUM, new_u24(dl)));
-    }
-  }
-
-  return inject_io_err_str(net, "too many open dylibs");
-}
-
-// Calls a function from a loaded dylib.
-// `argm` is a 3-tuple of `dylib_handle`, `symbol`, `args`.
-// `dylib_handle` is the numeric node returned from a `DL_OPEN` call.
-// `symbol` is a λ-encoded string of the symbol name.
-// `args` is the argument to be provided to the dylib symbol.
-//
-// This function returns a Result with an Ok variant containing an
-// arbitrary type.
-//
-// Returns Result<T, IOError<String>>
-Port io_dl_call(Net* net, Book* book, Port argm) {
-  Tup tup = readback_tup(net, book, argm, 3);
-  if (tup.elem_len != 3) {
-    return inject_io_err_type(net);
-  }
-
-  void* dl = readback_dylib(tup.elem_buf[0]);
-  Str symbol = readback_str(net, book, tup.elem_buf[1]);
-
-  dlerror();
-  Port (*func)(Net*, Book*, Port) = dlsym(dl, symbol.buf);
-  char* error = dlerror();
-  if (error != NULL) {
-    return inject_io_err_str(net, error);
-  }
-
-  return inject_ok(net, func(net, book, tup.elem_buf[2]));
-}
-
-// Closes a loaded dylib, reclaiming the handle.
-//
-// Returns:  Result<*, IOError<String>>
-Port io_dl_close(Net* net, Book* book, Port argm) {
-  void* dl = readback_dylib(argm);
-  if (dl == NULL) {
-    return inject_io_err_type(net);
-  }
-
-  int err = dlclose(dl) != 0;
-  if (err != 0) {
-    return inject_io_err_str(net, dlerror());
-  }
-
-  DYLIBS[get_u24(get_val(argm))] = NULL;
-
-  return inject_ok(net, new_port(ERA, 0));
-}
-
-// Book Loader
-// -----------
-
-void book_init(Book* book) {
-  book->ffns_buf[book->ffns_len++] = (FFn){"READ", io_read};
-  book->ffns_buf[book->ffns_len++] = (FFn){"OPEN", io_open};
-  book->ffns_buf[book->ffns_len++] = (FFn){"CLOSE", io_close};
-  book->ffns_buf[book->ffns_len++] = (FFn){"FLUSH", io_flush};
-  book->ffns_buf[book->ffns_len++] = (FFn){"WRITE", io_write};
-  book->ffns_buf[book->ffns_len++] = (FFn){"SEEK", io_seek};
-  book->ffns_buf[book->ffns_len++] = (FFn){"GET_TIME", io_get_time};
-  book->ffns_buf[book->ffns_len++] = (FFn){"SLEEP", io_sleep};
-  book->ffns_buf[book->ffns_len++] = (FFn){"DL_OPEN", io_dl_open};
-  book->ffns_buf[book->ffns_len++] = (FFn){"DL_CALL", io_dl_call};
-  book->ffns_buf[book->ffns_len++] = (FFn){"DL_CLOSE", io_dl_open};
-}
-
-// Monadic IO Evaluator
-// ---------------------
-
-// Runs an IO computation.
-void do_run_io(Net* net, Book* book, Port port) {
-  book_init(book);
-
-  setlinebuf(stdout);
-  setlinebuf(stderr);
-
-  // IO loop
-  while (true) {
-    // Normalizes the net
-    normalize(net, book);
-
-    // Reads the λ-Encoded Ctr
-    Ctr ctr = readback_ctr(net, book, peek(net, port));
-
-    // Checks if IO Magic Number is a CON
-    if (ctr.args_len < 1 || get_tag(ctr.args_buf[0]) != CON) {
-      break;
-    }
-
-    // Checks the IO Magic Number
-    Pair io_magic = node_load(net, get_val(ctr.args_buf[0]));
-    //printf("%08x %08x\n", get_u24(get_val(get_fst(io_magic))), get_u24(get_val(get_snd(io_magic))));
-    if (get_val(get_fst(io_magic)) != new_u24(IO_MAGIC_0) || get_val(get_snd(io_magic)) != new_u24(IO_MAGIC_1)) {
-      break;
-    }
-
-    switch (ctr.tag) {
-      case IO_CALL: {
-        if (ctr.args_len != 4) {
-          fprintf(stderr, "invalid IO_CALL: args_len = %u\n", ctr.args_len);
-          break;
-        }
-
-        Str  func = readback_str(net, book, ctr.args_buf[1]);
-        FFn* ffn  = NULL;
-        // FIXME: optimize this linear search
-        for (u32 fid = 0; fid < book->ffns_len; ++fid) {
-          if (strcmp(func.buf, book->ffns_buf[fid].name) == 0) {
-            ffn = &book->ffns_buf[fid];
-            break;
-          }
-        }
-
-        free(func.buf);
-
-        Port argm = ctr.args_buf[2];
-        Port cont = ctr.args_buf[3];
-
-        Port ret;
-        if (ffn == NULL) {
-          ret = inject_io_err_name(net);
-        } else {
-          ret = ffn->func(net, book, argm);
-        };
-
-        u32 lps = 0;
-        u32 loc = node_alloc_1(net, tm[0], &lps);
-        node_create(net, loc, new_pair(ret, ROOT));
-        boot_redex(net, new_pair(new_port(CON, loc), cont));
-        port = ROOT;
-
-        continue;
-      }
-
-      case IO_DONE: {
-        break;
+      if (!jshark_hvm2_blit_tile(nx, ny, tx0, ty0, tw, th)) {
+        jshark_hvm2_last_k = -3;
+        return 0;
       }
     }
-    break;
   }
+  jshark_hvm2_last_k = total;
+  return (int32_t)(uintptr_t)jshark_grid_buf;
 }
 
+__attribute__((export_name("jshark_hvm2_last_k")))
+int32_t jshark_export_hvm2_last_k(void) {
+  return (int32_t)jshark_hvm2_last_k;
+}
 
 

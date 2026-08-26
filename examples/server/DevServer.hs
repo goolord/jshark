@@ -102,10 +102,26 @@ lifeEngineJs =
   , ("js/shaders/cell.frag.glsl", "examples/Life/shaders/cell.frag.glsl")
   ]
 
+-- | HVM2 demo assets served under @/hvm2-demo/@ (COOP/COEP + CORP) so worker
+-- | scripts are not blocked and do not depend on @/static/@ data-file install.
+hvm2DemoAssets :: [(FilePath, FilePath)]
+hvm2DemoAssets =
+  [ ("hvm2-worker.js", "examples/static/hvm2-worker.js")
+  , ("hvm2-wasm.js", "examples/static/hvm2-wasm.js")
+  , ("hvm2-demo.wasm", "examples/static/hvm2-demo.wasm")
+  ]
+
 -- | Sandboxed frame fetches @app.js@ / wasm from the example origin; CORP +
 -- | ACAO are required. COOP/COEP stay off the shell HTML so the frame is not
 -- | blocked by require-corp (SharedArrayBuffer workers need headers on the
 -- | frame document itself).
+-- | COOP/COEP enable SharedArrayBuffer + wasm threads for the HVM2 demo.
+hvm2ThreadHeaders :: ActionM ()
+hvm2ThreadHeaders = do
+  setHeader "Cross-Origin-Opener-Policy" "same-origin"
+  setHeader "Cross-Origin-Embedder-Policy" "require-corp"
+  setHeader "Cross-Origin-Resource-Policy" "cross-origin"
+
 lifeAssetHeaders :: ActionM ()
 lifeAssetHeaders = do
   setHeader "Cross-Origin-Resource-Policy" "cross-origin"
@@ -129,8 +145,17 @@ serveExamples startPort examples = do
   assets <-
     fmap concat $
       traverse staticAsset staticFiles
-  lifeJs <- traverse lifeJsAsset lifeEngineJs
-  tryServe startPort startPort (startPort + 100) shots assets lifeJs examples
+  lifeJs <- traverse demoAssetPath lifeEngineJs
+  hvm2Js <- traverse demoAssetPath hvm2DemoAssets
+  tryServe
+    startPort
+    startPort
+    (startPort + 100)
+    shots
+    assets
+    lifeJs
+    hvm2Js
+    examples
 
 tryServe ::
   Int
@@ -139,9 +164,10 @@ tryServe ::
   -> [(Example, Maybe FilePath)]
   -> [(String, FilePath)]
   -> [(FilePath, FilePath)]
+  -> [(FilePath, FilePath)]
   -> [Example]
   -> IO ()
-tryServe startPort port maxPort shots assets lifeJs examples
+tryServe startPort port maxPort shots assets lifeJs hvm2Js examples
   | port > maxPort =
       fail $
         "no free port in range "
@@ -152,23 +178,24 @@ tryServe startPort port maxPort shots assets lifeJs examples
       putStrLn ("Examples on http://" <> serverHost <> ":" <> show port)
       hFlush stdout
       Exception.catch
-        (scottyOpts (serverOpts port) (exampleRoutes shots assets lifeJs examples))
+        (scottyOpts (serverOpts port) (exampleRoutes shots assets lifeJs hvm2Js examples))
         $ \e ->
           if isAlreadyInUseError e
             then do
               hPutStrLn
                 stderr
                 ("port " <> show port <> " in use, trying " <> show (port + 1))
-              tryServe startPort (port + 1) maxPort shots assets lifeJs examples
+              tryServe startPort (port + 1) maxPort shots assets lifeJs hvm2Js examples
             else Exception.throwIO (e :: IOException)
 
 exampleRoutes ::
   [(Example, Maybe FilePath)]
   -> [(String, FilePath)]
   -> [(FilePath, FilePath)]
+  -> [(FilePath, FilePath)]
   -> [Example]
   -> ScottyM ()
-exampleRoutes shots assets lifeJs examples = do
+exampleRoutes shots assets lifeJs hvm2Js examples = do
   get "/" $ do
     setHeader "Content-Type" "text/html; charset=utf-8"
     html $ renderText (indexPage serverPaths shots)
@@ -178,16 +205,20 @@ exampleRoutes shots assets lifeJs examples = do
       page =
         examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
       isLife = exampleName ex == "life"
+      isHvm2 = exampleName ex == "hvm2-demo"
     get (fromString base) $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
+      when isHvm2 hvm2ThreadHeaders
       html $ renderText page
     get (fromString (base <> "/")) $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
+      when isHvm2 hvm2ThreadHeaders
       html $ renderText page
     get (fromString (base <> "/app.js")) $ do
       setHeader "Content-Type" "application/javascript; charset=utf-8"
       setHeader "Cache-Control" "no-store"
       when isLife lifeAssetHeaders
+      when isHvm2 hvm2ThreadHeaders
       text (TL.fromStrict (exampleJs ex))
     when isLife $ do
       let
@@ -207,6 +238,12 @@ exampleRoutes shots assets lifeJs examples = do
         get (fromString (base <> "/" <> route)) $ do
           setHeader "Content-Type" (lifeAssetType route)
           lifeAssetHeaders
+          file path
+    when isHvm2 $
+      forM_ hvm2Js $ \(route, path) ->
+        get (fromString (base <> "/" <> route)) $ do
+          setHeader "Content-Type" (staticType route)
+          hvm2ThreadHeaders
           file path
   forM_ assets $ \(name, path) ->
     get (fromString ("/static/" <> name)) $ do
@@ -264,7 +301,11 @@ exportExamples dest examples = do
       createDirectoryIfMissing True (dir </> "js")
       createDirectoryIfMissing True (dir </> "js/shaders")
       forM_ lifeEngineJs $ \(route, rel) -> do
-        src <- getDataFileName rel
+        src <- resolveDataFile rel
+        copyFile src (dir </> route)
+    when (exampleName ex == "hvm2-demo") $
+      forM_ hvm2DemoAssets $ \(route, rel) -> do
+        src <- resolveDataFile rel
         copyFile src (dir </> route)
 
 -- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
@@ -303,8 +344,8 @@ staticAsset name = do
   exists <- doesFileExist path
   pure [(name, path) | exists]
 
-lifeJsAsset :: (FilePath, FilePath) -> IO (FilePath, FilePath)
-lifeJsAsset (route, rel) = do
+demoAssetPath :: (FilePath, FilePath) -> IO (FilePath, FilePath)
+demoAssetPath (route, rel) = do
   path <- resolveDataFile rel
   pure (route, path)
 
@@ -359,4 +400,6 @@ staticFiles =
   , "life.css"
   , "hvm2-demo.css"
   , "hvm2-demo.wasm"
+  , "hvm2-wasm.js"
+  , "hvm2-worker.js"
   ]

@@ -107,6 +107,11 @@ body {
   margin-left: auto;
 }
 
+.hvm2 button.pause.active {
+  border-color: #fbbf24;
+  background: #422006;
+}
+
 .hvm2-viewport {
   display: flex;
   justify-content: center;
@@ -116,10 +121,24 @@ body {
   border-radius: 4px;
 }
 
+.hvm2 .res-select {
+  font: 0.82rem system-ui, sans-serif;
+  cursor: pointer;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+}
+
+.hvm2 .res-select:hover {
+  border-color: #475569;
+}
+
 .hvm2 canvas {
   display: block;
   width: 100%;
-  max-width: 320px;
+  max-width: min(100%, 3840px);
   height: auto;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
@@ -131,13 +150,79 @@ body {
   border-top: 1px solid #334155;
 }
 
+.hvm2-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 1.25rem;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.hvm2-metric {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(4.5ch, 1fr) auto;
+  gap: 0.35rem;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.hvm2-metric-wide {
+  grid-column: 1 / -1;
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+}
+
+.hvm2-metric-k {
+  color: #64748b;
+}
+
+.hvm2-metric-v {
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.hvm2-metric-wide .hvm2-metric-v {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hvm2-metric-u {
+  color: #64748b;
+}
+
+.hvm2-metric-v.error {
+  color: #fca5a5;
+}
+
+.hvm2-metric-v.warn {
+  color: #fcd34d;
+}
+
 .hvm2 .status {
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
   font-size: 0.78rem;
   color: #94a3b8;
-  margin: 0;
+  margin: 0.35rem 0 0;
+  min-height: 1.45em;
   word-break: break-word;
   line-height: 1.45;
+}
+
+.hvm2 .status-alert:empty {
+  display: none;
+}
+
+.hvm2 .status.error {
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+.hvm2 .status.warn {
+  color: #fcd34d;
+  font-weight: 600;
 }
 
 .hvm2 .hint {
