@@ -198,6 +198,7 @@ import JShark.Emit
 import qualified JShark.Flat as Flat
 import qualified JShark.FlatSoA as FlatSoA
 import qualified JShark.Ir as Ir
+import JShark.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Prim
   ( MathBinary (..)
   , MathUnary (..)
@@ -206,7 +207,6 @@ import JShark.Prim
   , matchMathUnary
   )
 import qualified JShark.Prim as Prim
-import JShark.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Rec
 import JShark.Types
 import Numeric (readInt, showHex)
@@ -1089,8 +1089,10 @@ renderWithHelpers s code = helperDecls s $$ renderCode code
 -- | Pure expression compiled to a self-contained JS program (IIFE).
 pureProgram :: ClosedExpr u -> JS
 pureProgram e =
-  let !(s0, expr) = unsafePerformIO (preparePureProgram e)
-   in uncurry renderIIFE (pureAST' s0 IM.empty expr)
+  let
+    !(s0, expr) = unsafePerformIO (preparePureProgram e)
+   in
+    uncurry renderIIFE (pureAST' s0 IM.empty expr)
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: ClosedEffect u -> JS
@@ -1098,8 +1100,10 @@ effectfulProgram e
   | closedEffectNodes e >= optIrLargeThreshold =
       uncurry renderIIFE (flatEffectfulCodegen e)
   | otherwise =
-      let !(s0, eff) = unsafePerformIO (prepareEffectProgram e)
-       in uncurry renderIIFE (effectfulAST' IM.empty s0 eff)
+      let
+        !(s0, eff) = unsafePerformIO (prepareEffectProgram e)
+       in
+        uncurry renderIIFE (effectfulAST' IM.empty s0 eff)
 
 codesDecls :: [Code] -> JS
 codesDecls cs = vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
@@ -1141,7 +1145,8 @@ preparePureProgram e = do
     Nothing -> pure (startCG, optimize e)
     Just ctx -> do
       reportPackPhase ctx 0 1
-      let !expr = optimize e
+      let
+        !expr = optimize e
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountExpr expr)
       pure (startCG {cgEmitCtx = Just ctx}, expr)
@@ -1155,7 +1160,8 @@ prepareEffectProgram e = do
     Nothing -> pure (startCG, optimizeEffectTree e)
     Just ctx -> do
       reportPackPhase ctx 0 1
-      let !eff = optimizeEffectTree e
+      let
+        !eff = optimizeEffectTree e
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountEff eff)
       pure (startCG {cgEmitCtx = Just ctx}, eff)
@@ -1165,16 +1171,20 @@ prepareEffectProgram e = do
 prepareFlatEffectProgram :: ClosedEffect u -> IO (Flat.FlatProgram, CG)
 prepareFlatEffectProgram e = do
   mCtx <- captureEmitCtx
-  let packFlat ir = FlatSoA.optimizeFlatProgram (Flat.packEffectProgram ir)
+  let
+    packFlat ir = FlatSoA.optimizeFlatProgram (Flat.packEffectProgram ir)
   case mCtx of
     Nothing -> pure (packFlat (irEffectFromClosed e), startCG)
     Just ctx -> do
       reportPackPhase ctx 0 3
-      let !ir = irEffectFromClosed e
+      let
+        !ir = irEffectFromClosed e
       reportPackPhase ctx 1 3
-      let !packed = Flat.packEffectProgram ir
+      let
+        !packed = Flat.packEffectProgram ir
       reportPackPhase ctx 2 3
-      let !prog = FlatSoA.optimizeFlatProgram packed
+      let
+        !prog = FlatSoA.optimizeFlatProgram packed
       reportPackPhase ctx 3 3
       initEmitCtxTotal ctx (flatProgramNodeCount prog)
       pure (prog, startCG {cgEmitCtx = Just ctx})
@@ -1186,16 +1196,20 @@ tickEmitCtxUnit ctx tag = unsafePerformIO (tag `seq` tickEmitCtx ctx)
 
 bumpEmit :: CG -> (Int, CG)
 bumpEmit s =
-  let n = cgEmit s + 1
-   in (n, s {cgEmit = n})
+  let
+    n = cgEmit s + 1
+   in
+    (n, s {cgEmit = n})
 
 bumpEmitTick :: CG -> CG
 bumpEmitTick sIn =
   case cgEmitCtx sIn of
     Nothing -> sIn
     Just ctx ->
-      let (tag, s0) = bumpEmit sIn
-       in tag `seq` tickEmitCtxUnit ctx tag `seq` s0
+      let
+        (tag, s0) = bumpEmit sIn
+       in
+        tag `seq` tickEmitCtxUnit ctx tag `seq` s0
 {-# NOINLINE bumpEmitTick #-}
 
 allocTag :: CG -> (Int, CG)
@@ -5030,155 +5044,156 @@ flatPureAST' ::
   -> Flat.NodeId
   -> (CG, Code)
 flatPureAST' !env !sIn prog nid =
-  let s0 = bumpEmitTick sIn
+  let
+    s0 = bumpEmitTick sIn
    in
-  case Flat.flatNode prog nid of
-    Flat.FE_Literal li ->
-      flatRenderLiteral env s0 (Flat.flatLitValue prog li)
-    Flat.FE_Var i ->
-      (s0, Code mempty (varStampJS env (Name i)))
-    Flat.FE_Let tag xId bodyId ->
-      let
-        (nBind, s1) = allocIdent s0
-        (s2, MkCode xDecl xRef _) = flatPureAST' env s1 prog xId
-        env' = IM.insert tag nBind env
-        (s3, yCode) = flatPureAST' env' s2 prog bodyId
-       in
-        ( s3
-        , keepRef
-            ( fromMaybe mempty xDecl
-                $$ constBind nBind (fromMaybe mempty xRef)
-                $$ fromMaybe mempty (codeDecl yCode)
-            )
-            yCode
-        )
-    Flat.FE_LetRec tag rId bId ->
-      let
-        (nBind, s1) = allocIdent s0
-        n = nJS nBind
-        env' = IM.insert tag nBind env
-        (s2, MkCode rDecl rRef _) = flatPureAST' env' s1 prog rId
-        (s3, bCode) = flatPureAST' env' s2 prog bId
-       in
-        ( s3
-        , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
-        )
-    Flat.FE_Lambda tag bodyId ->
-      let
-        (nParam, s1) = allocIdent s0
-        env' = IM.insert tag nParam env
-        (s2, MkCode exprXDecl exprXRef _) = flatPureAST' env' s1 prog bodyId
-       in
-        (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
-    Flat.FE_Apply fId xId ->
-      let
-        (s1, Code fDecl fRef) = flatPureAST' env s0 prog fId
-        (s2, Code xDecl xRef) = flatPureAST' env s1 prog xId
-       in
-        (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
-    Flat.FE_EmbedEff eId -> flatEffectfulAST' env s0 prog eId
-    Flat.FE_If cId tId eId ->
-      let
-        (s1, Code cDecl cRef) = flatPureAST' env s0 prog cId
-        (s2, Code tDecl tRef) = flatPureAST' env s1 prog tId
-        (s3, Code eDecl eRef) = flatPureAST' env s2 prog eId
-       in
-        ( s3
-        , Code
-            (cDecl $$ tDecl $$ eDecl)
-            (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
-        )
-    Flat.FE_OptionCase oId nId tag sId ->
-      let
-        (s1, Code optDecl optRef) = flatPureAST' env s0 prog oId
-        (nBind, s2) = allocIdent s1
-        optVar = nName nBind
-        env' = IM.insert tag nBind env
-        (s3, Code noneDecl noneRef) = flatPureAST' env s2 prog nId
-        (s4, Code someDecl someRef) = flatPureAST' env' s3 prog sId
-       in
-        ( s4
-        , Code
-            (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
-            ( parens
-                (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
-            )
-        )
-    Flat.FE_ResultOk xId ->
-      let
-        (s1, MkCode d r _) = flatPureAST' env s0 prog xId
-       in
-        (s1, MkCode d (Just (resultObject True r)) False)
-    Flat.FE_ResultErr xId ->
-      let
-        (s1, MkCode d r _) = flatPureAST' env s0 prog xId
-       in
-        (s1, MkCode d (Just (resultObject False r)) False)
-    Flat.FE_ResultCase resId tagE errId tagO okId ->
-      flatRenderResultCase env s0 prog resId tagE errId tagO okId
-    Flat.FE_Index arrId idxId ->
-      let
-        s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
-        (s2, Code aDecl aRef) = flatPureAST' env s1 prog arrId
-        (s3, Code iDecl iRef) = flatPureAST' env s2 prog idxId
-       in
-        (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
-    Flat.FE_U8Index bufId idxId ->
-      let
-        (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
-        (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
-       in
-        (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
-    Flat.FE_Error msgId ->
-      let
-        (s1, Code d r) = flatPureAST' env s0 prog msgId
-       in
-        (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
-    Flat.FE_Fixed fixed -> flatRenderFixed env s0 prog fixed
-    Flat.FE_FnLit tags bodyId -> flatRenderFnLit env s0 prog tags bodyId
-    Flat.FE_UnsafeNullable xId -> flatPureAST' env s0 prog xId
-    Flat.FE_FrozenLit gi -> flatRenderObjectLit env s0 prog gi
-    Flat.FE_GetField ti oId ->
-      let
-        (s1, Code d r) = flatPureAST' env s0 prog oId
-       in
-        (s1, Code d (jsDotOrBracket r (Flat.flatText prog ti)))
-    Flat.FE_Hvm2Ref ti ->
-      (s0, Code mempty (hvm2ExportRef (Flat.flatText prog ti)))
-    knode ->
-      case knode of
-        Flat.FE_KConcat {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KPlus {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KTimes {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KMinus {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KNegate {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KFracDiv {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KRem {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBitAnd {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBitOr {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBitXor {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KShl {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KShr {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KUShr {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBig {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KBigNeg {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KAnd {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KOr {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KEq {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KNEq {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KGTh {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KLTh {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KGTEq {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KLTEq {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KShow {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_KTypeOf {} -> flatRenderKernel env s0 prog knode
-        Flat.FE_MethMap {} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethFilter {} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethReduce {} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethReduceRight {} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethToSorted {} -> flatRenderMethod env s0 prog knode
-        Flat.FE_MethFrom {} -> flatRenderMethod env s0 prog knode
-        _ -> error "JShark.flatPureAST': unexpected node"
+    case Flat.flatNode prog nid of
+      Flat.FE_Literal li ->
+        flatRenderLiteral env s0 (Flat.flatLitValue prog li)
+      Flat.FE_Var i ->
+        (s0, Code mempty (varStampJS env (Name i)))
+      Flat.FE_Let tag xId bodyId ->
+        let
+          (nBind, s1) = allocIdent s0
+          (s2, MkCode xDecl xRef _) = flatPureAST' env s1 prog xId
+          env' = IM.insert tag nBind env
+          (s3, yCode) = flatPureAST' env' s2 prog bodyId
+         in
+          ( s3
+          , keepRef
+              ( fromMaybe mempty xDecl
+                  $$ constBind nBind (fromMaybe mempty xRef)
+                  $$ fromMaybe mempty (codeDecl yCode)
+              )
+              yCode
+          )
+      Flat.FE_LetRec tag rId bId ->
+        let
+          (nBind, s1) = allocIdent s0
+          n = nJS nBind
+          env' = IM.insert tag nBind env
+          (s2, MkCode rDecl rRef _) = flatPureAST' env' s1 prog rId
+          (s3, bCode) = flatPureAST' env' s2 prog bId
+         in
+          ( s3
+          , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
+          )
+      Flat.FE_Lambda tag bodyId ->
+        let
+          (nParam, s1) = allocIdent s0
+          env' = IM.insert tag nParam env
+          (s2, MkCode exprXDecl exprXRef _) = flatPureAST' env' s1 prog bodyId
+         in
+          (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+      Flat.FE_Apply fId xId ->
+        let
+          (s1, Code fDecl fRef) = flatPureAST' env s0 prog fId
+          (s2, Code xDecl xRef) = flatPureAST' env s1 prog xId
+         in
+          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+      Flat.FE_EmbedEff eId -> flatEffectfulAST' env s0 prog eId
+      Flat.FE_If cId tId eId ->
+        let
+          (s1, Code cDecl cRef) = flatPureAST' env s0 prog cId
+          (s2, Code tDecl tRef) = flatPureAST' env s1 prog tId
+          (s3, Code eDecl eRef) = flatPureAST' env s2 prog eId
+         in
+          ( s3
+          , Code
+              (cDecl $$ tDecl $$ eDecl)
+              (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
+          )
+      Flat.FE_OptionCase oId nId tag sId ->
+        let
+          (s1, Code optDecl optRef) = flatPureAST' env s0 prog oId
+          (nBind, s2) = allocIdent s1
+          optVar = nName nBind
+          env' = IM.insert tag nBind env
+          (s3, Code noneDecl noneRef) = flatPureAST' env s2 prog nId
+          (s4, Code someDecl someRef) = flatPureAST' env' s3 prog sId
+         in
+          ( s4
+          , Code
+              (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
+              ( parens
+                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+              )
+          )
+      Flat.FE_ResultOk xId ->
+        let
+          (s1, MkCode d r _) = flatPureAST' env s0 prog xId
+         in
+          (s1, MkCode d (Just (resultObject True r)) False)
+      Flat.FE_ResultErr xId ->
+        let
+          (s1, MkCode d r _) = flatPureAST' env s0 prog xId
+         in
+          (s1, MkCode d (Just (resultObject False r)) False)
+      Flat.FE_ResultCase resId tagE errId tagO okId ->
+        flatRenderResultCase env s0 prog resId tagE errId tagO okId
+      Flat.FE_Index arrId idxId ->
+        let
+          s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
+          (s2, Code aDecl aRef) = flatPureAST' env s1 prog arrId
+          (s3, Code iDecl iRef) = flatPureAST' env s2 prog idxId
+         in
+          (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+      Flat.FE_U8Index bufId idxId ->
+        let
+          (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
+          (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
+         in
+          (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
+      Flat.FE_Error msgId ->
+        let
+          (s1, Code d r) = flatPureAST' env s0 prog msgId
+         in
+          (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
+      Flat.FE_Fixed fixed -> flatRenderFixed env s0 prog fixed
+      Flat.FE_FnLit tags bodyId -> flatRenderFnLit env s0 prog tags bodyId
+      Flat.FE_UnsafeNullable xId -> flatPureAST' env s0 prog xId
+      Flat.FE_FrozenLit gi -> flatRenderObjectLit env s0 prog gi
+      Flat.FE_GetField ti oId ->
+        let
+          (s1, Code d r) = flatPureAST' env s0 prog oId
+         in
+          (s1, Code d (jsDotOrBracket r (Flat.flatText prog ti)))
+      Flat.FE_Hvm2Ref ti ->
+        (s0, Code mempty (hvm2ExportRef (Flat.flatText prog ti)))
+      knode ->
+        case knode of
+          Flat.FE_KConcat {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KPlus {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KTimes {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KMinus {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KNegate {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KFracDiv {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KRem {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KBitAnd {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KBitOr {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KBitXor {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KShl {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KShr {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KUShr {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KBig {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KBigNeg {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KAnd {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KOr {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KEq {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KNEq {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KGTh {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KLTh {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KGTEq {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KLTEq {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KShow {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_KTypeOf {} -> flatRenderKernel env s0 prog knode
+          Flat.FE_MethMap {} -> flatRenderMethod env s0 prog knode
+          Flat.FE_MethFilter {} -> flatRenderMethod env s0 prog knode
+          Flat.FE_MethReduce {} -> flatRenderMethod env s0 prog knode
+          Flat.FE_MethReduceRight {} -> flatRenderMethod env s0 prog knode
+          Flat.FE_MethToSorted {} -> flatRenderMethod env s0 prog knode
+          Flat.FE_MethFrom {} -> flatRenderMethod env s0 prog knode
+          _ -> error "JShark.flatPureAST': unexpected node"
 
 flatEffectfulAST' ::
   Env
@@ -5187,203 +5202,204 @@ flatEffectfulAST' ::
   -> Flat.NodeId
   -> (CG, Code)
 flatEffectfulAST' !env !sIn prog nid =
-  let s0 = bumpEmitTick sIn
+  let
+    s0 = bumpEmitTick sIn
    in
-  case Flat.flatNode prog nid of
-    Flat.FX_Lift eId -> flatPureAST' env s0 prog eId
-    Flat.FX_FFI fi ai ->
-      let
-        (s1, argDecl, argRefs) = flatRenderArgList env s0 prog ai
-       in
-        ( s1
-        , fxCode
-            argDecl
-            (renderFFIInvoke (Flat.flatFFI prog fi) argRefs)
-        )
-    Flat.FX_UnsafeObject ti ->
-      (s0, Code mempty (jsText (Flat.flatText prog ti)))
-    Flat.FX_UnsafeObjectGet xId sId ->
-      let
-        (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
-       in
-        (s1, Code xDecl $ jsDotOrBracket xRef (Flat.flatText prog sId))
-    Flat.FX_UnsafeObjectAssign xId yId ->
-      let
-        (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
-        (s2, Code yDecl yRef) = flatEffectfulAST' env s1 prog yId
-       in
-        (s2, fxCode (xDecl $$ yDecl) $ xRef <> " = " <> yRef)
-    Flat.FX_CallMethod recvId methodIdx ai ->
-      let
-        method = Flat.flatText prog methodIdx
-        (s1, Code rDecl rRef) = flatEffectfulAST' env s0 prog recvId
-        (s2, argDecl, argRefs) = flatRenderArgList env s1 prog ai
-       in
-        ( s2
-        , fxCode
-            (rDecl $$ argDecl)
-            (rRef <> "." <> jsText method <> parens argRefs)
-        )
-    Flat.FX_Bind tag xId bodyId ->
-      flatBindEffect env s0 prog tag xId bodyId
-    Flat.FX_ThenE xId yId -> flatSeqEffect env s0 prog xId yId
-    Flat.FX_BindRec tag rId bId ->
-      let
-        (nBind, s1) = allocIdent s0
-        n = nJS nBind
-        env' = IM.insert tag nBind env
-        (s2, MkCode rDecl rRef _) = flatEffectfulAST' env' s1 prog rId
-        (s3, MkCode bDecl bRef bFX) = flatEffectfulAST' env' s2 prog bId
-       in
-        ( s3
-        , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
-        )
-    Flat.FX_LambdaE tag bodyId ->
-      let
-        (nParam, s1) = allocIdent s0
-        env' = IM.insert tag nParam env
-        (s2, MkCode exprXDecl exprXRef _) = flatEffectfulAST' env' s1 prog bodyId
-       in
-        (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
-    Flat.FX_ApplyE fId xId ->
-      let
-        (s1, Code fDecl fRef) = flatEffectfulAST' env s0 prog fId
-        (s2, Code xDecl xRef) = flatEffectfulAST' env s1 prog xId
-       in
-        (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
-    Flat.FX_IfE cId tId eId ->
-      emitBranching
-        ( flatIsUnitEffect prog tId
-            && flatIsUnitEffect prog eId
-        )
-        s0
-        ( \s ->
-            let
-              (s1, Code cDecl cRef) = flatEffectfulAST' env s prog cId
-             in
-              (s1, cDecl, cRef)
-        )
-        ( \mRes cRef s ->
-            let
-              (s1, MkCode tDecl tRef _) = flatEffectfulAST' env s prog tId
-              (s2, MkCode eDecl eRef _) = flatEffectfulAST' env s1 prog eId
-             in
-              (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
-        )
-    Flat.FX_While cId bId ->
-      let
-        (s1, MkCode condDecl condRef _) = flatEffectfulAST' env s0 prog cId
-        (s2, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env s1 prog bId
-        bodyStmt = asStmt bodyDecl bodyRef
-        whileStmt =
-          "while"
-            <+> parens (fromMaybe mempty condRef)
-            <+> blockBody bodyStmt
-       in
-        (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
-    Flat.FX_ForRange startId endId tag bodyId ->
-      let
-        (s1, MkCode startDecl startRef _) = flatPureAST' env s0 prog startId
-        (s2, MkCode endDecl endRef _) = flatPureAST' env s1 prog endId
-        (loopN, s3) = allocIdent s2
-        loopVar = nJS loopN
-        env' = IM.insert tag loopN env
-        (s4, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env' s3 prog bodyId
-        bodyStmt = asStmt bodyDecl bodyRef
-        forHead =
-          "let"
-            <+> loopVar
-            <+> "="
-            <+> fromMaybe mempty startRef
-            <+> ";"
-            <+> loopVar
-            <+> "<"
-            <+> fromMaybe mempty endRef
-            <+> ";"
-            <+> loopVar
-            <+> "++"
-        forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
-       in
-        ( s4
-        , MkCode
-            ( Just
-                ( fromMaybe mempty startDecl
-                    $$ fromMaybe mempty endDecl
-                    $$ forStmt
-                )
-            )
-            Nothing
-            False
-        )
-    Flat.FX_U8Set bufId idxId valId ->
-      let
-        (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
-        (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
-        (s3, Code vDecl vRef) = flatPureAST' env s2 prog valId
-        stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
-       in
-        (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
-    Flat.FX_U8Fill bufId valId ->
-      let
-        (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
-        (s2, Code vDecl vRef) = flatPureAST' env s1 prog valId
-        stmt = bRef <> ".fill" <> parens vRef
-       in
-        (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
-    Flat.FX_OptionCaseE oId nId tag sId ->
-      emitBranching
-        ( flatIsUnitEffect prog nId
-            && flatIsUnitEffect prog sId
-        )
-        s0
-        ( \s ->
-            let
-              (s1, Code oDecl oRef) = flatPureAST' env s prog oId
-              (nBind, s2) = allocIdent s1
-             in
-              (s2, oDecl $$ constBind nBind oRef, nBind)
-        )
-        ( \mRes nBind s ->
-            let
-              env' = IM.insert tag nBind env
-              (s1, MkCode nDecl nRef _) = flatEffectfulAST' env s prog nId
-              (s2, MkCode sDecl sRef _) = flatEffectfulAST' env' s1 prog sId
-              cond = nJS nBind <+> "===" <+> "null"
-             in
-              (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
-        )
-    Flat.FX_ResultCaseE resId tagE errId tagO okId ->
-      flatRenderResultCaseE env s0 prog resId tagE errId tagO okId
-    Flat.FX_StringCaseE scrutId ai defId ->
-      flatRenderStringCaseE env s0 prog scrutId ai defId
-    Flat.FX_Throw xId ->
-      let
-        (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
-       in
-        (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
-    Flat.FX_Try aId tag kId ->
-      emitBranching
-        (flatIsUnitEffect prog aId && flatIsUnitEffect prog kId)
-        s0
-        (\s -> (s, mempty, ()))
-        ( \mRes () s ->
-            let
-              (s1, MkCode aDecl aRef _) = flatEffectfulAST' env s prog aId
-              (catchN, s2) = allocIdent s1
-              env' = IM.insert tag catchN env
-              (s3, MkCode bDecl bRef _) = flatEffectfulAST' env' s2 prog kId
-             in
-              (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
-        )
-    Flat.FX_ObjectLit gi -> flatRenderObjectLit env s0 prog gi
-    Flat.FX_DeleteProp oId kId ->
-      let
-        (s1, Code oDecl oRef) = flatEffectfulAST' env s0 prog oId
-        (s2, Code kDecl kRef) = flatPureAST' env s1 prog kId
-       in
-        (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
-    Flat.FX_ArrayLit es -> flatRenderArrayLit env s0 prog es
-    _ -> error "JShark.flatEffectfulAST': unexpected node"
+    case Flat.flatNode prog nid of
+      Flat.FX_Lift eId -> flatPureAST' env s0 prog eId
+      Flat.FX_FFI fi ai ->
+        let
+          (s1, argDecl, argRefs) = flatRenderArgList env s0 prog ai
+         in
+          ( s1
+          , fxCode
+              argDecl
+              (renderFFIInvoke (Flat.flatFFI prog fi) argRefs)
+          )
+      Flat.FX_UnsafeObject ti ->
+        (s0, Code mempty (jsText (Flat.flatText prog ti)))
+      Flat.FX_UnsafeObjectGet xId sId ->
+        let
+          (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
+         in
+          (s1, Code xDecl $ jsDotOrBracket xRef (Flat.flatText prog sId))
+      Flat.FX_UnsafeObjectAssign xId yId ->
+        let
+          (s1, Code xDecl xRef) = flatEffectfulAST' env s0 prog xId
+          (s2, Code yDecl yRef) = flatEffectfulAST' env s1 prog yId
+         in
+          (s2, fxCode (xDecl $$ yDecl) $ xRef <> " = " <> yRef)
+      Flat.FX_CallMethod recvId methodIdx ai ->
+        let
+          method = Flat.flatText prog methodIdx
+          (s1, Code rDecl rRef) = flatEffectfulAST' env s0 prog recvId
+          (s2, argDecl, argRefs) = flatRenderArgList env s1 prog ai
+         in
+          ( s2
+          , fxCode
+              (rDecl $$ argDecl)
+              (rRef <> "." <> jsText method <> parens argRefs)
+          )
+      Flat.FX_Bind tag xId bodyId ->
+        flatBindEffect env s0 prog tag xId bodyId
+      Flat.FX_ThenE xId yId -> flatSeqEffect env s0 prog xId yId
+      Flat.FX_BindRec tag rId bId ->
+        let
+          (nBind, s1) = allocIdent s0
+          n = nJS nBind
+          env' = IM.insert tag nBind env
+          (s2, MkCode rDecl rRef _) = flatEffectfulAST' env' s1 prog rId
+          (s3, MkCode bDecl bRef bFX) = flatEffectfulAST' env' s2 prog bId
+         in
+          ( s3
+          , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
+          )
+      Flat.FX_LambdaE tag bodyId ->
+        let
+          (nParam, s1) = allocIdent s0
+          env' = IM.insert tag nParam env
+          (s2, MkCode exprXDecl exprXRef _) = flatEffectfulAST' env' s1 prog bodyId
+         in
+          (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+      Flat.FX_ApplyE fId xId ->
+        let
+          (s1, Code fDecl fRef) = flatEffectfulAST' env s0 prog fId
+          (s2, Code xDecl xRef) = flatEffectfulAST' env s1 prog xId
+         in
+          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+      Flat.FX_IfE cId tId eId ->
+        emitBranching
+          ( flatIsUnitEffect prog tId
+              && flatIsUnitEffect prog eId
+          )
+          s0
+          ( \s ->
+              let
+                (s1, Code cDecl cRef) = flatEffectfulAST' env s prog cId
+               in
+                (s1, cDecl, cRef)
+          )
+          ( \mRes cRef s ->
+              let
+                (s1, MkCode tDecl tRef _) = flatEffectfulAST' env s prog tId
+                (s2, MkCode eDecl eRef _) = flatEffectfulAST' env s1 prog eId
+               in
+                (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
+          )
+      Flat.FX_While cId bId ->
+        let
+          (s1, MkCode condDecl condRef _) = flatEffectfulAST' env s0 prog cId
+          (s2, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env s1 prog bId
+          bodyStmt = asStmt bodyDecl bodyRef
+          whileStmt =
+            "while"
+              <+> parens (fromMaybe mempty condRef)
+              <+> blockBody bodyStmt
+         in
+          (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
+      Flat.FX_ForRange startId endId tag bodyId ->
+        let
+          (s1, MkCode startDecl startRef _) = flatPureAST' env s0 prog startId
+          (s2, MkCode endDecl endRef _) = flatPureAST' env s1 prog endId
+          (loopN, s3) = allocIdent s2
+          loopVar = nJS loopN
+          env' = IM.insert tag loopN env
+          (s4, MkCode bodyDecl bodyRef _) = flatEffectfulAST' env' s3 prog bodyId
+          bodyStmt = asStmt bodyDecl bodyRef
+          forHead =
+            "let"
+              <+> loopVar
+              <+> "="
+              <+> fromMaybe mempty startRef
+              <+> ";"
+              <+> loopVar
+              <+> "<"
+              <+> fromMaybe mempty endRef
+              <+> ";"
+              <+> loopVar
+              <+> "++"
+          forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
+         in
+          ( s4
+          , MkCode
+              ( Just
+                  ( fromMaybe mempty startDecl
+                      $$ fromMaybe mempty endDecl
+                      $$ forStmt
+                  )
+              )
+              Nothing
+              False
+          )
+      Flat.FX_U8Set bufId idxId valId ->
+        let
+          (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
+          (s2, Code iDecl iRef) = flatPureAST' env s1 prog idxId
+          (s3, Code vDecl vRef) = flatPureAST' env s2 prog valId
+          stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
+         in
+          (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
+      Flat.FX_U8Fill bufId valId ->
+        let
+          (s1, Code bDecl bRef) = flatPureAST' env s0 prog bufId
+          (s2, Code vDecl vRef) = flatPureAST' env s1 prog valId
+          stmt = bRef <> ".fill" <> parens vRef
+         in
+          (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
+      Flat.FX_OptionCaseE oId nId tag sId ->
+        emitBranching
+          ( flatIsUnitEffect prog nId
+              && flatIsUnitEffect prog sId
+          )
+          s0
+          ( \s ->
+              let
+                (s1, Code oDecl oRef) = flatPureAST' env s prog oId
+                (nBind, s2) = allocIdent s1
+               in
+                (s2, oDecl $$ constBind nBind oRef, nBind)
+          )
+          ( \mRes nBind s ->
+              let
+                env' = IM.insert tag nBind env
+                (s1, MkCode nDecl nRef _) = flatEffectfulAST' env s prog nId
+                (s2, MkCode sDecl sRef _) = flatEffectfulAST' env' s1 prog sId
+                cond = nJS nBind <+> "===" <+> "null"
+               in
+                (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
+          )
+      Flat.FX_ResultCaseE resId tagE errId tagO okId ->
+        flatRenderResultCaseE env s0 prog resId tagE errId tagO okId
+      Flat.FX_StringCaseE scrutId ai defId ->
+        flatRenderStringCaseE env s0 prog scrutId ai defId
+      Flat.FX_Throw xId ->
+        let
+          (s1, Code xDecl xRef) = flatPureAST' env s0 prog xId
+         in
+          (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
+      Flat.FX_Try aId tag kId ->
+        emitBranching
+          (flatIsUnitEffect prog aId && flatIsUnitEffect prog kId)
+          s0
+          (\s -> (s, mempty, ()))
+          ( \mRes () s ->
+              let
+                (s1, MkCode aDecl aRef _) = flatEffectfulAST' env s prog aId
+                (catchN, s2) = allocIdent s1
+                env' = IM.insert tag catchN env
+                (s3, MkCode bDecl bRef _) = flatEffectfulAST' env' s2 prog kId
+               in
+                (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
+          )
+      Flat.FX_ObjectLit gi -> flatRenderObjectLit env s0 prog gi
+      Flat.FX_DeleteProp oId kId ->
+        let
+          (s1, Code oDecl oRef) = flatEffectfulAST' env s0 prog oId
+          (s2, Code kDecl kRef) = flatPureAST' env s1 prog kId
+         in
+          (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
+      Flat.FX_ArrayLit es -> flatRenderArrayLit env s0 prog es
+      _ -> error "JShark.flatEffectfulAST': unexpected node"
 
 flatProgramNodeCount :: Flat.FlatProgram -> Int
 flatProgramNodeCount p = V.length (Flat.fpNodes p)
@@ -5619,178 +5635,179 @@ isWholeParenthesized t =
 
 effectfulAST' :: forall v. Env -> CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !env !sIn eff =
-  let s0 = bumpEmitTick sIn
+  let
+    s0 = bumpEmitTick sIn
    in
-  case eff of
-  Lift x -> pureAST' s0 env x
-  FFI fn args ->
-    let
-      (s1, argDecl, argRefs) = renderArgList env s0 args
-     in
-      (s1, fxCode argDecl (renderFFIInvoke fn argRefs))
-  IfE c t e ->
-    -- Value-producing @if@: a shared result var is assigned in both
-    -- arms. Do not use emptiness to pick a ternary — a Unit leftover
-    -- ref is not a genuinely-empty Doc.
-    emitBranching
-      (isUnitWitness t && isUnitWitness e)
-      s0
-      ( \s ->
-          let
-            (s1, Code cDecl cRef) = effectfulAST' env s c
-           in
-            (s1, cDecl, cRef)
-      )
-      ( \mRes cRef s ->
-          let
-            (s1, MkCode tDecl tRef _) = effectfulAST' env s t
-            (s2, MkCode eDecl eRef _) = effectfulAST' env s1 e
-           in
-            (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
-      )
-  While cond body ->
-    let
-      (s1, MkCode condDecl condRef _) = effectfulAST' env s0 cond
-      (s2, MkCode bodyDecl bodyRef _) = effectfulAST' env s1 body
-      bodyStmt = asStmt bodyDecl bodyRef
-      whileStmt = "while" <+> parens (fromMaybe mempty condRef) <+> blockBody bodyStmt
-     in
-      (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
-  ForRange start end body ->
-    let
-      (s1, MkCode startDecl startRef _) = pureAST' s0 env start
-      (s2, MkCode endDecl endRef _) = pureAST' s1 env end
-      (loopN, s3) = allocIdent s2
-      loopVar = nJS loopN
-      (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
-      bodyStmt = asStmt bodyDecl bodyRef
-      forHead =
-        "let"
-          <+> loopVar
-          <+> "="
-          <+> fromMaybe mempty startRef
-          <+> ";"
-          <+> loopVar
-          <+> "<"
-          <+> fromMaybe mempty endRef
-          <+> ";"
-          <+> loopVar
-          <+> "++"
-      forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
-     in
-      ( s4
-      , MkCode
-          (Just (fromMaybe mempty startDecl $$ fromMaybe mempty endDecl $$ forStmt))
-          Nothing
-          False
-      )
-  U8Set buf idx val ->
-    let
-      (s1, Code bDecl bRef) = pureAST' s0 env buf
-      (s2, Code iDecl iRef) = pureAST' s1 env idx
-      (s3, Code vDecl vRef) = pureAST' s2 env val
-      stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
-     in
-      (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
-  U8Fill buf val ->
-    let
-      (s1, Code bDecl bRef) = pureAST' s0 env buf
-      (s2, Code vDecl vRef) = pureAST' s1 env val
-      stmt = bRef <> ".fill" <> parens vRef
-     in
-      (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
-  OptionCaseE opt noneE someF ->
-    let
-      (sProbe, tagged, binderTag) = probeContEff s0 someF
-     in
-      emitBranching
-        (isUnitWitness noneE && isUnitWitness (someF nestedDummy))
-        sProbe
-        ( \s ->
-            let
-              (s1, Code oDecl oRef) = pureAST' s env opt
-              (nBind, s2) = allocIdent s1
-             in
-              (s2, oDecl $$ constBind nBind oRef, nBind)
-        )
-        ( \mRes nBind s ->
-            let
-              env' = IM.insert binderTag nBind env
-              (s1, MkCode nDecl nRef _) = effectfulAST' env s noneE
-              (s2, MkCode sDecl sRef _) = effectfulAST' env' s1 tagged
-              cond = nJS nBind <+> "===" <+> "null"
-             in
-              (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
-        )
-  Try a k ->
-    let
-      (sProbe, tagged, binderTag) = probeContEff s0 k
-     in
-      emitBranching
-        (isUnitWitness a && isUnitWitness (k nestedDummy))
-        sProbe
-        (\s -> (s, mempty, ()))
-        ( \mRes () s ->
-            let
-              (s1, MkCode aDecl aRef _) = effectfulAST' env s a
-              (catchN, s2) = allocIdent s1
-              env' = IM.insert binderTag catchN env
-              (s3, MkCode bDecl bRef _) = effectfulAST' env' s2 tagged
-             in
-              (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
-        )
-  Bind x f -> bindEffectCode env s0 x f
-  ThenE x y -> seqEffectCode env s0 x y
-  BindRec r b ->
-    let
-      (nBind, s1) = allocIdent s0
-      n = nJS nBind
-      (s2, MkCode rDecl rRef _) = effectfulAST' env s1 (r (Name nBind))
-      (s3, MkCode bDecl bRef bFX) = effectfulAST' env s2 (b (Name nBind))
-     in
-      ( s3
-      , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
-      )
-  Throw x ->
-    let
-      (s1, Code xDecl xRef) = pureAST' s0 env x
-     in
-      (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
-  ObjectLit fs -> renderObjectLit env s0 fs
-  ArrayLit es -> renderArrayLit env s0 es
-  DeleteProp o k ->
-    let
-      (s1, Code oDecl oRef) = effectfulAST' env s0 o
-      (s2, Code kDecl kRef) = pureAST' s1 env k
-     in
-      (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
-  ResultCaseE res errF okF -> renderResultCaseE env s0 res errF okF
-  StringCaseE scrut arms def -> renderStringCaseE env s0 scrut arms def
-  UnsafeObject obj -> (s0, Code mempty (jsText obj))
-  UnsafeObjectGet x string ->
-    let
-      (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
-     in
-      (s1, Code x1Decl $ jsDotOrBracket x1Ref string)
-  UnsafeObjectAssign x y ->
-    let
-      (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
-      (s2, Code y1Decl y1Ref) = effectfulAST' env s1 y
-     in
-      (s2, fxCode (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref)
-  CallMethod recv name args ->
-    let
-      (s1, Code rDecl rRef) = effectfulAST' env s0 recv
-      (s2, argDecl, argRefs) = renderArgList env s1 args
-     in
-      (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> jsText name <> parens argRefs))
-  LambdaE f -> emitEffectLambda env s0 f
-  ApplyE fex ex ->
-    let
-      (s1, Code exprXDecl exprXRef) = effectfulAST' env s0 fex
-      (s2, Code exprYDecl exprYRef) = effectfulAST' env s1 ex
-     in
-      (s2, fxCode (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
+    case eff of
+      Lift x -> pureAST' s0 env x
+      FFI fn args ->
+        let
+          (s1, argDecl, argRefs) = renderArgList env s0 args
+         in
+          (s1, fxCode argDecl (renderFFIInvoke fn argRefs))
+      IfE c t e ->
+        -- Value-producing @if@: a shared result var is assigned in both
+        -- arms. Do not use emptiness to pick a ternary — a Unit leftover
+        -- ref is not a genuinely-empty Doc.
+        emitBranching
+          (isUnitWitness t && isUnitWitness e)
+          s0
+          ( \s ->
+              let
+                (s1, Code cDecl cRef) = effectfulAST' env s c
+               in
+                (s1, cDecl, cRef)
+          )
+          ( \mRes cRef s ->
+              let
+                (s1, MkCode tDecl tRef _) = effectfulAST' env s t
+                (s2, MkCode eDecl eRef _) = effectfulAST' env s1 e
+               in
+                (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
+          )
+      While cond body ->
+        let
+          (s1, MkCode condDecl condRef _) = effectfulAST' env s0 cond
+          (s2, MkCode bodyDecl bodyRef _) = effectfulAST' env s1 body
+          bodyStmt = asStmt bodyDecl bodyRef
+          whileStmt = "while" <+> parens (fromMaybe mempty condRef) <+> blockBody bodyStmt
+         in
+          (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
+      ForRange start end body ->
+        let
+          (s1, MkCode startDecl startRef _) = pureAST' s0 env start
+          (s2, MkCode endDecl endRef _) = pureAST' s1 env end
+          (loopN, s3) = allocIdent s2
+          loopVar = nJS loopN
+          (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
+          bodyStmt = asStmt bodyDecl bodyRef
+          forHead =
+            "let"
+              <+> loopVar
+              <+> "="
+              <+> fromMaybe mempty startRef
+              <+> ";"
+              <+> loopVar
+              <+> "<"
+              <+> fromMaybe mempty endRef
+              <+> ";"
+              <+> loopVar
+              <+> "++"
+          forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
+         in
+          ( s4
+          , MkCode
+              (Just (fromMaybe mempty startDecl $$ fromMaybe mempty endDecl $$ forStmt))
+              Nothing
+              False
+          )
+      U8Set buf idx val ->
+        let
+          (s1, Code bDecl bRef) = pureAST' s0 env buf
+          (s2, Code iDecl iRef) = pureAST' s1 env idx
+          (s3, Code vDecl vRef) = pureAST' s2 env val
+          stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
+         in
+          (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
+      U8Fill buf val ->
+        let
+          (s1, Code bDecl bRef) = pureAST' s0 env buf
+          (s2, Code vDecl vRef) = pureAST' s1 env val
+          stmt = bRef <> ".fill" <> parens vRef
+         in
+          (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
+      OptionCaseE opt noneE someF ->
+        let
+          (sProbe, tagged, binderTag) = probeContEff s0 someF
+         in
+          emitBranching
+            (isUnitWitness noneE && isUnitWitness (someF nestedDummy))
+            sProbe
+            ( \s ->
+                let
+                  (s1, Code oDecl oRef) = pureAST' s env opt
+                  (nBind, s2) = allocIdent s1
+                 in
+                  (s2, oDecl $$ constBind nBind oRef, nBind)
+            )
+            ( \mRes nBind s ->
+                let
+                  env' = IM.insert binderTag nBind env
+                  (s1, MkCode nDecl nRef _) = effectfulAST' env s noneE
+                  (s2, MkCode sDecl sRef _) = effectfulAST' env' s1 tagged
+                  cond = nJS nBind <+> "===" <+> "null"
+                 in
+                  (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
+            )
+      Try a k ->
+        let
+          (sProbe, tagged, binderTag) = probeContEff s0 k
+         in
+          emitBranching
+            (isUnitWitness a && isUnitWitness (k nestedDummy))
+            sProbe
+            (\s -> (s, mempty, ()))
+            ( \mRes () s ->
+                let
+                  (s1, MkCode aDecl aRef _) = effectfulAST' env s a
+                  (catchN, s2) = allocIdent s1
+                  env' = IM.insert binderTag catchN env
+                  (s3, MkCode bDecl bRef _) = effectfulAST' env' s2 tagged
+                 in
+                  (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
+            )
+      Bind x f -> bindEffectCode env s0 x f
+      ThenE x y -> seqEffectCode env s0 x y
+      BindRec r b ->
+        let
+          (nBind, s1) = allocIdent s0
+          n = nJS nBind
+          (s2, MkCode rDecl rRef _) = effectfulAST' env s1 (r (Name nBind))
+          (s3, MkCode bDecl bRef bFX) = effectfulAST' env s2 (b (Name nBind))
+         in
+          ( s3
+          , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
+          )
+      Throw x ->
+        let
+          (s1, Code xDecl xRef) = pureAST' s0 env x
+         in
+          (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
+      ObjectLit fs -> renderObjectLit env s0 fs
+      ArrayLit es -> renderArrayLit env s0 es
+      DeleteProp o k ->
+        let
+          (s1, Code oDecl oRef) = effectfulAST' env s0 o
+          (s2, Code kDecl kRef) = pureAST' s1 env k
+         in
+          (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
+      ResultCaseE res errF okF -> renderResultCaseE env s0 res errF okF
+      StringCaseE scrut arms def -> renderStringCaseE env s0 scrut arms def
+      UnsafeObject obj -> (s0, Code mempty (jsText obj))
+      UnsafeObjectGet x string ->
+        let
+          (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
+         in
+          (s1, Code x1Decl $ jsDotOrBracket x1Ref string)
+      UnsafeObjectAssign x y ->
+        let
+          (s1, Code x1Decl x1Ref) = effectfulAST' env s0 x
+          (s2, Code y1Decl y1Ref) = effectfulAST' env s1 y
+         in
+          (s2, fxCode (x1Decl $$ y1Decl) $ x1Ref <> " = " <> y1Ref)
+      CallMethod recv name args ->
+        let
+          (s1, Code rDecl rRef) = effectfulAST' env s0 recv
+          (s2, argDecl, argRefs) = renderArgList env s1 args
+         in
+          (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> jsText name <> parens argRefs))
+      LambdaE f -> emitEffectLambda env s0 f
+      ApplyE fex ex ->
+        let
+          (s1, Code exprXDecl exprXRef) = effectfulAST' env s0 fex
+          (s2, Code exprYDecl exprYRef) = effectfulAST' env s1 ex
+         in
+          (s2, fxCode (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
 
 letCode ::
   Env -> CG -> Expr Stamp u -> (Stamp u -> Expr Stamp v) -> (CG, Code)
@@ -5834,141 +5851,142 @@ pureAST' ::
   -> Expr Stamp v
   -> (CG, Code)
 pureAST' !sIn env expr =
-  let s0 = bumpEmitTick sIn
+  let
+    s0 = bumpEmitTick sIn
    in
-  case expr of
-  Literal v -> case v of
-    ValueNumber d -> (s0, Code mempty (jsDouble d))
-    ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
-    ValueArray xs ->
-      let
-        (s1, exprs) = mapAccumL (\s x -> pureAST' s env (Literal x)) s0 xs
-       in
-        ( s1
-        , Code
-            (codesDecls exprs)
-            (brackets (hcat (punctuate ", " (codesRefs exprs))))
-        )
-    ValueString s -> (s0, Code mempty (jsQuote s))
-    ValueFunction _ -> error "JShark.pureAST: ValueFunction is eval-only"
-    ValueUnit -> (s0, mempty)
-    ValueOption (Just x) -> pureAST' s0 env (Literal x)
-    ValueOption Nothing -> (s0, Code mempty "null")
-    ValueResult (Right x) -> renderResultLit True s0 x
-    ValueResult (Left x) -> renderResultLit False s0 x
-    ValueRegex s ->
-      (s0, Code mempty ("new RegExp" <> parens (jsQuote s)))
-    ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))
-    ValueBool True -> (s0, Code mempty "true")
-    ValueBool False -> (s0, Code mempty "false")
-    ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
-  Lambda f -> emitExprLambda env s0 f
-  -- `const` when shared or used under a lambda/loop/short-circuit.
-  Let x g -> letCode env s0 x g
-  LetRec r b ->
-    let
-      (nBind, s1) = allocIdent s0
-      n = nJS nBind
-      (s2, MkCode rDecl rRef _) = pureAST' s1 env (r (Name nBind))
-      (s3, bCode) = pureAST' s2 env (b (Name nBind))
-     in
-      ( s3
-      , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
-      )
-  Apply fex ex ->
-    let
-      (s1, Code exprXDecl exprXRef) = pureAST' s0 env fex
-      (s2, Code exprYDecl exprYRef) = pureAST' s1 env ex
-     in
-      (s2, Code (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
-  Var (Embed e) -> pureAST' s0 env (flattenExpr e)
-  Var (EmbedEff e) -> effectfulAST' env s0 e
-  Var s ->
-    -- Tags and the unused-binder dummy are negative; map via `env`.
-    (s0, Code mempty (varStampJS env s))
-  If c t e ->
-    let
-      (s1, Code cDecl cRef) = pureAST' s0 env c
-      (s2, Code tDecl tRef) = pureAST' s1 env t
-      (s3, Code eDecl eRef) = pureAST' s2 env e
-     in
-      ( s3
-      , Code
-          (cDecl $$ tDecl $$ eDecl)
-          (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
-      )
-  OptionCase opt none' someF ->
-    case opt of
-      Var (Embed e) -> pureAST' s0 env (OptionCase (flattenExpr e) none' someF)
-      Var s ->
+    case expr of
+      Literal v -> case v of
+        ValueNumber d -> (s0, Code mempty (jsDouble d))
+        ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
+        ValueArray xs ->
+          let
+            (s1, exprs) = mapAccumL (\s x -> pureAST' s env (Literal x)) s0 xs
+           in
+            ( s1
+            , Code
+                (codesDecls exprs)
+                (brackets (hcat (punctuate ", " (codesRefs exprs))))
+            )
+        ValueString s -> (s0, Code mempty (jsQuote s))
+        ValueFunction _ -> error "JShark.pureAST: ValueFunction is eval-only"
+        ValueUnit -> (s0, mempty)
+        ValueOption (Just x) -> pureAST' s0 env (Literal x)
+        ValueOption Nothing -> (s0, Code mempty "null")
+        ValueResult (Right x) -> renderResultLit True s0 x
+        ValueResult (Left x) -> renderResultLit False s0 x
+        ValueRegex s ->
+          (s0, Code mempty ("new RegExp" <> parens (jsQuote s)))
+        ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))
+        ValueBool True -> (s0, Code mempty "true")
+        ValueBool False -> (s0, Code mempty "false")
+        ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
+      Lambda f -> emitExprLambda env s0 f
+      -- `const` when shared or used under a lambda/loop/short-circuit.
+      Let x g -> letCode env s0 x g
+      LetRec r b ->
         let
-          i = stampId s
-          optVar = nName i
-          (s2, Code noneDecl noneRef) = pureAST' s0 env none'
-          (s3, Code someDecl someRef) = pureAST' s2 env (someF (Name i))
+          (nBind, s1) = allocIdent s0
+          n = nJS nBind
+          (s2, MkCode rDecl rRef _) = pureAST' s1 env (r (Name nBind))
+          (s3, bCode) = pureAST' s2 env (b (Name nBind))
+         in
+          ( s3
+          , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
+          )
+      Apply fex ex ->
+        let
+          (s1, Code exprXDecl exprXRef) = pureAST' s0 env fex
+          (s2, Code exprYDecl exprYRef) = pureAST' s1 env ex
+         in
+          (s2, Code (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
+      Var (Embed e) -> pureAST' s0 env (flattenExpr e)
+      Var (EmbedEff e) -> effectfulAST' env s0 e
+      Var s ->
+        -- Tags and the unused-binder dummy are negative; map via `env`.
+        (s0, Code mempty (varStampJS env s))
+      If c t e ->
+        let
+          (s1, Code cDecl cRef) = pureAST' s0 env c
+          (s2, Code tDecl tRef) = pureAST' s1 env t
+          (s3, Code eDecl eRef) = pureAST' s2 env e
          in
           ( s3
           , Code
-              (noneDecl $$ someDecl)
-              ( parens
-                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
-              )
+              (cDecl $$ tDecl $$ eDecl)
+              (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
           )
-      _ ->
+      OptionCase opt none' someF ->
+        case opt of
+          Var (Embed e) -> pureAST' s0 env (OptionCase (flattenExpr e) none' someF)
+          Var s ->
+            let
+              i = stampId s
+              optVar = nName i
+              (s2, Code noneDecl noneRef) = pureAST' s0 env none'
+              (s3, Code someDecl someRef) = pureAST' s2 env (someF (Name i))
+             in
+              ( s3
+              , Code
+                  (noneDecl $$ someDecl)
+                  ( parens
+                      (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+                  )
+              )
+          _ ->
+            let
+              (s1, Code optDecl optRef) = pureAST' s0 env opt
+              (nBind, s2) = allocIdent s1
+              optVar = nName nBind
+              (s3, Code noneDecl noneRef) = pureAST' s2 env none'
+              (s4, Code someDecl someRef) = pureAST' s3 env (someF (Name nBind))
+             in
+              ( s4
+              , Code
+                  (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
+                  ( parens
+                      (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+                  )
+              )
+      ResultOk x ->
         let
-          (s1, Code optDecl optRef) = pureAST' s0 env opt
-          (nBind, s2) = allocIdent s1
-          optVar = nName nBind
-          (s3, Code noneDecl noneRef) = pureAST' s2 env none'
-          (s4, Code someDecl someRef) = pureAST' s3 env (someF (Name nBind))
+          (s1, MkCode d r _) = pureAST' s0 env x
          in
-          ( s4
-          , Code
-              (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
-              ( parens
-                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
-              )
-          )
-  ResultOk x ->
-    let
-      (s1, MkCode d r _) = pureAST' s0 env x
-     in
-      (s1, MkCode d (Just (resultObject True r)) False)
-  ResultErr x ->
-    let
-      (s1, MkCode d r _) = pureAST' s0 env x
-     in
-      (s1, MkCode d (Just (resultObject False r)) False)
-  ResultCase res errF okF -> renderResultCase env s0 res errF okF
-  Index arr idx ->
-    let
-      s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
-      (s2, Code aDecl aRef) = pureAST' s1 env arr
-      (s3, Code iDecl iRef) = pureAST' s2 env idx
-     in
-      (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
-  U8Index buf idx ->
-    let
-      (s1, Code bDecl bRef) = pureAST' s0 env buf
-      (s2, Code iDecl iRef) = pureAST' s1 env idx
-     in
-      (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
-  Error msg ->
-    let
-      (s1, Code d r) = pureAST' s0 env msg
-     in
-      (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
-  Std s -> renderStd env s0 s
-  FnLit body -> renderFn env s0 body
-  UnsafeNullable x -> pureAST' s0 env x
-  FrozenLit fs -> renderObjectLit env s0 fs
-  GetField @k o ->
-    let
-      (s1, Code d r) = pureAST' s0 env o
-     in
-      (s1, Code d (jsDotOrBracket r (T.pack (symbolVal (Proxy @k)))))
-  Hvm2Kernel name _ ->
-    (s0, Code mempty (hvm2ExportRef name))
+          (s1, MkCode d (Just (resultObject True r)) False)
+      ResultErr x ->
+        let
+          (s1, MkCode d r _) = pureAST' s0 env x
+         in
+          (s1, MkCode d (Just (resultObject False r)) False)
+      ResultCase res errF okF -> renderResultCase env s0 res errF okF
+      Index arr idx ->
+        let
+          s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
+          (s2, Code aDecl aRef) = pureAST' s1 env arr
+          (s3, Code iDecl iRef) = pureAST' s2 env idx
+         in
+          (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+      U8Index buf idx ->
+        let
+          (s1, Code bDecl bRef) = pureAST' s0 env buf
+          (s2, Code iDecl iRef) = pureAST' s1 env idx
+         in
+          (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
+      Error msg ->
+        let
+          (s1, Code d r) = pureAST' s0 env msg
+         in
+          (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
+      Std s -> renderStd env s0 s
+      FnLit body -> renderFn env s0 body
+      UnsafeNullable x -> pureAST' s0 env x
+      FrozenLit fs -> renderObjectLit env s0 fs
+      GetField @k o ->
+        let
+          (s1, Code d r) = pureAST' s0 env o
+         in
+          (s1, Code d (jsDotOrBracket r (T.pack (symbolVal (Proxy @k)))))
+      Hvm2Kernel name _ ->
+        (s0, Code mempty (hvm2ExportRef name))
 
 renderFixed ::
   Env

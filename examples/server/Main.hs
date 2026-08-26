@@ -4,6 +4,7 @@ module Main (main) where
 
 import qualified Breakout
 import Data.List (partition)
+import qualified Data.Text as T
 import DevServer (Example (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
 import JShark.Compiler
@@ -19,7 +20,6 @@ import Kernels (hvm2Entries, mandelJsSource)
 import qualified Life
 import SourcePane (hvm2SourcePanes, sourceHead, sourcePane)
 import qualified Synth
-import qualified Data.Text as T
 import System.Environment (getArgs)
 import System.Exit (die)
 import qualified TodoMvc
@@ -42,7 +42,8 @@ main = do
     case bendModule hvm2Entries of
       Left err -> die ("hvm2-demo bend: " <> show err)
       Right bend -> pure bend
-  let hvm2MandelJs = T.pack mandelJsSource
+  let
+    hvm2MandelJs = T.pack mandelJsSource
   [breakoutJs, todoJs, synthJs, lifeJs, hvm2Js] <-
     compileEffectsLabeled
       (applyCompilerArgs progressFlags defaultCompilerConfig)

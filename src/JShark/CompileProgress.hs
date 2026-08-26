@@ -118,7 +118,14 @@ data EmitCtx = EmitCtx
   }
 
 emitCtxFromJob :: ActiveJobState -> EmitCtx
-emitCtxFromJob ActiveJobState {ajsSlot, ajsBoard, ajsEmitTotal, ajsEmitIndex, ajsEmitStep, ajsLastEmit} =
+emitCtxFromJob ActiveJobState
+                 { ajsSlot
+                 , ajsBoard
+                 , ajsEmitTotal
+                 , ajsEmitIndex
+                 , ajsEmitStep
+                 , ajsLastEmit
+                 } =
   EmitCtx
     { ecSlot = ajsSlot
     , ecBoard = ajsBoard
@@ -399,7 +406,8 @@ markJobDone ProgressBoardHandle {pbhDone, pbhJobs} slot =
   case pbhJobs V.!? slot of
     Nothing -> pure ()
     Just jobSlot -> do
-      let doneCounter = jsDone jobSlot
+      let
+        doneCounter = jsDone jobSlot
       already <- readCounter doneCounter
       when (already == 0) $ do
         writeCounter doneCounter 1
@@ -488,7 +496,14 @@ renderSubLine style j =
     tot = jpTotal j
     pct =
       jobProgressPct
-        (JobProgress {jpLabel = lbl, jpPhase = ph, jpIndex = idx, jpTotal = tot, jpDone = False})
+        ( JobProgress
+            { jpLabel = lbl
+            , jpPhase = ph
+            , jpIndex = idx
+            , jpTotal = tot
+            , jpDone = False
+            }
+        )
     filled = min subBarWidth (floor (pct * fromIntegral subBarWidth))
     empty = subBarWidth - filled
     name = truncateLabel 18 (T.unpack lbl)
@@ -546,13 +561,17 @@ truncateLabel n s
 
 padLeft :: Int -> String -> String
 padLeft w s =
-  let k = w - length s
-   in if k > 0 then replicate k ' ' ++ s else s
+  let
+    k = w - length s
+   in
+    if k > 0 then replicate k ' ' ++ s else s
 
 padRight :: Int -> String -> String
 padRight w s =
-  let k = w - length s
-   in if k > 0 then s ++ replicate k ' ' else take w s
+  let
+    k = w - length s
+   in
+    if k > 0 then s ++ replicate k ' ' else take w s
 
 ansiReset, ansiBold, ansiDim, ansiCyan :: String
 ansiReset = "\ESC[0m"

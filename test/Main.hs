@@ -1088,7 +1088,7 @@ stdlibTests =
               [ i
               | chunk <- T.splitOn "const " js
               , T.isInfixOf "getContext('2d'" (T.takeWhile (/= ';') chunk)
-                || T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
+                  || T.isInfixOf "getContext(\"2d\")" (T.takeWhile (/= ';') chunk)
               , let
                   i = jsIdent chunk
               , not (T.null i)
@@ -2227,7 +2227,9 @@ compilerTests =
                   False
                   Nothing
             (_, captured) <- captureStderr $ compileWith cfg src
-            assertBool "fallback notice" (T.isInfixOf "using unminified source" (T.pack captured))
+            assertBool
+              "fallback notice"
+              (T.isInfixOf "using unminified source" (T.pack captured))
     , testCase "compileWithPure suppresses minifier fallback stderr" $ do
         clearCompilerCache
         m <- findExecutable "esbuild"
@@ -2248,7 +2250,9 @@ compilerTests =
                   Nothing
             (out, captured) <- captureStderr $ compileWithPure cfg src
             out @?= src
-            assertBool "no fallback notice" (not (T.isInfixOf "using unminified source" (T.pack captured)))
+            assertBool
+              "no fallback notice"
+              (not (T.isInfixOf "using unminified source" (T.pack captured)))
     , testCase "compilePure ignores configProgress stderr" $ do
         clearCompilerCache
         let
@@ -2260,7 +2264,9 @@ compilerTests =
         (_, capturedEffect) <-
           captureStderr $ compileEffectIO withProgress eff
         (_, capturedPure) <- captureStderr $ compilePureIO withProgress prog
-        assertBool "effect timing line" (T.isInfixOf "compiled in" (T.pack capturedEffect))
+        assertBool
+          "effect timing line"
+          (T.isInfixOf "compiled in" (T.pack capturedEffect))
         assertBool "pure silent" (not (T.isInfixOf "compiled in" (T.pack capturedPure)))
         a <- compilePure withProgress prog
         b <- compilePurePure withProgress prog

@@ -52,7 +52,14 @@ import GHC.Word (Word8 (..))
 import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
-import System.IO (BufferMode (..), hClose, hFlush, hGetContents, hSetBuffering, stderr)
+import System.IO
+  ( BufferMode (..)
+  , hClose
+  , hFlush
+  , hGetContents
+  , hSetBuffering
+  , stderr
+  )
 import System.Posix.IO (closeFd, createPipe, dup, dupTo, fdToHandle, stdError)
 import Test.Tasty.HUnit ((@?=))
 
