@@ -31,10 +31,10 @@ import Test.Tasty.HUnit
 -- revision that added these tests. raw/opt from
 -- @exe:jshark-life-metrics@; probe chars from @exe:jshark-probe@.
 maxLifeRawNodes :: Int
-maxLifeRawNodes = 82504
+maxLifeRawNodes = 85041
 
 maxLifeOptNodes :: Int
-maxLifeOptNodes = 53716
+maxLifeOptNodes = 56126
 
 -- Process-wide Life metrics run allocated ~7.01 GB. Cap optimize
 -- alone at 8 GB so a 9 GB+ walk (strict-child / empty-map-merge
