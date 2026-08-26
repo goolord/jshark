@@ -40,7 +40,7 @@ import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
-import JShark.Types (Expr (..), Value (..), jsHelperValueEq)
+import JShark.Types (jsHelperValueEq)
 import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
 import LucidTests (lucidDomTests)

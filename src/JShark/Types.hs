@@ -680,27 +680,27 @@ data Std :: (Universe -> Type) -> Universe -> Type where
 pattern Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Plus x y <- Std (Kernel (KPlus x y))
  where
-  Plus x y = Std (Kernel (KPlus x y))
+  Plus = plusE
 
 pattern Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Times x y <- Std (Kernel (KTimes x y))
  where
-  Times x y = Std (Kernel (KTimes x y))
+  Times = timesE
 
 pattern Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Minus x y <- Std (Kernel (KMinus x y))
  where
-  Minus x y = Std (Kernel (KMinus x y))
+  Minus = minusE
 
 pattern Negate :: Expr f 'Number -> Expr f 'Number
 pattern Negate x <- Std (Kernel (KNegate x))
  where
-  Negate x = Std (Kernel (KNegate x))
+  Negate = negateE
 
 pattern FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern FracDiv x y <- Std (Kernel (KFracDiv x y))
  where
-  FracDiv x y = Std (Kernel (KFracDiv x y))
+  FracDiv = fracDivE
 
 pattern Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Rem x y <- Std (Kernel (KRem x y))
@@ -740,12 +740,12 @@ pattern UShr x y <- Std (Kernel (KUShr x y))
 pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern And x y <- Std (Kernel (KAnd x y))
  where
-  And x y = Std (Kernel (KAnd x y))
+  And = andE
 
 pattern Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern Or x y <- Std (Kernel (KOr x y))
  where
-  Or x y = Std (Kernel (KOr x y))
+  Or = orE
 
 pattern Eq :: Expr f a -> Expr f a -> Expr f 'Bool
 pattern Eq x y <- Std (Kernel (KEq _ x y))
@@ -824,7 +824,7 @@ pattern LTEq x y = Std (Kernel (KLTEq x y))
 pattern Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
 pattern Concat x y <- Std (Kernel (KConcat x y))
  where
-  Concat x y = Std (Kernel (KConcat x y))
+  Concat = concatE
 
 pattern Show :: Expr f a -> Expr f 'String
 pattern Show x <- Std (Kernel (KShow x))
@@ -934,38 +934,59 @@ liftValue2 ::
   (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
--- | Stable names for GHC RULES. @INLINE [1]@ keeps the binder through
+-- | Stable names for GHC RULES. Smart constructors fold literal-literal
+-- cases even when a rule does not fire (INCOHERENT 'Num' often inlines
+-- '(+)' straight to the kernel). @INLINE [1]@ keeps the binder through
 -- phase 2, where the rules fire; later phases unfold to the kernel.
 plusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plusE = Plus
+plusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x + y))
+plusE x y = Std (Kernel (KPlus x y))
 {-# INLINE [1] plusE #-}
 
 timesE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-timesE = Times
+timesE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x * y))
+timesE x y = Std (Kernel (KTimes x y))
 {-# INLINE [1] timesE #-}
 
 minusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-minusE = Minus
+minusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x - y))
+minusE x y = Std (Kernel (KMinus x y))
 {-# INLINE [1] minusE #-}
 
 fracDivE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-fracDivE = FracDiv
+fracDivE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x / y))
+fracDivE x y = Std (Kernel (KFracDiv x y))
 {-# INLINE [1] fracDivE #-}
 
 negateE :: Expr f 'Number -> Expr f 'Number
-negateE = Negate
+negateE (Literal (ValueNumber x)) = Literal (ValueNumber (negate x))
+negateE x = Std (Kernel (KNegate x))
 {-# INLINE [1] negateE #-}
 
 andE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-andE = And
+andE (Literal (ValueBool False)) _ = Literal (ValueBool False)
+andE (Literal (ValueBool True)) y = y
+andE x (Literal (ValueBool True)) = x
+andE _ (Literal (ValueBool False)) = Literal (ValueBool False)
+andE x y = Std (Kernel (KAnd x y))
 {-# INLINE [1] andE #-}
 
 orE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-orE = Or
+orE (Literal (ValueBool True)) _ = Literal (ValueBool True)
+orE (Literal (ValueBool False)) y = y
+orE x (Literal (ValueBool False)) = x
+orE _ (Literal (ValueBool True)) = Literal (ValueBool True)
+orE x y = Std (Kernel (KOr x y))
 {-# INLINE [1] orE #-}
 
 concatE :: Expr f 'String -> Expr f 'String -> Expr f 'String
-concatE = Concat
+concatE (Literal (ValueString x)) (Literal (ValueString y)) =
+  Literal (ValueString (x <> y))
+concatE x y = Std (Kernel (KConcat x y))
 {-# INLINE [1] concatE #-}
 
 -- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.

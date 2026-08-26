@@ -667,7 +667,9 @@ let_ :: Expr f u -> (Expr f u -> Expr f v) -> Expr f v
 let_ e f = Let e (\x -> f (var x))
 
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
-if_ = If
+if_ (Literal (ValueBool True)) t _ = t
+if_ (Literal (ValueBool False)) _ e = e
+if_ c t e = If c t e
 {-# INLINE [1] if_ #-}
 
 -- | Effectful conditional. Lift an 'Expr' test with 'expr'.
@@ -852,6 +854,8 @@ done :: EffectSyntax f (f 'Unit)
 done = toSyntax noOp
 
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+whenS (Literal (ValueBool True)) body = body
+whenS (Literal (ValueBool False)) _ = done
 whenS c body = toSyntax $ when_ (expr c) (stmts body)
 {-# INLINE [1] whenS #-}
 
@@ -863,6 +867,8 @@ ifS ::
 -- Branches are already 'Effect' 'Unit' via 'stmts'; do not 'discard' here.
 -- 'discard(stmts …)' under a constant-folded 'IfE' arm can drop impure FFI
 -- preludes (see 'stepGrid' region copy).
+ifS (Literal (ValueBool True)) t _ = t
+ifS (Literal (ValueBool False)) _ e = e
 ifS c t e = toSyntax $ IfE (expr c) (stmts t) (stmts e)
 {-# INLINE [1] ifS #-}
 
@@ -915,8 +921,8 @@ infixr 2 .||
 (.&&), (.||) :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 (.&&) = andE
 (.||) = orE
-{-# INLINE [1] (.&&) #-}
-{-# INLINE [1] (.||) #-}
+{-# INLINE (.&&) #-}
+{-# INLINE (.||) #-}
 
 ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 ushr = UShr
