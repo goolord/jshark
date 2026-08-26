@@ -1,5 +1,11 @@
 packages: ./
 
+-- Cabal's default profile is -O1. Package ghc-options already pass
+-- -O2 -fllvm for lib:jshark, but example libs (life) only get the
+-- profile level. Pin 2 so Life/probe metrics and the compiler see
+-- the same -O2.
+optimization: 2
+
 -- Hackage scotty-0.30 still caps containers < 0.8 (blocks GHC 9.14 boot
 -- containers-0.8). Drop this pin once a release allows containers >= 0.8.
 source-repository-package

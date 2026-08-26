@@ -43,6 +43,7 @@ import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
 import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
+import PerfTests (perfTests)
 import LucidTests (lucidDomTests)
 import Support
 import System.Directory
@@ -64,6 +65,7 @@ tests =
   testGroup
     "jshark"
     [ evaluatorTests
+    , rewriteRuleTests
     , bigIntTests
     , codegenTests
     , controlFlowTests
@@ -79,6 +81,7 @@ tests =
     -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
     -- , exampleTests
     , lifeTests
+    , perfTests
     , hvm2Tests
     , catalogTests
     ]
@@ -147,6 +150,82 @@ bigIntTests =
         cached <- evaluateCached e
         case cached of
           ValueBigInt n -> n @?= evaluateBigInt e
+    ]
+
+-- | GHC RULES fold literal-literal EDSL ops at compile time of the
+-- client. These inspect the unoptimized tree; if a rule fails to fire
+-- the case falls through to an AST node and the test fails.
+rewriteRuleTests :: TestTree
+rewriteRuleTests =
+  testGroup
+    "rewrite rules"
+    [ testCase "plus folds literals" $
+        case number 1 + number 2 of
+          Literal (ValueNumber n) -> n @?= 3
+          _ -> assertFailure "jshark/plus/lit"
+    , testCase "times and minus fold literals" $ do
+        case number 3 * number 4 of
+          Literal (ValueNumber n) -> n @?= 12
+          _ -> assertFailure "jshark/times/lit"
+        case number 10 - number 3 of
+          Literal (ValueNumber n) -> n @?= 7
+          _ -> assertFailure "jshark/minus/lit"
+    , testCase "div and negate fold literals" $ do
+        case number 8 / number 2 of
+          Literal (ValueNumber n) -> n @?= 4
+          _ -> assertFailure "jshark/div/lit"
+        case negate (number 5) of
+          Literal (ValueNumber n) -> n @?= -5
+          _ -> assertFailure "jshark/negate/lit"
+    , testCase "concat folds string literals" $
+        case string "ab" <> string "cd" of
+          Literal (ValueString t) -> t @?= "abcd"
+          _ -> assertFailure "jshark/concat/lit"
+    , testCase "and/or fold boolean literals" $ do
+        case bool True .&& bool False of
+          Literal (ValueBool b) -> b @?= False
+          _ -> assertFailure "jshark/and"
+        case bool False .|| bool True of
+          Literal (ValueBool b) -> b @?= True
+          _ -> assertFailure "jshark/or"
+    , testCase "and/or keep an impure left" $ do
+        case (Json.stringify (number 1) .== string "1") .&& false_ of
+          And _ (Literal (ValueBool False)) -> pure ()
+          _ -> assertFailure "andE dropped impure left"
+        case (Json.stringify (number 1) .== string "1") .|| true_ of
+          Or _ (Literal (ValueBool True)) -> pure ()
+          _ -> assertFailure "orE dropped impure left"
+    , testCase "eq/ord fold number literals" $ do
+        case number 1 .== number 1 of
+          Literal (ValueBool b) -> b @?= True
+          _ -> assertFailure "jshark/eq/num"
+        case number 2 .< number 1 of
+          Literal (ValueBool b) -> b @?= False
+          _ -> assertFailure "jshark/lt/num"
+    , testCase "if_ of a literal bool picks a branch" $
+        case if_ (bool True) (number 1) (number 2) of
+          Literal (ValueNumber n) -> n @?= 1
+          _ -> assertFailure "jshark/if/true"
+    , testCase "rem/bitAnd/shl fold literals" $ do
+        case rem_ (number 10) (number 3) of
+          Literal (ValueNumber n) -> n @?= 1
+          _ -> assertFailure "jshark/rem/lit"
+        case bitAnd (number 7) (number 3) of
+          Literal (ValueNumber n) -> n @?= 3
+          _ -> assertFailure "jshark/bitand/lit"
+        case shl (number 23) (number 8) of
+          Literal (ValueNumber n) -> n @?= 5888
+          _ -> assertFailure "jshark/shl/lit"
+        case rem_ (number (-10)) (number 3) of
+          Literal (ValueNumber n) -> n @?= -1
+          _ -> assertFailure "jshark/rem/neg"
+        case ushr (number (-1)) (number 0) of
+          Literal (ValueNumber n) -> n @?= 4294967295
+          _ -> assertFailure "jshark/ushr/lit"
+    , testCase "let_ of a literal betas" $
+        case let_ (number 1) (\x -> x + x) of
+          Literal (ValueNumber n) -> n @?= 2
+          _ -> assertFailure "jshark/let/lit"
     ]
 
 evaluatorTests :: TestTree
@@ -1689,6 +1768,16 @@ optimizeTests =
     , testCase "unused stringify is kept (can throw)" $
         renderJS (pureAST (let_ (Json.stringify (number 1)) (\_ -> number 2)))
           @?= "JSON.stringify(1.0);\n2.0"
+    , testCase "impure && false keeps stringify" $
+        T.isInfixOf
+          "JSON.stringify"
+          (renderJS (pureAST ((Json.stringify (number 1) .== string "1") .&& false_)))
+          @?= True
+    , testCase "impure || true keeps stringify" $
+        T.isInfixOf
+          "JSON.stringify"
+          (renderJS (pureAST ((Json.stringify (number 1) .== string "1") .|| true_)))
+          @?= True
     , testCase "optionCase of a Literal ValueOption folds" $
         renderJS
           ( pureAST

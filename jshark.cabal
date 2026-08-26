@@ -101,6 +101,7 @@ library
     JShark.Flat
     JShark.FlatSoA
     JShark.Ir
+    JShark.JsNum
     JShark.EmitBend
   build-depends:
     , async >= 2.2 && < 2.4
@@ -254,6 +255,7 @@ test-suite jshark-test
     LucidTests
     ExampleTests
     LifeTests
+    PerfTests
     Hvm2Tests
   hs-source-dirs:
     test

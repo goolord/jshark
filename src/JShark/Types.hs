@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -100,6 +101,21 @@ module JShark.Types
   , mkLTh
   , mkGTEq
   , mkLTEq
+  , plusE
+  , timesE
+  , minusE
+  , fracDivE
+  , negateE
+  , andE
+  , orE
+  , concatE
+  , remE
+  , bitAndE
+  , bitOrE
+  , bitXorE
+  , shlE
+  , shrE
+  , ushrE
   , EffectSyntax (..)
   , toSyntax
   , toSyntax_
@@ -118,6 +134,7 @@ where
 import Prelude hiding ((>>))
 import Control.Monad (ap)
 import Data.Array.Byte (ByteArray)
+import Data.Bits (xor, (.&.), (.|.))
 import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -129,6 +146,7 @@ import GHC.TypeLits
   , Symbol
   , symbolVal
   )
+import JShark.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Rec
 import Prelude hiding ((>>))
 
@@ -187,8 +205,8 @@ data Value :: Universe -> Type where
 
 -- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen.
 data FFIForm
-  = FFICall Text
-  | FFILambda Text
+  = FFICall !Text
+  | FFILambda !Text
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift ::
@@ -671,62 +689,62 @@ data Std :: (Universe -> Type) -> Universe -> Type where
 pattern Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Plus x y <- Std (Kernel (KPlus x y))
  where
-  Plus x y = Std (Kernel (KPlus x y))
+  Plus = plusE
 
 pattern Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Times x y <- Std (Kernel (KTimes x y))
  where
-  Times x y = Std (Kernel (KTimes x y))
+  Times = timesE
 
 pattern Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Minus x y <- Std (Kernel (KMinus x y))
  where
-  Minus x y = Std (Kernel (KMinus x y))
+  Minus = minusE
 
 pattern Negate :: Expr f 'Number -> Expr f 'Number
 pattern Negate x <- Std (Kernel (KNegate x))
  where
-  Negate x = Std (Kernel (KNegate x))
+  Negate = negateE
 
 pattern FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern FracDiv x y <- Std (Kernel (KFracDiv x y))
  where
-  FracDiv x y = Std (Kernel (KFracDiv x y))
+  FracDiv = fracDivE
 
 pattern Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Rem x y <- Std (Kernel (KRem x y))
  where
-  Rem x y = Std (Kernel (KRem x y))
+  Rem = remE
 
 pattern BitAnd :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitAnd x y <- Std (Kernel (KBitAnd x y))
  where
-  BitAnd x y = Std (Kernel (KBitAnd x y))
+  BitAnd = bitAndE
 
 pattern BitOr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitOr x y <- Std (Kernel (KBitOr x y))
  where
-  BitOr x y = Std (Kernel (KBitOr x y))
+  BitOr = bitOrE
 
 pattern BitXor :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitXor x y <- Std (Kernel (KBitXor x y))
  where
-  BitXor x y = Std (Kernel (KBitXor x y))
+  BitXor = bitXorE
 
 pattern Shl :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Shl x y <- Std (Kernel (KShl x y))
  where
-  Shl x y = Std (Kernel (KShl x y))
+  Shl = shlE
 
 pattern Shr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Shr x y <- Std (Kernel (KShr x y))
  where
-  Shr x y = Std (Kernel (KShr x y))
+  Shr = shrE
 
 pattern UShr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern UShr x y <- Std (Kernel (KUShr x y))
  where
-  UShr x y = Std (Kernel (KUShr x y))
+  UShr = ushrE
 
 pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern And x y <- Std (Kernel (KAnd x y))
@@ -778,25 +796,51 @@ instance KnownScalar 'Regex where
   isScalarTy = True
 
 mkEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+mkEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x == y))
+mkEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
+  Literal (ValueBool (x == y))
+mkEq (Literal (ValueString x)) (Literal (ValueString y)) =
+  Literal (ValueBool (x == y))
 mkEq x y = Std (Kernel (KEq (not (isScalarTy @a)) x y))
+{-# INLINE [1] mkEq #-}
 
 mkNEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+mkNEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x /= y))
+mkNEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
+  Literal (ValueBool (x /= y))
+mkNEq (Literal (ValueString x)) (Literal (ValueString y)) =
+  Literal (ValueBool (x /= y))
 mkNEq x y = Std (Kernel (KNEq (not (isScalarTy @a)) x y))
+{-# INLINE [1] mkNEq #-}
 
 -- | Compare helpers carry the 'Comparable' constraint GHC cannot attach to
 -- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
 -- separate type variables in GHC 9.14).
 mkGTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkGTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x > y))
 mkGTh x y = Std (Kernel (KGTh x y))
+{-# INLINE [1] mkGTh #-}
 
 mkLTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkLTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x < y))
 mkLTh x y = Std (Kernel (KLTh x y))
+{-# INLINE [1] mkLTh #-}
 
 mkGTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkGTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x >= y))
 mkGTEq x y = Std (Kernel (KGTEq x y))
+{-# INLINE [1] mkGTEq #-}
 
 mkLTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkLTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x <= y))
 mkLTEq x y = Std (Kernel (KLTEq x y))
+{-# INLINE [1] mkLTEq #-}
 
 pattern GTh x y = Std (Kernel (KGTh x y))
 
@@ -809,7 +853,7 @@ pattern LTEq x y = Std (Kernel (KLTEq x y))
 pattern Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
 pattern Concat x y <- Std (Kernel (KConcat x y))
  where
-  Concat x y = Std (Kernel (KConcat x y))
+  Concat = concatE
 
 pattern Show :: Expr f a -> Expr f 'String
 pattern Show x <- Std (Kernel (KShow x))
@@ -856,7 +900,7 @@ instance forall (f :: (Universe -> Type)) u. u ~ 'String => Exts.IsString (Expr 
   fromString s = Literal (Exts.fromString s)
 
 instance Semigroup (Expr f 'String) where
-  (<>) = Concat
+  (<>) = concatE
 
 instance Monoid (Expr f 'String) where
   mempty = Literal (ValueString mempty)
@@ -892,9 +936,11 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 --
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
--- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
---   ('Plus'/'Times'/'Std' ('Fixed …')/…) and fold later in codegen.
---   @(**)@ is @Math.pow@, not @exp (log x * y)@.
+-- * @Expr f 'Number@ — literals via 'Literal'; ops go through
+--   'plusE' / 'timesE' / … so smart constructors fold
+--   literal-literal cases at compile time. Remaining ops stay
+--   AST nodes and fold later in codegen. @(**)@ is @Math.pow@,
+--   not @exp (log x * y)@.
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
 -- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
@@ -918,6 +964,103 @@ liftValue2 ::
   (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
+-- | Smart constructors fold literal-literal cases. INCOHERENT 'Num'
+-- often inlines '(+)' past a named wrapper; these equations still
+-- match. @INLINE [1]@ unfolds to the kernel after the match.
+plusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+plusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x + y))
+plusE x y = Std (Kernel (KPlus x y))
+{-# INLINE [1] plusE #-}
+
+timesE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+timesE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x * y))
+timesE x y = Std (Kernel (KTimes x y))
+{-# INLINE [1] timesE #-}
+
+minusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+minusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x - y))
+minusE x y = Std (Kernel (KMinus x y))
+{-# INLINE [1] minusE #-}
+
+fracDivE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+fracDivE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (x / y))
+fracDivE x y = Std (Kernel (KFracDiv x y))
+{-# INLINE [1] fracDivE #-}
+
+negateE :: Expr f 'Number -> Expr f 'Number
+negateE (Literal (ValueNumber x)) = Literal (ValueNumber (negate x))
+negateE x = Std (Kernel (KNegate x))
+{-# INLINE [1] negateE #-}
+
+-- | Short-circuit only when the left is already a literal. Dropping a
+-- non-literal left of @&& false@ / @|| true@ would skip 'Error' and
+-- 'FixStringify' (impure). Same gate as the optimizer's foldAnd/foldOr.
+andE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+andE (Literal (ValueBool False)) _ = Literal (ValueBool False)
+andE (Literal (ValueBool True)) y = y
+andE x (Literal (ValueBool True)) = x
+andE x y = Std (Kernel (KAnd x y))
+{-# INLINE [1] andE #-}
+
+orE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+orE (Literal (ValueBool True)) _ = Literal (ValueBool True)
+orE (Literal (ValueBool False)) y = y
+orE x (Literal (ValueBool False)) = x
+orE x y = Std (Kernel (KOr x y))
+{-# INLINE [1] orE #-}
+
+concatE :: Expr f 'String -> Expr f 'String -> Expr f 'String
+concatE (Literal (ValueString x)) (Literal (ValueString y)) =
+  Literal (ValueString (x <> y))
+concatE x y = Std (Kernel (KConcat x y))
+{-# INLINE [1] concatE #-}
+
+remE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+remE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsRem x y))
+remE x y = Std (Kernel (KRem x y))
+{-# INLINE [1] remE #-}
+
+bitAndE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitAndE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsBit2 (.&.) x y))
+bitAndE x y = Std (Kernel (KBitAnd x y))
+{-# INLINE [1] bitAndE #-}
+
+bitOrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitOrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsBit2 (.|.) x y))
+bitOrE x y = Std (Kernel (KBitOr x y))
+{-# INLINE [1] bitOrE #-}
+
+bitXorE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitXorE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsBit2 xor x y))
+bitXorE x y = Std (Kernel (KBitXor x y))
+{-# INLINE [1] bitXorE #-}
+
+shlE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+shlE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsShl x y))
+shlE x y = Std (Kernel (KShl x y))
+{-# INLINE [1] shlE #-}
+
+shrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+shrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsShr x y))
+shrE x y = Std (Kernel (KShr x y))
+{-# INLINE [1] shrE #-}
+
+ushrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+ushrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsUShr x y))
+ushrE x y = Std (Kernel (KUShr x y))
+{-# INLINE [1] ushrE #-}
+
 -- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.
 -- @>>>@ stays Number-only ('UShr').
 class NumericU (u :: Universe) where
@@ -929,12 +1072,12 @@ class NumericU (u :: Universe) where
   shr :: Expr f u -> Expr f u -> Expr f u
 
 instance NumericU 'Number where
-  rem_ = Rem
-  bitAnd = BitAnd
-  bitOr = BitOr
-  bitXor = BitXor
-  shl = Shl
-  shr = Shr
+  rem_ = remE
+  bitAnd = bitAndE
+  bitOr = bitOrE
+  bitXor = bitXorE
+  shl = shlE
+  shr = shrE
 
 instance NumericU 'BigInt where
   rem_ = bigBin BRem
@@ -980,16 +1123,16 @@ instance Num (Expr f 'BigInt) where
   negate = bigNeg
 
 instance {-# INCOHERENT #-} forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
-  (+) = Plus
-  (*) = Times
-  (-) = Minus
+  (+) = plusE
+  (*) = timesE
+  (-) = minusE
   abs = expr1 FixAbs
   signum = expr1 FixSign
   fromInteger n = Literal (fromInteger n)
-  negate = Negate
+  negate = negateE
 
 instance forall (f :: Universe -> Type) u. u ~ 'Number => Fractional (Expr f u) where
-  (/) = FracDiv
+  (/) = fracDivE
   fromRational r = Literal (fromRational r)
 
 jsPi :: Double

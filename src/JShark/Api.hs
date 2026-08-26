@@ -302,6 +302,7 @@ loop0 rec body =
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
+{-# INLINE number #-}
 
 -- | Exact integer literal. Codegen emits @Nn@ (negatives parenthesized).
 bigInt :: Integer -> Expr f 'BigInt
@@ -309,13 +310,17 @@ bigInt = Literal . ValueBigInt
 
 bool :: Bool -> Expr f 'Bool
 bool = Literal . ValueBool
+{-# INLINE bool #-}
 
 true_, false_ :: Expr f 'Bool
 true_ = bool True
 false_ = bool False
+{-# INLINE true_ #-}
+{-# INLINE false_ #-}
 
 string :: Text -> Expr f 'String
 string = Literal . ValueString
+{-# INLINE string #-}
 
 -- | @new Uint8Array([…])@ from a host 'ByteArray'. All-zero buffers codegen
 -- as @new Uint8Array(n)@; non-zero literals keep the element list.
@@ -659,10 +664,16 @@ noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
 let_ :: Expr f u -> (Expr f u -> Expr f v) -> Expr f v
+let_ (Literal v) f = f (Literal v)
+let_ (Var x) f = f (Var x)
 let_ e f = Let e (\x -> f (var x))
+{-# INLINE [1] let_ #-}
 
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
-if_ = If
+if_ (Literal (ValueBool True)) t _ = t
+if_ (Literal (ValueBool False)) _ e = e
+if_ c t e = If c t e
+{-# INLINE [1] if_ #-}
 
 -- | Effectful conditional. Lift an 'Expr' test with 'expr'.
 ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
@@ -846,7 +857,12 @@ done :: EffectSyntax f (f 'Unit)
 done = toSyntax noOp
 
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-whenS c body = toSyntax $ when_ (expr c) (stmts body)
+whenS (Literal (ValueBool True)) body = body
+whenS (Literal (ValueBool False)) _ = done
+-- Same as 'ifS': do not route through 'when_' / 'discard'. 'discard'
+-- under a constant-folded 'IfE' can drop impure FFI preludes.
+whenS c body = toSyntax $ IfE (expr c) (stmts body) noOp
+{-# INLINE [1] whenS #-}
 
 ifS ::
   Expr f 'Bool
@@ -856,7 +872,10 @@ ifS ::
 -- Branches are already 'Effect' 'Unit' via 'stmts'; do not 'discard' here.
 -- 'discard(stmts …)' under a constant-folded 'IfE' arm can drop impure FFI
 -- preludes (see 'stepGrid' region copy).
+ifS (Literal (ValueBool True)) t _ = t
+ifS (Literal (ValueBool False)) _ e = e
 ifS c t e = toSyntax $ IfE (expr c) (stmts t) (stmts e)
+{-# INLINE [1] ifS #-}
 
 whenSomeS ::
   Expr f ('Option u)
@@ -887,6 +906,8 @@ infixr 2 .||
 (.==), (.!=) :: KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
 (.==) = mkEq
 (.!=) = mkNEq
+{-# INLINE [1] (.==) #-}
+{-# INLINE [1] (.!=) #-}
 
 (.>)
   , (.<)
@@ -897,13 +918,20 @@ infixr 2 .||
 (.<) = mkLTh
 (.>=) = mkGTEq
 (.<=) = mkLTEq
+{-# INLINE [1] (.>) #-}
+{-# INLINE [1] (.<) #-}
+{-# INLINE [1] (.>=) #-}
+{-# INLINE [1] (.<=) #-}
 
 (.&&), (.||) :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-(.&&) = And
-(.||) = Or
+(.&&) = andE
+(.||) = orE
+{-# INLINE (.&&) #-}
+{-# INLINE (.||) #-}
 
 ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-ushr = UShr
+ushr = ushrE
+{-# INLINE [1] ushr #-}
 
 -- | BigInt truncating division (JS @/@). Number uses 'Fractional' @/@.
 quot_ :: Expr f 'BigInt -> Expr f 'BigInt -> Expr f 'BigInt

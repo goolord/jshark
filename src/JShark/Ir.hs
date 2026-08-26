@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -67,7 +68,7 @@ optStep :: Int
 optStep = 2
 
 data IrMeta = IrMeta
-  { irSize :: !Int
+  { irSize :: {-# UNPACK #-} !Int
   , irFree :: !(IntMap Int)
   , irPure :: !P.Bool
   , irCheap :: !P.Bool
@@ -79,6 +80,12 @@ instance Semigroup IrMeta where
 
 instance Monoid IrMeta where
   mempty = IrMeta 0 IM.empty True True
+
+-- | 'foldMap' is a lazy right fold. IrMeta merges IntMaps; a lazy
+-- accumulator builds a thunk chain of unions on every list child.
+strictFoldMap :: Monoid m => (a -> m) -> [a] -> m
+strictFoldMap f xs = foldl' (\ !acc x -> acc <> f x) mempty xs
+{-# INLINE strictFoldMap #-}
 
 irMetaSize :: IrMeta -> Int
 irMetaSize = irSize
@@ -94,7 +101,7 @@ irMetaCheap = irCheap
 
 -- | Force impure on optimized metadata (empty 'RecNil' args are otherwise pure).
 effectMd :: IrMeta -> IrMeta
-effectMd md = md <> IrMeta 0 IM.empty False False
+effectMd !md = md <> IrMeta 0 IM.empty False False
 
 isCheapValueIr :: Value u -> P.Bool
 isCheapValueIr = \case
@@ -115,26 +122,26 @@ isCheapValueIr = \case
 
 data IrMethod :: Universe -> Type where
   IrMethMap ::
-    IrExpr ('Array a) -> Int -> IrExpr b -> IrMethod ('Array b)
+    IrExpr ('Array a) -> !Int -> IrExpr b -> IrMethod ('Array b)
   IrMethFilter ::
-    IrExpr ('Array a) -> Int -> IrExpr 'Bool -> IrMethod ('Array a)
+    IrExpr ('Array a) -> !Int -> IrExpr 'Bool -> IrMethod ('Array a)
   IrMethReduce ::
     IrExpr ('Array a)
     -> IrExpr b
-    -> Int
-    -> Int
+    -> !Int
+    -> !Int
     -> IrExpr b
     -> IrMethod b
   IrMethReduceRight ::
     IrExpr ('Array a)
     -> IrExpr b
-    -> Int
-    -> Int
+    -> !Int
+    -> !Int
     -> IrExpr b
     -> IrMethod b
   IrMethToSorted ::
-    IrExpr ('Array a) -> Int -> Int -> IrExpr 'Number -> IrMethod ('Array a)
-  IrMethFrom :: IrExpr 'Number -> Int -> IrExpr a -> IrMethod ('Array a)
+    IrExpr ('Array a) -> !Int -> !Int -> IrExpr 'Number -> IrMethod ('Array a)
+  IrMethFrom :: IrExpr 'Number -> !Int -> IrExpr a -> IrMethod ('Array a)
 
 -- | Kernel mirror with 'IrExpr' children ('Kernel' in 'Types' hardcodes 'Expr f').
 data IrKernel :: Universe -> Type where
@@ -190,17 +197,18 @@ data IrFixedArgs a b c where
 
 data IrExpr :: Universe -> Type where
   IrLiteral :: Value u -> IrExpr u
-  IrLet :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-  IrLetRec :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-  IrLambda :: Int -> IrExpr v -> IrExpr ('Function u v)
+  IrLet :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
+  IrLetRec :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
+  IrLambda :: !Int -> IrExpr v -> IrExpr ('Function u v)
   IrApply :: IrExpr ('Function u v) -> IrExpr u -> IrExpr v
-  IrVar :: Int -> IrExpr u
+  IrVar :: !Int -> IrExpr u
   IrEmbedEff :: IrEffect u -> IrExpr u
   IrIf :: IrExpr 'Bool -> IrExpr u -> IrExpr u -> IrExpr u
-  IrOptionCase :: IrExpr ('Option u) -> IrExpr v -> Int -> IrExpr v -> IrExpr v
+  IrOptionCase :: IrExpr ('Option u) -> IrExpr v -> !Int -> IrExpr v -> IrExpr v
   IrResultOk :: IrExpr a -> IrExpr ('Result e a)
   IrResultErr :: IrExpr e -> IrExpr ('Result e a)
-  IrResultCase :: IrExpr ('Result e a) -> Int -> IrExpr v -> Int -> IrExpr v -> IrExpr v
+  IrResultCase ::
+    IrExpr ('Result e a) -> !Int -> IrExpr v -> !Int -> IrExpr v -> IrExpr v
   IrIndex :: IrExpr ('Array u) -> IrExpr 'Number -> IrExpr u
   IrU8Index :: IrExpr 'Uint8Array -> IrExpr 'Number -> IrExpr 'Number
   IrError :: IrExpr 'String -> IrExpr u
@@ -216,7 +224,7 @@ data IrExpr :: Universe -> Type where
 
 data IrFnBody :: [Universe] -> Universe -> Type where
   IrJfNil :: IrExpr r -> IrFnBody '[] r
-  IrJfCons :: Int -> IrFnBody us r -> IrFnBody (u ': us) r
+  IrJfCons :: !Int -> IrFnBody us r -> IrFnBody (u ': us) r
 
 data IrFieldLit r where
   IrFieldLit :: KnownSymbol k => IrExpr (Field r k) -> IrFieldLit r
@@ -235,21 +243,24 @@ data IrEffect :: Universe -> Type where
   IrUnsafeObjectGet :: IrEffect object -> Text -> IrEffect u
   IrUnsafeObjectAssign :: IrEffect object -> IrEffect assignment -> IrEffect u
   IrCallMethod :: IrEffect object -> Text -> Rec (IrArg) us -> IrEffect u
-  IrBind :: Int -> IrEffect u -> IrEffect v -> IrEffect v
+  IrBind :: !Int -> IrEffect u -> IrEffect v -> IrEffect v
   IrThenE :: IrEffect u -> IrEffect v -> IrEffect v
-  IrBindRec :: Int -> IrEffect u -> IrEffect v -> IrEffect v
-  IrLambdaE :: Int -> IrEffect v -> IrEffect ('Function u v)
+  IrBindRec :: !Int -> IrEffect u -> IrEffect v -> IrEffect v
+  IrLambdaE :: !Int -> IrEffect v -> IrEffect ('Function u v)
   IrApplyE :: IrEffect ('Function u v) -> IrEffect u -> IrEffect v
   IrIfE :: IrEffect 'Bool -> IrEffect u -> IrEffect u -> IrEffect u
   IrWhile :: IrEffect 'Bool -> IrEffect 'Unit -> IrEffect 'Unit
-  IrForRange :: IrExpr 'Number -> IrExpr 'Number -> Int -> IrEffect 'Unit -> IrEffect 'Unit
+  IrForRange ::
+    IrExpr 'Number -> IrExpr 'Number -> !Int -> IrEffect 'Unit -> IrEffect 'Unit
   IrU8Set :: IrExpr 'Uint8Array -> IrExpr 'Number -> IrExpr 'Number -> IrEffect 'Unit
   IrU8Fill :: IrExpr 'Uint8Array -> IrExpr 'Number -> IrEffect 'Unit
-  IrOptionCaseE :: IrExpr ('Option u) -> IrEffect v -> Int -> IrEffect v -> IrEffect v
-  IrResultCaseE :: IrExpr ('Result e a) -> Int -> IrEffect v -> Int -> IrEffect v -> IrEffect v
+  IrOptionCaseE ::
+    IrExpr ('Option u) -> IrEffect v -> !Int -> IrEffect v -> IrEffect v
+  IrResultCaseE ::
+    IrExpr ('Result e a) -> !Int -> IrEffect v -> !Int -> IrEffect v -> IrEffect v
   IrStringCaseE :: IrExpr 'String -> [(Text, IrEffect v)] -> IrEffect v -> IrEffect v
   IrThrow :: IrExpr 'String -> IrEffect v
-  IrTry :: IrEffect u -> Int -> IrEffect u -> IrEffect u
+  IrTry :: IrEffect u -> !Int -> IrEffect u -> IrEffect u
   IrObjectLit :: [IrFieldLit r] -> IrEffect ('MutableObject r)
   IrDeleteProp :: IrEffect object -> IrExpr 'String -> IrEffect 'Bool
   IrArrayLit :: [IrEffect u] -> IrEffect ('Array u)
@@ -259,19 +270,26 @@ data IrEffect :: Universe -> Type where
 -- arm, or an FFI argument is still a use, and 'substIrExpr' keys its
 -- skip test off 'irFree'.
 metaIrExpr :: IrExpr u -> IrMeta
-metaIrExpr e = case e of
+metaIrExpr !e = case e of
   IrLiteral v -> IrMeta 1 IM.empty True (isCheapValueIr v)
   IrVar i -> IrMeta 1 (IM.singleton i 1) True True
   IrEmbedEff x -> metaIrEffect x
-  _ -> here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+  _ ->
+    let
+      !md = here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+     in
+      md
  where
   here = case e of
     IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) True
     _ -> IrMeta 1 IM.empty True False
 
 metaIrEffect :: IrEffect u -> IrMeta
-metaIrEffect e =
-  here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+metaIrEffect !e =
+  let
+    !md = here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+   in
+    md
  where
   here = case e of
     IrFFI {} -> impure
@@ -292,7 +310,7 @@ metaIrEffect e =
 -- | Occurrence test for 'substIrExpr' / 'substIrEffect'. Short-circuits
 -- on the first hit and, unlike a free-variable map, allocates nothing.
 occursIrExpr :: Int -> IrExpr u -> P.Bool
-occursIrExpr t = \case
+occursIrExpr !t expr = case expr of
   IrVar i -> i == t
   IrEmbedEff e -> occursIrEffect t e
   e ->
@@ -305,7 +323,7 @@ occursIrExpr t = \case
       )
 
 occursIrEffect :: Int -> IrEffect u -> P.Bool
-occursIrEffect t e =
+occursIrEffect !t !e =
   getAny
     ( foldIrEff
         (Any . occursIrExpr t)
@@ -319,7 +337,7 @@ occursIrEffect t e =
 -- loop body? Inlining there either skips work the program asked for or
 -- repeats it, so those uses keep their binding.
 lazyOccursIrExpr :: Int -> IrExpr u -> P.Bool
-lazyOccursIrExpr t = \case
+lazyOccursIrExpr !t expr = case expr of
   IrEmbedEff e -> lazyOccursIrEffect t e
   e ->
     getAny
@@ -331,7 +349,7 @@ lazyOccursIrExpr t = \case
       )
 
 lazyOccursIrEffect :: Int -> IrEffect u -> P.Bool
-lazyOccursIrEffect t = \case
+lazyOccursIrEffect !t eff = case eff of
   -- Re-evaluated once per iteration, so neither part is a "once" slot.
   IrWhile c b -> occursIrEffect t c P.|| occursIrEffect t b
   e ->
@@ -350,7 +368,7 @@ foldIrExpr ::
   -> (forall v. IrEffect v -> m)
   -> IrExpr u
   -> m
-foldIrExpr se le sf = \case
+foldIrExpr se le sf expr = case expr of
   IrLiteral {} -> mempty
   IrVar {} -> mempty
   IrEmbedEff e -> sf e
@@ -371,7 +389,7 @@ foldIrExpr se le sf = \case
   IrMethod m -> foldIrMethod se le m
   IrFnLit b -> foldIrFnBody le b
   IrUnsafeNullable x -> se x
-  IrFrozenLit fs -> foldMap (foldIrFieldLit se sf) fs
+  IrFrozenLit fs -> strictFoldMap (foldIrFieldLit se sf) fs
   IrGetField o -> se o
   IrHvm2Ref {} -> mempty
 
@@ -381,7 +399,7 @@ foldIrKernel ::
   -> (forall v. IrExpr v -> m)
   -> IrKernel u
   -> m
-foldIrKernel se le = \case
+foldIrKernel se le k = case k of
   KPlus x y -> se x <> se y
   KTimes x y -> se x <> se y
   KMinus x y -> se x <> se y
@@ -414,7 +432,7 @@ foldIrMethod ::
   -> (forall v. IrExpr v -> m)
   -> IrMethod u
   -> m
-foldIrMethod se le = \case
+foldIrMethod se le m = case m of
   IrMethMap x _ g -> se x <> le g
   IrMethFilter x _ g -> se x <> le g
   IrMethReduce x z _ _ g -> se x <> se z <> le g
@@ -427,7 +445,7 @@ foldIrFixedArgs ::
   (forall v. IrExpr v -> m)
   -> IrFixedArgs a b c
   -> m
-foldIrFixedArgs se = \case
+foldIrFixedArgs se a = case a of
   IrArgsU x -> se x
   IrArgsB x y -> se x <> se y
   IrArgsT x y z -> se x <> se y <> se z
@@ -437,7 +455,7 @@ foldIrFnBody ::
   (forall v. IrExpr v -> m)
   -> IrFnBody us r
   -> m
-foldIrFnBody le = \case
+foldIrFnBody le b = case b of
   IrJfNil e -> le e
   IrJfCons _ (IrJfNil e) -> le e
   IrJfCons _ k -> foldIrFnBody le k
@@ -447,7 +465,7 @@ foldIrFieldLit ::
   -> (forall v. IrEffect v -> m)
   -> IrFieldLit r
   -> m
-foldIrFieldLit se sf = \case
+foldIrFieldLit se sf fl = case fl of
   IrFieldLit e -> se e
   IrFieldLitEffect e -> sf e
   IrFieldLitExtra e -> se e
@@ -460,7 +478,7 @@ foldIrEff ::
   -> (forall v. IrEffect v -> m)
   -> IrEffect u
   -> m
-foldIrEff se sf lf = \case
+foldIrEff se sf lf eff = case eff of
   IrLift x -> se x
   IrFFI _ args -> recFoldIrArg se sf args
   IrUnsafeObject {} -> mempty
@@ -479,30 +497,34 @@ foldIrEff se sf lf = \case
   IrU8Fill b v -> se b <> se v
   IrOptionCaseE o n _ s -> se o <> sf n <> sf s
   IrResultCaseE o _ e _ s -> se o <> sf e <> sf s
-  IrStringCaseE s arms d -> se s <> foldMap (\(_, e) -> sf e) arms <> sf d
+  IrStringCaseE s arms d ->
+    se s <> strictFoldMap (\(_, e) -> sf e) arms <> sf d
   IrThrow x -> se x
   IrTry a _ k -> sf a <> sf k
-  IrObjectLit fs -> foldMap (foldIrFieldLit se sf) fs
+  IrObjectLit fs -> strictFoldMap (foldIrFieldLit se sf) fs
   IrDeleteProp o k -> sf o <> se k
-  IrArrayLit es -> foldMap sf es
+  IrArrayLit es -> strictFoldMap sf es
 
 recFoldIrArg ::
+  forall m us.
   Monoid m =>
   (forall v. IrExpr v -> m)
   -> (forall v. IrEffect v -> m)
   -> Rec (IrArg) us
   -> m
-recFoldIrArg se sf = \case
-  RecNil -> mempty
-  RecCons (IrArgExpr x) xs -> se x <> recFoldIrArg se sf xs
-  RecCons (IrArgEffect x) xs -> sf x <> recFoldIrArg se sf xs
+recFoldIrArg se sf args = go mempty args
+ where
+  go :: forall vs. m -> Rec IrArg vs -> m
+  go !acc RecNil = acc
+  go !acc (RecCons (IrArgExpr x) xs) = go (acc <> se x) xs
+  go !acc (RecCons (IrArgEffect x) xs) = go (acc <> sf x) xs
 
 mapIrExpr ::
   (forall v. IrExpr v -> IrExpr v)
   -> (forall v. IrEffect v -> IrEffect v)
   -> IrExpr u
   -> IrExpr u
-mapIrExpr ge gf = \case
+mapIrExpr ge gf expr = case expr of
   IrLiteral v -> IrLiteral v
   IrVar i -> IrVar i
   IrEmbedEff e -> IrEmbedEff (gf e)
@@ -532,7 +554,7 @@ mapIrKernel ::
   (forall v. IrExpr v -> IrExpr v)
   -> IrKernel u
   -> IrKernel u
-mapIrKernel ge = \case
+mapIrKernel ge k = case k of
   KPlus x y -> KPlus (ge x) (ge y)
   KTimes x y -> KTimes (ge x) (ge y)
   KMinus x y -> KMinus (ge x) (ge y)
@@ -563,7 +585,7 @@ mapIrMethod ::
   (forall v. IrExpr v -> IrExpr v)
   -> IrMethod u
   -> IrMethod u
-mapIrMethod ge = \case
+mapIrMethod ge m = case m of
   IrMethMap x tag g -> IrMethMap (ge x) tag (ge g)
   IrMethFilter x tag g -> IrMethFilter (ge x) tag (ge g)
   IrMethReduce x z tagA tagB g ->
@@ -578,7 +600,7 @@ mapIrFixedArgs ::
   (forall v. IrExpr v -> IrExpr v)
   -> IrFixedArgs a b c
   -> IrFixedArgs a b c
-mapIrFixedArgs ge = \case
+mapIrFixedArgs ge a = case a of
   IrArgsU x -> IrArgsU (ge x)
   IrArgsB x y -> IrArgsB (ge x) (ge y)
   IrArgsT x y z -> IrArgsT (ge x) (ge y) (ge z)
@@ -587,7 +609,7 @@ mapIrFnBody ::
   (forall v. IrExpr v -> IrExpr v)
   -> IrFnBody us r
   -> IrFnBody us r
-mapIrFnBody ge = \case
+mapIrFnBody ge b = case b of
   IrJfNil e -> IrJfNil (ge e)
   IrJfCons tag k -> IrJfCons tag (mapIrFnBody ge k)
 
@@ -596,7 +618,7 @@ mapIrFieldLit ::
   -> (forall v. IrEffect v -> IrEffect v)
   -> IrFieldLit r
   -> IrFieldLit r
-mapIrFieldLit ge gf = \case
+mapIrFieldLit ge gf fl = case fl of
   IrFieldLit @k e -> IrFieldLit @k (ge e)
   IrFieldLitEffect @k e -> IrFieldLitEffect @k (gf e)
   IrFieldLitExtra @k e -> IrFieldLitExtra @k (ge e)
@@ -607,7 +629,7 @@ mapIrEff ::
   -> (forall v. IrEffect v -> IrEffect v)
   -> IrEffect u
   -> IrEffect u
-mapIrEff ge gf = \case
+mapIrEff ge gf eff = case eff of
   IrLift x -> IrLift (ge x)
   IrFFI n args -> IrFFI n (mapIrArgs gf ge args)
   IrUnsafeObject o -> IrUnsafeObject o
@@ -640,13 +662,13 @@ mapIrArgs ::
   -> (forall v. IrExpr v -> IrExpr v)
   -> Rec (IrArg) us
   -> Rec (IrArg) us
-mapIrArgs gf ge = \case
+mapIrArgs gf ge args = case args of
   RecNil -> RecNil
   RecCons (IrArgExpr x) xs -> RecCons (IrArgExpr (ge x)) (mapIrArgs gf ge xs)
   RecCons (IrArgEffect x) xs -> RecCons (IrArgEffect (gf x)) (mapIrArgs gf ge xs)
 
 substIrExpr :: Int -> Int -> IrExpr u -> IrExpr u
-substIrExpr old new e
+substIrExpr !old !new !e
   | old == new = e
   | not (occursIrExpr old e) = e
   | otherwise = case e of
@@ -654,7 +676,7 @@ substIrExpr old new e
       _ -> mapIrExpr (substIrExpr old new) (substIrEffect old new) e
 
 substIrEffect :: Int -> Int -> IrEffect u -> IrEffect u
-substIrEffect old new e
+substIrEffect !old !new !e
   | old == new = e
   | not (occursIrEffect old e) = e
   | otherwise = mapIrEff (substIrExpr old new) (substIrEffect old new) e
@@ -664,21 +686,21 @@ substIrEffect old new e
 -- treating it as a rename would drop the binding while leaving the uses
 -- pointing at a tag nothing binds.
 inlineIrExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-inlineIrExpr tag bound body = case bound of
+inlineIrExpr !tag !bound !body = case bound of
   IrVar i -> substIrExpr tag i body
   _ -> replaceIrVarExpr tag bound body
 
 replaceIrVarExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-replaceIrVarExpr tag bound = \case
+replaceIrVarExpr !tag bound expr = case expr of
   IrVar i | i == tag -> unsafeCoerce bound
   e -> mapIrExpr (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound) e
 
 replaceIrVarEff :: Int -> IrExpr u -> IrEffect v -> IrEffect v
-replaceIrVarEff tag bound =
+replaceIrVarEff !tag bound =
   mapIrEff (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound)
 
 inlineIrEffect :: Int -> IrEffect u -> IrEffect v -> IrEffect v
-inlineIrEffect tag bound body = case bound of
+inlineIrEffect !tag !bound !body = case bound of
   IrLift (IrVar i) -> substIrEffect tag i body
   _
     | not (occursIrEffect tag body) -> body
@@ -686,12 +708,12 @@ inlineIrEffect tag bound body = case bound of
         mapIrEff (inlineIrExprInEff tag bound) (inlineIrEffect tag bound) body
 
 inlineIrEffectInExpr :: Int -> IrEffect u -> IrEffect v -> IrEffect v
-inlineIrEffectInExpr tag bound = \case
+inlineIrEffectInExpr !tag bound expr = case expr of
   IrLift e -> IrLift (inlineIrExprInEff tag bound e)
   e -> inlineIrEffect tag bound e
 
 inlineIrExprInEff :: Int -> IrEffect u -> IrExpr v -> IrExpr v
-inlineIrExprInEff tag bound = \case
+inlineIrExprInEff !tag bound expr = case expr of
   IrVar i | i == tag -> unsafeCoerce (inlineEffAsExpr bound)
   e -> mapIrExpr (inlineIrExprInEff tag bound) (inlineIrEffectInExpr tag bound) e
  where
@@ -713,7 +735,7 @@ elimIrLet ::
   -> IrExpr v
   -> IrMeta
   -> (IrExpr v, IrMeta)
-elimIrLet mdX tag x body mdBody =
+elimIrLet !mdX !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -736,7 +758,7 @@ elimIrBind ::
   -> IrEffect v
   -> IrMeta
   -> (IrEffect v, IrMeta)
-elimIrBind mdX tag x body mdBody =
+elimIrBind !mdX !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -756,16 +778,17 @@ elimIrBind mdX tag x body mdBody =
       _ -> (IrBind tag x body, nodeMeta mdX closed)
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta
-nodeMeta mdX mdY = IrMeta 1 IM.empty (irPure mdX && irPure mdY) False <> mdX <> mdY
+nodeMeta !mdX !mdY =
+  IrMeta 1 IM.empty (irPure mdX && irPure mdY) False <> mdX <> mdY
 
 -- | Close a binder: its tag is no longer free above this node. Without
 -- this the free map grows to every tag in the subtree, and the union in
 -- '<>' then costs the whole program at every node.
 bindMeta :: Int -> IrMeta -> IrMeta
-bindMeta tag md = md {irFree = IM.delete tag (irFree md)}
+bindMeta !tag !md = md {irFree = IM.delete tag (irFree md)}
 
 optIrExpr :: Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
-optIrExpr t0 = \case
+optIrExpr !t0 expr = case expr of
   IrLiteral v -> (t0, IrLiteral v, litMeta v)
   IrVar i -> (t0, IrVar i, varMeta i)
   IrLet tag x body ->
@@ -803,10 +826,10 @@ litMeta :: Value u -> IrMeta
 litMeta v = IrMeta 1 IM.empty True (isCheapValueIr v)
 
 varMeta :: Int -> IrMeta
-varMeta i = IrMeta 1 (IM.singleton i 1) True True
+varMeta !i = IrMeta 1 (IM.singleton i 1) True True
 
 optIrExprChildren :: Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
-optIrExprChildren t0 = \case
+optIrExprChildren !t0 expr = case expr of
   IrEmbedEff e ->
     let (t1, e', md) = optIrEffect t0 e
      in (t1, IrEmbedEff e', md)
@@ -888,7 +911,7 @@ binOptIr ::
   -> IrExpr a
   -> IrExpr b
   -> (Int, IrExpr c, IrMeta)
-binOptIr t0 k x y =
+binOptIr !t0 k x y =
   let
     (t1, x', mdX) = optIrExpr t0 x
     (t2, y', mdY) = optIrExpr t1 y
@@ -897,7 +920,7 @@ binOptIr t0 k x y =
 
 optIrFixedArgs ::
   Int -> IrFixedArgs a b c -> (Int, IrFixedArgs a b c, IrMeta)
-optIrFixedArgs t0 = \case
+optIrFixedArgs !t0 a = case a of
   IrArgsU x ->
     let (t1, x', md) = optIrExpr t0 x
      in (t1, IrArgsU x', md)
@@ -916,7 +939,7 @@ optIrFixedArgs t0 = \case
       (t3, IrArgsT x' y' z', nodeMeta mdX (nodeMeta mdY mdZ))
 
 optIrKernel :: Int -> IrKernel u -> (Int, IrKernel u, IrMeta)
-optIrKernel t0 = \case
+optIrKernel !t0 k = case k of
   KPlus x y -> binOptKernel t0 KPlus x y
   KTimes x y -> binOptKernel t0 KTimes x y
   KMinus x y -> binOptKernel t0 KMinus x y
@@ -965,7 +988,7 @@ binOptKernel t0 k x y =
     (t2, k x' y', nodeMeta mdX mdY)
 
 optIrMethod :: Int -> IrMethod u -> (Int, IrMethod u, IrMeta)
-optIrMethod t0 = \case
+optIrMethod !t0 m = case m of
   IrMethMap x tag g ->
     let
       (t1, x', mdX) = optIrExpr t0 x
@@ -1015,7 +1038,7 @@ optIrMethod t0 = \case
       (t2, IrMethFrom n' tag g', nodeMeta mdN (bindMeta tag mdG))
 
 optIrFnBody :: Int -> IrFnBody us r -> (Int, IrFnBody us r, IrMeta)
-optIrFnBody t0 = \case
+optIrFnBody !t0 b = case b of
   IrJfNil e ->
     let (t1, e', md) = optIrExpr t0 e
      in (t1, IrJfNil e', md)
@@ -1025,9 +1048,9 @@ optIrFnBody t0 = \case
 
 mapAccumIrFieldLit ::
   Int -> [IrFieldLit r] -> (Int, [IrFieldLit r], IrMeta)
-mapAccumIrFieldLit t0 fs =
+mapAccumIrFieldLit !t0 fs =
   foldr
-    ( \fl (t, acc, md) ->
+    ( \fl (!t, acc, !md) ->
         let (t', fl', md') = step t fl
          in (t', fl' : acc, md' <> md)
     )
@@ -1035,7 +1058,7 @@ mapAccumIrFieldLit t0 fs =
     fs
  where
   step :: Int -> IrFieldLit r -> (Int, IrFieldLit r, IrMeta)
-  step t = \case
+  step !t = \case
     IrFieldLit @k e ->
       let (t', e', md) = optIrExpr t e
        in (t', IrFieldLit @k e', md)
@@ -1050,7 +1073,7 @@ mapAccumIrFieldLit t0 fs =
        in (t', IrFieldLitExtraEffect @k e', md)
 
 optIrEffect :: Int -> IrEffect u -> (Int, IrEffect u, IrMeta)
-optIrEffect t0 = \case
+optIrEffect !t0 eff = case eff of
   IrLift x ->
     let (t1, x', md) = optIrExpr t0 x
      in (t1, IrLift x', md)
@@ -1182,9 +1205,9 @@ optIrEffect t0 = \case
 
 mapAccumIrEffect ::
   Int -> [(Text, IrEffect u)] -> (Int, [(Text, IrEffect u)], IrMeta)
-mapAccumIrEffect t0 arms =
+mapAccumIrEffect !t0 arms =
   foldr
-    ( \(k, e) (t, acc, md) ->
+    ( \(k, e) (!t, acc, !md) ->
         let (t', e', md') = optIrEffect t e
          in (t', (k, e') : acc, md' <> md)
     )
@@ -1192,9 +1215,9 @@ mapAccumIrEffect t0 arms =
     arms
 
 mapAccumIrEffects :: Int -> [IrEffect u] -> (Int, [IrEffect u], IrMeta)
-mapAccumIrEffects t0 es =
+mapAccumIrEffects !t0 es =
   foldr
-    ( \e (t, acc, md) ->
+    ( \e (!t, acc, !md) ->
         let (t', e', md') = optIrEffect t e
          in (t', e' : acc, md' <> md)
     )
@@ -1202,7 +1225,7 @@ mapAccumIrEffects t0 es =
     es
 
 optIrArgs :: Int -> Rec (IrArg) us -> (Int, Rec (IrArg) us, IrMeta)
-optIrArgs t0 = \case
+optIrArgs !t0 args = case args of
   RecNil -> (t0, RecNil, mempty)
   RecCons (IrArgExpr x) xs ->
     let

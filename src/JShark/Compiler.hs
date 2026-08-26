@@ -710,7 +710,7 @@ isCompilerFlag = \case
 -- | Apply recognized CLI flags to a 'CompilerConfig'.
 applyCompilerArgs :: [String] -> CompilerConfig -> CompilerConfig
 applyCompilerArgs args cfg =
-  foldl applyCompilerArg cfg args
+  foldl' applyCompilerArg cfg args
 
 applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
 applyCompilerArg cfg = \case
