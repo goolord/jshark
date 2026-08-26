@@ -54,6 +54,7 @@ import System.Directory
   , removePathForcibly
   )
 import System.FilePath ((</>))
+import System.IO ()
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -2193,6 +2194,65 @@ compilerTests =
                   Nothing
             out <- compileWith cfg src
             out @?= src
+    , testCase "compileWith logs minifier fallback on stderr" $ do
+        clearCompilerCache
+        m <- findExecutable "esbuild"
+        case m of
+          Nothing -> pure ()
+          Just _ -> do
+            let
+              src = "(() => { return 1; })();" :: Text
+              cfg =
+                CompilerConfig
+                  (Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]})
+                  NoCache
+                  True
+                  Minified
+                  False
+                  False
+                  False
+                  Nothing
+            (_, captured) <- captureStderr $ compileWith cfg src
+            assertBool "fallback notice" (T.isInfixOf "using unminified source" (T.pack captured))
+    , testCase "compileWithPure suppresses minifier fallback stderr" $ do
+        clearCompilerCache
+        m <- findExecutable "esbuild"
+        case m of
+          Nothing -> pure ()
+          Just _ -> do
+            let
+              src = "(() => { return 1; })();" :: Text
+              cfg =
+                CompilerConfig
+                  (Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]})
+                  NoCache
+                  True
+                  Minified
+                  False
+                  False
+                  False
+                  Nothing
+            (out, captured) <- captureStderr $ compileWithPure cfg src
+            out @?= src
+            assertBool "no fallback notice" (not (T.isInfixOf "using unminified source" (T.pack captured)))
+    , testCase "compilePure ignores configProgress stderr" $ do
+        clearCompilerCache
+        let
+          prog = number 1 + number 2
+          withProgress =
+            defaultCompilerConfig {configProgress = True}
+          eff =
+            fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp)
+        (_, capturedEffect) <-
+          captureStderr $ compileEffectIO withProgress eff
+        (_, capturedPure) <- captureStderr $ compilePureIO withProgress prog
+        assertBool "effect timing line" (T.isInfixOf "compiled in" (T.pack capturedEffect))
+        assertBool "pure silent" (not (T.isInfixOf "compiled in" (T.pack capturedPure)))
+        a <- compilePure withProgress prog
+        b <- compilePurePure withProgress prog
+        c <- compilePureIO withProgress prog
+        a @?= b
+        b @?= c
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
         clearCompilerCache
         out <-
