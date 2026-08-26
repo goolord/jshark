@@ -902,7 +902,7 @@ mapFixedArgs ::
   (forall v. Expr f v -> Expr f v)
   -> FixedArgs f a b c
   -> FixedArgs f a b c
-mapFixedArgs ge = \case
+mapFixedArgs ge a = case a of
   ArgsU x -> ArgsU (ge x)
   ArgsB x y -> ArgsB (ge x) (ge y)
   ArgsT x y z -> ArgsT (ge x) (ge y) (ge z)
@@ -915,13 +915,13 @@ foldFixed ::
   -> FixedOp a b c u
   -> FixedArgs f a b c
   -> m
-foldFixed _ se _ = \case
+foldFixed _ se _ a = case a of
   ArgsU x -> se x
   ArgsB x y -> se x <> se y
   ArgsT x y z -> se x <> se y <> se z
 
 data Metadata = Metadata
-  { mdSize :: !Int
+  { mdSize :: {-# UNPACK #-} !Int
   , mdIsPure :: !Bool
   , mdIsCheap :: !Bool
   }
@@ -1331,16 +1331,18 @@ countExpr t e = case e of
       )
 
 countEffect :: Int -> Effect Stamp u -> Int
-countEffect t =
+countEffect t e =
   getSum
-    . foldEff
-      nestedDummy
-      (Sum . countExpr t)
-      (Sum . countEffect t)
-      (Sum . countLazyEffect t)
+    ( foldEff
+        nestedDummy
+        (Sum . countExpr t)
+        (Sum . countEffect t)
+        (Sum . countLazyEffect t)
+        e
+    )
 
 occursVarInExpr :: Int -> Expr Stamp u -> Bool
-occursVarInExpr t = \case
+occursVarInExpr t expr = case expr of
   Var (Stamp i) -> i == t
   Var (Embed e') -> occursVarInExpr t e'
   Var (EmbedEff e') -> occursVarInEff t e'
@@ -1354,19 +1356,21 @@ occursVarInExpr t = \case
         e
 
 occursVarInEff :: Int -> Effect Stamp u -> Bool
-occursVarInEff t =
+occursVarInEff t e =
   getAny
-    . foldEff
-      nestedDummy
-      (Any . occursVarInExpr t)
-      (Any . occursVarInEff t)
-      (Any . occursVarInEff t)
+    ( foldEff
+        nestedDummy
+        (Any . occursVarInExpr t)
+        (Any . occursVarInEff t)
+        (Any . occursVarInEff t)
+        e
+    )
 
 -- | Structural node count. Lazy children (lambda bodies, @?:@ arms,
 -- @&&@ RHS) are part of the tree, so they count: a size gate that
 -- skipped them under-measured a whole paint body as a leaf.
 nodeCountExpr :: Expr Stamp u -> Int
-nodeCountExpr = \case
+nodeCountExpr expr = case expr of
   Var (Embed e') -> nodeCountExpr e'
   Var (EmbedEff e') -> nodeCountEff e'
   e ->
@@ -1671,7 +1675,7 @@ mapExpr ::
   -> (forall v. Effect f v -> Effect f v)
   -> Expr f u
   -> Expr f u
-mapExpr ge gf = \case
+mapExpr ge gf expr = case expr of
   Literal x -> Literal x
   Var s -> Var s
   Let x g -> Let (ge x) (ge . g)
@@ -1697,7 +1701,7 @@ mapStd ::
   (forall v. Expr f v -> Expr f v)
   -> Std f u
   -> Std f u
-mapStd ge = \case
+mapStd ge s = case s of
   Fixed op args -> Fixed op (mapFixedArgs ge args)
   Method m -> Method (mapMethod ge m)
   Kernel k -> Kernel (mapKernel ge k)
@@ -1706,7 +1710,7 @@ mapKernel ::
   (forall v. Expr f v -> Expr f v)
   -> Kernel f u
   -> Kernel f u
-mapKernel ge = \case
+mapKernel ge k = case k of
   KPlus x y -> KPlus (ge x) (ge y)
   KTimes x y -> KTimes (ge x) (ge y)
   KMinus x y -> KMinus (ge x) (ge y)
@@ -1737,7 +1741,7 @@ mapMethod ::
   (forall v. Expr f v -> Expr f v)
   -> Method f u
   -> Method f u
-mapMethod ge = \case
+mapMethod ge m = case m of
   MethMap x f -> MethMap (ge x) (ge . f)
   MethFilter x f -> MethFilter (ge x) (ge . f)
   MethReduce x z f -> MethReduce (ge x) (ge z) (\a b -> ge (f a b))
@@ -1750,7 +1754,7 @@ mapEff ::
   -> (forall v. Effect f v -> Effect f v)
   -> Effect f u
   -> Effect f u
-mapEff ge gf = \case
+mapEff ge gf eff = case eff of
   Lift x -> Lift (ge x)
   FFI n args -> FFI n (mapRec (mapArg ge gf) args)
   UnsafeObject o -> UnsafeObject o
@@ -1793,7 +1797,7 @@ foldExpr ::
   -> (forall v. Effect f v -> m)
   -> Expr f u
   -> m
-foldExpr dummy se le sf = \case
+foldExpr dummy se le sf expr = case expr of
   Literal {} -> mempty
   Var {} -> mempty
   Let x g -> se x <> se (g dummy)
@@ -1823,7 +1827,7 @@ foldStd ::
   -> (forall v. Expr f v -> m)
   -> Std f u
   -> m
-foldStd dummy se le = \case
+foldStd dummy se le s = case s of
   Fixed op args -> foldFixed dummy se op args
   Method m -> foldMethod dummy se le m
   Kernel k -> foldKernel se le k
@@ -1835,7 +1839,7 @@ foldKernel ::
   -> (forall v. Expr f v -> m)
   -> Kernel f u
   -> m
-foldKernel se le = \case
+foldKernel se le k = case k of
   KPlus x y -> se x <> se y
   KTimes x y -> se x <> se y
   KMinus x y -> se x <> se y
@@ -1870,7 +1874,7 @@ foldMethod ::
   -> (forall v. Expr f v -> m)
   -> Method f u
   -> m
-foldMethod dummy se le = \case
+foldMethod dummy se le m = case m of
   MethMap x f -> se x <> le (f dummy)
   MethFilter x f -> se x <> le (f dummy)
   MethReduce x z f -> se x <> se z <> le (f dummy dummy)
@@ -1897,7 +1901,7 @@ foldEff ::
   -> (forall v. Effect f v -> m)
   -> Effect f u
   -> m
-foldEff dummy se sf lf = \case
+foldEff dummy se sf lf eff = case eff of
   Lift x -> se x
   FFI _ args -> recFold (\n a -> n <> foldArg a) mempty args
   UnsafeObject {} -> mempty
@@ -2052,7 +2056,7 @@ lowerArg = \case
   ArgEffect e -> Ir.IrArgEffect (lowerEffect e)
 
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
-lowerArgAt !t0 = \case
+lowerArgAt !t0 a = case a of
   ArgExpr e ->
     let
       (t1, e') = lowerExprAt t0 e
@@ -2066,7 +2070,7 @@ lowerArgAt !t0 = \case
 
 lowerRecArgsAt ::
   Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us)
-lowerRecArgsAt !t0 = \case
+lowerRecArgsAt !t0 args = case args of
   RecNil -> (t0, RecNil)
   RecCons x xs ->
     let
@@ -2081,7 +2085,7 @@ lowerArgsAt = lowerRecArgsAt
 
 lowerFixedArgsAt ::
   Int -> FixedArgs Stamp a b c -> (Int, Ir.IrFixedArgs a b c)
-lowerFixedArgsAt !t0 = \case
+lowerFixedArgsAt !t0 a = case a of
   ArgsU x ->
     let
       (t1, x') = lowerExprAt t0 x
@@ -2102,7 +2106,7 @@ lowerFixedArgsAt !t0 = \case
       (t3, Ir.IrArgsT x' y' z')
 
 lowerKernelKAt :: Int -> Kernel Stamp u -> (Int, Ir.IrKernel u)
-lowerKernelKAt !t0 = \case
+lowerKernelKAt !t0 k = case k of
   KPlus x y ->
     let
       (t1, x') = lowerExprAt t0 x
@@ -2293,7 +2297,7 @@ reifyKernelK = \case
   Ir.KLTEq x y -> KLTEq (reifyExpr x) (reifyExpr y)
 
 lowerStdMethodAt :: Int -> Method Stamp u -> (Int, Ir.IrMethod u)
-lowerStdMethodAt !t0 = \case
+lowerStdMethodAt !t0 m = case m of
   MethMap arr f ->
     let
       tag = t0
@@ -2375,7 +2379,7 @@ reifyStdMethod = \case
     MethFrom (reifyExpr n) (\s -> rebindExpr tag (reifyExpr body) s)
 
 lowerFieldLitAt :: Int -> FieldLit Stamp r -> (Int, Ir.IrFieldLit r)
-lowerFieldLitAt !t0 = \case
+lowerFieldLitAt !t0 fl = case fl of
   FieldLit @k e ->
     let
       (t1, e') = lowerExprAt t0 e
@@ -2471,7 +2475,7 @@ lowerFnBodyAt !t0 body =
     (tEnd, lowerFnBodyTags tags body)
 
 lowerFnBodyTags :: [Int] -> FnBody Stamp us r -> Ir.IrFnBody us r
-lowerFnBodyTags tags = \case
+lowerFnBodyTags tags b = case b of
   JfNil e -> Ir.IrJfNil (lowerExpr e)
   JfCons k ->
     case tags of
@@ -2490,7 +2494,7 @@ lowerExpr e =
     ir
 
 lowerExprAt :: Int -> Expr Stamp u -> (Int, Ir.IrExpr u)
-lowerExprAt !t0 = \case
+lowerExprAt !t0 expr = case expr of
   Literal v -> (t0, Ir.IrLiteral v)
   Var (Stamp i) -> (t0, Ir.IrVar i)
   Var (Embed e) ->
@@ -2669,7 +2673,7 @@ lowerEffect e =
     ir
 
 lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u)
-lowerEffectAt !t0 = \case
+lowerEffectAt !t0 eff = case eff of
   Lift x ->
     let
       (t1, x') = lowerExprAt t0 x
@@ -3631,7 +3635,7 @@ optUnNum t0 f k x =
     (t1, res, Metadata 1 True (isCheap res) <> mdX)
 
 optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u, Metadata)
-optExpr t0 = \case
+optExpr t0 expr = case expr of
   Literal v -> (t0, Literal v, Metadata 1 True (isCheapValue v))
   Var (Embed e) -> optExpr t0 (flattenExpr e)
   Var (EmbedEff (Lift e)) -> optExpr t0 (flattenExpr e)
@@ -3838,13 +3842,13 @@ optToSorted k t0 x f =
     (t2, k x' (keepExprCont2 t2 tA tB body mdBody f), md)
 
 optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u, Metadata)
-optStd t0 = \case
+optStd t0 s = case s of
   Fixed op args -> optFixed t0 op args
   Method m -> optMethod t0 m
   Kernel k -> optKernel t0 k
 
 optKernel :: Int -> Kernel Stamp u -> (Int, Expr Stamp u, Metadata)
-optKernel t0 = \case
+optKernel t0 k = case k of
   KPlus x y -> optBinNum t0 (+) Plus x y
   KTimes x y -> optBinNum t0 (*) Times x y
   KMinus x y -> optBinNum t0 (-) Minus x y
@@ -3939,7 +3943,7 @@ optKernel t0 = \case
   KLTEq x y -> optBin t0 (foldOrdNeq GT LTEq) x y
 
 optMethod :: Int -> Method Stamp u -> (Int, Expr Stamp u, Metadata)
-optMethod t0 = \case
+optMethod t0 m = case m of
   MethMap x f -> optMapped (\a g -> Std (Method (MethMap a g))) t0 x f
   MethFilter x f -> optMapped (\a g -> Std (Method (MethFilter a g))) t0 x f
   MethReduce x z f -> optReduced (\a b g -> Std (Method (MethReduce a b g))) t0 x z f
@@ -3954,7 +3958,7 @@ optMethod t0 = \case
       (t2, Std (Method (MethFrom n' (keepExprCont t2 tag body mdBody f))), md)
 
 optEffect :: Int -> Effect Stamp u -> (Int, Effect Stamp u, Metadata)
-optEffect t0 = \case
+optEffect t0 eff = case eff of
   Lift x ->
     let
       (t1, x', mdX) = optExpr t0 x
