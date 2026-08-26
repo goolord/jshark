@@ -5,7 +5,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
@@ -151,15 +150,15 @@ data FlatNode
   | FX_ArrayLit [NodeId]
 
 data FlatProgram = FlatProgram
-  { fpNodes :: Vector FlatNode
-  , fpLits :: Vector FlatLit
-  , fpTexts :: Vector Text
-  , fpFFIs :: Vector FFIForm
-  , fpStrCases :: Vector [(Text, NodeId)]
-  , fpFieldGroups :: Vector [FlatField]
-  , fpArgGroups :: Vector [FlatArg]
-  , fpPure :: Vector Word8
-  , fpRoot :: NodeId
+  { fpNodes :: !(Vector FlatNode)
+  , fpLits :: !(Vector FlatLit)
+  , fpTexts :: !(Vector Text)
+  , fpFFIs :: !(Vector FFIForm)
+  , fpStrCases :: !(Vector [(Text, NodeId)])
+  , fpFieldGroups :: !(Vector [FlatField])
+  , fpArgGroups :: !(Vector [FlatArg])
+  , fpPure :: !(Vector Word8)
+  , fpRoot :: {-# UNPACK #-} !NodeId
   }
 
 fpRootEffect :: FlatProgram -> NodeId

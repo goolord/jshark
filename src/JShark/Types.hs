@@ -168,17 +168,17 @@ data Universe
 
 data Value :: Universe -> Type where
   ValueArray :: [Value u] -> Value ('Array u)
-  ValueNumber :: {-# UNPACK #-} !Double -> Value 'Number
-  ValueBigInt :: !Integer -> Value 'BigInt
-  ValueString :: !Text -> Value 'String
+  ValueNumber :: Double -> Value 'Number
+  ValueBigInt :: Integer -> Value 'BigInt
+  ValueString :: Text -> Value 'String
   ValueFunction :: (Value u -> Value v) -> Value ('Function u v)
   ValueUnit :: Value 'Unit
   ValueOption :: Maybe (Value u) -> Value ('Option u)
   ValueResult :: Either (Value e) (Value a) -> Value ('Result e a)
-  ValueRegex :: !Text -> Value 'Regex
-  ValueBool :: !Bool -> Value 'Bool
+  ValueRegex :: Text -> Value 'Regex
+  ValueBool :: Bool -> Value 'Bool
   ValueUint8Array ::
-    !ByteArray
+    ByteArray
     -> Value 'Uint8Array
     -- ^ Contents of a @Uint8Array@ (unpinned 'ByteArray').
   ValueFrozen ::

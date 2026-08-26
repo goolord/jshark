@@ -612,9 +612,9 @@ jsUint8ArrayLit ba =
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
 -- 'Embed' / 'EmbedEff' are typed hole fillers for bind inlining.
 data Stamp (u :: Universe) where
-  Stamp :: {-# UNPACK #-} !Int -> Stamp u
-  Embed :: !(Expr Stamp u) -> Stamp u
-  EmbedEff :: !(Effect Stamp u) -> Stamp u
+  Stamp :: Int -> Stamp u
+  Embed :: Expr Stamp u -> Stamp u
+  EmbedEff :: Effect Stamp u -> Stamp u
 
 -- | Codegen / dummy binder. Same as 'Stamp'; kept so call sites that
 -- only need a name stay readable.
@@ -949,7 +949,7 @@ foldFixed _ se _ = \case
   ArgsT x y z -> se x <> se y <> se z
 
 data Metadata = Metadata
-  { mdSize :: {-# UNPACK #-} !Int
+  { mdSize :: !Int
   , mdIsPure :: !Bool
   , mdIsCheap :: !Bool
   }
