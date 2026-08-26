@@ -5,7 +5,7 @@ module Main (main) where
 
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
-import JShark (effectfulAST, optimizeEffect, renderJSCompact)
+import JShark (closedEffectNodes, effectfulAST, optimizeEffect, renderJSCompact)
 import JShark.Api (stmts)
 import JShark.Types (ClosedEffect)
 import Life (mainJS)
@@ -17,6 +17,7 @@ life = stmts mainJS
 
 main :: IO ()
 main = do
+  putStrLn $ "rawNodes," ++ show (closedEffectNodes life)
   t0 <- getMonotonicTime
   let opt = optimizeEffect life
   t1 <- getMonotonicTime

@@ -44,11 +44,9 @@ import JShark.Lucid
   , text_
   )
 import qualified JShark.Map as Map
-import qualified JShark.Math as Math
 import JShark.Object (field, frozen)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
-import JShark.Types (Effect (Lift))
 import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)
 import Types
@@ -303,136 +301,53 @@ resolveComponent scratch = do
   alive <- getProp scratch "alive"
   w0 <- scratch.w
   cells <- getProp scratch "cells"
-  info <-
+  registry <- getProp scratch "registry"
+  nextId0 <- scratch.nextId
+  maxSid0 <- scratch.maxSid
+  res <-
     hold $
       ffi
-        ( "(function(_a,w,c){const D=globalThis.LifeDiscover;"
-            <> "if(!D)return{key:'',hashes:[]};"
-            <> "return D.classify(_a,w,c);})"
+        ( "(function(reg,a,w,c,nid,mx){const D=globalThis.LifeDiscover;"
+            <> "return D?D.classifyAndResolve(reg,a,w,c,nid,mx):{action:0,sid:0};})"
         )
-        (arg alive <: arg w0 <: arg cells <: RecNil)
-  key <- getProp info "key"
-  hashes <- getProp info "hashes"
-  registry <- getProp scratch "registry"
-  knownM <- getProp (Lift registry) "known"
-  knownHit <- Map.lookup (Lift knownM) key
-  toSyntax $
-    optionCaseE
-      knownHit
-      (fromSyntax $ resolveUnlabeled scratch key hashes)
-      (\sid -> fromSyntax $ assignSpecies scratch sid key hashes)
-
-resolveUnlabeled ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f 'String
-  -> Expr f ('Array 'String)
-  -> EffectSyntax f (f 'Unit)
-resolveUnlabeled scratch key hashes = do
-  registry <- getProp scratch "registry"
-  seenM <- getProp (Lift registry) "seen"
-  keyHit <- Map.lookup (Lift seenM) key
-  toSyntax $
-    optionCaseE
-      keyHit
-      ( fromSyntax $
-          lookupHashThenPending scratch seenM key hashes (number 0)
-      )
-      (\sid -> fromSyntax $ assignSpecies scratch sid key hashes)
-
-lookupHashThenPending ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f ('Map 'String 'Number)
-  -> Expr f 'String
-  -> Expr f ('Array 'String)
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-lookupHashThenPending scratch seenM key hashes k = do
+        ( arg registry
+            <: arg alive
+            <: arg w0
+            <: arg cells
+            <: arg nextId0
+            <: arg maxSid0
+            <: RecNil
+        )
+  action <- getProp res "action"
+  sid <- getProp res "sid"
   ifS
-    (k .>= Array.length hashes)
-    (bumpPending scratch key hashes)
+    (action .== 1)
     ( do
-        let
-          cellHash = Array.index hashes k
-        hit <- Map.lookup (Lift seenM) cellHash
-        toSyntax $
-          optionCaseE
-            hit
-            ( fromSyntax $
-                lookupHashThenPending scratch seenM key hashes (k + 1)
-            )
-            ( \sid ->
-                fromSyntax $ assignSpecies scratch sid key hashes
-            )
+        species <- getProp scratch "species"
+        cells' <- getProp scratch "cells"
+        assignCells species cells' sid
     )
-
-bumpPending ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f 'String
-  -> Expr f ('Array 'String)
-  -> EffectSyntax f (f 'Unit)
-bumpPending scratch key hashes = do
-  registry <- getProp scratch "registry"
-  pendingM <- getProp (Lift registry) "pending"
-  cntHit <- Map.lookup (Lift pendingM) key
-  nextCnt <-
-    bindExpr $
-      optionCaseE
-        cntHit
-        (expr (number 1))
-        (\c -> expr (c + 1))
-  _ <- Map.insert (Lift pendingM) key nextCnt
-  whenS (nextCnt .>= 2) (maybeMint scratch key hashes)
-
-assignSpecies ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f 'Number
-  -> Expr f 'String
-  -> Expr f ('Array 'String)
-  -> EffectSyntax f (f 'Unit)
-assignSpecies scratch sid key hashes = do
-  registry <- getProp scratch "registry"
-  seenM <- getProp (Lift registry) "seen"
-  _ <- Map.insert (Lift seenM) key sid
-  _ <- registerHashAliases seenM hashes sid
-  species <- getProp scratch "species"
-  cells <- getProp scratch "cells"
-  assignCells species cells sid
-
-registerHashAliases ::
-  Expr f ('Map 'String 'Number)
-  -> Expr f ('Array 'String)
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-registerHashAliases seenM hashes sid =
-  forRange_ (number 0) (Array.length hashes) $ \k ->
-    Map.insert (Lift seenM) (Array.index hashes k) sid
-
-maybeMint ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f 'String
-  -> Expr f ('Array 'String)
-  -> EffectSyntax f (f 'Unit)
-maybeMint scratch key hashes = do
-  nid <- scratch.nextId
-  maxSid0 <- scratch.maxSid
-  whenS (nid .<= maxSid0) $ do
-    let
-      (r, g, b) = discoverRgb nid
-      base = nid * number 3
-    palette <- getProp scratch "palette"
-    setU8 palette base r
-    setU8 palette (base + 1) g
-    setU8 palette (base + 2) b
-    minted <- getProp scratch "minted"
-    _ <- Array.push_ minted nid
-    registry <- getProp scratch "registry"
-    seenM <- getProp (Lift registry) "seen"
-    _ <- Map.insert (Lift seenM) key nid
-    _ <- registerHashAliases seenM hashes nid
-    set @"nextId" scratch (nid + 1)
-    species <- getProp scratch "species"
-    cells <- getProp scratch "cells"
-    assignCells species cells nid
+    ( ifS
+        (action .== 2)
+        ( do
+            r <- getProp res "r"
+            g <- getProp res "g"
+            b <- getProp res "b"
+            let
+              base = sid * number 3
+            palette <- getProp scratch "palette"
+            setU8 palette base r
+            setU8 palette (base + 1) g
+            setU8 palette (base + 2) b
+            minted <- getProp scratch "minted"
+            _ <- Array.push_ minted sid
+            set @"nextId" scratch (sid + 1)
+            species <- getProp scratch "species"
+            cells' <- getProp scratch "cells"
+            assignCells species cells' sid
+        )
+        done
+    )
 
 assignCells ::
   Expr f 'Uint8Array
@@ -445,49 +360,6 @@ assignCells species cells sid =
 
 sidCount :: Expr f 'Number -> Expr f 'Number -> Expr f ('Object SidCount)
 sidCount sid cnt = frozen [field @"sid" sid, field @"cnt" cnt]
-
-discoverRgb ::
-  Expr f 'Number -> (Expr f 'Number, Expr f 'Number, Expr f 'Number)
-discoverRgb n =
-  let
-    hue = rem_ (n * number 137.508) (number 360)
-    s = number 0.62
-    l = number 0.41
-    c = (number 1 - abs (number 2 * l - number 1)) * s
-    hp = hue / number 60
-    hpMod = hp - number 2 * Math.floor (hp / number 2)
-    x = c * (number 1 - abs (hpMod - number 1))
-    m = l - c / number 2
-    r1 =
-      if_
-        (hp .< 1)
-        c
-        ( if_
-            (hp .< 2)
-            x
-            (if_ (hp .< 3) 0 (if_ (hp .< 4) 0 (if_ (hp .< 5) x c)))
-        )
-    g1 =
-      if_
-        (hp .< 1)
-        x
-        ( if_
-            (hp .< 2)
-            c
-            (if_ (hp .< 3) c (if_ (hp .< 4) x (if_ (hp .< 5) 0 0)))
-        )
-    b1 =
-      if_
-        (hp .< 1)
-        0
-        ( if_
-            (hp .< 2)
-            0
-            (if_ (hp .< 3) x (if_ (hp .< 4) c (if_ (hp .< 5) c x)))
-        )
-    clamp t = Math.max 0 (Math.min 255 (Math.round (number 255 * (t + m))))
-   in
-    (clamp r1, clamp g1, clamp b1)
 
 stepIndexTracker ::
   Expr f 'Uint8Array

@@ -171,10 +171,128 @@
     return { key, hashes };
   }
 
+  function discoverRgb(n) {
+    const hue = ((n * 137.508) % 360 + 360) % 360;
+    const s = 0.62;
+    const l = 0.41;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const hp = hue / 60;
+    const hpMod = hp - 2 * Math.floor(hp / 2);
+    const x = c * (1 - Math.abs(hpMod - 1));
+    const m = l - c / 2;
+    let r1;
+    let g1;
+    let b1;
+    if (hp < 1) {
+      r1 = c;
+      g1 = x;
+      b1 = 0;
+    } else if (hp < 2) {
+      r1 = x;
+      g1 = c;
+      b1 = 0;
+    } else if (hp < 3) {
+      r1 = 0;
+      g1 = c;
+      b1 = x;
+    } else if (hp < 4) {
+      r1 = 0;
+      g1 = x;
+      b1 = c;
+    } else if (hp < 5) {
+      r1 = x;
+      g1 = 0;
+      b1 = c;
+    } else {
+      r1 = c;
+      g1 = 0;
+      b1 = x;
+    }
+    const clamp = (t) =>
+      Math.max(0, Math.min(255, Math.round(255 * (t + m))));
+    return [clamp(r1), clamp(g1), clamp(b1)];
+  }
+
+  function registerAliases(seen, hashes, sid) {
+    for (let k = 0; k < hashes.length; k++) {
+      seen[hashes[k]] = sid;
+    }
+  }
+
+  function resolveSpecies(registry, key, hashes, nextId, maxSid) {
+    const known = registry.known;
+    const seen = registry.seen;
+    let pending = registry.pending;
+    if (!pending) {
+      pending = {};
+      registry.pending = pending;
+    }
+
+    let sid = known[key];
+    if (sid !== undefined) {
+      seen[key] = sid;
+      registerAliases(seen, hashes, sid);
+      return { action: 1, sid };
+    }
+
+    sid = seen[key];
+    if (sid !== undefined) {
+      registerAliases(seen, hashes, sid);
+      return { action: 1, sid };
+    }
+
+    for (let k = 0; k < hashes.length; k++) {
+      sid = seen[hashes[k]];
+      if (sid !== undefined) {
+        seen[key] = sid;
+        registerAliases(seen, hashes, sid);
+        return { action: 1, sid };
+      }
+    }
+
+    const cnt = (pending[key] | 0) + 1;
+    pending[key] = cnt;
+    if (cnt < 2) return { action: 0, sid: 0 };
+
+    if (nextId > maxSid) return { action: 0, sid: 0 };
+
+    const nid = nextId | 0;
+    const rgb = discoverRgb(nid);
+    seen[key] = nid;
+    registerAliases(seen, hashes, nid);
+    delete pending[key];
+    return { action: 2, sid: nid, r: rgb[0], g: rgb[1], b: rgb[2] };
+  }
+
+  function classifyAndResolveImpl(registry, alive, w, cells, nextId, maxSid) {
+    const coords = extractCoords(w | 0, cells);
+    const info = collectPhaseKey(coords);
+    if (!info.key) return { action: 0, sid: 0 };
+    const out = resolveSpecies(
+      registry,
+      info.key,
+      info.hashes,
+      nextId,
+      maxSid
+    );
+    out.key = info.key;
+    return out;
+  }
+
   global.LifeDiscover = {
     classify(_alive, w, cells) {
       const coords = extractCoords(w | 0, cells);
       return collectPhaseKey(coords);
+    },
+    classifyAndResolve(registry, alive, w, cells, nextId, maxSid) {
+      return classifyAndResolveImpl(
+        registry,
+        alive,
+        w,
+        cells,
+        nextId,
+        maxSid
+      );
     },
   };
 })(globalThis);

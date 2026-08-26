@@ -107,6 +107,7 @@ library
     JShark.Bun
     JShark.Bun.Internal
     JShark.FlatTest
+    JShark.CompileTiming
   other-modules:
     JShark.Emit
     JShark.CompileProgress

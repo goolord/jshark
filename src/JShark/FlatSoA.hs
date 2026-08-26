@@ -16,18 +16,24 @@ module JShark.FlatSoA
   , fromProgram
   , toProgram
   , optimizeFlatProgram
+  , flatSoaParallelThreshold
   , propagatePureFlags
   , optConstantFoldNum
   , optimizeSoA
   , packEffectProgramSoA
+  , packEffectProgramDirect
+  , optimizeFlatPack
   , soaPureCount
   , exprMask
   , soaColumnsEqual
   )
 where
 
+import Control.Concurrent (getNumCapabilities)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Monad (foldM, forM_, when)
 import Control.Monad.ST (runST)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Bits ((.&.))
 import Data.Int (Int32)
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
@@ -46,10 +52,13 @@ import JShark.Flat
   , FlatProgram (..)
   , NodeId
   , fpPure
-  , packEffectProgram
+  , packEffectProgramState
+  , buildFlatProgram
   )
 import JShark.Ir (IrEffect)
-import JShark.Types (BigBinOp (..), FFIForm, Value (..))
+import JShark.Types (BigBinOp (..), FFIForm (..), Value (..))
+import Data.Maybe (catMaybes)
+import GHC.IO.Unsafe (unsafePerformIO)
 
 type Op = Word16
 
@@ -304,7 +313,28 @@ data FlatSoA = FlatSoA
   }
 
 packEffectProgramSoA :: IrEffect u -> FlatSoA
-packEffectProgramSoA = fromProgram . packEffectProgram
+packEffectProgramSoA e = fst (packEffectProgramDirect e)
+
+-- | Pack IR to SoA + 'FlatProgram' in one encode pass (no 'validateFlatProgram').
+packEffectProgramDirect :: IrEffect u -> (FlatSoA, FlatProgram)
+packEffectProgramDirect e =
+  let
+    (root, st) = packEffectProgramState e
+    prog = buildFlatProgram root st
+   in
+    (fromProgram prog, prog)
+
+-- | SoA optimizer passes without re-packing from 'FlatProgram'.
+optimizeFlatPack :: FlatSoA -> FlatProgram -> (FlatProgram, FlatSoA)
+optimizeFlatPack soa0 prog0 =
+  let
+    (soa1, folded) = optConstantFoldNumWithChangedPar soa0
+    soa2 = propagatePureFlagsPar soa1
+    pureV = V.fromList (VU.toList (fsaPure soa2))
+   in
+    if folded
+      then (toProgram soa2, soa2)
+      else (prog0 {fpPure = pureV}, soa2)
 
 i32 :: Int -> Int32
 i32 = fromIntegral
@@ -882,13 +912,266 @@ soaSideLengthsEqual a b =
     && V.length (fsaLits a) == V.length (fsaLits b)
     && V.length (fsaFFIs a) == V.length (fsaFFIs b)
 
+-- | Node count above which SoA passes use chunked 'mapConcurrently'.
+flatSoaParallelThreshold :: Int
+flatSoaParallelThreshold = 4096
+
+chunkRanges :: Int -> Int -> [[Int]]
+chunkRanges n chunk =
+  let
+    go lo acc
+      | lo >= n = reverse acc
+      | otherwise =
+          let
+            hi = min n (lo + chunk)
+           in
+            go hi ([lo .. hi - 1] : acc)
+   in
+    go 0 []
+
+propagatePureFlagsPassPar :: FlatSoA -> (FlatSoA, Bool)
+propagatePureFlagsPassPar soa
+  | VU.length (fsaOpcodes soa) < flatSoaParallelThreshold =
+      propagatePureFlagsPass soa
+  | otherwise =
+      unsafePerformIO $
+        propagatePureFlagsPassIO soa
+{-# NOINLINE propagatePureFlagsPassPar #-}
+
+propagatePureFlagsPassIO :: FlatSoA -> IO (FlatSoA, Bool)
+propagatePureFlagsPassIO soa = do
+  let
+    n = VU.length (fsaOpcodes soa)
+  caps <- max 1 <$> getNumCapabilities
+  let
+    chunk = max 256 (n `div` (caps * 4))
+    ranges = chunkRanges n chunk
+  mp <- VU.unsafeThaw (fsaPure soa)
+  changedRef <- newIORef False
+  let
+    ch j = do
+      let
+        i = fromIntegral j :: Int
+      if i >= 0 && i < n
+        then MVU.read mp i
+        else pure (0 :: Word8)
+    bin j k = do
+      x <- ch j
+      y <- ch k
+      pure (x .&. y)
+    tri j k l = do
+      x <- bin j k
+      y <- ch l
+      pure (x .&. y)
+    andNodes ns =
+      foldM
+        (\acc j -> do p <- ch (i32 j); pure (acc .&. p))
+        (1 :: Word8)
+        ns
+    pureFixed fi =
+      case fsaFixed soa V.! fromIntegral fi of
+        FlatFixedU _ j -> ch (i32 j)
+        FlatFixedB _ j k -> bin (i32 j) (i32 k)
+        FlatFixedT _ j k l -> tri (i32 j) (i32 k) (i32 l)
+    pureArray gi =
+      andNodes (V.toList (fsaArrayGroups soa V.! fromIntegral gi))
+    pureFields gi =
+      let
+        fieldNode = \case
+          FlatField _ j -> j
+          FlatFieldEff _ j -> j
+          FlatFieldExtra _ j -> j
+          FlatFieldExtraEff _ j -> j
+        ns = map fieldNode (fsaFieldGroups soa V.! fromIntegral gi)
+       in
+        andNodes ns
+    pureForOp op a b c d e
+      | op == oFE_LITERAL = pure 1
+      | op == oFE_VAR = pure 1
+      | op == oFE_FROZEN = pure 1
+      | op == oFE_RESOK = ch a
+      | op == oFE_RESERR = ch a
+      | op == oFE_LET = bin b c
+      | op == oFE_LETREC = bin b c
+      | op == oFE_LAMBDA = ch b
+      | op == oFE_APPLY = bin a b
+      | op == oFE_IF = tri a b c
+      | op == oFE_OPTIONCASE = tri a b d
+      | op == oFE_RESCASE = tri a c e
+      | op == oFE_INDEX = bin a b
+      | op == oFE_U8INDEX = bin a b
+      | op == oFE_FIXED = pureFixed a
+      | op == oFE_FNLIT = ch b
+      | op == oFE_GETFIELD = ch b
+      | op == oFE_HVM2REF = pure 1
+      | op == oFE_UNSAFENULL = ch a
+      | op == oFE_KNEG = ch a
+      | op == oFE_KBIGNEG = ch a
+      | op == oFE_KSHOW = ch a
+      | op == oFE_KTYPEOF = ch a
+      | op == oFE_KEQ = bin b c
+      | op == oFE_KNEQ = bin b c
+      | op == oFE_KBIG = bin b c
+      | op == oFE_MMAP = bin a c
+      | op == oFE_MFILTER = bin a c
+      | op == oFE_MREDUCE = tri a b e
+      | op == oFE_MREDUCER = tri a b e
+      | op == oFE_MTOSORTED = bin a d
+      | op == oFE_MFROM = bin a c
+      | op == oFX_LIFT = ch a
+      | op == oFX_BIND = bin b c
+      | op == oFX_THENE = bin a b
+      | op == oFX_BINDREC = bin b c
+      | op == oFX_LAMBDAE = ch b
+      | op == oFX_IFE = tri a b c
+      | op == oFX_FORRANGE = tri a b d
+      | op == oFX_U8SET = tri a b c
+      | op == oFX_U8FILL = bin a b
+      | op == oFX_OPTCASEE = tri a b d
+      | op == oFX_RESCASEE = tri a c e
+      | op == oFX_STRCASEE = bin a c
+      | op == oFX_THROW = ch a
+      | op == oFX_TRY = bin a c
+      | op == oFX_OBJLIT = pureFields a
+      | op == oFX_DELETEPROP = bin a b
+      | op == oFX_ARRAYLIT = pureArray a
+      | op < oFX_LIFT = bin a b
+      | otherwise = pure 0
+    runIdx idx = do
+      let
+        op = fsaOpcodes soa VU.! idx
+        a = fsaA soa VU.! idx
+        b = fsaB soa VU.! idx
+        c = fsaC soa VU.! idx
+        d = fsaD soa VU.! idx
+        e = fsaE soa VU.! idx
+      p <-
+        if impureOp op
+          then pure (0 :: Word8)
+          else pureForOp op a b c d e
+      old <- MVU.read mp idx
+      when (p /= old) (writeIORef changedRef True)
+      MVU.write mp idx p
+  _ <- mapConcurrently (\ixs -> forM_ ixs runIdx) ranges
+  changed <- readIORef changedRef
+  pureV' <- VU.unsafeFreeze mp
+  pure (soa {fsaPure = pureV'}, changed)
+ where
+  impureOp op
+    | op >= oFX_LIFT =
+        op
+          `elem` [ oFX_FFI
+                 , oFX_UNSAFEOBJ
+                 , oFX_UNSAFEOBJGET
+                 , oFX_UNSAFEOBJSET
+                 , oFX_CALLMETHOD
+                 , oFX_APPLYE
+                 , oFX_WHILE
+                 , oFX_FORRANGE
+                 , oFX_U8SET
+                 , oFX_U8FILL
+                 , oFX_THROW
+                 , oFX_DELETEPROP
+                 ]
+    | otherwise = op `elem` [oFE_ERROR, oFE_EMBEDEFF]
+
+propagatePureFlagsPar :: FlatSoA -> FlatSoA
+propagatePureFlagsPar soa0 =
+  let
+    go soa =
+      let
+        (soa', changed) = propagatePureFlagsPassPar soa
+       in
+        if changed then go soa' else soa'
+   in
+    go soa0
+
+optConstantFoldNumOncePar :: FlatSoA -> (FlatSoA, Bool)
+optConstantFoldNumOncePar soa0
+  | VU.length (fsaOpcodes soa0) < flatSoaParallelThreshold =
+      optConstantFoldNumOnce soa0
+  | otherwise =
+      unsafePerformIO $
+        optConstantFoldNumOnceIO soa0
+{-# NOINLINE optConstantFoldNumOncePar #-}
+
+optConstantFoldNumOnceIO :: FlatSoA -> IO (FlatSoA, Bool)
+optConstantFoldNumOnceIO soa0 = do
+  let
+    n = VU.length (fsaOpcodes soa0)
+  caps <- max 1 <$> getNumCapabilities
+  let
+    chunk = max 256 (n `div` (caps * 4))
+    ranges = chunkRanges n chunk
+    readLit li = litAsNumber (fsaLits soa0 V.! fromIntegral (li :: Int32))
+    scanFold i = do
+      let
+        op = fsaOpcodes soa0 VU.! i
+        x = fsaA soa0 VU.! i
+        y = fsaB soa0 VU.! i
+      case op of
+        o
+          | o == oFE_KPLUS ->
+              tryPair i x y (+)
+        o
+          | o == oFE_KTIMES ->
+              tryPair i x y (*)
+        o
+          | o == oFE_KMINUS ->
+              tryPair i x y (-)
+        _ -> pure Nothing
+     where
+      tryPair idx xa ya f = do
+        let
+          ox = fsaOpcodes soa0 VU.! fromIntegral xa
+          oy = fsaOpcodes soa0 VU.! fromIntegral ya
+        if ox == oFE_LITERAL && oy == oFE_LITERAL
+          then case (readLit xa, readLit ya) of
+            (Just dx, Just dy) -> pure (Just (idx, f dx dy))
+            _ -> pure Nothing
+          else pure Nothing
+  hitsNested <- mapConcurrently (\ixs -> mapM scanFold ixs) ranges
+  let
+    hits = catMaybes (concat hitsNested)
+  if null hits
+    then pure (soa0, False)
+    else do
+      opM <- VU.unsafeThaw (fsaOpcodes soa0)
+      aM <- VU.unsafeThaw (fsaA soa0)
+      bM <- VU.unsafeThaw (fsaB soa0)
+      litsRef <- newIORef (fsaLits soa0)
+      forM_ hits $ \(i, d) -> do
+        lits <- readIORef litsRef
+        let
+          liNew = i32 (V.length lits)
+          lits' = lits V.// [(V.length lits, FLit (ValueNumber d))]
+        writeIORef litsRef lits'
+        MVU.write opM i oFE_LITERAL
+        MVU.write aM i liNew
+        MVU.write bM i 0
+      opF <- VU.unsafeFreeze opM
+      aF <- VU.unsafeFreeze aM
+      litsF <- readIORef litsRef
+      pure (soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}, True)
+
+optConstantFoldNumWithChangedPar :: FlatSoA -> (FlatSoA, Bool)
+optConstantFoldNumWithChangedPar soa0 =
+  let
+    go soa didFold =
+      let
+        (soa', changed) = optConstantFoldNumOncePar soa
+       in
+        if changed then go soa' True else (soa, didFold)
+   in
+    go soa0 False
+
 -- | Run SoA opts and attach 'fpPure' (staging metadata; emit ignores for now).
 optimizeFlatProgram :: FlatProgram -> FlatProgram
 optimizeFlatProgram p =
   let
     soa0 = fromProgram p
-    (soa1, folded) = optConstantFoldNumWithChanged soa0
-    soa2 = propagatePureFlags soa1
+    (soa1, folded) = optConstantFoldNumWithChangedPar soa0
+    soa2 = propagatePureFlagsPar soa1
     pureV = V.fromList (VU.toList (fsaPure soa2))
    in
     if folded

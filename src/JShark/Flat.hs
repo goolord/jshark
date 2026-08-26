@@ -21,6 +21,8 @@ module JShark.Flat
   , packExpr
   , packEffect
   , packEffectProgram
+  , packEffectProgramState
+  , buildFlatProgram
   , fpRootEffect
   , flatNode
   , flatLit
@@ -31,6 +33,8 @@ module JShark.Flat
   , flatStrCases
   , flatFieldGroup
   , flatArgGroup
+  , flatSubtreeSizes
+  , flatIdentBudget
   )
 where
 
@@ -285,22 +289,26 @@ addArgGroup args = do
   pure i
 
 finalizePack :: NodeId -> PackState -> FlatProgram
-finalizePack root st =
-  let
-    prog =
-      FlatProgram
-        { fpNodes = V.fromList (reverse (psNodes st))
-        , fpLits = V.fromList (reverse (psLits st))
-        , fpTexts = V.fromList (reverse (psTexts st))
-        , fpFFIs = V.fromList (reverse (psFFIs st))
-        , fpStrCases = V.fromList (reverse (psStrCases st))
-        , fpFieldGroups = V.fromList (reverse (psFieldGroups st))
-        , fpArgGroups = V.fromList (reverse (psArgGroups st))
-        , fpPure = V.empty
-        , fpRoot = root
-        }
-   in
-    validateFlatProgram prog `seq` prog
+finalizePack root st = validateFlatProgram prog `seq` prog
+ where
+  prog = buildFlatProgram root st
+
+buildFlatProgram :: NodeId -> PackState -> FlatProgram
+buildFlatProgram root st =
+  FlatProgram
+    { fpNodes = V.fromList (reverse (psNodes st))
+    , fpLits = V.fromList (reverse (psLits st))
+    , fpTexts = V.fromList (reverse (psTexts st))
+    , fpFFIs = V.fromList (reverse (psFFIs st))
+    , fpStrCases = V.fromList (reverse (psStrCases st))
+    , fpFieldGroups = V.fromList (reverse (psFieldGroups st))
+    , fpArgGroups = V.fromList (reverse (psArgGroups st))
+    , fpPure = V.empty
+    , fpRoot = root
+    }
+
+packEffectProgramState :: IrEffect u -> (NodeId, PackState)
+packEffectProgramState e = runState (packEffect e) emptyPackState
 
 fixedRefs :: FlatFixed -> [NodeId]
 fixedRefs = \case
@@ -426,6 +434,38 @@ flatFieldRef = \case
   FlatFieldEff _ j -> j
   FlatFieldExtra _ j -> j
   FlatFieldExtraEff _ j -> j
+
+-- | Subtree node counts; pack order ensures child refs are below @i@.
+flatSubtreeSizes :: FlatProgram -> V.Vector Int
+flatSubtreeSizes p =
+  let
+    nodes = fpNodes p
+    n = V.length nodes
+   in
+    snd $
+      foldl'
+        ( \(_, acc) i ->
+            let
+              sz =
+                1
+                  + sum
+                    [ acc V.! r
+                    | r <- flatNodePackRefs p (nodes V.! i)
+                    ]
+              acc' = acc V.// [(i, sz)]
+             in
+              ((), acc')
+        )
+        ((), V.replicate n 0)
+        [0 .. n - 1]
+
+-- | Conservative @n*@ ident budget for parallel sibling emit (one per node).
+flatIdentBudget :: FlatProgram -> NodeId -> Int
+flatIdentBudget p i =
+  let
+    sizes = flatSubtreeSizes p
+   in
+    if i >= 0 && i < V.length sizes then sizes V.! i else 1
 
 validateFlatProgram :: FlatProgram -> ()
 validateFlatProgram p =

@@ -121,6 +121,9 @@ module JShark
   , effectfulASTFromFlat
   , effectfulASTIr
   , irEffectFromClosed
+  , flatPrepareCore
+  , flatProgramNodeCount
+  , flatSoaParallelThreshold
   , irExprFromClosed
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
@@ -143,7 +146,9 @@ where
 -- 'Expr' is the pure tree; 'Effect' is the impure tree. They join at FFI
 -- through 'Arg', not by treating effects as expressions.
 
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Monad (foldM)
+import GHC.Clock (getMonotonicTime)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
@@ -170,6 +175,13 @@ import JShark.CompileProgress
   , initEmitCtxTotal
   , reportPackPhase
   , tickEmitCtx
+  )
+import JShark.CompileTiming
+  ( FlatPrepareTiming (..)
+  , PhoasPrepareTiming (..)
+  , reportFlatPrepareTiming
+  , reportPhoasPrepareTiming
+  , seconds
   )
 import JShark.Emit
   ( JS
@@ -1142,11 +1154,30 @@ preparePureProgram :: ClosedExpr u -> IO (CG, Expr Stamp u)
 preparePureProgram e = do
   mCtx <- captureEmitCtx
   case mCtx of
-    Nothing -> pure (startCG, optimize e)
-    Just ctx -> do
-      reportPackPhase ctx 0 1
+    Nothing -> do
+      t0 <- getMonotonicTime
       let
         !expr = optimize e
+      t1 <- getMonotonicTime
+      let
+        timing =
+          PhoasPrepareTiming
+            { pptOptimizeSec = seconds t0 t1
+            , pptTotalSec = seconds t0 t1
+            }
+      reportPhoasPrepareTiming timing
+      pure (startCG, expr)
+    Just ctx -> do
+      reportPackPhase ctx 0 1
+      t0 <- getMonotonicTime
+      let
+        !expr = optimize e
+      t1 <- getMonotonicTime
+      reportPhoasPrepareTiming
+        PhoasPrepareTiming
+          { pptOptimizeSec = seconds t0 t1
+          , pptTotalSec = seconds t0 t1
+          }
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountExpr expr)
       pure (startCG {cgEmitCtx = Just ctx}, expr)
@@ -1157,11 +1188,28 @@ prepareEffectProgram :: ClosedEffect u -> IO (CG, Effect Stamp u)
 prepareEffectProgram e = do
   mCtx <- captureEmitCtx
   case mCtx of
-    Nothing -> pure (startCG, optimizeEffectTree e)
-    Just ctx -> do
-      reportPackPhase ctx 0 1
+    Nothing -> do
+      t0 <- getMonotonicTime
       let
         !eff = optimizeEffectTree e
+      t1 <- getMonotonicTime
+      reportPhoasPrepareTiming
+        PhoasPrepareTiming
+          { pptOptimizeSec = seconds t0 t1
+          , pptTotalSec = seconds t0 t1
+          }
+      pure (startCG, eff)
+    Just ctx -> do
+      reportPackPhase ctx 0 1
+      t0 <- getMonotonicTime
+      let
+        !eff = optimizeEffectTree e
+      t1 <- getMonotonicTime
+      reportPhoasPrepareTiming
+        PhoasPrepareTiming
+          { pptOptimizeSec = seconds t0 t1
+          , pptTotalSec = seconds t0 t1
+          }
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountEff eff)
       pure (startCG {cgEmitCtx = Just ctx}, eff)
@@ -1171,23 +1219,53 @@ prepareEffectProgram e = do
 prepareFlatEffectProgram :: ClosedEffect u -> IO (Flat.FlatProgram, CG)
 prepareFlatEffectProgram e = do
   mCtx <- captureEmitCtx
-  let
-    packFlat ir = FlatSoA.optimizeFlatProgram (Flat.packEffectProgram ir)
+  (prog, _timing) <- flatPrepareCore e
   case mCtx of
-    Nothing -> pure (packFlat (irEffectFromClosed e), startCG)
+    Nothing -> pure (prog, startCG)
     Just ctx -> do
-      reportPackPhase ctx 0 3
-      let
-        !ir = irEffectFromClosed e
-      reportPackPhase ctx 1 3
-      let
-        !packed = Flat.packEffectProgram ir
-      reportPackPhase ctx 2 3
-      let
-        !prog = FlatSoA.optimizeFlatProgram packed
-      reportPackPhase ctx 3 3
       initEmitCtxTotal ctx (flatProgramNodeCount prog)
       pure (prog, startCG {cgEmitCtx = Just ctx})
+
+flatPrepareCore :: ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming)
+flatPrepareCore (e :: ClosedEffect u) = do
+  mCtx <- captureEmitCtx
+  t0 <- getMonotonicTime
+  let
+    (!_, !irRaw) = lowerEffectAt (-2) (flattenEff e)
+  t1 <- getMonotonicTime
+  let
+    (!_, !irOpt, !_) = Ir.optIrEffect (-2) irRaw
+  t2 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportPackPhase ctx 0 3
+    Nothing -> pure ()
+  let
+    !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
+    !packNodes = flatProgramNodeCount prog0
+  t3 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportPackPhase ctx 1 3
+    Nothing -> pure ()
+  let
+    !(prog, _soa) = FlatSoA.optimizeFlatPack soa0 prog0
+    !_ = packNodes
+  t4 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> do
+      reportPackPhase ctx 2 3
+      reportPackPhase ctx 3 3
+    Nothing -> pure ()
+  let
+    timing =
+      FlatPrepareTiming
+        { fptLowerSec = seconds t0 t1
+        , fptIrOptSec = seconds t1 t2
+        , fptPackSec = seconds t2 t3
+        , fptFlatOptSec = seconds t3 t4
+        , fptTotalSec = seconds t0 t4
+        }
+  reportFlatPrepareTiming timing
+  pure (prog, timing)
 {-# NOINLINE prepareFlatEffectProgram #-}
 
 {-# NOINLINE tickEmitCtxUnit #-}
@@ -4544,28 +4622,120 @@ flatRenderBin env op s0 prog xId yId =
         )
     )
 
+flatParEmitMinSiblings :: Int
+flatParEmitMinSiblings = 4
+
+-- | Higher than 'FlatSoA.flatSoaParallelThreshold': parallel emit keeps
+--   one full 'CG' per sibling until merge; large programs can spike RAM.
+flatParEmitBudgetThreshold :: Int
+flatParEmitBudgetThreshold = 65536
+
+-- | Disabled: parallel emit retains one full 'CG' per sibling until merge
+--   and can exceed 10GB on Life-sized programs. Infrastructure kept for
+--   smaller benchmarks; re-enable when merge is streaming.
+shouldParFlatSiblings :: Flat.FlatProgram -> [Flat.NodeId] -> Bool
+shouldParFlatSiblings _ _ = False
+
+mergeEmitCG :: CG -> CG -> CG
+mergeEmitCG a b =
+  a
+    { cgIdent = max (cgIdent a) (cgIdent b)
+    , cgHelpers = M.union (cgHelpers a) (cgHelpers b)
+    , cgEmit = max (cgEmit a) (cgEmit b)
+    }
+
+parEmitSiblings ::
+  (Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code))
+  -> Env
+  -> CG
+  -> Flat.FlatProgram
+  -> [Flat.NodeId]
+  -> (CG, [Code])
+parEmitSiblings emit env s0 prog nids
+  | not (shouldParFlatSiblings prog nids) =
+      mapAccumL
+        ( \st nid ->
+            let
+              (st', code) = emit env st prog nid
+             in
+              (st', code)
+        )
+        s0
+        nids
+  | otherwise =
+      unsafePerformIO $ do
+        let
+          budgets = map (Flat.flatIdentBudget prog) nids
+          starts = scanl (+) (cgIdent s0) (0 : init budgets)
+          jobs = zip starts nids
+        results <-
+          mapConcurrently
+            ( \(start, nid) ->
+                pure $
+                  emit env (s0 {cgIdent = start}) prog nid
+            )
+            jobs
+        let
+          (cgs, codes) = unzip results
+          sMerged = foldl mergeEmitCG s0 cgs
+        pure (sMerged, codes)
+{-# NOINLINE parEmitSiblings #-}
+
 flatRenderArgList ::
   Env -> CG -> Flat.FlatProgram -> Int -> (CG, JS, JS)
 flatRenderArgList env s0 prog ai =
   let
     args = Flat.flatArgGroup prog ai
-    go s = \case
-      [] -> (s, [])
-      Flat.FlatArgExpr eid : rest ->
-        let
-          (s', c) = flatPureAST' env s prog eid
-          (s'', cs') = go s' rest
-         in
-          (s'', c : cs')
-      Flat.FlatArgEffect eid : rest ->
-        let
-          (s', c) = flatEffectfulAST' env s prog eid
-          (s'', cs') = go s' rest
-         in
-          (s'', c : cs')
-    (s1, cs) = go s0 args
+    nids =
+      [ case arg of
+          Flat.FlatArgExpr eid -> eid
+          Flat.FlatArgEffect eid -> eid
+      | arg <- args
+      ]
+    usePar = shouldParFlatSiblings prog nids
    in
-    (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+    if usePar
+      then
+        let
+          emitArg s = \case
+            Flat.FlatArgExpr eid -> flatPureAST' env s prog eid
+            Flat.FlatArgEffect eid -> flatEffectfulAST' env s prog eid
+          starts = scanl (+) (cgIdent s0) (0 : init (map (Flat.flatIdentBudget prog) nids))
+          jobs = zip starts args
+          (s1, cs) =
+            unsafePerformIO $
+              do
+                results <-
+                  mapConcurrently
+                    ( \(start, arg) ->
+                        pure $ emitArg (s0 {cgIdent = start}) arg
+                    )
+                    jobs
+                let
+                  (cgs, codes) = unzip results
+                  sMerged = foldl mergeEmitCG s0 cgs
+                pure (sMerged, codes)
+         in
+          (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+      else
+        let
+          go s = \case
+            [] -> (s, [])
+            Flat.FlatArgExpr eid : rest ->
+              let
+                (s', c) = flatPureAST' env s prog eid
+                (s'', cs') = go s' rest
+               in
+                (s'', c : cs')
+            Flat.FlatArgEffect eid : rest ->
+              let
+                (s', c) = flatEffectfulAST' env s prog eid
+                (s'', cs') = go s' rest
+               in
+                (s'', c : cs')
+          (s1, cs) = go s0 args
+         in
+          (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
 
 flatRenderField ::
   Env -> Flat.FlatProgram -> CG -> Flat.FlatField -> (CG, (JS, JS))
@@ -4615,7 +4785,7 @@ flatRenderArrayLit ::
   Env -> CG -> Flat.FlatProgram -> [Flat.NodeId] -> (CG, Code)
 flatRenderArrayLit env s0 prog es =
   let
-    (s1, cs) = mapAccumL (\s e -> flatEffectfulAST' env s prog e) s0 es
+    (s1, cs) = parEmitSiblings flatEffectfulAST' env s0 prog es
    in
     ( s1
     , Code
@@ -5403,6 +5573,9 @@ flatEffectfulAST' !env !sIn prog nid =
 
 flatProgramNodeCount :: Flat.FlatProgram -> Int
 flatProgramNodeCount p = V.length (Flat.fpNodes p)
+
+flatSoaParallelThreshold :: Int
+flatSoaParallelThreshold = FlatSoA.flatSoaParallelThreshold
 
 flatEffectfulCodegen ::
   ClosedEffect u -> (CG, Code)
