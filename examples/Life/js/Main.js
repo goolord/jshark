@@ -230,7 +230,7 @@
   /**
    * Binary step + species + pop/bounds/lists in one pass.
    * Returns null when LifeEngine is unavailable (caller keeps Haskell path).
-   * Return value is a shallow copy of {@link LifeEngineMain#_stepOut}; do not
+   * Return value is the reused {@link LifeEngineMain#_stepOut}; do not
    * cache it across calls.
    */
   function finishStep(
@@ -333,7 +333,7 @@
     out.by0 = by0;
     out.bx1 = bx1;
     out.by1 = by1;
-    return { pop: out.pop, bx0: out.bx0, by0: out.by0, bx1: out.bx1, by1: out.by1 };
+    return out;
   }
 
   global.LifeEngine = new LifeEngineMain();

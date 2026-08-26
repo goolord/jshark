@@ -90,6 +90,9 @@ lifeTests =
               testJsLutGliderSeam
           , lifeJsCase "LifeEngine.step keeps block stable" testJsEngineBlock
           , lifeJsCase "LifeEngineSync.finishStep rebuilds packed counts" testJsFinishStep
+          , lifeJsCase
+              "LifeEngineSync.finishStep reuses _stepOut object"
+              testJsFinishStepReuse
           , lifeJsCase "engineStepGeneration keeps block stable" testEngineStepGeneration
           , lifeJsCase "stepTile row slices match full LUT step" testJsStepTile
           , lifeJsCase "initWorkerEngine registers LifeEngine" testEngineInit
@@ -149,7 +152,7 @@ testUnderpopulation = fromSyntax $ do
     toSyntax_ (u8Fill alive (number 0))
     setAlive alive w (number 3) (number 2)
     setAlive alive w (number 3) (number 3)
-    toSyntax_ (rebuildPackedCounts alive w (number 7))
+    rebuildPackedCounts alive w (number 7)
     next <-
       runProcessCellAt
         alive
@@ -170,7 +173,7 @@ testSurvival = fromSyntax $ do
     setAlive alive w (number 3) (number 2)
     setAlive alive w (number 4) (number 3)
     setAlive alive w (number 3) (number 3)
-    toSyntax_ (rebuildPackedCounts alive w (number 7))
+    rebuildPackedCounts alive w (number 7)
     next <-
       runProcessCellAt
         alive
@@ -194,7 +197,7 @@ testOverpopulation = fromSyntax $ do
     setAlive alive w (number 2) (number 3)
     setAlive alive w (number 3) (number 3)
     setAlive alive w (number 4) (number 3)
-    toSyntax_ (rebuildPackedCounts alive w (number 7))
+    rebuildPackedCounts alive w (number 7)
     next <-
       runProcessCellAt
         alive
@@ -215,7 +218,7 @@ testReproduction = fromSyntax $ do
     setAlive alive w (number 3) (number 2)
     setAlive alive w (number 4) (number 3)
     setAlive alive w (number 2) (number 3)
-    toSyntax_ (rebuildPackedCounts alive w (number 7))
+    rebuildPackedCounts alive w (number 7)
     next <-
       runProcessCellAt
         alive
@@ -261,7 +264,7 @@ patternGrid seed coords expectedPop = do
         (number 7)
         (number 7)
     toSyntax_ (u8Copy alive nextAlive)
-    toSyntax_ (rebuildPackedCounts alive w h)
+    rebuildPackedCounts alive w h
     done
   cells <- coords
   coordsMatch alive w cells
@@ -300,7 +303,7 @@ testBlinkerPeriod2 = fromSyntax $ do
   vCoords <- blinkerVerticalCoords
   coordsMatch nextAlive w vCoords
   toSyntax_ (u8Copy alive nextAlive)
-  toSyntax_ (rebuildPackedCounts alive w h)
+  rebuildPackedCounts alive w h
   _ <-
     runStepGridOnce
       alive
@@ -451,6 +454,31 @@ testJsFinishStep = fromSyntax $ do
           <> "if(!r||r.pop!==4)throw new Error('finishStep pop');"
           <> "if((nextAlive[9]&1)!==1)throw new Error('packed bit');"
           <> "if((nextAlive[9]>>1)===0)throw new Error('packed count');"
+          <> "})"
+      )
+      RecNil
+  done
+
+testJsFinishStepReuse :: forall f. Effect f 'Unit
+testJsFinishStepReuse = fromSyntax $ do
+  toSyntax_ $
+    ffi
+      ( "(()=>{"
+          <> "const w=8,h=8,n=w*h;"
+          <> "LifeEngine.init({width:w,height:h,workerCount:0});"
+          <> "const alive=new Uint8Array(n);"
+          <> "const species=new Uint8Array(n);"
+          <> "const nextAlive=new Uint8Array(n);"
+          <> "const nextSpecies=new Uint8Array(n);"
+          <> "const live=[];"
+          <> "const changed=[];"
+          <> "alive[9]=1;alive[10]=1;alive[17]=1;alive[18]=1;"
+          <> "LifeEngineSync.rebuildPackedCounts(alive,w,h);"
+          <> "const a=LifeEngineSync.finishStep("
+          <> "alive,species,nextAlive,nextSpecies,w,h,0,0,7,7,live,changed);"
+          <> "const b=LifeEngineSync.finishStep("
+          <> "alive,species,nextAlive,nextSpecies,w,h,0,0,7,7,live,changed);"
+          <> "if(!a||!b||a!==b)throw new Error('finishStep must reuse _stepOut');"
           <> "})"
       )
       RecNil

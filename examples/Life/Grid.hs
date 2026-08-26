@@ -7,9 +7,9 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
--- | Typed grid buffer and canvas helpers. Hot grid loops use native JShark
---    @forRange_@ and @u8Index@/@u8Set@ so the compiler emits tight JS @for@
---    loops instead of @forEach@ callbacks.
+-- | Typed grid buffer and canvas helpers. Hot loops use native JShark
+--    @forRange_@ and @u8Set@; irregular edit paths (@stampPatternCells@,
+--    @eraseCircleCells@) stay in FFI for zero-alloc scratch writes.
 module Grid
   ( BoundScratch (..)
   , RenderDirty (..)
@@ -32,6 +32,7 @@ module Grid
   , setPackedAlive
   , writeCellState
   , stampPatternCells
+  , eraseCircleCells
   , refreshPackedAt
   , refreshPackedRegion
   , cellIdx
@@ -44,6 +45,7 @@ import GHC.Generics (Generic)
 import JShark.Api
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
+import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf)
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
@@ -69,7 +71,8 @@ data RenderDirty = RenderDirty
   deriving Generic
 
 data BoundScratch = BoundScratch
-  { bx0 :: Double
+  { count :: Double
+  , bx0 :: Double
   , by0 :: Double
   , bx1 :: Double
   , by1 :: Double
@@ -108,11 +111,22 @@ packedCount :: Expr f 'Number -> Expr f 'Number
 packedCount b = shr b (number 1)
 
 rebuildPackedCounts ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> Effect f 'Unit
-rebuildPackedCounts grid w h =
-  ffi
-    "((g,w,h)=>{const n=w*h|0;for(let i=0;i<n;i++)g[i]&=1;for(let y=0;y<h;y++){for(let x=0;x<w;x++){const i=y*w+x;if(g[i]&1){for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=w||ny>=h)continue;g[ny*w+nx]+=2;}}}}}})"
-    (arg grid <: arg w <: arg h <: RecNil)
+  Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+rebuildPackedCounts grid w h = do
+  let
+    totalCells = w * h
+  forRange_ (number 0) totalCells $ \i -> do
+    a <- u8Get grid i
+    setU8 grid i (bitAnd a (number 1))
+  forRange_ (number 0) h $ \y ->
+    forRange_ (number 0) w $ \x -> do
+      a <- u8Get grid (cellIdx w x y)
+      whenS (bitAnd a (number 1) .== 1) $
+        bumpPackedNeighbors grid w h x y (number 2)
+  done
 
 bumpPackedNeighbors ::
   Expr f 'Uint8Array
@@ -144,7 +158,6 @@ setPackedAlive grid i alive = do
   cur <- u8Get grid i
   setU8 grid i (bitAnd cur (number 0xFE) + alive)
 
--- | Flat codegen drops @setU8@ inside @ifS@; keep click edits in FFI.
 writeCellState ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -152,24 +165,21 @@ writeCellState ::
   -> Expr f 'Bool
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-writeCellState alive species i live sid = do
-  toSyntax_ $
-    ffi
-      ( "(function(a,sp,i,live,sid){"
-          <> "if(live){a[i]=(a[i]&0xFE)|1;sp[i]=sid;}"
-          <> "else{a[i]=a[i]&0xFE;sp[i]=0;}"
-          <> "})"
-      )
-      ( arg alive
-          <: arg species
-          <: arg i
-          <: arg live
-          <: arg sid
-          <: RecNil
-      )
-  done
+writeCellState alive species i live sid =
+  ifS
+    live
+    ( do
+        cur <- u8Get alive i
+        setU8 alive i (bitAnd cur (number 0xFE) + number 1)
+        setU8 species i sid
+    )
+    ( do
+        cur <- u8Get alive i
+        setU8 alive i (bitAnd cur (number 0xFE))
+        setU8 species i (number 0)
+    )
 
--- | Stamp pattern cells; returns @\[added, bx0, by0, bx1, by1\]@.
+-- | Stamp pattern cells; writes counts and bbox onto @scratch@.
 stampPatternCells ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -179,11 +189,12 @@ stampPatternCells ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> EffectSyntax f (Expr f ('Array 'Number))
-stampPatternCells alive species cells gx gy sid w h =
-  bindExpr $
+  -> Effect f (MutableObjectOf BoundScratch)
+  -> EffectSyntax f (f 'Unit)
+stampPatternCells alive species cells gx gy sid w h scratch = do
+  toSyntax_ $
     ffi
-      ( "(function(a,sp,cells,gx,gy,sid,w,h){"
+      ( "(function(a,sp,cells,gx,gy,sid,w,h,sc){"
           <> "let added=0,bx0=1e9,by0=1e9,bx1=-1,by1=-1;"
           <> "for(let k=0;k<cells.length;k++){"
           <> "const c=cells[k],x=(gx+c[0])|0,y=(gy+c[1])|0;"
@@ -194,7 +205,7 @@ stampPatternCells alive species cells gx gy sid w h =
           <> "if(x<bx0)bx0=x;if(y<by0)by0=y;"
           <> "if(x>bx1)bx1=x;if(y>by1)by1=y;"
           <> "}"
-          <> "return [added,bx0,by0,bx1,by1];"
+          <> "sc.count=added;sc.bx0=bx0;sc.by0=by0;sc.bx1=bx1;sc.by1=by1;"
           <> "})"
       )
       ( arg alive
@@ -205,8 +216,57 @@ stampPatternCells alive species cells gx gy sid w h =
           <: arg sid
           <: arg w
           <: arg h
+          <: ArgEffect scratch
           <: RecNil
       )
+  done
+
+-- | Erase live cells in a circle; writes counts and bbox onto @scratch@.
+eraseCircleCells ::
+  Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f (MutableObjectOf BoundScratch)
+  -> EffectSyntax f (f 'Unit)
+eraseCircleCells alive species gx gy radius w h scratch = do
+  toSyntax_ $
+    ffi
+      ( "(function(a,sp,gx,gy,r,w,h,sc){"
+          <> "let removed=0,bx0=1e9,by0=1e9,bx1=-1,by1=-1;"
+          <> "const ri=Math.max(0,Math.floor(r))|0;"
+          <> "const rr=ri*ri;"
+          <> "for(let dy=-ri;dy<=ri;dy++){"
+          <> "for(let dx=-ri;dx<=ri;dx++){"
+          <> "if(dx*dx+dy*dy>rr)continue;"
+          <> "const x=(gx+dx)|0,y=(gy+dy)|0;"
+          <> "if(x<0||y<0||x>=w||y>=h)continue;"
+          <> "const i=y*w+x;"
+          <> "if(a[i]&1){"
+          <> "a[i]=a[i]&0xFE;sp[i]=0;"
+          <> "removed++;"
+          <> "if(x<bx0)bx0=x;if(y<by0)by0=y;"
+          <> "if(x>bx1)bx1=x;if(y>by1)by1=y;"
+          <> "}"
+          <> "}"
+          <> "}"
+          <> "sc.count=removed;sc.bx0=bx0;sc.by0=by0;sc.bx1=bx1;sc.by1=by1;"
+          <> "})"
+      )
+      ( arg alive
+          <: arg species
+          <: arg gx
+          <: arg gy
+          <: arg radius
+          <: arg w
+          <: arg h
+          <: ArgEffect scratch
+          <: RecNil
+      )
+  done
 
 -- | Recompute packed neighbor count for one cell from live bits.
 refreshPackedAt ::
@@ -243,52 +303,48 @@ refreshPackedRegion ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Effect f 'Unit
-refreshPackedRegion grid w h x0 y0 x1 y1 =
-  ffi
-    ( "((g,w,h,x0,y0,x1,y1)=>{"
-        <> "w=w|0;h=h|0;"
-        <> "if(w<=0||h<=0||!g)return;"
-        <> "const xs=Math.max(0,Math.floor(x0)-1);"
-        <> "const ys=Math.max(0,Math.floor(y0)-1);"
-        <> "const xe=Math.min(w-1,Math.floor(x1)+1);"
-        <> "const ye=Math.min(h-1,Math.floor(y1)+1);"
-        <> "if(xs>xe||ys>ye)return;"
-        <> "for(let y=ys;y<=ye;y++){const row=y*w;"
-        <> "for(let x=xs;x<=xe;x++){"
-        <> "let n=0;"
-        <> "for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){"
-        <> "if(!dx&&!dy)continue;"
-        <> "const nx=x+dx,ny=y+dy;"
-        <> "if(nx<0||ny<0||nx>=w||ny>=h)continue;"
-        <> "if(g[ny*w+nx]&1)n++;"
-        <> "}}"
-        <> "g[row+x]=(g[row+x]&1)+n*2;"
-        <> "}}})"
-    )
-    ( arg grid
-        <: arg w
-        <: arg h
-        <: arg x0
-        <: arg y0
-        <: arg x1
-        <: arg y1
-        <: RecNil
-    )
+  -> EffectSyntax f (f 'Unit)
+refreshPackedRegion grid w h x0 y0 x1 y1 = do
+  let
+    fx0 = Math.floor x0
+    fy0 = Math.floor y0
+    fx1 = Math.floor x1
+    fy1 = Math.floor y1
+    (xStart, yStart, xStop, yStop) =
+      clampLiveBounds w h fx0 fy0 fx1 fy1 (number 1)
+  forRange_ yStart yStop $ \y ->
+    forRange_ xStart xStop $ \x ->
+      refreshPackedAt grid w h x y
+  done
 
--- | Flat codegen on the Life program still elides @forRange_@ + @setU8@ here;
---   keep the palette→RGBA copy in one FFI until that is fixed.
+-- | Expand RGB palette to RGBA for WebGL texture uploads.
 initPaletteRgba ::
   Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)
-initPaletteRgba pal =
-  bindExpr $
-    ffi
-      ( "(pal=>{const n=256,r=new Uint8Array(n*4);"
-          <> "for(let s=0;s<n;s++){const b=s*3,p=s*4;"
-          <> "r[p]=pal[b];r[p+1]=pal[b+1];r[p+2]=pal[b+2];r[p+3]=255;}"
-          <> "return r;})"
-      )
-      (arg pal <: RecNil)
+initPaletteRgba pal = do
+  rgba <- bindExpr (newByteArray (number 1024))
+  _ <-
+    forRange_ (number 0) (number 256) $ \s -> do
+      let
+        base = s * number 3
+        px = s * number 4
+      r <- u8Get pal base
+      g <- u8Get pal (base + number 1)
+      b <- u8Get pal (base + number 2)
+      toSyntax_ $
+        ffi
+          ( "(rgba,px,r,g,b)=>{"
+              <> "rgba[px]=r;rgba[px+1]=g;rgba[px+2]=b;rgba[px+3]=255;"
+              <> "}"
+          )
+          ( arg rgba
+              <: arg px
+              <: arg r
+              <: arg g
+              <: arg b
+              <: RecNil
+          )
+      done
+  pure rgba
 
 syncPaletteRgbaSid ::
   Expr f 'Uint8Array
@@ -306,6 +362,7 @@ syncPaletteRgbaSid pal rgba sid = do
   setU8 rgba (px + number 1) g
   setU8 rgba (px + number 2) b
   setU8 rgba (px + number 3) (number 255)
+  done
 
 rebuildLiveList ::
   Expr f 'Uint8Array
@@ -942,11 +999,7 @@ drawGridFallback
 hideFallback2d ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (f 'Unit)
 hideFallback2d cv = do
-  toSyntax_
-    $ discard
-    $ ffi
-      "((cv) => { if (cv && cv.style.display !== 'none') cv.style.display = 'none'; })"
-      (ArgEffect cv <: RecNil)
+  _ <- Dom.setStyleProperty cv "display" (string "none")
   done
 
 cellIdx :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number

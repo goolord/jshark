@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -6,6 +8,7 @@ module JShark.FlatTest
   ( flatSoaColumnsRoundTrip
   , flatProgramRoundTrip
   , flatSoaPureNodeCount
+  , optIrEffectForRangeImpure
   )
 where
 
@@ -15,6 +18,8 @@ import Data.Word (Word8)
 import JShark (ClosedEffect, irEffectFromClosed)
 import qualified JShark.Flat as Flat
 import qualified JShark.FlatSoA as FlatSoA
+import qualified JShark.Ir as Ir
+import JShark.Types (Universe (Unit), Value (..))
 
 packFlat :: ClosedEffect u -> Flat.FlatProgram
 packFlat e = Flat.packEffectProgram (irEffectFromClosed e)
@@ -50,3 +55,24 @@ flatSoaPureNodeCount e =
 countPure :: Vector Word8 -> Int -> Int
 countPure v n =
   length [i | i <- [0 .. n - 1], i < V.length v, v V.! i == 1]
+
+forRangeU8SetLoop :: Ir.IrEffect 'Unit
+forRangeU8SetLoop =
+  Ir.IrForRange
+    (Ir.IrLiteral (ValueNumber 0))
+    (Ir.IrLiteral (ValueNumber 4))
+    0
+    ( Ir.IrU8Set
+        (Ir.IrVar 99)
+        (Ir.IrLiteral (ValueNumber 0))
+        (Ir.IrLiteral (ValueNumber 1))
+    )
+
+-- | @optIrEffect@ must mark @ForRange@ + @IrU8Set@ impure so flat codegen
+-- keeps mutation loops.
+optIrEffectForRangeImpure :: Bool
+optIrEffectForRangeImpure =
+  let
+    (_, _, md) = Ir.optIrEffect 0 forRangeU8SetLoop
+   in
+    not (Ir.irMetaPure md)

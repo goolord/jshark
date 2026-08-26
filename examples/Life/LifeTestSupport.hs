@@ -114,7 +114,7 @@ seedBlock grid w h = do
   setAlive grid w (number 2) (number 1)
   setAlive grid w (number 1) (number 2)
   setAlive grid w (number 2) (number 2)
-  toSyntax_ (rebuildPackedCounts grid w h)
+  rebuildPackedCounts grid w h
   done
 
 seedBeehive ::
@@ -130,7 +130,7 @@ seedBeehive grid w h = do
   setAlive grid w (number 3) (number 1)
   setAlive grid w (number 1) (number 2)
   setAlive grid w (number 2) (number 2)
-  toSyntax_ (rebuildPackedCounts grid w h)
+  rebuildPackedCounts grid w h
   done
 
 seedBlinkerHorizontal ::
@@ -143,7 +143,7 @@ seedBlinkerHorizontal grid w h = do
   setAlive grid w (number 1) (number 2)
   setAlive grid w (number 2) (number 2)
   setAlive grid w (number 3) (number 2)
-  toSyntax_ (rebuildPackedCounts grid w h)
+  rebuildPackedCounts grid w h
   done
 
 seedBlinkerVertical ::
@@ -156,7 +156,7 @@ seedBlinkerVertical grid w h = do
   setAlive grid w (number 2) (number 1)
   setAlive grid w (number 2) (number 2)
   setAlive grid w (number 2) (number 3)
-  toSyntax_ (rebuildPackedCounts grid w h)
+  rebuildPackedCounts grid w h
   done
 
 blockCoords :: EffectSyntax f (Expr f ('Array ('Array 'Number)))

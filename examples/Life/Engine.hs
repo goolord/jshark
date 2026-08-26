@@ -25,11 +25,13 @@ where
 import Catalog (catalogInitialCells, stampCatalogCells)
 import Discover (Registry, discoverLife)
 import Grid
-  ( RenderDirty (..)
+  ( BoundScratch
+  , RenderDirty (..)
   , StepCtx (..)
   , cellIdx
   , drawGridFallback
   , drawGridViewport
+  , eraseCircleCells
   , expandBoundsForLive
   , hideFallback2d
   , initPaletteRgba
@@ -47,7 +49,6 @@ import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..), (<:))
 import JShark.Worker (performanceNow)
 import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)
 import Patterns
@@ -112,7 +113,7 @@ initLife app viewport = do
   let
     w = number (fromIntegral gridW)
     h = number (fromIntegral gridH)
-  toSyntax_ (rebuildPackedCounts alive w h)
+  rebuildPackedCounts alive w h
   set @"pop" state (fromIntegral initialPop)
   set @"alive" state alive
   set @"species" state species
@@ -544,7 +545,7 @@ resizeWorld state viewport w h = do
       seedH'
       w
       (number (fromIntegral soupRngSeed))
-  toSyntax_ (rebuildPackedCounts alive w h)
+  rebuildPackedCounts alive w h
   nextAlive <- bindExpr (newByteArray cellsN)
   nextSpecies <- bindExpr (newByteArray cellsN)
   visited <- bindExpr (newByteArray cellsN)
@@ -625,14 +626,14 @@ flipCell state gx gy = do
       ( do
           writeCellState alive species i false_ (number 0)
           set @"pop" state (pop0 - 1)
-          toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
+          refreshPackedRegion alive w h gx gy gx gy
           done
       )
       ( do
           writeCellState alive species i true_ (number (fromIntegral manualSpecies))
           set @"pop" state (pop0 + 1)
           includeBounds state gx gy
-          toSyntax_ (refreshPackedRegion alive w h gx gy gx gy)
+          refreshPackedRegion alive w h gx gy gx gy
           done
       )
     syncLiveList state
@@ -641,83 +642,51 @@ flipCell state gx gy = do
 
 eraseCircle ::
   Effect f (MutableObjectOf LifeState)
+  -> Effect f (MutableObjectOf BoundScratch)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-eraseCircle state gx gy radius = do
+eraseCircle state editScratch gx gy radius = do
   w <- state.worldW
   h <- state.worldH
   whenS (radius .>= 0) $ do
     alive <- state.alive
     species <- state.species
-    info <-
-      bindExpr $
-        ffi
-          ( "(function(a,sp,gx,gy,r,w,h){"
-              <> "let removed=0,bx0=1e9,by0=1e9,bx1=-1,by1=-1;"
-              <> "const ri=Math.max(0,Math.floor(r))|0;"
-              <> "const rr=ri*ri;"
-              <> "for(let dy=-ri;dy<=ri;dy++){"
-              <> "for(let dx=-ri;dx<=ri;dx++){"
-              <> "if(dx*dx+dy*dy>rr)continue;"
-              <> "const x=(gx+dx)|0,y=(gy+dy)|0;"
-              <> "if(x<0||y<0||x>=w||y>=h)continue;"
-              <> "const i=y*w+x;"
-              <> "if(a[i]&1){"
-              <> "a[i]=a[i]&0xFE;sp[i]=0;"
-              <> "removed++;"
-              <> "if(x<bx0)bx0=x;if(y<by0)by0=y;"
-              <> "if(x>bx1)bx1=x;if(y>by1)by1=y;"
-              <> "}"
-              <> "}"
-              <> "}"
-              <> "return [removed,bx0,by0,bx1,by1];"
-              <> "})"
-          )
-          ( arg alive
-              <: arg species
-              <: arg gx
-              <: arg gy
-              <: arg radius
-              <: arg w
-              <: arg h
-              <: RecNil
-          )
-    let
-      removed = Array.index info (number 0)
-      bx0n = Array.index info (number 1)
-      by0n = Array.index info (number 2)
-      bx1n = Array.index info (number 3)
-      by1n = Array.index info (number 4)
+    eraseCircleCells alive species gx gy radius w h editScratch
+    removed <- editScratch.count
+    bx0n <- editScratch.bx0
+    by0n <- editScratch.by0
+    bx1n <- editScratch.bx1
+    by1n <- editScratch.by1
     whenS (removed .> 0) $ do
       pop0 <- state.pop
       set @"pop" state (pop0 - removed)
-      toSyntax_ (refreshPackedRegion alive w h bx0n by0n bx1n by1n)
+      refreshPackedRegion alive w h bx0n by0n bx1n by1n
       syncLiveList state
       markSceneDirty state
     done
 
 placePattern ::
   Effect f (MutableObjectOf LifeState)
+  -> Effect f (MutableObjectOf BoundScratch)
   -> Expr f ('Array ('Array 'Number))
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-placePattern state cells gx gy sid = do
+placePattern state editScratch cells gx gy sid = do
   w <- state.worldW
   h <- state.worldH
   whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
     alive <- state.alive
     species <- state.species
-    info <- stampPatternCells alive species cells gx gy sid w h
-    let
-      added = Array.index info (number 0)
-      bx0n = Array.index info (number 1)
-      by0n = Array.index info (number 2)
-      bx1n = Array.index info (number 3)
-      by1n = Array.index info (number 4)
+    stampPatternCells alive species cells gx gy sid w h editScratch
+    added <- editScratch.count
+    bx0n <- editScratch.bx0
+    by0n <- editScratch.by0
+    bx1n <- editScratch.bx1
+    by1n <- editScratch.by1
     whenS (added .> 0) $ do
       curPop <- state.pop
       set @"pop" state (curPop + added)
@@ -740,7 +709,7 @@ placePattern state cells gx gy sid = do
             _ <- set @"boundX1" state (Math.floor (Math.max x1 bx1n))
             set @"boundY1" state (Math.floor (Math.max y1 by1n))
         )
-      toSyntax_ (refreshPackedRegion alive w h bx0n by0n bx1n by1n)
+      refreshPackedRegion alive w h bx0n by0n bx1n by1n
       done
     syncLiveList state
     done

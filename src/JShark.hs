@@ -4430,11 +4430,10 @@ flatIsUnitExpr prog nid = case Flat.flatNode prog nid of
 flatIsUnitEffect :: Flat.FlatProgram -> Flat.NodeId -> Bool
 flatIsUnitEffect prog nid = case Flat.flatNode prog nid of
   Flat.FX_Lift eid -> flatIsUnitExpr prog eid
-  Flat.FX_While _ _ -> True
-  Flat.FX_ForRange _ _ _ _ -> True
   Flat.FX_Throw _ -> True
-  Flat.FX_ThenE x y ->
-    flatIsUnitEffect prog x && flatIsUnitEffect prog y
+  Flat.FX_While _ b -> flatIsUnitEffect prog b
+  Flat.FX_ForRange _ _ _ b -> flatIsUnitEffect prog b
+  Flat.FX_ThenE _ y -> flatIsUnitEffect prog y
   Flat.FX_Bind _ _ y -> flatIsUnitEffect prog y
   Flat.FX_BindRec _ _ y -> flatIsUnitEffect prog y
   Flat.FX_IfE _ t e -> flatIsUnitEffect prog t && flatIsUnitEffect prog e
@@ -5420,26 +5419,14 @@ effectfulAST e
 effectfulASTIr :: ClosedEffect u -> JS
 effectfulASTIr = effectfulASTFromFlat
 
--- | Conservative stmt-only test for unused-bind @ThenE@ merge. Never
--- materializes continuations (@f nestedDummy@).
-isUnitBoundEffect :: Effect Stamp u -> Bool
-isUnitBoundEffect = \case
-  Lift (Literal ValueUnit) -> True
-  Lift (Var (EmbedEff e)) -> isUnitBoundEffect e
-  While {} -> True
-  ForRange {} -> True
-  Throw {} -> True
-  ThenE _ b -> isUnitBoundEffect b
-  _ -> False
-
 -- | Stmt-only codegen for branching effects (no shared @let result@).
 isUnitWitness :: Effect Stamp u -> Bool
 isUnitWitness = \case
   Lift (Literal ValueUnit) -> True
   Lift (Var (EmbedEff e)) -> isUnitWitness e
   Lift _ -> False
-  While {} -> True
-  ForRange {} -> True
+  While _ b -> isUnitWitness b
+  ForRange _ _ b -> isUnitWitness (b nestedDummy)
   Bind _ f -> isUnitWitness (f nestedDummy)
   ThenE _ y -> isUnitWitness y
   BindRec _ f -> isUnitWitness (f nestedDummy)

@@ -33,6 +33,8 @@ module JShark.Ir
   , substIrExpr
   , substIrEffect
   , irNestedDummyId
+  , elimIrBind
+  , effectMd
   )
 where
 
@@ -254,13 +256,15 @@ data IrEffect :: Universe -> Type where
   IrWhile :: IrEffect 'Bool -> IrEffect 'Unit -> IrEffect 'Unit
   IrForRange ::
     IrExpr 'Number -> IrExpr 'Number -> !Int -> IrEffect 'Unit -> IrEffect 'Unit
-  IrU8Set :: IrExpr 'Uint8Array -> IrExpr 'Number -> IrExpr 'Number -> IrEffect 'Unit
+  IrU8Set ::
+    IrExpr 'Uint8Array -> IrExpr 'Number -> IrExpr 'Number -> IrEffect 'Unit
   IrU8Fill :: IrExpr 'Uint8Array -> IrExpr 'Number -> IrEffect 'Unit
   IrOptionCaseE ::
     IrExpr ('Option u) -> IrEffect v -> !Int -> IrEffect v -> IrEffect v
   IrResultCaseE ::
     IrExpr ('Result e a) -> !Int -> IrEffect v -> !Int -> IrEffect v -> IrEffect v
-  IrStringCaseE :: IrExpr 'String -> [(Text, IrEffect v)] -> IrEffect v -> IrEffect v
+  IrStringCaseE ::
+    IrExpr 'String -> [(Text, IrEffect v)] -> IrEffect v -> IrEffect v
   IrThrow :: IrExpr 'String -> IrEffect v
   IrTry :: IrEffect u -> !Int -> IrEffect u -> IrEffect u
   IrObjectLit :: [IrFieldLit r] -> IrEffect ('MutableObject r)
@@ -1105,8 +1109,10 @@ mapAccumIrFieldLit ::
 mapAccumIrFieldLit !t0 fs =
   foldr
     ( \fl (!t, acc, !md) ->
-        let (t', fl', md') = step t fl
-         in (t', fl' : acc, md' <> md)
+        let
+          (t', fl', md') = step t fl
+         in
+          (t', fl' : acc, md' <> md)
     )
     (t0, [], mempty)
     fs
@@ -1215,20 +1221,23 @@ optIrEffect !t0 eff = case eff of
       (t2, e', mdE) = optIrExpr t1 e
       (t3, b', mdB) = optIrEffect (t2 - optStep) b
      in
-      (t3, IrForRange s' e' tag b', nodeMeta mdS (nodeMeta mdE (bindMeta tag mdB)))
+      ( t3
+      , IrForRange s' e' tag b'
+      , effectMd (nodeMeta mdS (nodeMeta mdE (bindMeta tag mdB)))
+      )
   IrU8Set b i v ->
     let
       (t1, b', mdB) = optIrExpr t0 b
       (t2, i', mdI) = optIrExpr t1 i
       (t3, v', mdV) = optIrExpr t2 v
      in
-      (t3, IrU8Set b' i' v', nodeMeta mdB (nodeMeta mdI mdV))
+      (t3, IrU8Set b' i' v', effectMd (nodeMeta mdB (nodeMeta mdI mdV)))
   IrU8Fill b v ->
     let
       (t1, b', mdB) = optIrExpr t0 b
       (t2, v', mdV) = optIrExpr t1 v
      in
-      (t2, IrU8Fill b' v', nodeMeta mdB mdV)
+      (t2, IrU8Fill b' v', effectMd (nodeMeta mdB mdV))
   IrOptionCaseE o n tag s ->
     let
       (t1, o', mdO) = optIrExpr t0 o
@@ -1286,8 +1295,10 @@ mapAccumIrEffect ::
 mapAccumIrEffect !t0 arms =
   foldr
     ( \(k, e) (!t, acc, !md) ->
-        let (t', e', md') = optIrEffect t e
-         in (t', (k, e') : acc, md' <> md)
+        let
+          (t', e', md') = optIrEffect t e
+         in
+          (t', (k, e') : acc, md' <> md)
     )
     (t0, [], mempty)
     arms
@@ -1296,8 +1307,10 @@ mapAccumIrEffects :: Int -> [IrEffect u] -> (Int, [IrEffect u], IrMeta)
 mapAccumIrEffects !t0 es =
   foldr
     ( \e (!t, acc, !md) ->
-        let (t', e', md') = optIrEffect t e
-         in (t', e' : acc, md' <> md)
+        let
+          (t', e', md') = optIrEffect t e
+         in
+          (t', e' : acc, md' <> md)
     )
     (t0, [], mempty)
     es

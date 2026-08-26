@@ -22,7 +22,14 @@ import Discover
   )
 import Engine
 import GHC.Generics (Generic)
-import Grid (RenderDirty (..), StepCtx (StepCtx), cellIdx, packedIsAlive, u8Get)
+import Grid
+  ( BoundScratch (..)
+  , RenderDirty (..)
+  , StepCtx (StepCtx)
+  , cellIdx
+  , packedIsAlive
+  , u8Get
+  )
 import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
@@ -33,6 +40,7 @@ import qualified JShark.Math as Math
 import JShark.Promise (promiseThen)
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
+import qualified JShark.String as String
 import qualified JShark.Timers as Timers
 import JShark.Types (Effect (Lift), Expr (Literal, Var))
 import qualified JShark.Types as Ts
@@ -150,6 +158,7 @@ bootLoaded canvas app appH viewport renderDirty = do
   _ <- setProp viewport "app" app
   Pixi.wireContextRecovery canvas viewport state
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
+  editScratch <- hold (toObject (BoundScratch 0 1e9 1e9 (-1) (-1)))
   registry <- initRegistry
   indexTracker <- initIndexTracker
   seenSpecies <- initSeenSpecies
@@ -194,7 +203,7 @@ bootLoaded canvas app appH viewport renderDirty = do
   eraserSize <- Dom.lookupId (string lifeEraserSizeId)
   eraserRadius <- Dom.lookupId (string lifeEraserRadiusId)
   eraserRadiusVal <- Dom.lookupId (string lifeEraserRadiusValId)
-  wire canvas state tooltip tipRef toolRef toolsMap viewport
+  wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch
   wireTools toolRef toolBtnsE canvas eraserSize
   wireEraserSize toolRef eraserRadius eraserRadiusVal
   syncEraserUi toolRef canvas eraserSize
@@ -260,8 +269,9 @@ wire ::
   -> Effect f ('MutableObject ())
   -> Effect f ('Map 'Number ('Array ('Array 'Number)))
   -> Effect f ('MutableObject ())
+  -> Effect f (MutableObjectOf BoundScratch)
   -> EffectSyntax f (f 'Unit)
-wire canvas state tooltip tipRef toolRef toolsMap viewport = do
+wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
   _ <- setProp tipRef "over" (number 0)
@@ -353,7 +363,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
           oy <- getProp' e "offsetY"
           (gx, gy) <- gridFromPointer canvas viewport ox oy
           syncPointerTip viewport tipRef cx cy gx gy
-          applyErase state toolRef gx gy
+          applyErase state editScratch toolRef gx gy
   addEventListener "mouseup" canvas $ \_ -> stmts endDrag
   addEventListener "mouseup" win $ \_ -> stmts endDrag
   addEventListener "click" canvas $ \(e :: Expr f ('MutableObject ())) ->
@@ -363,7 +373,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
         ox <- getProp' e "offsetX"
         oy <- getProp' e "offsetY"
         (gx, gy) <- gridFromPointer canvas viewport ox oy
-        applyClick state toolRef toolsMap gx gy
+        applyClick state editScratch toolRef toolsMap gx gy
       _ <- setProp viewport "moved" (number 0)
       done
   addEventListener "mousemove" canvas $ \(e :: Expr f ('MutableObject ())) ->
@@ -403,7 +413,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport = do
                 oy <- getProp' e "offsetY"
                 (gx, gy) <- gridFromPointer canvas viewport ox oy
                 syncPointerTip viewport tipRef cx cy gx gy
-                applyErase state toolRef gx gy
+                applyErase state editScratch toolRef gx gy
             )
             ( do
                 ox <- getProp' e "offsetX"
@@ -539,9 +549,9 @@ applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx
         setProp tipRef "swatchSid" sid
     )
     (collectNearby alive species w h gx gy hits tipRef)
-  n <- Set.size hits
+  hitN <- Set.size hits
   ifS
-    (n .== 0)
+    (hitN .== 0)
     (hideTooltip tipRef tooltip)
     ( do
         Array.clear_ sidsScratch
@@ -825,12 +835,13 @@ initDisturbCatalog = do
 
 applyClick ::
   Effect f (MutableObjectOf LifeState)
+  -> Effect f (MutableObjectOf BoundScratch)
   -> Effect f ('MutableObject ())
   -> Effect f ('Map 'Number ('Array ('Array 'Number)))
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-applyClick state toolRef toolsMap gx gy = do
+applyClick state editScratch toolRef toolsMap gx gy = do
   sid <- getProp toolRef "sid"
   ifS
     (sid .== number (fromIntegral toggleToolSid))
@@ -844,21 +855,22 @@ applyClick state toolRef toolsMap gx gy = do
               optionCaseE
                 hit
                 noOp
-                (\cells -> fromSyntax $ placePattern state cells gx gy sid)
+                (\cells -> fromSyntax $ placePattern state editScratch cells gx gy sid)
         )
     )
 
 applyErase ::
   Effect f (MutableObjectOf LifeState)
+  -> Effect f (MutableObjectOf BoundScratch)
   -> Effect f ('MutableObject ())
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-applyErase state toolRef gx gy = do
+applyErase state editScratch toolRef gx gy = do
   radius0 <- getProp toolRef "eraserRadius"
   let
     radius = Math.floor radius0
-  eraseCircle state gx gy radius
+  eraseCircle state editScratch gx gy radius
 
 wireTools ::
   Effect f ('MutableObject ())
@@ -957,9 +969,7 @@ wireEraserSize toolRef slider valEl = do
                 (parseInt_ raw (number 10))
             )
       _ <- setProp toolRef "eraserRadius" radius
-      label <-
-        bindExpr $
-          ffi "((n) => String(Math.round(n)))" (arg radius <: RecNil)
+      label <- pure (toString (Math.round radius))
       _ <- Dom.setValue slider label
       _ <- Dom.setAttribute slider "aria-valuenow" label
       Dom.setTextContent valEl label
@@ -1171,12 +1181,22 @@ wireSimSettings state viewport gridSel tickSlider tickVal = do
   addEventListener "change" gridSel $ \_ ->
     stmts $ do
       raw <- Dom.getValue gridSel
-      w <-
-        bindExpr $
-          ffi "s=>+String(s).split('x')[0]||1024" (arg raw <: RecNil)
-      h <-
-        bindExpr $
-          ffi "s=>+String(s).split('x')[1]||768" (arg raw <: RecNil)
+      let
+        parts = String.split raw (string "x")
+        wParsed =
+          if_
+            (Array.length parts .>= number 1)
+            (parseInt_ (Array.index parts (number 0)) (number 10))
+            (number (fromIntegral gridW))
+        hParsed =
+          if_
+            (Array.length parts .>= number 2)
+            (parseInt_ (Array.index parts (number 1)) (number 10))
+            (number (fromIntegral gridH))
+        w =
+          if_ (wParsed .> 0) wParsed (number (fromIntegral gridW))
+        h =
+          if_ (hParsed .> 0) hParsed (number (fromIntegral gridH))
       whenS (w .> 0 .&& h .> 0) $ resizeWorld state viewport w h
       done
   addEventListener "input" tickSlider $ \_ ->
@@ -1191,13 +1211,17 @@ wireSimSettings state viewport gridSel tickSlider tickVal = do
                 (parseInt_ raw (number 10))
             )
       set @"tickMs" state ms
-      label <-
-        bindExpr $
-          ffi
-            "n=>n<=0?'max':(Math.round(n)+' ms')"
-            (arg ms <: RecNil)
+      ifS
+        (ms .<= 0)
+        (Dom.setTextContent tickVal (string "max"))
+        ( do
+            _ <-
+              Dom.setTextContent
+                tickVal
+                (toString (Math.round ms) <> string " ms")
+            done
+        )
       _ <- Dom.setAttribute tickSlider "aria-valuenow" (toString ms)
-      _ <- Dom.setTextContent tickVal label
       done
   done
 

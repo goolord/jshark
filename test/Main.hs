@@ -43,8 +43,8 @@ import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
 import LifeTests (lifeTests)
-import PerfTests (perfTests)
 import LucidTests (lucidDomTests)
+import PerfTests (perfTests)
 import Support
 import System.Directory
   ( createDirectoryIfMissing
@@ -78,9 +78,9 @@ tests =
     , compilerTests
     , bunEvalTests
     , lucidDomTests
-    -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
-    -- , exampleTests
-    , lifeTests
+    , -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
+      -- , exampleTests
+      lifeTests
     , perfTests
     , hvm2Tests
     , catalogTests
@@ -417,10 +417,12 @@ codegenTests =
           (renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
           @?= 2
     , testCase "foreverTick reschedules setTimeout" $
-        let js =
-              renderJS (effectfulAST (fromSyntax (Timers.foreverTick (\_ -> done))))
-         in and [T.isInfixOf needle js | needle <- ["setTimeout", "performance.now"]]
-          @?= True
+        let
+          js =
+            renderJS (effectfulAST (fromSyntax (Timers.foreverTick (\_ -> done))))
+         in
+          and [T.isInfixOf needle js | needle <- ["setTimeout", "performance.now"]]
+            @?= True
     ]
 
 controlFlowTests :: TestTree
@@ -495,6 +497,74 @@ controlFlowTests =
               )
         assertJSContains "for (let" js
         assertJSContains "[n" js
+    , testCase "flat bindExpr forRange u8Set keeps loop" $ do
+        let
+          js =
+            renderJS
+              ( effectfulASTIr
+                  ( fromSyntax $ do
+                      buf <- bindExpr (newByteArray (number 4))
+                      _ <-
+                        forRange_ (number 0) (number 4) $ \i -> do
+                          toSyntax_ (u8Set buf i (number 255))
+                          done
+                      toSyntax noOp
+                  )
+              )
+        assertJSContains "for (let" js
+        assertJSContains "[n" js
+        assertJSContains "= 255.0;" js
+    , testCase "flat initPaletteRgba pattern keeps fill loop" $ do
+        let
+          js =
+            renderJS
+              ( effectfulASTIr
+                  ( fromSyntax $ do
+                      pal <- bindExpr (newByteArray (number 12))
+                      rgba <- bindExpr (newByteArray (number 16))
+                      _ <-
+                        forRange_ (number 0) (number 4) $ \s -> do
+                          toSyntax_ (u8Set rgba (s * number 4) (u8Index pal (s * number 3)))
+                          done
+                      toSyntax noOp
+                  )
+              )
+        assertJSContains "for (let" js
+        assertJSContains "[n" js
+    , testCase "flat nested forRange u8Set keeps both loops" $ do
+        let
+          w = number 3
+          h = number 3
+          js =
+            renderJS
+              ( effectfulASTIr
+                  ( fromSyntax $ do
+                      buf <- bindExpr (newByteArray (w * h))
+                      _ <-
+                        forRange_ (number 0) h $ \y ->
+                          forRange_ (number 0) w $ \x -> do
+                            toSyntax_ (u8Set buf (y * w + x) (number 1))
+                            done
+                      toSyntax noOp
+                  )
+              )
+        assertJSContains "for (let" js
+        T.count "for (let" js @?= 2
+    , testCase "flat whenS u8Set keeps assignment" $ do
+        let
+          js =
+            renderJS
+              ( effectfulASTIr
+                  ( fromSyntax $ do
+                      buf <- bindExpr (newByteArray (number 1))
+                      _ <-
+                        whenS (number 1 .== number 1) $ do
+                          toSyntax_ (u8Set buf (number 0) (number 42))
+                          done
+                      toSyntax noOp
+                  )
+              )
+        assertJSContains "= 42.0;" js
     , testCase "multi-arg arrow FFI wraps IIFE" $
         renderJS
           ( effectfulAST
@@ -1716,6 +1786,8 @@ optimizeTests =
               [1 .. 40 :: Int]
         out <- compileEffect readableConfig (fromSyntax chain)
         assertBool "emitted js" (T.length out > 20)
+    , testCase "optIrEffect marks ForRange impure" $
+        optIrEffectForRangeImpure @?= True
     , testCase "lambda application of a literal folds" $
         renderJS (pureAST (apply (lambda (\x -> x * 2)) (number 21))) @?= "42.0"
     , testCase "if_ of True takes the true branch" $
@@ -1963,7 +2035,8 @@ compilerTests =
     , testCase "memory cache returns the same payload" $ do
         clearCompilerCache
         let
-          cfg = CompilerConfig Passthrough MemoryCache False Minified False False False Nothing
+          cfg =
+            CompilerConfig Passthrough MemoryCache False Minified False False False Nothing
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -1986,7 +2059,16 @@ compilerTests =
         removePathForcibly dir
         createDirectoryIfMissing True dir
         let
-          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False False False Nothing
+          cfg =
+            CompilerConfig
+              Passthrough
+              (DiskCache dir)
+              False
+              Minified
+              False
+              False
+              False
+              Nothing
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -2003,7 +2085,16 @@ compilerTests =
         removePathForcibly dir
         createDirectoryIfMissing True dir
         let
-          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False False False Nothing
+          cfg =
+            CompilerConfig
+              Passthrough
+              (DiskCache dir)
+              False
+              Minified
+              False
+              False
+              False
+              Nothing
         _ <- compileWith cfg "const a = 1;"
         files <- listDirectory dir
         mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
@@ -2021,7 +2112,16 @@ compilerTests =
             let
               snippet = number 1 + number 2
               raw = renderJS (pureProgram snippet)
-              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False False False Nothing
+              cfg =
+                CompilerConfig
+                  (Esbuild defaultEsbuildConfig)
+                  NoCache
+                  False
+                  Minified
+                  False
+                  False
+                  False
+                  Nothing
             out <- compilePure cfg snippet
             assertBool "non-empty" (not (T.null out))
             assertBool "minifier changed the IIFE" (out /= raw)
@@ -2037,7 +2137,16 @@ compilerTests =
           (Nothing, Nothing) -> do
             res <-
               tryCompileWith
-                (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False False False Nothing)
+                ( CompilerConfig
+                    (Esbuild defaultEsbuildConfig)
+                    NoCache
+                    False
+                    Minified
+                    False
+                    False
+                    False
+                    Nothing
+                )
                 "1+2;"
             case res of
               Left _ -> pure ()
@@ -2103,14 +2212,32 @@ compilerTests =
         clearCompilerCache
         out <-
           compileEffect
-            (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False False False Nothing)
+            ( CompilerConfig
+                (Esbuild defaultEsbuildConfig)
+                NoCache
+                False
+                Readable
+                False
+                False
+                False
+                Nothing
+            )
             fooE
         out @?= "foo()"
     , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
         clearCompilerCache
         let
           src = "const x = 1 + 2;" :: Text
-          cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False False False Nothing
+          cfg =
+            CompilerConfig
+              (Esbuild defaultEsbuildConfig)
+              NoCache
+              False
+              Readable
+              False
+              False
+              False
+              Nothing
         out <- compileWith cfg src
         out @?= src
     , testCase "prettyJS breaks if/else and function bodies onto their own lines" $
