@@ -160,7 +160,6 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
 import qualified Data.Vector as V
-import Data.Word (Word32)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
 import GHC.IO.Unsafe (unsafePerformIO)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
