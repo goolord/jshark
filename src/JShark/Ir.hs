@@ -9,7 +9,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeOperators #-}
-{-# OPTIONS_GHC -fspecialise-aggressively #-}
 
 -- | First-order IR for optimize + codegen. PHOAS 'Expr'/'Effect' in
 -- 'JShark.Types' stay the user-facing syntax; closed terms lower here once.
@@ -369,7 +368,6 @@ foldIrExpr ::
   -> (forall v. IrEffect v -> m)
   -> IrExpr u
   -> m
-{-# INLINABLE foldIrExpr #-}
 foldIrExpr se le sf = \case
   IrLiteral {} -> mempty
   IrVar {} -> mempty
@@ -401,7 +399,6 @@ foldIrKernel ::
   -> (forall v. IrExpr v -> m)
   -> IrKernel u
   -> m
-{-# INLINABLE foldIrKernel #-}
 foldIrKernel se le = \case
   KPlus x y -> se x <> se y
   KTimes x y -> se x <> se y
@@ -435,7 +432,6 @@ foldIrMethod ::
   -> (forall v. IrExpr v -> m)
   -> IrMethod u
   -> m
-{-# INLINABLE foldIrMethod #-}
 foldIrMethod se le = \case
   IrMethMap x _ g -> se x <> le g
   IrMethFilter x _ g -> se x <> le g
@@ -449,7 +445,6 @@ foldIrFixedArgs ::
   (forall v. IrExpr v -> m)
   -> IrFixedArgs a b c
   -> m
-{-# INLINABLE foldIrFixedArgs #-}
 foldIrFixedArgs se = \case
   IrArgsU x -> se x
   IrArgsB x y -> se x <> se y
@@ -460,7 +455,6 @@ foldIrFnBody ::
   (forall v. IrExpr v -> m)
   -> IrFnBody us r
   -> m
-{-# INLINABLE foldIrFnBody #-}
 foldIrFnBody le = \case
   IrJfNil e -> le e
   IrJfCons _ (IrJfNil e) -> le e
@@ -484,7 +478,6 @@ foldIrEff ::
   -> (forall v. IrEffect v -> m)
   -> IrEffect u
   -> m
-{-# INLINABLE foldIrEff #-}
 foldIrEff se sf lf = \case
   IrLift x -> se x
   IrFFI _ args -> recFoldIrArg se sf args
@@ -519,7 +512,6 @@ recFoldIrArg ::
   -> (forall v. IrEffect v -> m)
   -> Rec (IrArg) us
   -> m
-{-# INLINABLE recFoldIrArg #-}
 recFoldIrArg se sf = go mempty
  where
   go :: forall vs. m -> Rec IrArg vs -> m
