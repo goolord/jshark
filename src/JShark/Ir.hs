@@ -95,7 +95,7 @@ irMetaCheap = irCheap
 
 -- | Force impure on optimized metadata (empty 'RecNil' args are otherwise pure).
 effectMd :: IrMeta -> IrMeta
-effectMd md = md <> IrMeta 0 IM.empty False False
+effectMd !md = md <> IrMeta 0 IM.empty False False
 
 isCheapValueIr :: Value u -> P.Bool
 isCheapValueIr = \case
@@ -264,19 +264,26 @@ data IrEffect :: Universe -> Type where
 -- arm, or an FFI argument is still a use, and 'substIrExpr' keys its
 -- skip test off 'irFree'.
 metaIrExpr :: IrExpr u -> IrMeta
-metaIrExpr e = case e of
+metaIrExpr !e = case e of
   IrLiteral v -> IrMeta 1 IM.empty True (isCheapValueIr v)
   IrVar i -> IrMeta 1 (IM.singleton i 1) True True
   IrEmbedEff x -> metaIrEffect x
-  _ -> here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+  _ ->
+    let
+      !md = here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+     in
+      md
  where
   here = case e of
     IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) True
     _ -> IrMeta 1 IM.empty True False
 
 metaIrEffect :: IrEffect u -> IrMeta
-metaIrEffect e =
-  here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+metaIrEffect !e =
+  let
+    !md = here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+   in
+    md
  where
   here = case e of
     IrFFI {} -> impure
@@ -310,7 +317,7 @@ occursIrExpr !t = \case
       )
 
 occursIrEffect :: Int -> IrEffect u -> P.Bool
-occursIrEffect !t e =
+occursIrEffect !t !e =
   getAny
     ( foldIrEff
         (Any . occursIrExpr t)
@@ -651,7 +658,7 @@ mapIrArgs gf ge = \case
   RecCons (IrArgEffect x) xs -> RecCons (IrArgEffect (gf x)) (mapIrArgs gf ge xs)
 
 substIrExpr :: Int -> Int -> IrExpr u -> IrExpr u
-substIrExpr !old !new e
+substIrExpr !old !new !e
   | old == new = e
   | not (occursIrExpr old e) = e
   | otherwise = case e of
@@ -659,7 +666,7 @@ substIrExpr !old !new e
       _ -> mapIrExpr (substIrExpr old new) (substIrEffect old new) e
 
 substIrEffect :: Int -> Int -> IrEffect u -> IrEffect u
-substIrEffect !old !new e
+substIrEffect !old !new !e
   | old == new = e
   | not (occursIrEffect old e) = e
   | otherwise = mapIrEff (substIrExpr old new) (substIrEffect old new) e
@@ -669,7 +676,7 @@ substIrEffect !old !new e
 -- treating it as a rename would drop the binding while leaving the uses
 -- pointing at a tag nothing binds.
 inlineIrExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-inlineIrExpr !tag bound body = case bound of
+inlineIrExpr !tag !bound !body = case bound of
   IrVar i -> substIrExpr tag i body
   _ -> replaceIrVarExpr tag bound body
 
@@ -683,7 +690,7 @@ replaceIrVarEff !tag bound =
   mapIrEff (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound)
 
 inlineIrEffect :: Int -> IrEffect u -> IrEffect v -> IrEffect v
-inlineIrEffect !tag bound body = case bound of
+inlineIrEffect !tag !bound !body = case bound of
   IrLift (IrVar i) -> substIrEffect tag i body
   _
     | not (occursIrEffect tag body) -> body
@@ -718,7 +725,7 @@ elimIrLet ::
   -> IrExpr v
   -> IrMeta
   -> (IrExpr v, IrMeta)
-elimIrLet !mdX !tag x body !mdBody =
+elimIrLet !mdX !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -741,7 +748,7 @@ elimIrBind ::
   -> IrEffect v
   -> IrMeta
   -> (IrEffect v, IrMeta)
-elimIrBind !mdX !tag x body !mdBody =
+elimIrBind !mdX !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
