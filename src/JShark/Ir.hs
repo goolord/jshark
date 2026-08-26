@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeOperators #-}
@@ -95,7 +96,7 @@ irMetaCheap = irCheap
 
 -- | Force impure on optimized metadata (empty 'RecNil' args are otherwise pure).
 effectMd :: IrMeta -> IrMeta
-effectMd md = md <> IrMeta 0 IM.empty False False
+effectMd !md = md <> IrMeta 0 IM.empty False False
 
 isCheapValueIr :: Value u -> P.Bool
 isCheapValueIr = \case
@@ -264,19 +265,26 @@ data IrEffect :: Universe -> Type where
 -- arm, or an FFI argument is still a use, and 'substIrExpr' keys its
 -- skip test off 'irFree'.
 metaIrExpr :: IrExpr u -> IrMeta
-metaIrExpr e = case e of
+metaIrExpr !e = case e of
   IrLiteral v -> IrMeta 1 IM.empty True (isCheapValueIr v)
   IrVar i -> IrMeta 1 (IM.singleton i 1) True True
   IrEmbedEff x -> metaIrEffect x
-  _ -> here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+  _ ->
+    let
+      !md = here <> foldIrExpr metaIrExpr metaIrExpr metaIrEffect e
+     in
+      md
  where
   here = case e of
     IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) True
     _ -> IrMeta 1 IM.empty True False
 
 metaIrEffect :: IrEffect u -> IrMeta
-metaIrEffect e =
-  here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+metaIrEffect !e =
+  let
+    !md = here <> foldIrEff metaIrExpr metaIrEffect metaIrEffect e
+   in
+    md
  where
   here = case e of
     IrFFI {} -> impure
@@ -310,7 +318,7 @@ occursIrExpr !t = \case
       )
 
 occursIrEffect :: Int -> IrEffect u -> P.Bool
-occursIrEffect !t e =
+occursIrEffect !t !e =
   getAny
     ( foldIrEff
         (Any . occursIrExpr t)
@@ -651,7 +659,7 @@ mapIrArgs gf ge = \case
   RecCons (IrArgEffect x) xs -> RecCons (IrArgEffect (gf x)) (mapIrArgs gf ge xs)
 
 substIrExpr :: Int -> Int -> IrExpr u -> IrExpr u
-substIrExpr !old !new e
+substIrExpr !old !new !e
   | old == new = e
   | not (occursIrExpr old e) = e
   | otherwise = case e of
@@ -659,7 +667,7 @@ substIrExpr !old !new e
       _ -> mapIrExpr (substIrExpr old new) (substIrEffect old new) e
 
 substIrEffect :: Int -> Int -> IrEffect u -> IrEffect u
-substIrEffect !old !new e
+substIrEffect !old !new !e
   | old == new = e
   | not (occursIrEffect old e) = e
   | otherwise = mapIrEff (substIrExpr old new) (substIrEffect old new) e
@@ -669,7 +677,7 @@ substIrEffect !old !new e
 -- treating it as a rename would drop the binding while leaving the uses
 -- pointing at a tag nothing binds.
 inlineIrExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
-inlineIrExpr !tag bound body = case bound of
+inlineIrExpr !tag !bound !body = case bound of
   IrVar i -> substIrExpr tag i body
   _ -> replaceIrVarExpr tag bound body
 
@@ -683,7 +691,7 @@ replaceIrVarEff !tag bound =
   mapIrEff (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound)
 
 inlineIrEffect :: Int -> IrEffect u -> IrEffect v -> IrEffect v
-inlineIrEffect !tag bound body = case bound of
+inlineIrEffect !tag !bound !body = case bound of
   IrLift (IrVar i) -> substIrEffect tag i body
   _
     | not (occursIrEffect tag body) -> body
@@ -718,7 +726,7 @@ elimIrLet ::
   -> IrExpr v
   -> IrMeta
   -> (IrExpr v, IrMeta)
-elimIrLet !mdX !tag x body !mdBody =
+elimIrLet !mdX !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -741,7 +749,7 @@ elimIrBind ::
   -> IrEffect v
   -> IrMeta
   -> (IrEffect v, IrMeta)
-elimIrBind !mdX !tag x body !mdBody =
+elimIrBind !mdX !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -776,33 +784,33 @@ optIrExpr !t0 = \case
   IrVar i -> (t0, IrVar i, varMeta i)
   IrLet tag x body ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, body', mdBody) = optIrExpr t1 body
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !body', !mdBody) = optIrExpr t1 body
      in
-      let (e', md') = elimIrLet mdX tag x' body' mdBody
+      let (!e', !md') = elimIrLet mdX tag x' body' mdBody
        in (t2, e', md')
   -- A JS call evaluates its argument before the body runs, so an applied
   -- lambda is a let and gets the same inlining decision.
   IrApply (IrLambda tag g) x ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, g', mdG) = optIrExpr t1 g
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !g', !mdG) = optIrExpr t1 g
      in
-      let (e', md') = elimIrLet mdX tag x' g' mdG
+      let (!e', !md') = elimIrLet mdX tag x' g' mdG
        in (t2, e', md')
   IrFixed op args ->
-    let (t1, args', md) = optIrFixedArgs t0 args
+    let (!t1, !args', !md) = optIrFixedArgs t0 args
      in (t1, IrFixed op args', md)
   IrKernelK k ->
-    let (t1, k', md) = optIrKernel t0 k
+    let (!t1, !k', !md) = optIrKernel t0 k
      in (t1, IrKernelK k', md)
   IrMethod m ->
-    let (t1, m', md) = optIrMethod t0 m
+    let (!t1, !m', !md) = optIrMethod t0 m
      in (t1, IrMethod m', md)
   IrHvm2Ref name ->
     (t0, IrHvm2Ref name, IrMeta 1 IM.empty True True)
   e ->
-    let (t1, e', md) = optIrExprChildren t0 e
+    let (!t1, !e', !md) = optIrExprChildren t0 e
      in (t1, e', md)
 
 litMeta :: Value u -> IrMeta
@@ -814,28 +822,28 @@ varMeta !i = IrMeta 1 (IM.singleton i 1) True True
 optIrExprChildren :: Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
 optIrExprChildren !t0 = \case
   IrEmbedEff e ->
-    let (t1, e', md) = optIrEffect t0 e
+    let (!t1, !e', !md) = optIrEffect t0 e
      in (t1, IrEmbedEff e', md)
   IrLetRec tag r b ->
     let
-      (t1, r', mdR) = optIrExpr t0 r
-      (t2, b', mdB) = optIrExpr t1 b
+      (!t1, !r', !mdR) = optIrExpr t0 r
+      (!t2, !b', !mdB) = optIrExpr t1 b
      in
       (t2, IrLetRec tag r' b', bindMeta tag (nodeMeta mdR mdB))
   IrLambda tag g ->
-    let (t1, g', md) = optIrExpr t0 g
+    let (!t1, !g', !md) = optIrExpr t0 g
      in (t1, IrLambda tag g', bindMeta tag md)
   IrApply f x ->
     let
-      (t1, f', mdF) = optIrExpr t0 f
-      (t2, x', mdX) = optIrExpr t1 x
+      (!t1, !f', !mdF) = optIrExpr t0 f
+      (!t2, !x', !mdX) = optIrExpr t1 x
      in
       (t2, IrApply f' x', nodeMeta mdF mdX)
   IrIf c t e ->
     let
-      (t1, c', mdC) = optIrExpr t0 c
-      (t2, t', mdT) = optIrExpr t1 t
-      (t3, e', mdE) = optIrExpr t2 e
+      (!t1, !c', !mdC) = optIrExpr t0 c
+      (!t2, !t', !mdT) = optIrExpr t1 t
+      (!t3, !e', !mdE) = optIrExpr t2 e
      in
       ( t3
       , IrIf c' t' e'
@@ -843,25 +851,25 @@ optIrExprChildren !t0 = \case
       )
   IrOptionCase o n tag s ->
     let
-      (t1, o', mdO) = optIrExpr t0 o
-      (t2, n', mdN) = optIrExpr t1 n
-      (t3, s', mdS) = optIrExpr t2 s
+      (!t1, !o', !mdO) = optIrExpr t0 o
+      (!t2, !n', !mdN) = optIrExpr t1 n
+      (!t3, !s', !mdS) = optIrExpr t2 s
      in
       ( t3
       , IrOptionCase o' n' tag s'
       , nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS))
       )
   IrResultOk x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrResultOk x', md)
   IrResultErr x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrResultErr x', md)
   IrResultCase o tagE e tagO s ->
     let
-      (t1, o', mdO) = optIrExpr t0 o
-      (t2, e', mdE) = optIrExpr t1 e
-      (t3, s', mdS) = optIrExpr t2 s
+      (!t1, !o', !mdO) = optIrExpr t0 o
+      (!t2, !e', !mdE) = optIrExpr t1 e
+      (!t3, !s', !mdS) = optIrExpr t2 s
      in
       ( t3
       , IrResultCase o' tagE e' tagO s'
@@ -872,19 +880,19 @@ optIrExprChildren !t0 = \case
   IrU8Index x i ->
     binOptIr t0 IrU8Index x i
   IrError x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrError x', md)
   IrFnLit b ->
-    let (t1, b', md) = optIrFnBody t0 b
+    let (!t1, !b', !md) = optIrFnBody t0 b
      in (t1, IrFnLit b', md)
   IrUnsafeNullable x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrUnsafeNullable x', md)
   IrFrozenLit fs ->
-    let (t1, fs', md) = mapAccumIrFieldLit t0 fs
+    let (!t1, !fs', !md) = mapAccumIrFieldLit t0 fs
      in (t1, IrFrozenLit fs', md)
   IrGetField @k o ->
-    let (t1, o', md) = optIrExpr t0 o
+    let (!t1, !o', !md) = optIrExpr t0 o
      in (t1, IrGetField @k o', md)
   _ -> error "JShark.Ir.optIrExprChildren: unhandled constructor"
 
@@ -896,8 +904,8 @@ binOptIr ::
   -> (Int, IrExpr c, IrMeta)
 binOptIr !t0 k x y =
   let
-    (t1, x', mdX) = optIrExpr t0 x
-    (t2, y', mdY) = optIrExpr t1 y
+    (!t1, !x', !mdX) = optIrExpr t0 x
+    (!t2, !y', !mdY) = optIrExpr t1 y
    in
     (t2, k x' y', nodeMeta mdX mdY)
 
@@ -905,19 +913,19 @@ optIrFixedArgs ::
   Int -> IrFixedArgs a b c -> (Int, IrFixedArgs a b c, IrMeta)
 optIrFixedArgs !t0 = \case
   IrArgsU x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrArgsU x', md)
   IrArgsB x y ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, y', mdY) = optIrExpr t1 y
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !y', !mdY) = optIrExpr t1 y
      in
       (t2, IrArgsB x' y', nodeMeta mdX mdY)
   IrArgsT x y z ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, y', mdY) = optIrExpr t1 y
-      (t3, z', mdZ) = optIrExpr t2 z
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !y', !mdY) = optIrExpr t1 y
+      (!t3, !z', !mdZ) = optIrExpr t2 z
      in
       (t3, IrArgsT x' y' z', nodeMeta mdX (nodeMeta mdY mdZ))
 
@@ -936,17 +944,17 @@ optIrKernel !t0 = \case
   KUShr x y -> binOptKernel t0 KUShr x y
   KBig op x y -> binOptKernel t0 (KBig op) x y
   KBigNeg x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, KBigNeg x', md)
   KConcat x y -> binOptKernel t0 KConcat x y
   KShow x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, KShow x', md)
   KTypeOf x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, KTypeOf x', md)
   KNegate x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, KNegate x', md)
   KAnd x y -> binOptKernel t0 KAnd x y
   KOr x y -> binOptKernel t0 KOr x y
@@ -963,10 +971,10 @@ binOptKernel ::
   -> IrExpr a
   -> IrExpr b
   -> (Int, IrKernel c, IrMeta)
-binOptKernel t0 k x y =
+binOptKernel !t0 k x y =
   let
-    (t1, x', mdX) = optIrExpr t0 x
-    (t2, y', mdY) = optIrExpr t1 y
+    (!t1, !x', !mdX) = optIrExpr t0 x
+    (!t2, !y', !mdY) = optIrExpr t1 y
    in
     (t2, k x' y', nodeMeta mdX mdY)
 
@@ -974,21 +982,21 @@ optIrMethod :: Int -> IrMethod u -> (Int, IrMethod u, IrMeta)
 optIrMethod !t0 = \case
   IrMethMap x tag g ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, g', mdG) = optIrExpr t1 g
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !g', !mdG) = optIrExpr t1 g
      in
       (t2, IrMethMap x' tag g', nodeMeta mdX (bindMeta tag mdG))
   IrMethFilter x tag g ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, g', mdG) = optIrExpr t1 g
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !g', !mdG) = optIrExpr t1 g
      in
       (t2, IrMethFilter x' tag g', nodeMeta mdX (bindMeta tag mdG))
   IrMethReduce x z tagA tagB g ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, z', mdZ) = optIrExpr t1 z
-      (t3, g', mdG) = optIrExpr t2 g
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !z', !mdZ) = optIrExpr t1 z
+      (!t3, !g', !mdG) = optIrExpr t2 g
      in
       ( t3
       , IrMethReduce x' z' tagA tagB g'
@@ -996,9 +1004,9 @@ optIrMethod !t0 = \case
       )
   IrMethReduceRight x z tagA tagB g ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, z', mdZ) = optIrExpr t1 z
-      (t3, g', mdG) = optIrExpr t2 g
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !z', !mdZ) = optIrExpr t1 z
+      (!t3, !g', !mdG) = optIrExpr t2 g
      in
       ( t3
       , IrMethReduceRight x' z' tagA tagB g'
@@ -1006,8 +1014,8 @@ optIrMethod !t0 = \case
       )
   IrMethToSorted x tagA tagB g ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, g', mdG) = optIrExpr t1 g
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !g', !mdG) = optIrExpr t1 g
      in
       ( t2
       , IrMethToSorted x' tagA tagB g'
@@ -1015,18 +1023,18 @@ optIrMethod !t0 = \case
       )
   IrMethFrom n tag g ->
     let
-      (t1, n', mdN) = optIrExpr t0 n
-      (t2, g', mdG) = optIrExpr t1 g
+      (!t1, !n', !mdN) = optIrExpr t0 n
+      (!t2, !g', !mdG) = optIrExpr t1 g
      in
       (t2, IrMethFrom n' tag g', nodeMeta mdN (bindMeta tag mdG))
 
 optIrFnBody :: Int -> IrFnBody us r -> (Int, IrFnBody us r, IrMeta)
 optIrFnBody !t0 = \case
   IrJfNil e ->
-    let (t1, e', md) = optIrExpr t0 e
+    let (!t1, !e', !md) = optIrExpr t0 e
      in (t1, IrJfNil e', md)
   IrJfCons tag k ->
-    let (t1, k', md) = optIrFnBody (t0 - optStep) k
+    let (!t1, !k', !md) = optIrFnBody (t0 - optStep) k
      in (t1, IrJfCons tag k', bindMeta tag md)
 
 mapAccumIrFieldLit ::
@@ -1043,115 +1051,115 @@ mapAccumIrFieldLit !t0 fs =
   step :: Int -> IrFieldLit r -> (Int, IrFieldLit r, IrMeta)
   step !t = \case
     IrFieldLit @k e ->
-      let (t', e', md) = optIrExpr t e
+      let (!t', !e', !md) = optIrExpr t e
        in (t', IrFieldLit @k e', md)
     IrFieldLitEffect @k e ->
-      let (t', e', md) = optIrEffect t e
+      let (!t', !e', !md) = optIrEffect t e
        in (t', IrFieldLitEffect @k e', md)
     IrFieldLitExtra @k e ->
-      let (t', e', md) = optIrExpr t e
+      let (!t', !e', !md) = optIrExpr t e
        in (t', IrFieldLitExtra @k e', md)
     IrFieldLitExtraEffect @k e ->
-      let (t', e', md) = optIrEffect t e
+      let (!t', !e', !md) = optIrEffect t e
        in (t', IrFieldLitExtraEffect @k e', md)
 
 optIrEffect :: Int -> IrEffect u -> (Int, IrEffect u, IrMeta)
 optIrEffect !t0 = \case
   IrLift x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrLift x', md)
   IrBind tag x body ->
     let
-      (t1, x', mdX) = optIrEffect t0 x
-      (t2, body', mdBody) = optIrEffect t1 body
+      (!t1, !x', !mdX) = optIrEffect t0 x
+      (!t2, !body', !mdBody) = optIrEffect t1 body
      in
-      let (e', md') = elimIrBind mdX tag x' body' mdBody
+      let (!e', !md') = elimIrBind mdX tag x' body' mdBody
        in (t2, e', md')
   IrThenE x y ->
     let
-      (t1, x', mdX) = optIrEffect t0 x
-      (t2, y', mdY) = optIrEffect t1 y
+      (!t1, !x', !mdX) = optIrEffect t0 x
+      (!t2, !y', !mdY) = optIrEffect t1 y
      in
       (t2, IrThenE x' y', nodeMeta mdX mdY)
   IrFFI n args ->
-    let (t1, args', md) = optIrArgs t0 args
+    let (!t1, !args', !md) = optIrArgs t0 args
      in (t1, IrFFI n args', effectMd md)
   IrUnsafeObject o -> (t0, IrUnsafeObject o, IrMeta 1 IM.empty False False)
   IrUnsafeObjectGet x s ->
-    let (t1, x', md) = optIrEffect t0 x
+    let (!t1, !x', !md) = optIrEffect t0 x
      in (t1, IrUnsafeObjectGet x' s, effectMd md)
   IrUnsafeObjectAssign x y ->
     let
-      (t1, x', mdX) = optIrEffect t0 x
-      (t2, y', mdY) = optIrEffect t1 y
+      (!t1, !x', !mdX) = optIrEffect t0 x
+      (!t2, !y', !mdY) = optIrEffect t1 y
      in
       (t2, IrUnsafeObjectAssign x' y', effectMd (nodeMeta mdX mdY))
   IrCallMethod x n args ->
     let
-      (t1, x', mdX) = optIrEffect t0 x
-      (t2, args', mdA) = optIrArgs t1 args
+      (!t1, !x', !mdX) = optIrEffect t0 x
+      (!t2, !args', !mdA) = optIrArgs t1 args
      in
       (t2, IrCallMethod x' n args', effectMd (nodeMeta mdX mdA))
   IrBindRec tag r b ->
     let
-      (t1, r', mdR) = optIrEffect (t0 - optStep) r
-      (t2, b', mdB) = optIrEffect t1 b
+      (!t1, !r', !mdR) = optIrEffect (t0 - optStep) r
+      (!t2, !b', !mdB) = optIrEffect t1 b
      in
       (t2, IrBindRec tag r' b', bindMeta tag (nodeMeta mdR mdB))
   IrLambdaE tag g ->
-    let (t1, g', md) = optIrEffect (t0 - optStep) g
+    let (!t1, !g', !md) = optIrEffect (t0 - optStep) g
      in (t1, IrLambdaE tag g', bindMeta tag md)
   IrApplyE f x ->
     let
-      (t1, f', mdF) = optIrEffect t0 f
-      (t2, x', mdX) = optIrEffect t1 x
+      (!t1, !f', !mdF) = optIrEffect t0 f
+      (!t2, !x', !mdX) = optIrEffect t1 x
      in
       (t2, IrApplyE f' x', effectMd (nodeMeta mdF mdX))
   IrIfE c t e ->
     let
-      (t1, c', mdC) = optIrEffect t0 c
-      (t2, t', mdT) = optIrEffect t1 t
-      (t3, e', mdE) = optIrEffect t2 e
+      (!t1, !c', !mdC) = optIrEffect t0 c
+      (!t2, !t', !mdT) = optIrEffect t1 t
+      (!t3, !e', !mdE) = optIrEffect t2 e
      in
       (t3, IrIfE c' t' e', nodeMeta mdC (nodeMeta mdT mdE))
   IrWhile c b ->
     let
-      (t1, c', mdC) = optIrEffect t0 c
-      (t2, b', mdB) = optIrEffect t1 b
+      (!t1, !c', !mdC) = optIrEffect t0 c
+      (!t2, !b', !mdB) = optIrEffect t1 b
      in
       (t2, IrWhile c' b', effectMd (nodeMeta mdC mdB))
   IrForRange s e tag b ->
     let
-      (t1, s', mdS) = optIrExpr t0 s
-      (t2, e', mdE) = optIrExpr t1 e
-      (t3, b', mdB) = optIrEffect (t2 - optStep) b
+      (!t1, !s', !mdS) = optIrExpr t0 s
+      (!t2, !e', !mdE) = optIrExpr t1 e
+      (!t3, !b', !mdB) = optIrEffect (t2 - optStep) b
      in
       (t3, IrForRange s' e' tag b', nodeMeta mdS (nodeMeta mdE (bindMeta tag mdB)))
   IrU8Set b i v ->
     let
-      (t1, b', mdB) = optIrExpr t0 b
-      (t2, i', mdI) = optIrExpr t1 i
-      (t3, v', mdV) = optIrExpr t2 v
+      (!t1, !b', !mdB) = optIrExpr t0 b
+      (!t2, !i', !mdI) = optIrExpr t1 i
+      (!t3, !v', !mdV) = optIrExpr t2 v
      in
       (t3, IrU8Set b' i' v', nodeMeta mdB (nodeMeta mdI mdV))
   IrU8Fill b v ->
     let
-      (t1, b', mdB) = optIrExpr t0 b
-      (t2, v', mdV) = optIrExpr t1 v
+      (!t1, !b', !mdB) = optIrExpr t0 b
+      (!t2, !v', !mdV) = optIrExpr t1 v
      in
       (t2, IrU8Fill b' v', nodeMeta mdB mdV)
   IrOptionCaseE o n tag s ->
     let
-      (t1, o', mdO) = optIrExpr t0 o
-      (t2, n', mdN) = optIrEffect t1 n
-      (t3, s', mdS) = optIrEffect (t2 - optStep) s
+      (!t1, !o', !mdO) = optIrExpr t0 o
+      (!t2, !n', !mdN) = optIrEffect t1 n
+      (!t3, !s', !mdS) = optIrEffect (t2 - optStep) s
      in
       (t3, IrOptionCaseE o' n' tag s', nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS)))
   IrResultCaseE o tagE e tagO s ->
     let
-      (t1, o', mdO) = optIrExpr t0 o
-      (t2, e', mdE) = optIrEffect (t1 - optStep) e
-      (t3, s', mdS) = optIrEffect (t2 - optStep) s
+      (!t1, !o', !mdO) = optIrExpr t0 o
+      (!t2, !e', !mdE) = optIrEffect (t1 - optStep) e
+      (!t3, !s', !mdS) = optIrEffect (t2 - optStep) s
      in
       ( t3
       , IrResultCaseE o' tagE e' tagO s'
@@ -1159,31 +1167,31 @@ optIrEffect !t0 = \case
       )
   IrStringCaseE s arms d ->
     let
-      (t1, s', mdS) = optIrExpr t0 s
-      (t2, arms', mdA) = mapAccumIrEffect t1 arms
-      (t3, d', mdD) = optIrEffect t2 d
+      (!t1, !s', !mdS) = optIrExpr t0 s
+      (!t2, !arms', !mdA) = mapAccumIrEffect t1 arms
+      (!t3, !d', !mdD) = optIrEffect t2 d
      in
       (t3, IrStringCaseE s' arms' d', nodeMeta mdS (nodeMeta mdA mdD))
   IrThrow x ->
-    let (t1, x', md) = optIrExpr t0 x
+    let (!t1, !x', !md) = optIrExpr t0 x
      in (t1, IrThrow x', effectMd md)
   IrTry a tag k ->
     let
-      (t1, a', mdA) = optIrEffect t0 a
-      (t2, k', mdK) = optIrEffect (t1 - optStep) k
+      (!t1, !a', !mdA) = optIrEffect t0 a
+      (!t2, !k', !mdK) = optIrEffect (t1 - optStep) k
      in
       (t2, IrTry a' tag k', nodeMeta mdA (bindMeta tag mdK))
   IrObjectLit fs ->
-    let (t1, fs', md) = mapAccumIrFieldLit t0 fs
+    let (!t1, !fs', !md) = mapAccumIrFieldLit t0 fs
      in (t1, IrObjectLit fs', md)
   IrDeleteProp o k ->
     let
-      (t1, o', mdO) = optIrEffect t0 o
-      (t2, k', mdK) = optIrExpr t1 k
+      (!t1, !o', !mdO) = optIrEffect t0 o
+      (!t2, !k', !mdK) = optIrExpr t1 k
      in
       (t2, IrDeleteProp o' k', effectMd (nodeMeta mdO mdK))
   IrArrayLit es ->
-    let (t1, es', md) = mapAccumIrEffects t0 es
+    let (!t1, !es', !md) = mapAccumIrEffects t0 es
      in (t1, IrArrayLit es', md)
 
 mapAccumIrEffect ::
@@ -1191,7 +1199,7 @@ mapAccumIrEffect ::
 mapAccumIrEffect !t0 arms =
   foldr
     ( \(k, e) (!t, acc, !md) ->
-        let (t', e', md') = optIrEffect t e
+        let (!t', !e', !md') = optIrEffect t e
          in (t', (k, e') : acc, md' <> md)
     )
     (t0, [], mempty)
@@ -1201,7 +1209,7 @@ mapAccumIrEffects :: Int -> [IrEffect u] -> (Int, [IrEffect u], IrMeta)
 mapAccumIrEffects !t0 es =
   foldr
     ( \e (!t, acc, !md) ->
-        let (t', e', md') = optIrEffect t e
+        let (!t', !e', !md') = optIrEffect t e
          in (t', e' : acc, md' <> md)
     )
     (t0, [], mempty)
@@ -1212,13 +1220,13 @@ optIrArgs !t0 = \case
   RecNil -> (t0, RecNil, mempty)
   RecCons (IrArgExpr x) xs ->
     let
-      (t1, x', mdX) = optIrExpr t0 x
-      (t2, xs', mdXs) = optIrArgs t1 xs
+      (!t1, !x', !mdX) = optIrExpr t0 x
+      (!t2, !xs', !mdXs) = optIrArgs t1 xs
      in
       (t2, RecCons (IrArgExpr x') xs', nodeMeta mdX mdXs)
   RecCons (IrArgEffect x) xs ->
     let
-      (t1, x', mdX) = optIrEffect t0 x
-      (t2, xs', mdXs) = optIrArgs t1 xs
+      (!t1, !x', !mdX) = optIrEffect t0 x
+      (!t2, !xs', !mdXs) = optIrArgs t1 xs
      in
       (t2, RecCons (IrArgEffect x') xs', nodeMeta mdX mdXs)
