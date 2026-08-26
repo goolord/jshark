@@ -1423,7 +1423,7 @@ nodeCountEff e =
 closedEffectNodes :: ClosedEffect u -> Int
 closedEffectNodes (e :: ClosedEffect u) =
   let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff (e :: Effect Stamp u))
+    (_, ir) = lowerEffectAt (-2) (flattenEff (e :: Effect Stamp u))
    in
     Ir.irMetaSize (Ir.metaIrEffect ir)
 {-# NOINLINE closedEffectNodes #-}
@@ -2506,11 +2506,7 @@ reifyFnBody ir =
   rebindFn (irFnTags ir) (reifyExpr (irFnBodyExpr ir))
 
 lowerExpr :: Expr Stamp u -> Ir.IrExpr u
-lowerExpr e =
-  let
-    (!_, !ir) = lowerExprAt (-2) e
-   in
-    ir
+lowerExpr e = snd (lowerExprAt (-2) e)
 
 lowerExprAt :: Int -> Expr Stamp u -> (Int, Ir.IrExpr u)
 lowerExprAt !t0 = \case
@@ -2685,11 +2681,7 @@ reifyExpr = \case
     error ("JShark.reifyExpr: IrHvm2Ref " <> T.unpack name)
 
 lowerEffect :: Effect Stamp u -> Ir.IrEffect u
-lowerEffect e =
-  let
-    (!_, !ir) = lowerEffectAt (-2) e
-   in
-    ir
+lowerEffect e = snd (lowerEffectAt (-2) e)
 
 lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u)
 lowerEffectAt !t0 = \case
@@ -2914,8 +2906,8 @@ optimize (e :: ClosedExpr u) =
 optimizeEffectIr :: Effect Stamp u -> Effect Stamp u
 optimizeEffectIr e =
   let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff e)
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+    (_, ir) = lowerEffectAt (-2) (flattenEff e)
+    (_, irOpt, _) = Ir.optIrEffect (-2) ir
    in
     flattenEff (reifyEffect irOpt)
 {-# NOINLINE optimizeEffectIr #-}
@@ -2937,8 +2929,8 @@ optimizeEffect e = optimizeEffectTree e
 irEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
 irEffectFromClosed (e :: ClosedEffect u) =
   let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff e)
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+    (_, ir) = lowerEffectAt (-2) (flattenEff e)
+    (_, irOpt, _) = Ir.optIrEffect (-2) ir
    in
     irOpt
 {-# NOINLINE irEffectFromClosed #-}
@@ -2946,8 +2938,8 @@ irEffectFromClosed (e :: ClosedEffect u) =
 irExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
 irExprFromClosed (e :: ClosedExpr u) =
   let
-    (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
-    (!_, !irOpt, !_) = Ir.optIrExpr (-2) ir
+    (_, ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
+    (_, irOpt, _) = Ir.optIrExpr (-2) ir
    in
     irOpt
 {-# NOINLINE irExprFromClosed #-}
@@ -2955,8 +2947,8 @@ irExprFromClosed (e :: ClosedExpr u) =
 irOptimizedExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
 irOptimizedExprFromClosed (e :: ClosedExpr u) =
   let
-    (!_, !ir) = lowerExprAt (-2) (flattenExpr (optimize e))
-    (!_, !irOpt, !_) = Ir.optIrExpr (-2) ir
+    (_, ir) = lowerExprAt (-2) (flattenExpr (optimize e))
+    (_, irOpt, _) = Ir.optIrExpr (-2) ir
    in
     irOpt
 {-# NOINLINE irOptimizedExprFromClosed #-}
@@ -2964,8 +2956,8 @@ irOptimizedExprFromClosed (e :: ClosedExpr u) =
 irOptimizedEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
 irOptimizedEffectFromClosed (e :: ClosedEffect u) =
   let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff (optimizeEffect e))
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+    (_, ir) = lowerEffectAt (-2) (flattenEff (optimizeEffect e))
+    (_, irOpt, _) = Ir.optIrEffect (-2) ir
    in
     irOpt
 {-# NOINLINE irOptimizedEffectFromClosed #-}
@@ -3110,16 +3102,16 @@ hvm2ExportRef name =
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =
   let
-    (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
-    (!_, !_, !md) = Ir.optIrExpr (-2) ir
+    (_, ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
+    (_, _, md) = Ir.optIrExpr (-2) ir
    in
     Ir.irMetaSize md
 
 optimizedEffectSize :: ClosedEffect u -> Int
 optimizedEffectSize (e :: ClosedEffect u) =
   let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff (e :: Effect Stamp u))
-    (!_, !_, !md) = Ir.optIrEffect (-2) ir
+    (_, ir) = lowerEffectAt (-2) (flattenEff (e :: Effect Stamp u))
+    (_, _, md) = Ir.optIrEffect (-2) ir
    in
     Ir.irMetaSize md
 
