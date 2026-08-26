@@ -77,8 +77,8 @@ allocated :: IO a -> IO (a, Int64)
 allocated act = do
   before <- getAllocationCounter
   x <- act
-  after <- getAllocationCounter
-  pure (x, before - after)
+  doneAlloc <- getAllocationCounter
+  pure (x, before - doneAlloc)
 
 assertCeiling :: (Ord a, Show a) => String -> a -> a -> Assertion
 assertCeiling label got maxOk =
