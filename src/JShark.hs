@@ -1183,28 +1183,23 @@ varStampJS env s =
       else nJS i
 
 -- | Single-pass binder probe for codegen and elim (no per-node 'IntMap').
--- @bsMinNeg@ is 'maxBound' when no negative stamp was seen.
 data BinderScan = BinderScan
-  { bsMinNeg :: {-# UNPACK #-} !Int
-  , bsUses :: {-# UNPACK #-} !Int
+  { bsMinNeg :: Maybe Int
+  , bsUses :: !Int
   }
 
 instance Semigroup BinderScan where
   BinderScan mn u <> BinderScan mn' u' =
-    BinderScan (min mn mn') (u + u')
+    BinderScan (minMaybe mn mn') (u + u')
 
 instance Monoid BinderScan where
-  mempty = BinderScan maxBound 0
+  mempty = BinderScan Nothing 0
 
 minNegStampEff :: Effect Stamp u -> Maybe Int
-minNegStampEff e =
-  let
-    n = bsMinNeg (scanMinNegEff e)
-   in
-    if n == maxBound then Nothing else Just n
+minNegStampEff e = bsMinNeg (scanMinNegEff e)
 
 scanMinNegVar :: Int -> BinderScan
-scanMinNegVar i = BinderScan (if i < 0 then i else maxBound) 0
+scanMinNegVar i = BinderScan (if i < 0 then Just i else Nothing) 0
 
 scanMinNegExpr :: Expr Stamp u -> BinderScan
 scanMinNegExpr = \case
@@ -1254,6 +1249,11 @@ elimExprUses tag body _ =
 
 elimEffUses :: Int -> Effect Stamp v -> Metadata -> Int
 elimEffUses tag body _ = effectBindUses tag body
+
+minMaybe :: Maybe Int -> Maybe Int -> Maybe Int
+minMaybe Nothing y = y
+minMaybe x Nothing = x
+minMaybe (Just a) (Just b) = Just (min a b)
 
 probeContEff ::
   CG -> (Stamp u -> Effect Stamp v) -> (CG, Effect Stamp v, Int)
@@ -1333,11 +1333,15 @@ wrapOperand e d = if isSimple e then d else parens d
 -- A use under a lambda, loop, `&&`/`||` RHS, or `?:` branch is not a
 -- candidate for inlining: the binder would be re-run or skipped.
 -- Lazy positions only need zero vs nonzero; 'occurs' short-circuits.
+-- NOINLINE: inlining this into 'countExpr' duplicates the occurs walk in
+-- Core and regresses GHC compile time of this module.
 countLazyExpr :: Int -> Expr Stamp u -> Int
 countLazyExpr t e = if occursVarInExpr t e then 2 else 0
+{-# NOINLINE countLazyExpr #-}
 
 countLazyEffect :: Int -> Effect Stamp u -> Int
 countLazyEffect t e = if occursVarInEff t e then 2 else 0
+{-# NOINLINE countLazyEffect #-}
 
 countExpr :: Int -> Expr Stamp u -> Int
 countExpr t e = case e of
