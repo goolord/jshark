@@ -506,15 +506,18 @@ foldIrEff se sf lf = \case
   IrArrayLit es -> strictFoldMap sf es
 
 recFoldIrArg ::
+  forall m us.
   Monoid m =>
   (forall v. IrExpr v -> m)
   -> (forall v. IrEffect v -> m)
   -> Rec (IrArg) us
   -> m
-recFoldIrArg se sf = \case
-  RecNil -> mempty
-  RecCons (IrArgExpr x) xs -> se x <> recFoldIrArg se sf xs
-  RecCons (IrArgEffect x) xs -> sf x <> recFoldIrArg se sf xs
+recFoldIrArg se sf = go mempty
+ where
+  go :: forall vs. m -> Rec IrArg vs -> m
+  go !acc RecNil = acc
+  go !acc (RecCons (IrArgExpr x) xs) = go (acc <> se x) xs
+  go !acc (RecCons (IrArgEffect x) xs) = go (acc <> sf x) xs
 
 mapIrExpr ::
   (forall v. IrExpr v -> IrExpr v)
