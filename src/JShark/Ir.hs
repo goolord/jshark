@@ -37,7 +37,6 @@ module JShark.Ir
   )
 where
 
-import Data.Foldable (foldl')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Kind (Type)
@@ -370,18 +369,7 @@ foldIrExpr ::
   -> (forall v. IrEffect v -> m)
   -> IrExpr u
   -> m
-{-# SPECIALIZE foldIrExpr ::
-  (forall v. IrExpr v -> IrMeta)
-  -> (forall v. IrExpr v -> IrMeta)
-  -> (forall v. IrEffect v -> IrMeta)
-  -> IrExpr u
-  -> IrMeta #-}
-{-# SPECIALIZE foldIrExpr ::
-  (forall v. IrExpr v -> Any)
-  -> (forall v. IrExpr v -> Any)
-  -> (forall v. IrEffect v -> Any)
-  -> IrExpr u
-  -> Any #-}
+{-# INLINABLE foldIrExpr #-}
 foldIrExpr se le sf = \case
   IrLiteral {} -> mempty
   IrVar {} -> mempty
@@ -413,16 +401,7 @@ foldIrKernel ::
   -> (forall v. IrExpr v -> m)
   -> IrKernel u
   -> m
-{-# SPECIALIZE foldIrKernel ::
-  (forall v. IrExpr v -> IrMeta)
-  -> (forall v. IrExpr v -> IrMeta)
-  -> IrKernel u
-  -> IrMeta #-}
-{-# SPECIALIZE foldIrKernel ::
-  (forall v. IrExpr v -> Any)
-  -> (forall v. IrExpr v -> Any)
-  -> IrKernel u
-  -> Any #-}
+{-# INLINABLE foldIrKernel #-}
 foldIrKernel se le = \case
   KPlus x y -> se x <> se y
   KTimes x y -> se x <> se y
@@ -456,16 +435,7 @@ foldIrMethod ::
   -> (forall v. IrExpr v -> m)
   -> IrMethod u
   -> m
-{-# SPECIALIZE foldIrMethod ::
-  (forall v. IrExpr v -> IrMeta)
-  -> (forall v. IrExpr v -> IrMeta)
-  -> IrMethod u
-  -> IrMeta #-}
-{-# SPECIALIZE foldIrMethod ::
-  (forall v. IrExpr v -> Any)
-  -> (forall v. IrExpr v -> Any)
-  -> IrMethod u
-  -> Any #-}
+{-# INLINABLE foldIrMethod #-}
 foldIrMethod se le = \case
   IrMethMap x _ g -> se x <> le g
   IrMethFilter x _ g -> se x <> le g
@@ -479,10 +449,7 @@ foldIrFixedArgs ::
   (forall v. IrExpr v -> m)
   -> IrFixedArgs a b c
   -> m
-{-# SPECIALIZE foldIrFixedArgs ::
-  (forall v. IrExpr v -> IrMeta) -> IrFixedArgs a b c -> IrMeta #-}
-{-# SPECIALIZE foldIrFixedArgs ::
-  (forall v. IrExpr v -> Any) -> IrFixedArgs a b c -> Any #-}
+{-# INLINABLE foldIrFixedArgs #-}
 foldIrFixedArgs se = \case
   IrArgsU x -> se x
   IrArgsB x y -> se x <> se y
@@ -493,10 +460,7 @@ foldIrFnBody ::
   (forall v. IrExpr v -> m)
   -> IrFnBody us r
   -> m
-{-# SPECIALIZE foldIrFnBody ::
-  (forall v. IrExpr v -> IrMeta) -> IrFnBody us r -> IrMeta #-}
-{-# SPECIALIZE foldIrFnBody ::
-  (forall v. IrExpr v -> Any) -> IrFnBody us r -> Any #-}
+{-# INLINABLE foldIrFnBody #-}
 foldIrFnBody le = \case
   IrJfNil e -> le e
   IrJfCons _ (IrJfNil e) -> le e
@@ -520,18 +484,7 @@ foldIrEff ::
   -> (forall v. IrEffect v -> m)
   -> IrEffect u
   -> m
-{-# SPECIALIZE foldIrEff ::
-  (forall v. IrExpr v -> IrMeta)
-  -> (forall v. IrEffect v -> IrMeta)
-  -> (forall v. IrEffect v -> IrMeta)
-  -> IrEffect u
-  -> IrMeta #-}
-{-# SPECIALIZE foldIrEff ::
-  (forall v. IrExpr v -> Any)
-  -> (forall v. IrEffect v -> Any)
-  -> (forall v. IrEffect v -> Any)
-  -> IrEffect u
-  -> Any #-}
+{-# INLINABLE foldIrEff #-}
 foldIrEff se sf lf = \case
   IrLift x -> se x
   IrFFI _ args -> recFoldIrArg se sf args
@@ -566,16 +519,6 @@ recFoldIrArg ::
   -> (forall v. IrEffect v -> m)
   -> Rec (IrArg) us
   -> m
-{-# SPECIALIZE recFoldIrArg ::
-  (forall v. IrExpr v -> IrMeta)
-  -> (forall v. IrEffect v -> IrMeta)
-  -> Rec IrArg us
-  -> IrMeta #-}
-{-# SPECIALIZE recFoldIrArg ::
-  (forall v. IrExpr v -> Any)
-  -> (forall v. IrEffect v -> Any)
-  -> Rec IrArg us
-  -> Any #-}
 recFoldIrArg se sf = go mempty
  where
   go :: forall vs. m -> Rec IrArg vs -> m

@@ -1821,20 +1821,6 @@ foldExpr ::
   -> (forall v. Effect f v -> m)
   -> Expr f u
   -> m
-{-# SPECIALIZE foldExpr ::
-  (forall v. Stamp v)
-  -> (forall v. Expr Stamp v -> Sum Int)
-  -> (forall v. Expr Stamp v -> Sum Int)
-  -> (forall v. Effect Stamp v -> Sum Int)
-  -> Expr Stamp u
-  -> Sum Int #-}
-{-# SPECIALIZE foldExpr ::
-  (forall v. Stamp v)
-  -> (forall v. Expr Stamp v -> Any)
-  -> (forall v. Expr Stamp v -> Any)
-  -> (forall v. Effect Stamp v -> Any)
-  -> Expr Stamp u
-  -> Any #-}
 foldExpr dummy se le sf = \case
   Literal {} -> mempty
   Var {} -> mempty
@@ -1939,20 +1925,6 @@ foldEff ::
   -> (forall v. Effect f v -> m)
   -> Effect f u
   -> m
-{-# SPECIALIZE foldEff ::
-  (forall v. Stamp v)
-  -> (forall v. Expr Stamp v -> Sum Int)
-  -> (forall v. Effect Stamp v -> Sum Int)
-  -> (forall v. Effect Stamp v -> Sum Int)
-  -> Effect Stamp u
-  -> Sum Int #-}
-{-# SPECIALIZE foldEff ::
-  (forall v. Stamp v)
-  -> (forall v. Expr Stamp v -> Any)
-  -> (forall v. Effect Stamp v -> Any)
-  -> (forall v. Effect Stamp v -> Any)
-  -> Effect Stamp u
-  -> Any #-}
 foldEff dummy se sf lf = \case
   Lift x -> se x
   FFI _ args -> recFold (\n a -> n <> foldArg a) mempty args
