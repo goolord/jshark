@@ -101,6 +101,7 @@ library
     JShark.Flat
     JShark.FlatSoA
     JShark.Ir
+    JShark.JsNum
     JShark.EmitBend
   build-depends:
     , async >= 2.2 && < 2.4

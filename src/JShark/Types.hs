@@ -116,11 +116,6 @@ module JShark.Types
   , shlE
   , shrE
   , ushrE
-  , jsRem
-  , jsBit2
-  , jsShl
-  , jsShr
-  , jsUShr
   , EffectSyntax (..)
   , toSyntax
   , toSyntax_
@@ -139,10 +134,8 @@ where
 import Prelude hiding ((>>))
 import Control.Monad (ap)
 import Data.Array.Byte (ByteArray)
-import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
-import Data.Int (Int32)
+import Data.Bits (xor, (.&.), (.|.))
 import Data.Kind (Type)
-import Data.Word (Word32)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -153,6 +146,7 @@ import GHC.TypeLits
   , Symbol
   , symbolVal
   )
+import JShark.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Rec
 import Prelude hiding ((>>))
 
@@ -755,12 +749,12 @@ pattern UShr x y <- Std (Kernel (KUShr x y))
 pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern And x y <- Std (Kernel (KAnd x y))
  where
-  And = andE
+  And x y = Std (Kernel (KAnd x y))
 
 pattern Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern Or x y <- Std (Kernel (KOr x y))
  where
-  Or = orE
+  Or x y = Std (Kernel (KOr x y))
 
 pattern Eq :: Expr f a -> Expr f a -> Expr f 'Bool
 pattern Eq x y <- Std (Kernel (KEq _ x y))
@@ -923,9 +917,10 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
 -- * @Expr f 'Number@ — literals via 'Literal'; ops go through
---   'plusE' / 'timesE' / … so GHC RULES can fold literal-literal
---   cases at compile time. Remaining ops stay AST nodes and fold
---   later in codegen. @(**)@ is @Math.pow@, not @exp (log x * y)@.
+--   'plusE' / 'timesE' / … so smart constructors fold
+--   literal-literal cases at compile time. Remaining ops stay
+--   AST nodes and fold later in codegen. @(**)@ is @Math.pow@,
+--   not @exp (log x * y)@.
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
 -- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
@@ -949,10 +944,9 @@ liftValue2 ::
   (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
--- | Stable names for GHC RULES. Smart constructors fold literal-literal
--- cases even when a rule does not fire (INCOHERENT 'Num' often inlines
--- '(+)' straight to the kernel). @INLINE [1]@ keeps the binder through
--- phase 2, where the rules fire; later phases unfold to the kernel.
+-- | Smart constructors fold literal-literal cases. INCOHERENT 'Num'
+-- often inlines '(+)' past a named wrapper; these equations still
+-- match. @INLINE [1]@ unfolds to the kernel after the match.
 plusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 plusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
   Literal (ValueNumber (x + y))
@@ -982,11 +976,13 @@ negateE (Literal (ValueNumber x)) = Literal (ValueNumber (negate x))
 negateE x = Std (Kernel (KNegate x))
 {-# INLINE [1] negateE #-}
 
+-- | Short-circuit only when the left is already a literal. Dropping a
+-- non-literal left of @&& false@ / @|| true@ would skip 'Error' and
+-- 'FixStringify' (impure). Same gate as the optimizer's foldAnd/foldOr.
 andE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 andE (Literal (ValueBool False)) _ = Literal (ValueBool False)
 andE (Literal (ValueBool True)) y = y
 andE x (Literal (ValueBool True)) = x
-andE _ (Literal (ValueBool False)) = Literal (ValueBool False)
 andE x y = Std (Kernel (KAnd x y))
 {-# INLINE [1] andE #-}
 
@@ -994,7 +990,6 @@ orE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 orE (Literal (ValueBool True)) _ = Literal (ValueBool True)
 orE (Literal (ValueBool False)) y = y
 orE x (Literal (ValueBool False)) = x
-orE _ (Literal (ValueBool True)) = Literal (ValueBool True)
 orE x y = Std (Kernel (KOr x y))
 {-# INLINE [1] orE #-}
 
@@ -1003,32 +998,6 @@ concatE (Literal (ValueString x)) (Literal (ValueString y)) =
   Literal (ValueString (x <> y))
 concatE x y = Std (Kernel (KConcat x y))
 {-# INLINE [1] concatE #-}
-
--- | JS ToInt32 / ToUint32 for bitwise ops and @>>>@.
-toInt32 :: Double -> Int32
-toInt32 d
-  | isNaN d || isInfinite d = 0
-  | otherwise = fromInteger (truncate d)
-
-toUint32 :: Double -> Word32
-toUint32 d
-  | isNaN d || isInfinite d = 0
-  | otherwise = fromInteger (truncate d)
-
-jsBit2 :: (Int32 -> Int32 -> Int32) -> Double -> Double -> Double
-jsBit2 f a b = fromIntegral (f (toInt32 a) (toInt32 b))
-
-jsShl, jsShr, jsUShr :: Double -> Double -> Double
-jsShl a b = fromIntegral (shiftL (toInt32 a) (fromIntegral (toUint32 b .&. 31)))
-jsShr a b = fromIntegral (shiftR (toInt32 a) (fromIntegral (toUint32 b .&. 31)))
-jsUShr a b = fromIntegral (shiftR (toUint32 a) (fromIntegral (toUint32 b .&. 31)))
-
--- | JS @%@ : remainder after truncating division, not Haskell @mod@.
-jsRem :: Double -> Double -> Double
-jsRem a b
-  | isNaN a || isNaN b || isInfinite a || b == 0 = 0 / 0
-  | isInfinite b = a
-  | otherwise = a - b * fromInteger (truncate (a / b))
 
 remE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 remE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
@@ -1167,133 +1136,6 @@ instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) wh
   asinh = expr1 FixAsinh
   acosh = expr1 FixAcosh
   atanh = expr1 FixAtanh
-
--- | Compile-time folds for common EDSL shapes. Match the JS optimizer
--- on literal-literal cases only. No @x+0@ / @x*1@ identities: IEEE
--- @-0@ makes those unsound. @&&@ / @||@ may drop an Expr arm because
--- 'Expr' is pure (the optimizer also does this).
-{-# RULES
-"jshark/plus/lit"
-  forall x y.
-    plusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (x + y))
-"jshark/times/lit"
-  forall x y.
-    timesE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (x * y))
-"jshark/minus/lit"
-  forall x y.
-    minusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (x - y))
-"jshark/div/lit"
-  forall x y.
-    fracDivE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (x / y))
-"jshark/negate/lit"
-  forall x.
-    negateE (Literal (ValueNumber x)) =
-      Literal (ValueNumber (negate x))
-"jshark/and/false-l"
-  forall y.
-    andE (Literal (ValueBool False)) y =
-      Literal (ValueBool False)
-"jshark/and/true-l"
-  forall y.
-    andE (Literal (ValueBool True)) y = y
-"jshark/and/true-r"
-  forall x.
-    andE x (Literal (ValueBool True)) = x
-"jshark/and/false-r"
-  forall x.
-    andE x (Literal (ValueBool False)) =
-      Literal (ValueBool False)
-"jshark/or/true-l"
-  forall y.
-    orE (Literal (ValueBool True)) y =
-      Literal (ValueBool True)
-"jshark/or/false-l"
-  forall y.
-    orE (Literal (ValueBool False)) y = y
-"jshark/or/false-r"
-  forall x.
-    orE x (Literal (ValueBool False)) = x
-"jshark/or/true-r"
-  forall x.
-    orE x (Literal (ValueBool True)) =
-      Literal (ValueBool True)
-"jshark/concat/lit"
-  forall x y.
-    concatE (Literal (ValueString x)) (Literal (ValueString y)) =
-      Literal (ValueString (x <> y))
-"jshark/eq/num"
-  forall x y.
-    mkEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueBool (x == y))
-"jshark/eq/bool"
-  forall x y.
-    mkEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
-      Literal (ValueBool (x == y))
-"jshark/eq/str"
-  forall x y.
-    mkEq (Literal (ValueString x)) (Literal (ValueString y)) =
-      Literal (ValueBool (x == y))
-"jshark/neq/num"
-  forall x y.
-    mkNEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueBool (x /= y))
-"jshark/neq/bool"
-  forall x y.
-    mkNEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
-      Literal (ValueBool (x /= y))
-"jshark/neq/str"
-  forall x y.
-    mkNEq (Literal (ValueString x)) (Literal (ValueString y)) =
-      Literal (ValueBool (x /= y))
-"jshark/gt/num"
-  forall x y.
-    mkGTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueBool (x > y))
-"jshark/lt/num"
-  forall x y.
-    mkLTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueBool (x < y))
-"jshark/gte/num"
-  forall x y.
-    mkGTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueBool (x >= y))
-"jshark/lte/num"
-  forall x y.
-    mkLTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueBool (x <= y))
-"jshark/rem/lit"
-  forall x y.
-    remE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsRem x y))
-"jshark/bitand/lit"
-  forall x y.
-    bitAndE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsBit2 (.&.) x y))
-"jshark/bitor/lit"
-  forall x y.
-    bitOrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsBit2 (.|.) x y))
-"jshark/bitxor/lit"
-  forall x y.
-    bitXorE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsBit2 xor x y))
-"jshark/shl/lit"
-  forall x y.
-    shlE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsShl x y))
-"jshark/shr/lit"
-  forall x y.
-    shrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsShr x y))
-"jshark/ushr/lit"
-  forall x y.
-    ushrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-      Literal (ValueNumber (jsUShr x y))
-  #-}
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).

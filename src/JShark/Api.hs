@@ -859,7 +859,9 @@ done = toSyntax noOp
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenS (Literal (ValueBool True)) body = body
 whenS (Literal (ValueBool False)) _ = done
-whenS c body = toSyntax $ when_ (expr c) (stmts body)
+-- Same as 'ifS': do not route through 'when_' / 'discard'. 'discard'
+-- under a constant-folded 'IfE' can drop impure FFI preludes.
+whenS c body = toSyntax $ IfE (expr c) (stmts body) noOp
 {-# INLINE [1] whenS #-}
 
 ifS ::
@@ -971,32 +973,3 @@ hvm2LoadWasmFFI =
     ++ "const{instance:i}=await WebAssembly.instantiate(b,{});"
     ++ "globalThis.__jsharkHvm2={exports:i.exports}"
     ++ "})()"
-
--- | Constant-condition control. Safe for 'ifS' / 'whenS': the dropped
--- arm never runs, so no 'discard' wrap is introduced.
-{-# RULES
-"jshark/if/true"
-  forall t e.
-    if_ (Literal (ValueBool True)) t e = t
-"jshark/if/false"
-  forall t e.
-    if_ (Literal (ValueBool False)) t e = e
-"jshark/ifS/true"
-  forall t e.
-    ifS (Literal (ValueBool True)) t e = t
-"jshark/ifS/false"
-  forall t e.
-    ifS (Literal (ValueBool False)) t e = e
-"jshark/whenS/true"
-  forall body.
-    whenS (Literal (ValueBool True)) body = body
-"jshark/whenS/false"
-  forall body.
-    whenS (Literal (ValueBool False)) body = done
-"jshark/let/lit"
-  forall v f.
-    let_ (Literal v) f = f (Literal v)
-"jshark/let/var"
-  forall x f.
-    let_ (Var x) f = f (Var x)
-  #-}

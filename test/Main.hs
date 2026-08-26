@@ -186,6 +186,13 @@ rewriteRuleTests =
         case bool False .|| bool True of
           Literal (ValueBool b) -> b @?= True
           _ -> assertFailure "jshark/or"
+    , testCase "and/or keep an impure left" $ do
+        case (Json.stringify (number 1) .== string "1") .&& false_ of
+          And _ (Literal (ValueBool False)) -> pure ()
+          _ -> assertFailure "andE dropped impure left"
+        case (Json.stringify (number 1) .== string "1") .|| true_ of
+          Or _ (Literal (ValueBool True)) -> pure ()
+          _ -> assertFailure "orE dropped impure left"
     , testCase "eq/ord fold number literals" $ do
         case number 1 .== number 1 of
           Literal (ValueBool b) -> b @?= True
@@ -207,6 +214,12 @@ rewriteRuleTests =
         case shl (number 23) (number 8) of
           Literal (ValueNumber n) -> n @?= 5888
           _ -> assertFailure "jshark/shl/lit"
+        case rem_ (number (-10)) (number 3) of
+          Literal (ValueNumber n) -> n @?= -1
+          _ -> assertFailure "jshark/rem/neg"
+        case ushr (number (-1)) (number 0) of
+          Literal (ValueNumber n) -> n @?= 4294967295
+          _ -> assertFailure "jshark/ushr/lit"
     , testCase "let_ of a literal betas" $
         case let_ (number 1) (\x -> x + x) of
           Literal (ValueNumber n) -> n @?= 2
@@ -1753,6 +1766,16 @@ optimizeTests =
     , testCase "unused stringify is kept (can throw)" $
         renderJS (pureAST (let_ (Json.stringify (number 1)) (\_ -> number 2)))
           @?= "JSON.stringify(1.0);\n2.0"
+    , testCase "impure && false keeps stringify" $
+        T.isInfixOf
+          "JSON.stringify"
+          (renderJS (pureAST ((Json.stringify (number 1) .== string "1") .&& false_)))
+          @?= True
+    , testCase "impure || true keeps stringify" $
+        T.isInfixOf
+          "JSON.stringify"
+          (renderJS (pureAST ((Json.stringify (number 1) .== string "1") .|| true_)))
+          @?= True
     , testCase "optionCase of a Literal ValueOption folds" $
         renderJS
           ( pureAST

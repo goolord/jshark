@@ -173,6 +173,7 @@ import JShark.Prim
   , matchMathUnary
   )
 import qualified JShark.Prim as Prim
+import JShark.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Rec
 import JShark.Types
 import JShark.Emit
@@ -3245,7 +3246,7 @@ foldAnd x y = case (x, y) of
   (Literal (ValueBool True), y') -> y'
   (_, Literal (ValueBool True)) -> x
   (x', Literal (ValueBool False)) | isPureExpr x' -> Literal (ValueBool False)
-  _ -> And x y
+  _ -> Std (Kernel (KAnd x y))
 
 foldOr :: Expr Stamp 'Bool -> Expr Stamp 'Bool -> Expr Stamp 'Bool
 foldOr x y = case (x, y) of
@@ -3253,7 +3254,7 @@ foldOr x y = case (x, y) of
   (Literal (ValueBool False), y') -> y'
   (_, Literal (ValueBool False)) -> x
   (x', Literal (ValueBool True)) | isPureExpr x' -> Literal (ValueBool True)
-  _ -> Or x y
+  _ -> Std (Kernel (KOr x y))
 
 foldCmp ::
   (Value u -> Value u -> Bool)
