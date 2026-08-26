@@ -255,6 +255,7 @@ test-suite jshark-test
     LucidTests
     ExampleTests
     LifeTests
+    PerfTests
     Hvm2Tests
   hs-source-dirs:
     test

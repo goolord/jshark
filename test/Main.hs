@@ -43,6 +43,7 @@ import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
 import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
+import PerfTests (perfTests)
 import LucidTests (lucidDomTests)
 import Support
 import System.Directory
@@ -80,6 +81,7 @@ tests =
     -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
     -- , exampleTests
     , lifeTests
+    , perfTests
     , hvm2Tests
     , catalogTests
     ]
