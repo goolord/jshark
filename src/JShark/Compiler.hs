@@ -65,7 +65,6 @@ import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import Data.Char (isAlphaNum, isSpace)
-import Data.Foldable (foldl')
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
