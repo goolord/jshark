@@ -111,6 +111,7 @@ module JShark
   , nodeCountExpr
   , nodeCountEff
   , closedEffectNodes
+  , closedExprNodes
   , optIrLargeThreshold
   , optimizedExprSize
   , optimizedEffectSize
@@ -161,8 +162,16 @@ import Data.Typeable (Typeable, eqT, type (:~:) (..))
 import qualified Data.Vector as V
 import Data.Word (Word32)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
+import GHC.IO.Unsafe (unsafePerformIO)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
+import JShark.CompileProgress
+  ( EmitCtx
+  , captureEmitCtx
+  , initEmitCtxTotal
+  , reportPackPhase
+  , tickEmitCtx
+  )
 import JShark.Emit
   ( JS
   , blockBody
@@ -1080,7 +1089,9 @@ renderWithHelpers s code = helperDecls s $$ renderCode code
 
 -- | Pure expression compiled to a self-contained JS program (IIFE).
 pureProgram :: ClosedExpr u -> JS
-pureProgram e = uncurry renderIIFE (pureAST' startCG IM.empty (optimize e))
+pureProgram e =
+  let !(s0, expr) = unsafePerformIO (preparePureProgram e)
+   in uncurry renderIIFE (pureAST' s0 IM.empty expr)
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: ClosedEffect u -> JS
@@ -1088,7 +1099,8 @@ effectfulProgram e
   | closedEffectNodes e >= optIrLargeThreshold =
       uncurry renderIIFE (flatEffectfulCodegen e)
   | otherwise =
-      uncurry renderIIFE (effectfulAST' IM.empty startCG (optimizeEffectTree e))
+      let !(s0, eff) = unsafePerformIO (prepareEffectProgram e)
+       in uncurry renderIIFE (effectfulAST' IM.empty s0 eff)
 
 codesDecls :: [Code] -> JS
 codesDecls cs = vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
@@ -1114,10 +1126,78 @@ data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
   , cgHelpers :: !(M.Map Text Text)
+  , cgEmit :: {-# UNPACK #-} !Int
+  , cgEmitCtx :: !(Maybe EmitCtx)
   }
 
 startCG :: CG
-startCG = CG 0 (-3) M.empty
+startCG = CG 0 (-3) M.empty 0 Nothing
+
+-- | Prepare optimized pure AST and wire batch progress (pack then emit).
+-- Requires 'withActiveJob' + 'configProgressSlot' when progress is enabled.
+preparePureProgram :: ClosedExpr u -> IO (CG, Expr Stamp u)
+preparePureProgram e = do
+  mCtx <- captureEmitCtx
+  case mCtx of
+    Nothing -> pure (startCG, optimize e)
+    Just ctx -> do
+      reportPackPhase ctx 0 1
+      let !expr = optimize e
+      reportPackPhase ctx 1 1
+      initEmitCtxTotal ctx (nodeCountExpr expr)
+      pure (startCG {cgEmitCtx = Just ctx}, expr)
+{-# NOINLINE preparePureProgram #-}
+
+-- | Prepare optimized effect AST and wire batch progress (pack then emit).
+prepareEffectProgram :: ClosedEffect u -> IO (CG, Effect Stamp u)
+prepareEffectProgram e = do
+  mCtx <- captureEmitCtx
+  case mCtx of
+    Nothing -> pure (startCG, optimizeEffectTree e)
+    Just ctx -> do
+      reportPackPhase ctx 0 1
+      let !eff = optimizeEffectTree e
+      reportPackPhase ctx 1 1
+      initEmitCtxTotal ctx (nodeCountEff eff)
+      pure (startCG {cgEmitCtx = Just ctx}, eff)
+{-# NOINLINE prepareEffectProgram #-}
+
+-- | Lower, pack, and optimize flat IR; report pack sub-steps then emit total.
+prepareFlatEffectProgram :: ClosedEffect u -> IO (Flat.FlatProgram, CG)
+prepareFlatEffectProgram e = do
+  mCtx <- captureEmitCtx
+  let packFlat ir = FlatSoA.optimizeFlatProgram (Flat.packEffectProgram ir)
+  case mCtx of
+    Nothing -> pure (packFlat (irEffectFromClosed e), startCG)
+    Just ctx -> do
+      reportPackPhase ctx 0 3
+      let !ir = irEffectFromClosed e
+      reportPackPhase ctx 1 3
+      let !packed = Flat.packEffectProgram ir
+      reportPackPhase ctx 2 3
+      let !prog = FlatSoA.optimizeFlatProgram packed
+      reportPackPhase ctx 3 3
+      initEmitCtxTotal ctx (flatProgramNodeCount prog)
+      pure (prog, startCG {cgEmitCtx = Just ctx})
+{-# NOINLINE prepareFlatEffectProgram #-}
+
+{-# NOINLINE tickEmitCtxUnit #-}
+tickEmitCtxUnit :: EmitCtx -> Int -> ()
+tickEmitCtxUnit ctx tag = unsafePerformIO (tag `seq` tickEmitCtx ctx)
+
+bumpEmit :: CG -> (Int, CG)
+bumpEmit s =
+  let n = cgEmit s + 1
+   in (n, s {cgEmit = n})
+
+bumpEmitTick :: CG -> CG
+bumpEmitTick sIn =
+  case cgEmitCtx sIn of
+    Nothing -> sIn
+    Just ctx ->
+      let (tag, s0) = bumpEmit sIn
+       in tag `seq` tickEmitCtxUnit ctx tag `seq` s0
+{-# NOINLINE bumpEmitTick #-}
 
 allocTag :: CG -> (Int, CG)
 allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
@@ -1405,6 +1485,14 @@ closedEffectNodes (e :: ClosedEffect u) =
    in
     Ir.irMetaSize (Ir.metaIrEffect ir)
 {-# NOINLINE closedEffectNodes #-}
+
+closedExprNodes :: ClosedExpr u -> Int
+closedExprNodes (e :: ClosedExpr u) =
+  let
+    (_, ir) = lowerExprAt (-2) (flattenExpr (optimize e))
+   in
+    Ir.irMetaSize (Ir.metaIrExpr ir)
+{-# NOINLINE closedExprNodes #-}
 
 cheapExpr :: Expr Stamp u -> Bool
 cheapExpr = \case
@@ -4943,7 +5031,9 @@ flatPureAST' ::
   -> Flat.FlatProgram
   -> Flat.NodeId
   -> (CG, Code)
-flatPureAST' !env !s0 prog nid =
+flatPureAST' !env !sIn prog nid =
+  let s0 = bumpEmitTick sIn
+   in
   case Flat.flatNode prog nid of
     Flat.FE_Literal li ->
       flatRenderLiteral env s0 (Flat.flatLitValue prog li)
@@ -5098,7 +5188,9 @@ flatEffectfulAST' ::
   -> Flat.FlatProgram
   -> Flat.NodeId
   -> (CG, Code)
-flatEffectfulAST' !env !s0 prog nid =
+flatEffectfulAST' !env !sIn prog nid =
+  let s0 = bumpEmitTick sIn
+   in
   case Flat.flatNode prog nid of
     Flat.FX_Lift eId -> flatPureAST' env s0 prog eId
     Flat.FX_FFI fi ai ->
@@ -5302,13 +5394,14 @@ flatEffectfulCodegen ::
   ClosedEffect u -> (CG, Code)
 flatEffectfulCodegen (e :: ClosedEffect u) =
   let
-    prog =
-      FlatSoA.optimizeFlatProgram (Flat.packEffectProgram (irEffectFromClosed e))
+    !(prog, s0) = unsafePerformIO (prepareFlatEffectProgram e)
     root = Flat.fpRootEffect prog
+    total = flatProgramNodeCount prog
    in
-    if root < 0 || root >= flatProgramNodeCount prog
+    if root < 0 || root >= total
       then error "JShark.flatEffectfulCodegen: invalid root node"
-      else flatEffectfulAST' IM.empty startCG prog root
+      else flatEffectfulAST' IM.empty s0 prog root
+{-# NOINLINE flatEffectfulCodegen #-}
 
 effectfulASTFromFlat :: ClosedEffect u -> JS
 effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
@@ -5539,7 +5632,10 @@ isWholeParenthesized t =
       Just (_, rest) -> parenBalanced rest depth
 
 effectfulAST' :: forall v. Env -> CG -> Effect Stamp v -> (CG, Code)
-effectfulAST' !env !s0 = \case
+effectfulAST' !env !sIn eff =
+  let s0 = bumpEmitTick sIn
+   in
+  case eff of
   Lift x -> pureAST' s0 env x
   FFI fn args ->
     let
@@ -5751,7 +5847,10 @@ pureAST' ::
   -> Env
   -> Expr Stamp v
   -> (CG, Code)
-pureAST' !s0 env = \case
+pureAST' !sIn env expr =
+  let s0 = bumpEmitTick sIn
+   in
+  case expr of
   Literal v -> case v of
     ValueNumber d -> (s0, Code mempty (jsDouble d))
     ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))

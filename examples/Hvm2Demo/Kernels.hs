@@ -8,6 +8,8 @@ module Kernels
   , blockPx
   , maxIter
   , zoomRate
+  , zoomReferenceMs
+  , minScale
   , initialCenterRe
   , initialCenterIm
   , initialScale
@@ -32,9 +34,14 @@ maxIter = 64
 
 zoomRate, initialCenterRe, initialCenterIm, initialScale :: Double
 zoomRate = 0.988
-initialCenterRe = -0.74546
-initialCenterIm = 0.11303
+initialCenterRe = -0.745429
+initialCenterIm = 0.113062
 initialScale = 2.4
+
+-- | @zoomRate@ is applied per this many ms (~60 Hz reference).
+zoomReferenceMs, minScale :: Double
+zoomReferenceMs = 1000 / 60
+minScale = 1e-7
 
 escapeR2 :: Expr f 'Number
 escapeR2 = number 4

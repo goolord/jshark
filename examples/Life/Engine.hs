@@ -596,8 +596,9 @@ resizeWorld state viewport w h = do
   _ <- setProp viewport "zoom" (number 1)
   _ <- setProp viewport "panX" (number (canvasW / 2) - cx * px)
   _ <- setProp viewport "panY" (number (canvasH / 2) - cy * px)
+  _ <- setProp viewport "renderPanValid" false_
+  _ <- setProp viewport "onionSkip" (number 2)
   markSceneDirty state
-  setProp viewport "renderPanValid" false_
 
 togglePause :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 togglePause state = do

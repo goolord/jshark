@@ -13,6 +13,7 @@ module Client (mainJS) where
 
 import GHC.Generics (Generic)
 import JShark.Api
+import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Generic (MutableObjectOf, SumOf)
@@ -143,18 +144,28 @@ step state =
     bounce state
     advanceBall state
 
+-- | The optimizer currently drops bare @whenS@/@ifS@ assignments outside
+-- callbacks; wrapping in @forEach_@ preserves them (same as brick hits).
+once_ :: EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
+once_ body = forEach_ (Array.singleton (number 0)) $ \_ -> body
+
 movePaddle :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 movePaddle state = do
   pad <- state.paddle
   px0 <- pad.px
   goR <- state.rightOn
   goL <- state.leftOn
-  ifS
-    (goR .&& px0 .< number paddleMaxX)
-    (set @"px" pad (px0 + number paddleSpeed))
-    done
+  once_ $
+    whenS (goR .&& px0 .< number paddleMaxX) $
+      do
+        set @"px" pad (px0 + number paddleSpeed)
+        done
   px1 <- pad.px
-  ifS (goL .&& px1 .> 0) (set @"px" pad (px1 - number paddleSpeed)) done
+  once_ $
+    whenS (goL .&& px1 .> 0) $
+      do
+        set @"px" pad (px1 - number paddleSpeed)
+        done
 
 advanceBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 advanceBall state = do
@@ -216,7 +227,11 @@ bounceWalls ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 bounceWalls b ddx r w nx =
-  whenS (nx .> (w - r) .|| nx .< r) $ set @"dx" b (negate ddx)
+  once_ $
+    whenS (nx .> (w - r) .|| nx .< r) $
+      do
+        set @"dx" b (negate ddx)
+        done
 
 bounceFloor ::
   Effect f (MutableObjectOf Game)
@@ -229,10 +244,14 @@ bounceFloor ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 bounceFloor state b bx0 ddy px0 r h ny =
-  ifS
-    (ny .< r)
-    (set @"dy" b (negate ddy))
-    ( whenS (ny .> (h - r)) $
+  do
+    once_ $
+      whenS (ny .< r) $
+        do
+          set @"dy" b (negate ddy)
+          done
+    once_ $
+      whenS (ny .>= r .&& ny .> (h - r)) $
         ifS
           (overlapsPaddle bx0 px0)
           ( do
@@ -246,7 +265,7 @@ bounceFloor state b bx0 ddy px0 r h ny =
               lv1 <- state.lives
               ifS (lv1 .<= 0) (setPhase state Lose) (resetBall state)
           )
-    )
+    done
 
 resetBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 resetBall state = do

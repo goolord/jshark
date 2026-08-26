@@ -74,7 +74,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
             toHtml (show blockPx)
             " px blocks, "
             toHtml (show maxIter)
-            " iters, one grid sample per frame. fps is smoothed. bench times the kernel."
+            " iters. WASM = native C from shims.c; JS = same loop in mandelJsSource. Bench isolates kernel cost."
     footer_ [class_ "info"] $
       p_ $ do
         "wasm: "

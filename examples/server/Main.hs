@@ -8,7 +8,8 @@ import DevServer (Example (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
 import JShark.Compiler
   ( applyCompilerArgs
-  , compileEffects
+  , compileEffectsLabeled
+  , defaultCompilerConfig
   , isCompilerFlag
   , readableConfig
   )
@@ -25,15 +26,23 @@ main = do
   args <- getArgs
   let
     (flags, cmd) = partition isCompilerFlag args
-    cfg = applyCompilerArgs flags readableConfig
+    progressFlags = "--progress" : flags
+  [breakoutSrc, todoSrc, synthSrc, hvm2Src] <-
+    compileEffectsLabeled
+      (applyCompilerArgs progressFlags readableConfig)
+      [ ("breakout (source)", fromSyntax Breakout.mainJS)
+      , ("todo-mvc (source)", fromSyntax TodoMvc.mainJS)
+      , ("synth (source)", fromSyntax Synth.mainJS)
+      , ("hvm2-demo (source)", fromSyntax Hvm2Demo.mainJS)
+      ]
   [breakoutJs, todoJs, synthJs, lifeJs, hvm2Js] <-
-    compileEffects
-      cfg
-      [ fromSyntax Breakout.mainJS
-      , fromSyntax TodoMvc.mainJS
-      , fromSyntax Synth.mainJS
-      , fromSyntax Life.mainJS
-      , fromSyntax Hvm2Demo.mainJS
+    compileEffectsLabeled
+      (applyCompilerArgs progressFlags defaultCompilerConfig)
+      [ ("breakout", fromSyntax Breakout.mainJS)
+      , ("todo-mvc", fromSyntax TodoMvc.mainJS)
+      , ("synth", fromSyntax Synth.mainJS)
+      , ("life", fromSyntax Life.mainJS)
+      , ("hvm2-demo", fromSyntax Hvm2Demo.mainJS)
       ]
   let
     examples =
@@ -41,23 +50,38 @@ main = do
           "breakout"
           "Breakout"
           ( \script static ->
-              Breakout.page static (sourceHead static) (sourcePane static breakoutJs) script
+              Breakout.page
+                static
+                (sourceHead static)
+                (sourcePane static breakoutSrc)
+                script
           )
           breakoutJs
+          (Just breakoutSrc)
       , Example
           "todo-mvc"
           "TodoMVC"
           ( \script static ->
-              TodoMvc.page static (sourceHead static) (sourcePane static todoJs) script
+              TodoMvc.page
+                static
+                (sourceHead static)
+                (sourcePane static todoSrc)
+                script
           )
           todoJs
+          (Just todoSrc)
       , Example
           "synth"
           "Synthesizer"
           ( \script static ->
-              Synth.page static (sourceHead static) (sourcePane static synthJs) script
+              Synth.page
+                static
+                (sourceHead static)
+                (sourcePane static synthSrc)
+                script
           )
           synthJs
+          (Just synthSrc)
       , Example
           "life"
           "Game of Life"
@@ -65,6 +89,7 @@ main = do
               Life.page static script (Life.frameSrcFor script)
           )
           lifeJs
+          Nothing
       , Example
           "hvm2-demo"
           "HVM2 Lab"
@@ -72,10 +97,11 @@ main = do
               Hvm2Demo.page
                 static
                 (sourceHead static)
-                (sourcePane static hvm2Js)
+                (sourcePane static hvm2Src)
                 script
           )
           hvm2Js
+          (Just hvm2Src)
       ]
   case cmd of
     [] ->
@@ -83,4 +109,4 @@ main = do
     ["export", dest] -> exportExamples dest examples
     _ ->
       die
-        "usage: examples [--warn-hvm2-candidates] | examples [--warn-hvm2-candidates] export DIR"
+        "usage: examples [--progress] [--warn-hvm2-candidates] | examples [--progress] [--warn-hvm2-candidates] export DIR"

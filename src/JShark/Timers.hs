@@ -9,6 +9,7 @@ module JShark.Timers
   , clearInterval
   , requestAnimationFrame
   , foreverFrame
+  , foreverTick
   )
 where
 
@@ -75,5 +76,32 @@ foreverFrame tick =
       ( \frame ->
           stmts $ do
             void (requestAnimationFrame $ \t0 -> stmts (toSyntax (ApplyE frame (Lift t0))))
+            done
+      )
+
+-- | Uncapped loop via @setTimeout(..., 0)@. Callback receives @performance.now()@.
+foreverTick ::
+  (Expr f 'Number -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
+foreverTick tick =
+  toSyntax $
+    bindRec
+      ( \loop ->
+          LambdaE $ \_ ->
+            stmts $ do
+              void $
+                setTimeout
+                  ( \u ->
+                      stmts $ do
+                        now <- bindExpr $ ffi "performance.now" RecNil
+                        void (tick now)
+                        void (toSyntax (ApplyE loop (Lift u)))
+                        done
+                  )
+                  (number 0)
+              done
+      )
+      ( \loop ->
+          stmts $ do
+            void (toSyntax (ApplyE loop noOp))
             done
       )

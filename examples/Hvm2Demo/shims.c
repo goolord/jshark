@@ -31,3 +31,9 @@ static jshark_hvm2_i64 mandel_iter(double cr, double ci) {
 jshark_hvm2_i64 mandel(jshark_hvm2_i64 cr_i, jshark_hvm2_i64 ci_i) {
   return mandel_iter(i64_to_f64(cr_i), i64_to_f64(ci_i));
 }
+
+/* Browser-fast path: f64 args avoid BigInt per sample (see Client sampleGrid). */
+__attribute__((export_name("mandel_f64")))
+double mandel_f64(double cr, double ci) {
+  return (double)mandel_iter(cr, ci);
+}

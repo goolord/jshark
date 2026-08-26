@@ -45,8 +45,10 @@ module JShark.Compiler
   , compileTerser
   , compileEffect
   , compileEffects
+  , compileEffectsLabeled
   , compilePure
   , compilePures
+  , compilePuresLabeled
   , prettyJS
 
     -- * Cache
@@ -59,12 +61,13 @@ module JShark.Compiler
 where
 
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Exception (IOException, SomeException, catch, evaluate, throwIO)
-import Control.Monad (guard, when)
+import Control.Exception (IOException, SomeException, catch, evaluate, finally, throwIO)
+import Control.Monad (guard, unless, when)
+import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
-import Data.Char (isAlphaNum, isSpace)
+import Data.Char (chr, isAlphaNum, isSpace)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -81,7 +84,11 @@ import JShark
   )
 import JShark.Emit (JS, renderJS)
 import JShark.Hvm2Lint (warnHvm2CandidatesEffect, warnHvm2CandidatesExpr)
-import Numeric (showHex)
+import qualified JShark.CompileProgress as CP
+import Data.List (sortOn)
+import qualified Data.Vector as V
+import Numeric (showFFloat, showHex)
+import System.CPUTime (getCPUTime)
 import System.Directory
   ( createDirectoryIfMissing
   , doesFileExist
@@ -92,7 +99,15 @@ import System.Directory
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
-import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
+import System.IO
+  ( hClose
+  , hFlush
+  , hIsTerminalDevice
+  , hPutStr
+  , hPutStrLn
+  , openBinaryTempFile
+  , stderr
+  )
 import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
 import qualified TextBuilder as TB
@@ -190,21 +205,32 @@ data CompilerConfig = CompilerConfig
   --     set this to 'False'.
   , configStyle :: OutputStyle
   , configWarnHvm2Candidates :: Bool
+  , configProgress :: Bool
+  -- ^ Print a terminal progress bar for batch compiles and elapsed time when
+  --     done. Off by default so tests stay quiet.
+  , configQuiet :: Bool
+  -- ^ Suppress non-fatal compiler stderr (for example minifier fallback
+  --     notices) from concurrent batch workers.
+  , configProgressSlot :: Maybe Int
+  -- ^ Active job index for sub-progress reporting during batch compiles.
   }
   deriving (Show, Eq, Ord)
 
 -- | Auto backend, minified output, no in-process cache, fall back to the
 -- unminified source if no minifier is installed (or if it crashes).
 defaultCompilerConfig :: CompilerConfig
-defaultCompilerConfig = CompilerConfig Auto NoCache True Minified False
+defaultCompilerConfig =
+  CompilerConfig Auto NoCache True Minified False False False Nothing
 
 -- | Skip minification entirely. Useful in tests of the IIFE wrapper.
 passthroughConfig :: CompilerConfig
-passthroughConfig = CompilerConfig Passthrough NoCache False Minified False
+passthroughConfig =
+  CompilerConfig Passthrough NoCache False Minified False False False Nothing
 
 -- | Human-readable JS: assignment elimination, no minifier, no IIFE.
 readableConfig :: CompilerConfig
-readableConfig = CompilerConfig Passthrough NoCache False Readable False
+readableConfig =
+  CompilerConfig Passthrough NoCache False Readable False False False Nothing
 
 cacheFormatVersion :: Text
 cacheFormatVersion = "jshark-minify-2"
@@ -252,7 +278,9 @@ compileWith cfg source = do
     Right out -> pure out
     Left err
       | configFallback cfg -> do
-          hPutStrLn stderr ("JShark.Compiler: " ++ err ++ "; using unminified source")
+          unless (configQuiet cfg) $
+            CP.withProgressIO $
+              hPutStrLn stderr ("JShark.Compiler: " ++ err ++ "; using unminified source")
           pure source
       | otherwise ->
           throwIO (userError ("JShark.Compiler: compilation failed: " ++ err))
@@ -353,19 +381,40 @@ compileClosure lvl =
         False
         Minified
         False
+        False
+        False
+        Nothing
     )
 
 -- | Minify with esbuild. Throws if esbuild is missing or fails.
 compileEsbuild :: Text -> IO Text
 compileEsbuild =
   compileWith
-    (CompilerConfig (Esbuild defaultEsbuildConfig) MemoryCache False Minified False)
+    ( CompilerConfig
+        (Esbuild defaultEsbuildConfig)
+        MemoryCache
+        False
+        Minified
+        False
+        False
+        False
+        Nothing
+    )
 
 -- | Minify with Terser. Throws if terser is missing or fails.
 compileTerser :: Text -> IO Text
 compileTerser =
   compileWith
-    (CompilerConfig (Terser defaultTerserConfig) MemoryCache False Minified False)
+    ( CompilerConfig
+        (Terser defaultTerserConfig)
+        MemoryCache
+        False
+        Minified
+        False
+        False
+        False
+        Nothing
+    )
 
 -- | Indent generated JavaScript. Understands double/single-quoted strings
 -- (with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
@@ -470,28 +519,152 @@ compileTree cfg doc = do
   let
     !style = configStyle cfg
     !js = renderJSCompact (doc style)
+  CP.finishEmitPhase
+  let
+    report phase idx tot =
+      case configProgressSlot cfg of
+        Just slot -> CP.reportJobPhase slot phase idx tot
+        Nothing -> pure ()
+  report CP.PhaseMinify 0 1
   out <- compileWith (styleConfig cfg) js
+  report CP.PhaseMinify 1 1
   forceCompiled (finishStyle style out)
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff = do
+  start <- getCPUTime
+  let
+    report phase idx tot =
+      case configProgressSlot cfg of
+        Just slot -> CP.reportJobPhase slot phase idx tot
+        Nothing -> pure ()
+  report CP.PhaseLint 0 1
   when (configWarnHvm2Candidates cfg) (warnHvm2CandidatesEffect eff)
-  compileTree cfg (`effectDoc` eff)
+  report CP.PhaseLint 1 1
+  out <- compileTree cfg (`effectDoc` eff)
+  when (configProgress cfg) $
+    CP.withProgressIO $ do
+      end <- getCPUTime
+      style <- progressStyle
+      hPutStrLn
+        stderr
+        ( renderSingleDone style (picosecondsToSecs (end - start))
+        )
+  pure out
 
 -- | Compile a pure JShark expression. See 'compileEffect'.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
 compilePure cfg e = do
+  start <- getCPUTime
+  let
+    report phase idx tot =
+      case configProgressSlot cfg of
+        Just slot -> CP.reportJobPhase slot phase idx tot
+        Nothing -> pure ()
+  report CP.PhaseLint 0 1
   when (configWarnHvm2Candidates cfg) (warnHvm2CandidatesExpr e)
-  compileTree cfg (`pureDoc` e)
+  report CP.PhaseLint 1 1
+  out <- compileTree cfg (`pureDoc` e)
+  when (configProgress cfg) $
+    CP.withProgressIO $ do
+      end <- getCPUTime
+      style <- progressStyle
+      hPutStrLn
+        stderr
+        ( renderSingleDone style (picosecondsToSecs (end - start))
+        )
+  pure out
 
 -- | Compile many effectful programs concurrently (one capability per item).
+-- When 'configProgress' is set, prints a live progress bar and total time.
 compileEffects ::
   CompilerConfig -> [ClosedEffect u] -> IO [Text]
-compileEffects cfg = mapConcurrently (compileEffect cfg)
+compileEffects cfg effs =
+  compileEffectsLabeled cfg (zipWith numberedJob ([1 ..] :: [Int]) effs)
+ where
+  numberedJob :: Int -> ClosedEffect u -> (Text, ClosedEffect u)
+  numberedJob i eff = ("#" <> T.pack (show i), eff)
+
+-- | Like 'compileEffects' but labels each job on the progress bar.
+compileEffectsLabeled ::
+  CompilerConfig -> [(Text, ClosedEffect u)] -> IO [Text]
+compileEffectsLabeled cfg jobs = compileBatch cfg compileEffect jobs
 
 -- | Compile many pure programs concurrently. See 'compileEffects'.
 compilePures :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
-compilePures cfg = mapConcurrently (compilePure cfg)
+compilePures cfg exprs =
+  compilePuresLabeled cfg (zipWith numberedJob ([1 ..] :: [Int]) exprs)
+ where
+  numberedJob :: Int -> ClosedExpr u -> (Text, ClosedExpr u)
+  numberedJob i e = ("#" <> T.pack (show i), e)
+
+-- | Like 'compilePures' but labels each job on the progress bar.
+compilePuresLabeled ::
+  CompilerConfig -> [(Text, ClosedExpr u)] -> IO [Text]
+compilePuresLabeled cfg jobs = compileBatch cfg compilePure jobs
+
+compileBatch ::
+  CompilerConfig
+  -> (CompilerConfig -> item -> IO Text)
+  -> [(Text, item)]
+  -> IO [Text]
+compileBatch cfg compileOne jobs
+  | configProgress cfg = compileBatchProgress cfg compileOne jobs
+  | otherwise =
+      mapConcurrently (compileOne cfg . snd) jobs
+
+compileBatchProgress ::
+  CompilerConfig
+  -> (CompilerConfig -> item -> IO Text)
+  -> [(Text, item)]
+  -> IO [Text]
+compileBatchProgress cfg compileOne jobs = do
+  let
+    total = length jobs
+    -- Workers keep sub-progress via configProgressSlot; suppress duplicate
+    -- batch bar + minifier chatter with configProgress/configQuiet off.
+    quietCfg = cfg {configProgress = False, configQuiet = True}
+  start <- getCPUTime
+  board <- CP.newProgressBoard total
+  styleIO <- progressStyle
+  let cpStyle = toCompileProgressStyle styleIO
+  lineCount <- newCounter 0
+  let refresh = do
+        b <- CP.readProgressBoard board
+        prev <- readCounter lineCount
+        let
+          block = CP.renderBatchProgress cpStyle b prev
+          lineCount' =
+            1
+              + length
+                [ ()
+                | j <- V.toList (CP.pbJobs b)
+                , not (CP.jpDone j)
+                , not (T.null (CP.jpLabel j))
+                ]
+        writeCounter lineCount lineCount'
+        writeProgressLine block
+  CP.setProgressRedraw refresh
+  indexed <-
+    ( mapConcurrently
+        ( \(slot, (label, item)) -> do
+            CP.initJob board slot label
+            CP.withProgressIO refresh
+            out <-
+              CP.withActiveJob slot board $
+                compileOne (quietCfg {configProgressSlot = Just slot}) item
+            CP.markJobDone board slot
+            CP.withProgressIO refresh
+            pure (slot, out)
+        )
+        (zip ([0 ..] :: [Int]) jobs)
+    )
+      `finally` CP.clearProgressRedraw
+  end <- getCPUTime
+  CP.withProgressIO $ do
+    hPutStrLn stderr ""
+    hPutStrLn stderr (renderProgressDone styleIO total (picosecondsToSecs (end - start)))
+  pure (map snd (sortOn fst indexed))
 
 -- | Banner-before-serve only means JS is ready if this ran.
 forceCompiled :: Text -> IO Text
@@ -709,6 +882,7 @@ executeProcessRaw cmd args source =
 isCompilerFlag :: String -> Bool
 isCompilerFlag = \case
   "--warn-hvm2-candidates" -> True
+  "--progress" -> True
   _ -> False
 
 -- | Apply recognized CLI flags to a 'CompilerConfig'.
@@ -719,4 +893,81 @@ applyCompilerArgs args cfg =
 applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
 applyCompilerArg cfg = \case
   "--warn-hvm2-candidates" -> cfg {configWarnHvm2Candidates = True}
+  "--progress" -> cfg {configProgress = True}
   _ -> cfg
+
+progressClear :: String
+progressClear = "\r\ESC[2K"
+
+writeProgressLine :: String -> IO ()
+writeProgressLine line =
+  hPutStr stderr (progressClear ++ line) >> hFlush stderr
+
+data ProgressStyle = ProgressPlain | ProgressTTY
+
+toCompileProgressStyle :: ProgressStyle -> CP.ProgressStyle
+toCompileProgressStyle ProgressPlain = CP.ProgressPlain
+toCompileProgressStyle ProgressTTY = CP.ProgressTTY
+
+progressStyle :: IO ProgressStyle
+progressStyle = do
+  tty <- hIsTerminalDevice stderr
+  pure (if tty then ProgressTTY else ProgressPlain)
+
+renderProgressDone :: ProgressStyle -> Int -> Double -> String
+renderProgressDone style total secs =
+  let
+    dur = formatDuration secs
+   in
+    case style of
+      ProgressPlain ->
+        "JShark.Compiler: compiled "
+          ++ show total
+          ++ " programs in "
+          ++ dur
+      ProgressTTY ->
+        ansiGreen
+          ++ [chr 0x2713]
+          ++ " "
+          ++ ansiReset
+          ++ "JShark compiled "
+          ++ ansiBold
+          ++ show total
+          ++ ansiReset
+          ++ " programs in "
+          ++ ansiCyan
+          ++ dur
+          ++ ansiReset
+
+renderSingleDone :: ProgressStyle -> Double -> String
+renderSingleDone style secs =
+  let
+    dur = formatDuration secs
+   in
+    case style of
+      ProgressPlain ->
+        "JShark.Compiler: compiled in " ++ dur
+      ProgressTTY ->
+        ansiGreen
+          ++ [chr 0x2713]
+          ++ " "
+          ++ ansiReset
+          ++ "JShark compiled in "
+          ++ ansiCyan
+          ++ dur
+          ++ ansiReset
+
+ansiReset, ansiBold, ansiCyan, ansiGreen :: String
+ansiReset = "\ESC[0m"
+ansiBold = "\ESC[1m"
+ansiCyan = "\ESC[36m"
+ansiGreen = "\ESC[32m"
+
+picosecondsToSecs :: Integer -> Double
+picosecondsToSecs ps = fromIntegral ps / 1e12
+
+formatDuration :: Double -> String
+formatDuration s
+  | s < 0.001 = show (round (s * 1e6 :: Double) :: Integer) ++ "us"
+  | s < 1 = show (round (s * 1000 :: Double) :: Integer) ++ "ms"
+  | otherwise = showFFloat (Just 2) s "" ++ "s"

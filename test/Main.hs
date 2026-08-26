@@ -416,6 +416,11 @@ codegenTests =
           "requestAnimationFrame"
           (renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
           @?= 2
+    , testCase "foreverTick reschedules setTimeout" $
+        let js =
+              renderJS (effectfulAST (fromSyntax (Timers.foreverTick (\_ -> done))))
+         in and [T.isInfixOf needle js | needle <- ["setTimeout", "performance.now"]]
+          @?= True
     ]
 
 controlFlowTests :: TestTree
@@ -1958,7 +1963,7 @@ compilerTests =
     , testCase "memory cache returns the same payload" $ do
         clearCompilerCache
         let
-          cfg = CompilerConfig Passthrough MemoryCache False Minified False
+          cfg = CompilerConfig Passthrough MemoryCache False Minified False False False Nothing
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -1981,7 +1986,7 @@ compilerTests =
         removePathForcibly dir
         createDirectoryIfMissing True dir
         let
-          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False
+          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False False False Nothing
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -1998,7 +2003,7 @@ compilerTests =
         removePathForcibly dir
         createDirectoryIfMissing True dir
         let
-          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False
+          cfg = CompilerConfig Passthrough (DiskCache dir) False Minified False False False Nothing
         _ <- compileWith cfg "const a = 1;"
         files <- listDirectory dir
         mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
@@ -2016,7 +2021,7 @@ compilerTests =
             let
               snippet = number 1 + number 2
               raw = renderJS (pureProgram snippet)
-              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False
+              cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False False False Nothing
             out <- compilePure cfg snippet
             assertBool "non-empty" (not (T.null out))
             assertBool "minifier changed the IIFE" (out /= raw)
@@ -2032,7 +2037,7 @@ compilerTests =
           (Nothing, Nothing) -> do
             res <-
               tryCompileWith
-                (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False)
+                (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Minified False False False Nothing)
                 "1+2;"
             case res of
               Left _ -> pure ()
@@ -2052,6 +2057,9 @@ compilerTests =
                   False
                   Minified
                   False
+                  False
+                  False
+                  Nothing
             res <- tryCompileWith cfg "(() => { return 1; })();"
             case res of
               Left _ -> pure ()
@@ -2071,6 +2079,9 @@ compilerTests =
                   True
                   Minified
                   False
+                  False
+                  False
+                  Nothing
             out <- compileWith cfg src
             out @?= src
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
@@ -2092,14 +2103,14 @@ compilerTests =
         clearCompilerCache
         out <-
           compileEffect
-            (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False)
+            (CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False False False Nothing)
             fooE
         out @?= "foo()"
     , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
         clearCompilerCache
         let
           src = "const x = 1 + 2;" :: Text
-          cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False
+          cfg = CompilerConfig (Esbuild defaultEsbuildConfig) NoCache False Readable False False False Nothing
         out <- compileWith cfg src
         out @?= src
     , testCase "prettyJS breaks if/else and function bodies onto their own lines" $
