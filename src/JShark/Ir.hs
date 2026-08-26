@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeOperators #-}
+{-# OPTIONS_GHC -fspecialise-aggressively #-}
 
 -- | First-order IR for optimize + codegen. PHOAS 'Expr'/'Effect' in
 -- 'JShark.Types' stay the user-facing syntax; closed terms lower here once.
@@ -36,6 +37,7 @@ module JShark.Ir
   )
 where
 
+import Data.Foldable (foldl')
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Kind (Type)
@@ -80,6 +82,12 @@ instance Semigroup IrMeta where
 
 instance Monoid IrMeta where
   mempty = IrMeta 0 IM.empty True True
+
+-- | 'foldMap' is a lazy right fold. IrMeta merges IntMaps; a lazy
+-- accumulator builds a thunk chain of unions on every list child.
+strictFoldMap :: Monoid m => (a -> m) -> [a] -> m
+strictFoldMap f = foldl' (\ !acc x -> acc <> f x) mempty
+{-# INLINE strictFoldMap #-}
 
 irMetaSize :: IrMeta -> Int
 irMetaSize = irSize
@@ -362,6 +370,18 @@ foldIrExpr ::
   -> (forall v. IrEffect v -> m)
   -> IrExpr u
   -> m
+{-# SPECIALIZE foldIrExpr ::
+  (forall v. IrExpr v -> IrMeta)
+  -> (forall v. IrExpr v -> IrMeta)
+  -> (forall v. IrEffect v -> IrMeta)
+  -> IrExpr u
+  -> IrMeta #-}
+{-# SPECIALIZE foldIrExpr ::
+  (forall v. IrExpr v -> Any)
+  -> (forall v. IrExpr v -> Any)
+  -> (forall v. IrEffect v -> Any)
+  -> IrExpr u
+  -> Any #-}
 foldIrExpr se le sf = \case
   IrLiteral {} -> mempty
   IrVar {} -> mempty
@@ -383,7 +403,7 @@ foldIrExpr se le sf = \case
   IrMethod m -> foldIrMethod se le m
   IrFnLit b -> foldIrFnBody le b
   IrUnsafeNullable x -> se x
-  IrFrozenLit fs -> foldMap (foldIrFieldLit se sf) fs
+  IrFrozenLit fs -> strictFoldMap (foldIrFieldLit se sf) fs
   IrGetField o -> se o
   IrHvm2Ref {} -> mempty
 
@@ -393,6 +413,16 @@ foldIrKernel ::
   -> (forall v. IrExpr v -> m)
   -> IrKernel u
   -> m
+{-# SPECIALIZE foldIrKernel ::
+  (forall v. IrExpr v -> IrMeta)
+  -> (forall v. IrExpr v -> IrMeta)
+  -> IrKernel u
+  -> IrMeta #-}
+{-# SPECIALIZE foldIrKernel ::
+  (forall v. IrExpr v -> Any)
+  -> (forall v. IrExpr v -> Any)
+  -> IrKernel u
+  -> Any #-}
 foldIrKernel se le = \case
   KPlus x y -> se x <> se y
   KTimes x y -> se x <> se y
@@ -426,6 +456,16 @@ foldIrMethod ::
   -> (forall v. IrExpr v -> m)
   -> IrMethod u
   -> m
+{-# SPECIALIZE foldIrMethod ::
+  (forall v. IrExpr v -> IrMeta)
+  -> (forall v. IrExpr v -> IrMeta)
+  -> IrMethod u
+  -> IrMeta #-}
+{-# SPECIALIZE foldIrMethod ::
+  (forall v. IrExpr v -> Any)
+  -> (forall v. IrExpr v -> Any)
+  -> IrMethod u
+  -> Any #-}
 foldIrMethod se le = \case
   IrMethMap x _ g -> se x <> le g
   IrMethFilter x _ g -> se x <> le g
@@ -439,6 +479,10 @@ foldIrFixedArgs ::
   (forall v. IrExpr v -> m)
   -> IrFixedArgs a b c
   -> m
+{-# SPECIALIZE foldIrFixedArgs ::
+  (forall v. IrExpr v -> IrMeta) -> IrFixedArgs a b c -> IrMeta #-}
+{-# SPECIALIZE foldIrFixedArgs ::
+  (forall v. IrExpr v -> Any) -> IrFixedArgs a b c -> Any #-}
 foldIrFixedArgs se = \case
   IrArgsU x -> se x
   IrArgsB x y -> se x <> se y
@@ -449,6 +493,10 @@ foldIrFnBody ::
   (forall v. IrExpr v -> m)
   -> IrFnBody us r
   -> m
+{-# SPECIALIZE foldIrFnBody ::
+  (forall v. IrExpr v -> IrMeta) -> IrFnBody us r -> IrMeta #-}
+{-# SPECIALIZE foldIrFnBody ::
+  (forall v. IrExpr v -> Any) -> IrFnBody us r -> Any #-}
 foldIrFnBody le = \case
   IrJfNil e -> le e
   IrJfCons _ (IrJfNil e) -> le e
@@ -472,6 +520,18 @@ foldIrEff ::
   -> (forall v. IrEffect v -> m)
   -> IrEffect u
   -> m
+{-# SPECIALIZE foldIrEff ::
+  (forall v. IrExpr v -> IrMeta)
+  -> (forall v. IrEffect v -> IrMeta)
+  -> (forall v. IrEffect v -> IrMeta)
+  -> IrEffect u
+  -> IrMeta #-}
+{-# SPECIALIZE foldIrEff ::
+  (forall v. IrExpr v -> Any)
+  -> (forall v. IrEffect v -> Any)
+  -> (forall v. IrEffect v -> Any)
+  -> IrEffect u
+  -> Any #-}
 foldIrEff se sf lf = \case
   IrLift x -> se x
   IrFFI _ args -> recFoldIrArg se sf args
@@ -491,12 +551,13 @@ foldIrEff se sf lf = \case
   IrU8Fill b v -> se b <> se v
   IrOptionCaseE o n _ s -> se o <> sf n <> sf s
   IrResultCaseE o _ e _ s -> se o <> sf e <> sf s
-  IrStringCaseE s arms d -> se s <> foldMap (\(_, e) -> sf e) arms <> sf d
+  IrStringCaseE s arms d ->
+    se s <> strictFoldMap (\(_, e) -> sf e) arms <> sf d
   IrThrow x -> se x
   IrTry a _ k -> sf a <> sf k
-  IrObjectLit fs -> foldMap (foldIrFieldLit se sf) fs
+  IrObjectLit fs -> strictFoldMap (foldIrFieldLit se sf) fs
   IrDeleteProp o k -> sf o <> se k
-  IrArrayLit es -> foldMap sf es
+  IrArrayLit es -> strictFoldMap sf es
 
 recFoldIrArg ::
   Monoid m =>
@@ -504,10 +565,21 @@ recFoldIrArg ::
   -> (forall v. IrEffect v -> m)
   -> Rec (IrArg) us
   -> m
-recFoldIrArg se sf = \case
-  RecNil -> mempty
-  RecCons (IrArgExpr x) xs -> se x <> recFoldIrArg se sf xs
-  RecCons (IrArgEffect x) xs -> sf x <> recFoldIrArg se sf xs
+{-# SPECIALIZE recFoldIrArg ::
+  (forall v. IrExpr v -> IrMeta)
+  -> (forall v. IrEffect v -> IrMeta)
+  -> Rec IrArg us
+  -> IrMeta #-}
+{-# SPECIALIZE recFoldIrArg ::
+  (forall v. IrExpr v -> Any)
+  -> (forall v. IrEffect v -> Any)
+  -> Rec IrArg us
+  -> Any #-}
+recFoldIrArg se sf = go mempty
+ where
+  go !acc RecNil = acc
+  go !acc (RecCons (IrArgExpr x) xs) = go (acc <> se x) xs
+  go !acc (RecCons (IrArgEffect x) xs) = go (acc <> sf x) xs
 
 mapIrExpr ::
   (forall v. IrExpr v -> IrExpr v)

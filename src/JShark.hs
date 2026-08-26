@@ -150,7 +150,7 @@ import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
 import Data.Int (Int32)
 import qualified Data.IntMap.Strict as IM
-import Data.List (mapAccumL)
+import Data.List (foldl', mapAccumL)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Monoid (All (..), Any (..), Sum (..))
@@ -1808,6 +1808,10 @@ mapEff ge gf = \case
 -- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
 -- use @le@. Binders are applied to @dummy@.
 -- 'Expr' has no lazy 'Effect' child; see 'foldEff' for @lf@.
+strictFoldMap :: Monoid m => (a -> m) -> [a] -> m
+strictFoldMap f = foldl' (\ !acc x -> acc <> f x) mempty
+{-# INLINE strictFoldMap #-}
+
 foldExpr ::
   forall f m u.
   Monoid m =>
@@ -1817,6 +1821,20 @@ foldExpr ::
   -> (forall v. Effect f v -> m)
   -> Expr f u
   -> m
+{-# SPECIALIZE foldExpr ::
+  (forall v. Stamp v)
+  -> (forall v. Expr Stamp v -> Sum Int)
+  -> (forall v. Expr Stamp v -> Sum Int)
+  -> (forall v. Effect Stamp v -> Sum Int)
+  -> Expr Stamp u
+  -> Sum Int #-}
+{-# SPECIALIZE foldExpr ::
+  (forall v. Stamp v)
+  -> (forall v. Expr Stamp v -> Any)
+  -> (forall v. Expr Stamp v -> Any)
+  -> (forall v. Effect Stamp v -> Any)
+  -> Expr Stamp u
+  -> Any #-}
 foldExpr dummy se le sf = \case
   Literal {} -> mempty
   Var {} -> mempty
@@ -1835,7 +1853,7 @@ foldExpr dummy se le sf = \case
   Std s -> foldStd dummy se le s
   FnLit body -> foldFnBody dummy le body
   UnsafeNullable x -> se x
-  FrozenLit fs -> foldMap (foldFieldLit se sf) fs
+  FrozenLit fs -> strictFoldMap (foldFieldLit se sf) fs
   GetField o -> se o
   Hvm2Kernel {} -> mempty
 
@@ -1921,6 +1939,20 @@ foldEff ::
   -> (forall v. Effect f v -> m)
   -> Effect f u
   -> m
+{-# SPECIALIZE foldEff ::
+  (forall v. Stamp v)
+  -> (forall v. Expr Stamp v -> Sum Int)
+  -> (forall v. Effect Stamp v -> Sum Int)
+  -> (forall v. Effect Stamp v -> Sum Int)
+  -> Effect Stamp u
+  -> Sum Int #-}
+{-# SPECIALIZE foldEff ::
+  (forall v. Stamp v)
+  -> (forall v. Expr Stamp v -> Any)
+  -> (forall v. Effect Stamp v -> Any)
+  -> (forall v. Effect Stamp v -> Any)
+  -> Effect Stamp u
+  -> Any #-}
 foldEff dummy se sf lf = \case
   Lift x -> se x
   FFI _ args -> recFold (\n a -> n <> foldArg a) mempty args
@@ -1940,12 +1972,13 @@ foldEff dummy se sf lf = \case
   U8Fill b v -> se b <> se v
   OptionCaseE o n s -> se o <> lf n <> lf (s dummy)
   ResultCaseE o e s -> se o <> lf (e dummy) <> lf (s dummy)
-  StringCaseE o arms d -> se o <> foldMap (lf . snd) arms <> lf d
+  StringCaseE o arms d ->
+    se o <> strictFoldMap (lf . snd) arms <> lf d
   Throw x -> se x
   Try a k -> sf a <> lf (k dummy)
-  ObjectLit fs -> foldMap (foldFieldLit se sf) fs
+  ObjectLit fs -> strictFoldMap (foldFieldLit se sf) fs
   DeleteProp o k -> sf o <> se k
-  ArrayLit es -> foldMap sf es
+  ArrayLit es -> strictFoldMap sf es
  where
   foldArg :: forall x. Arg f x -> m
   foldArg (ArgExpr e) = se e

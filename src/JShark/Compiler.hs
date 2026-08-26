@@ -65,6 +65,7 @@ import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import Data.Char (isAlphaNum, isSpace)
+import Data.Foldable (foldl')
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -710,7 +711,7 @@ isCompilerFlag = \case
 -- | Apply recognized CLI flags to a 'CompilerConfig'.
 applyCompilerArgs :: [String] -> CompilerConfig -> CompilerConfig
 applyCompilerArgs args cfg =
-  foldl applyCompilerArg cfg args
+  foldl' applyCompilerArg cfg args
 
 applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
 applyCompilerArg cfg = \case
