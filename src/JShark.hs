@@ -612,9 +612,9 @@ jsUint8ArrayLit ba =
 -- | Optimizer / codegen name. 'Stamp' is an untyped tag for use-counting.
 -- 'Embed' / 'EmbedEff' are typed hole fillers for bind inlining.
 data Stamp (u :: Universe) where
-  Stamp :: Int -> Stamp u
-  Embed :: Expr Stamp u -> Stamp u
-  EmbedEff :: Effect Stamp u -> Stamp u
+  Stamp :: {-# UNPACK #-} !Int -> Stamp u
+  Embed :: !(Expr Stamp u) -> Stamp u
+  EmbedEff :: !(Effect Stamp u) -> Stamp u
 
 -- | Codegen / dummy binder. Same as 'Stamp'; kept so call sites that
 -- only need a name stay readable.
@@ -949,7 +949,7 @@ foldFixed _ se _ = \case
   ArgsT x y z -> se x <> se y <> se z
 
 data Metadata = Metadata
-  { mdSize :: !Int
+  { mdSize :: {-# UNPACK #-} !Int
   , mdIsPure :: !Bool
   , mdIsCheap :: !Bool
   }
@@ -1183,23 +1183,28 @@ varStampJS env s =
       else nJS i
 
 -- | Single-pass binder probe for codegen and elim (no per-node 'IntMap').
+-- @bsMinNeg@ is 'maxBound' when no negative stamp was seen.
 data BinderScan = BinderScan
-  { bsMinNeg :: Maybe Int
-  , bsUses :: !Int
+  { bsMinNeg :: {-# UNPACK #-} !Int
+  , bsUses :: {-# UNPACK #-} !Int
   }
 
 instance Semigroup BinderScan where
   BinderScan mn u <> BinderScan mn' u' =
-    BinderScan (minMaybe mn mn') (u + u')
+    BinderScan (min mn mn') (u + u')
 
 instance Monoid BinderScan where
-  mempty = BinderScan Nothing 0
+  mempty = BinderScan maxBound 0
 
 minNegStampEff :: Effect Stamp u -> Maybe Int
-minNegStampEff e = bsMinNeg (scanMinNegEff e)
+minNegStampEff e =
+  let
+    n = bsMinNeg (scanMinNegEff e)
+   in
+    if n == maxBound then Nothing else Just n
 
 scanMinNegVar :: Int -> BinderScan
-scanMinNegVar i = BinderScan (if i < 0 then Just i else Nothing) 0
+scanMinNegVar i = BinderScan (if i < 0 then i else maxBound) 0
 
 scanMinNegExpr :: Expr Stamp u -> BinderScan
 scanMinNegExpr = \case
@@ -1249,11 +1254,6 @@ elimExprUses tag body _ =
 
 elimEffUses :: Int -> Effect Stamp v -> Metadata -> Int
 elimEffUses tag body _ = effectBindUses tag body
-
-minMaybe :: Maybe Int -> Maybe Int -> Maybe Int
-minMaybe Nothing y = y
-minMaybe x Nothing = x
-minMaybe (Just a) (Just b) = Just (min a b)
 
 probeContEff ::
   CG -> (Stamp u -> Effect Stamp v) -> (CG, Effect Stamp v, Int)
@@ -1332,11 +1332,12 @@ wrapOperand e d = if isSimple e then d else parens d
 
 -- A use under a lambda, loop, `&&`/`||` RHS, or `?:` branch is not a
 -- candidate for inlining: the binder would be re-run or skipped.
+-- Lazy positions only need zero vs nonzero; 'occurs' short-circuits.
 countLazyExpr :: Int -> Expr Stamp u -> Int
-countLazyExpr t e = if countExpr t e == 0 then 0 else 2
+countLazyExpr t e = if occursVarInExpr t e then 2 else 0
 
 countLazyEffect :: Int -> Effect Stamp u -> Int
-countLazyEffect t e = if countEffect t e == 0 then 0 else 2
+countLazyEffect t e = if occursVarInEff t e then 2 else 0
 
 countExpr :: Int -> Expr Stamp u -> Int
 countExpr t e = case e of
@@ -1362,36 +1363,28 @@ countEffect t =
       (Sum . countEffect t)
       (Sum . countLazyEffect t)
 
-newtype Occ = Occ {getOcc :: Bool}
-
-instance Semigroup Occ where
-  Occ a <> Occ b = Occ (a || b)
-
-instance Monoid Occ where
-  mempty = Occ False
-
 occursVarInExpr :: Int -> Expr Stamp u -> Bool
 occursVarInExpr t = \case
   Var (Stamp i) -> i == t
   Var (Embed e') -> occursVarInExpr t e'
   Var (EmbedEff e') -> occursVarInEff t e'
   e ->
-    getOcc $
+    getAny $
       foldExpr
         nestedDummy
-        (Occ . occursVarInExpr t)
-        (Occ . occursVarInExpr t)
-        (Occ . occursVarInEff t)
+        (Any . occursVarInExpr t)
+        (Any . occursVarInExpr t)
+        (Any . occursVarInEff t)
         e
 
 occursVarInEff :: Int -> Effect Stamp u -> Bool
 occursVarInEff t =
-  getOcc
+  getAny
     . foldEff
       nestedDummy
-      (Occ . occursVarInExpr t)
-      (Occ . occursVarInEff t)
-      (Occ . occursVarInEff t)
+      (Any . occursVarInExpr t)
+      (Any . occursVarInEff t)
+      (Any . occursVarInEff t)
 
 -- | Structural node count. Lazy children (lambda bodies, @?:@ arms,
 -- @&&@ RHS) are part of the tree, so they count: a size gate that

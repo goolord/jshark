@@ -1,9 +1,11 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | A minimal heterogeneous list (record) type, indexed by a type-level
@@ -39,7 +41,7 @@ mapRec t (RecCons x xs) = RecCons (t x) (mapRec t xs)
 mapAccumRec ::
   (forall x. s -> f x -> (s, g x)) -> s -> Rec f xs -> (s, Rec g xs)
 mapAccumRec _ s RecNil = (s, RecNil)
-mapAccumRec t s (RecCons x xs) =
+mapAccumRec t !s (RecCons x xs) =
   let
     (s1, x') = t s x
     (s2, xs') = mapAccumRec t s1 xs
@@ -48,11 +50,11 @@ mapAccumRec t s (RecCons x xs) =
 
 recFold :: (forall x. a -> f x -> a) -> a -> Rec f xs -> a
 recFold _ z RecNil = z
-recFold t z (RecCons x xs) = recFold t (t z x) xs
+recFold t !z (RecCons x xs) = recFold t (t z x) xs
 
 recCodes :: (forall x. s -> f x -> (s, a)) -> s -> Rec f xs -> (s, [a])
 recCodes _ s RecNil = (s, [])
-recCodes t s (RecCons x xs) =
+recCodes t !s (RecCons x xs) =
   let
     (s1, a) = t s x
     (s2, as) = recCodes t s1 xs

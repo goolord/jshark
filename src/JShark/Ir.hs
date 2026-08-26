@@ -1,10 +1,12 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeOperators #-}
@@ -67,15 +69,21 @@ optStep :: Int
 optStep = 2
 
 data IrMeta = IrMeta
-  { irSize :: !Int
+  { irSize :: {-# UNPACK #-} !Int
   , irFree :: !(IntMap Int)
   , irPure :: !P.Bool
   , irCheap :: !P.Bool
   }
 
+unionFree :: IntMap Int -> IntMap Int -> IntMap Int
+unionFree a b
+  | IM.null a = b
+  | IM.null b = a
+  | otherwise = IM.unionWith (+) a b
+
 instance Semigroup IrMeta where
   IrMeta s1 f1 p1 c1 <> IrMeta s2 f2 p2 c2 =
-    IrMeta (s1 + s2) (IM.unionWith (+) f1 f2) (p1 && p2) (c1 && c2)
+    IrMeta (s1 + s2) (unionFree f1 f2) (p1 && p2) (c1 && c2)
 
 instance Monoid IrMeta where
   mempty = IrMeta 0 IM.empty True True
@@ -756,7 +764,8 @@ elimIrBind mdX tag x body mdBody =
       _ -> (IrBind tag x body, nodeMeta mdX closed)
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta
-nodeMeta mdX mdY = IrMeta 1 IM.empty (irPure mdX && irPure mdY) False <> mdX <> mdY
+nodeMeta (IrMeta s1 f1 p1 _) (IrMeta s2 f2 p2 _) =
+  IrMeta (1 + s1 + s2) (unionFree f1 f2) (p1 && p2) False
 
 -- | Close a binder: its tag is no longer free above this node. Without
 -- this the free map grows to every tag in the subtree, and the union in
