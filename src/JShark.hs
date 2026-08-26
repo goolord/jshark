@@ -150,7 +150,7 @@ import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
 import Data.Int (Int32)
 import qualified Data.IntMap.Strict as IM
-import Data.List (foldl', mapAccumL)
+import Data.List (mapAccumL)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Monoid (All (..), Any (..), Sum (..))

@@ -519,6 +519,7 @@ recFoldIrArg ::
   -> (forall v. IrEffect v -> m)
   -> Rec (IrArg) us
   -> m
+{-# INLINABLE recFoldIrArg #-}
 recFoldIrArg se sf = go mempty
  where
   go :: forall vs. m -> Rec IrArg vs -> m
