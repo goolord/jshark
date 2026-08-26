@@ -101,6 +101,14 @@ module JShark.Types
   , mkLTh
   , mkGTEq
   , mkLTEq
+  , plusE
+  , timesE
+  , minusE
+  , fracDivE
+  , negateE
+  , andE
+  , orE
+  , concatE
   , EffectSyntax (..)
   , toSyntax
   , toSyntax_
@@ -780,24 +788,30 @@ instance KnownScalar 'Regex where
 
 mkEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
 mkEq x y = Std (Kernel (KEq (not (isScalarTy @a)) x y))
+{-# INLINE [1] mkEq #-}
 
 mkNEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
 mkNEq x y = Std (Kernel (KNEq (not (isScalarTy @a)) x y))
+{-# INLINE [1] mkNEq #-}
 
 -- | Compare helpers carry the 'Comparable' constraint GHC cannot attach to
 -- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
 -- separate type variables in GHC 9.14).
 mkGTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
 mkGTh x y = Std (Kernel (KGTh x y))
+{-# INLINE [1] mkGTh #-}
 
 mkLTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
 mkLTh x y = Std (Kernel (KLTh x y))
+{-# INLINE [1] mkLTh #-}
 
 mkGTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
 mkGTEq x y = Std (Kernel (KGTEq x y))
+{-# INLINE [1] mkGTEq #-}
 
 mkLTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
 mkLTEq x y = Std (Kernel (KLTEq x y))
+{-# INLINE [1] mkLTEq #-}
 
 pattern GTh x y = Std (Kernel (KGTh x y))
 
@@ -857,7 +871,7 @@ instance forall (f :: (Universe -> Type)) u. u ~ 'String => Exts.IsString (Expr 
   fromString s = Literal (Exts.fromString s)
 
 instance Semigroup (Expr f 'String) where
-  (<>) = Concat
+  (<>) = concatE
 
 instance Monoid (Expr f 'String) where
   mempty = Literal (ValueString mempty)
@@ -893,9 +907,10 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 --
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
--- * @Expr f 'Number@ — literals via 'Literal'; ops build AST nodes
---   ('Plus'/'Times'/'Std' ('Fixed …')/…) and fold later in codegen.
---   @(**)@ is @Math.pow@, not @exp (log x * y)@.
+-- * @Expr f 'Number@ — literals via 'Literal'; ops go through
+--   'plusE' / 'timesE' / … so GHC RULES can fold literal-literal
+--   cases at compile time. Remaining ops stay AST nodes and fold
+--   later in codegen. @(**)@ is @Math.pow@, not @exp (log x * y)@.
 --
 -- Prefer a signature when the hole is ambiguous. Use 'JShark.Api.number'
 -- for arbitrary runtime 'Double's (integer literals can use 'Num' directly).
@@ -918,6 +933,40 @@ liftValue1 f (ValueNumber a) = ValueNumber (f a)
 liftValue2 ::
   (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
+
+-- | Stable names for GHC RULES. @INLINE [1]@ keeps the binder through
+-- phase 2, where the rules fire; later phases unfold to the kernel.
+plusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+plusE = Plus
+{-# INLINE [1] plusE #-}
+
+timesE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+timesE = Times
+{-# INLINE [1] timesE #-}
+
+minusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+minusE = Minus
+{-# INLINE [1] minusE #-}
+
+fracDivE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+fracDivE = FracDiv
+{-# INLINE [1] fracDivE #-}
+
+negateE :: Expr f 'Number -> Expr f 'Number
+negateE = Negate
+{-# INLINE [1] negateE #-}
+
+andE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+andE = And
+{-# INLINE [1] andE #-}
+
+orE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+orE = Or
+{-# INLINE [1] orE #-}
+
+concatE :: Expr f 'String -> Expr f 'String -> Expr f 'String
+concatE = Concat
+{-# INLINE [1] concatE #-}
 
 -- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.
 -- @>>>@ stays Number-only ('UShr').
@@ -981,16 +1030,16 @@ instance Num (Expr f 'BigInt) where
   negate = bigNeg
 
 instance {-# INCOHERENT #-} forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
-  (+) = Plus
-  (*) = Times
-  (-) = Minus
+  (+) = plusE
+  (*) = timesE
+  (-) = minusE
   abs = expr1 FixAbs
   signum = expr1 FixSign
   fromInteger n = Literal (fromInteger n)
-  negate = Negate
+  negate = negateE
 
 instance forall (f :: Universe -> Type) u. u ~ 'Number => Fractional (Expr f u) where
-  (/) = FracDiv
+  (/) = fracDivE
   fromRational r = Literal (fromRational r)
 
 jsPi :: Double
@@ -1014,6 +1063,105 @@ instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) wh
   asinh = expr1 FixAsinh
   acosh = expr1 FixAcosh
   atanh = expr1 FixAtanh
+
+-- | Compile-time folds for common EDSL shapes. Match the JS optimizer
+-- on literal-literal cases only. No @x+0@ / @x*1@ identities: IEEE
+-- @-0@ makes those unsound. @&&@ / @||@ may drop an Expr arm because
+-- 'Expr' is pure (the optimizer also does this).
+{-# RULES
+"jshark/plus/lit"
+  forall x y.
+    plusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (x + y))
+"jshark/times/lit"
+  forall x y.
+    timesE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (x * y))
+"jshark/minus/lit"
+  forall x y.
+    minusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (x - y))
+"jshark/div/lit"
+  forall x y.
+    fracDivE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (x / y))
+"jshark/negate/lit"
+  forall x.
+    negateE (Literal (ValueNumber x)) =
+      Literal (ValueNumber (negate x))
+"jshark/and/false-l"
+  forall y.
+    andE (Literal (ValueBool False)) y =
+      Literal (ValueBool False)
+"jshark/and/true-l"
+  forall y.
+    andE (Literal (ValueBool True)) y = y
+"jshark/and/true-r"
+  forall x.
+    andE x (Literal (ValueBool True)) = x
+"jshark/and/false-r"
+  forall x.
+    andE x (Literal (ValueBool False)) =
+      Literal (ValueBool False)
+"jshark/or/true-l"
+  forall y.
+    orE (Literal (ValueBool True)) y =
+      Literal (ValueBool True)
+"jshark/or/false-l"
+  forall y.
+    orE (Literal (ValueBool False)) y = y
+"jshark/or/false-r"
+  forall x.
+    orE x (Literal (ValueBool False)) = x
+"jshark/or/true-r"
+  forall x.
+    orE x (Literal (ValueBool True)) =
+      Literal (ValueBool True)
+"jshark/concat/lit"
+  forall x y.
+    concatE (Literal (ValueString x)) (Literal (ValueString y)) =
+      Literal (ValueString (x <> y))
+"jshark/eq/num"
+  forall x y.
+    mkEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueBool (x == y))
+"jshark/eq/bool"
+  forall x y.
+    mkEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
+      Literal (ValueBool (x == y))
+"jshark/eq/str"
+  forall x y.
+    mkEq (Literal (ValueString x)) (Literal (ValueString y)) =
+      Literal (ValueBool (x == y))
+"jshark/neq/num"
+  forall x y.
+    mkNEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueBool (x /= y))
+"jshark/neq/bool"
+  forall x y.
+    mkNEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
+      Literal (ValueBool (x /= y))
+"jshark/neq/str"
+  forall x y.
+    mkNEq (Literal (ValueString x)) (Literal (ValueString y)) =
+      Literal (ValueBool (x /= y))
+"jshark/gt/num"
+  forall x y.
+    mkGTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueBool (x > y))
+"jshark/lt/num"
+  forall x y.
+    mkLTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueBool (x < y))
+"jshark/gte/num"
+  forall x y.
+    mkGTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueBool (x >= y))
+"jshark/lte/num"
+  forall x y.
+    mkLTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueBool (x <= y))
+  #-}
 
 -- Monadic interface to expressions based on KeyMonad
 -- (https://people.seas.harvard.edu/~pbuiras/publications/KeyMonadHaskell2016.pdf).

@@ -40,7 +40,7 @@ import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
-import JShark.Types (jsHelperValueEq)
+import JShark.Types (Expr (..), Value (..), jsHelperValueEq)
 import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
 import LucidTests (lucidDomTests)
@@ -64,6 +64,7 @@ tests =
   testGroup
     "jshark"
     [ evaluatorTests
+    , rewriteRuleTests
     , bigIntTests
     , codegenTests
     , controlFlowTests
@@ -147,6 +148,55 @@ bigIntTests =
         cached <- evaluateCached e
         case cached of
           ValueBigInt n -> n @?= evaluateBigInt e
+    ]
+
+-- | GHC RULES fold literal-literal EDSL ops at compile time of the
+-- client. These inspect the unoptimized tree; if a rule fails to fire
+-- the case falls through to an AST node and the test fails.
+rewriteRuleTests :: TestTree
+rewriteRuleTests =
+  testGroup
+    "rewrite rules"
+    [ testCase "plus folds literals" $
+        case number 1 + number 2 of
+          Literal (ValueNumber n) -> n @?= 3
+          _ -> assertFailure "jshark/plus/lit"
+    , testCase "times and minus fold literals" $ do
+        case number 3 * number 4 of
+          Literal (ValueNumber n) -> n @?= 12
+          _ -> assertFailure "jshark/times/lit"
+        case number 10 - number 3 of
+          Literal (ValueNumber n) -> n @?= 7
+          _ -> assertFailure "jshark/minus/lit"
+    , testCase "div and negate fold literals" $ do
+        case number 8 / number 2 of
+          Literal (ValueNumber n) -> n @?= 4
+          _ -> assertFailure "jshark/div/lit"
+        case negate (number 5) of
+          Literal (ValueNumber n) -> n @?= -5
+          _ -> assertFailure "jshark/negate/lit"
+    , testCase "concat folds string literals" $
+        case string "ab" <> string "cd" of
+          Literal (ValueString t) -> t @?= "abcd"
+          _ -> assertFailure "jshark/concat/lit"
+    , testCase "and/or fold boolean literals" $ do
+        case bool True .&& bool False of
+          Literal (ValueBool b) -> b @?= False
+          _ -> assertFailure "jshark/and"
+        case bool False .|| bool True of
+          Literal (ValueBool b) -> b @?= True
+          _ -> assertFailure "jshark/or"
+    , testCase "eq/ord fold number literals" $ do
+        case number 1 .== number 1 of
+          Literal (ValueBool b) -> b @?= True
+          _ -> assertFailure "jshark/eq/num"
+        case number 2 .< number 1 of
+          Literal (ValueBool b) -> b @?= False
+          _ -> assertFailure "jshark/lt/num"
+    , testCase "if_ of a literal bool picks a branch" $
+        case if_ (bool True) (number 1) (number 2) of
+          Literal (ValueNumber n) -> n @?= 1
+          _ -> assertFailure "jshark/if/true"
     ]
 
 evaluatorTests :: TestTree

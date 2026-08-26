@@ -302,6 +302,7 @@ loop0 rec body =
 
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
+{-# INLINE number #-}
 
 -- | Exact integer literal. Codegen emits @Nn@ (negatives parenthesized).
 bigInt :: Integer -> Expr f 'BigInt
@@ -309,13 +310,17 @@ bigInt = Literal . ValueBigInt
 
 bool :: Bool -> Expr f 'Bool
 bool = Literal . ValueBool
+{-# INLINE bool #-}
 
 true_, false_ :: Expr f 'Bool
 true_ = bool True
 false_ = bool False
+{-# INLINE true_ #-}
+{-# INLINE false_ #-}
 
 string :: Text -> Expr f 'String
 string = Literal . ValueString
+{-# INLINE string #-}
 
 -- | @new Uint8Array([…])@ from a host 'ByteArray'. All-zero buffers codegen
 -- as @new Uint8Array(n)@; non-zero literals keep the element list.
@@ -663,6 +668,7 @@ let_ e f = Let e (\x -> f (var x))
 
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ = If
+{-# INLINE [1] if_ #-}
 
 -- | Effectful conditional. Lift an 'Expr' test with 'expr'.
 ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
@@ -847,6 +853,7 @@ done = toSyntax noOp
 
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenS c body = toSyntax $ when_ (expr c) (stmts body)
+{-# INLINE [1] whenS #-}
 
 ifS ::
   Expr f 'Bool
@@ -857,6 +864,7 @@ ifS ::
 -- 'discard(stmts …)' under a constant-folded 'IfE' arm can drop impure FFI
 -- preludes (see 'stepGrid' region copy).
 ifS c t e = toSyntax $ IfE (expr c) (stmts t) (stmts e)
+{-# INLINE [1] ifS #-}
 
 whenSomeS ::
   Expr f ('Option u)
@@ -887,6 +895,8 @@ infixr 2 .||
 (.==), (.!=) :: KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
 (.==) = mkEq
 (.!=) = mkNEq
+{-# INLINE [1] (.==) #-}
+{-# INLINE [1] (.!=) #-}
 
 (.>)
   , (.<)
@@ -897,10 +907,16 @@ infixr 2 .||
 (.<) = mkLTh
 (.>=) = mkGTEq
 (.<=) = mkLTEq
+{-# INLINE [1] (.>) #-}
+{-# INLINE [1] (.<) #-}
+{-# INLINE [1] (.>=) #-}
+{-# INLINE [1] (.<=) #-}
 
 (.&&), (.||) :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-(.&&) = And
-(.||) = Or
+(.&&) = andE
+(.||) = orE
+{-# INLINE [1] (.&&) #-}
+{-# INLINE [1] (.||) #-}
 
 ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 ushr = UShr
@@ -945,3 +961,26 @@ hvm2LoadWasmFFI =
     ++ "const{instance:i}=await WebAssembly.instantiate(b,{});"
     ++ "globalThis.__jsharkHvm2={exports:i.exports}"
     ++ "})()"
+
+-- | Constant-condition control. Safe for 'ifS' / 'whenS': the dropped
+-- arm never runs, so no 'discard' wrap is introduced.
+{-# RULES
+"jshark/if/true"
+  forall t e.
+    if_ (Literal (ValueBool True)) t e = t
+"jshark/if/false"
+  forall t e.
+    if_ (Literal (ValueBool False)) t e = e
+"jshark/ifS/true"
+  forall t e.
+    ifS (Literal (ValueBool True)) t e = t
+"jshark/ifS/false"
+  forall t e.
+    ifS (Literal (ValueBool False)) t e = e
+"jshark/whenS/true"
+  forall body.
+    whenS (Literal (ValueBool True)) body = body
+"jshark/whenS/false"
+  forall body.
+    whenS (Literal (ValueBool False)) body = done
+  #-}
