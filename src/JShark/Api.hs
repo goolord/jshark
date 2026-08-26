@@ -664,7 +664,10 @@ noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
 let_ :: Expr f u -> (Expr f u -> Expr f v) -> Expr f v
+let_ (Literal v) f = f (Literal v)
+let_ (Var x) f = f (Var x)
 let_ e f = Let e (\x -> f (var x))
+{-# INLINE [1] let_ #-}
 
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ (Literal (ValueBool True)) t _ = t
@@ -925,7 +928,8 @@ infixr 2 .||
 {-# INLINE (.||) #-}
 
 ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-ushr = UShr
+ushr = ushrE
+{-# INLINE [1] ushr #-}
 
 -- | BigInt truncating division (JS @/@). Number uses 'Fractional' @/@.
 quot_ :: Expr f 'BigInt -> Expr f 'BigInt -> Expr f 'BigInt
@@ -989,4 +993,10 @@ hvm2LoadWasmFFI =
 "jshark/whenS/false"
   forall body.
     whenS (Literal (ValueBool False)) body = done
+"jshark/let/lit"
+  forall v f.
+    let_ (Literal v) f = f (Literal v)
+"jshark/let/var"
+  forall x f.
+    let_ (Var x) f = f (Var x)
   #-}

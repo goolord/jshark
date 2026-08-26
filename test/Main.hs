@@ -197,6 +197,20 @@ rewriteRuleTests =
         case if_ (bool True) (number 1) (number 2) of
           Literal (ValueNumber n) -> n @?= 1
           _ -> assertFailure "jshark/if/true"
+    , testCase "rem/bitAnd/shl fold literals" $ do
+        case rem_ (number 10) (number 3) of
+          Literal (ValueNumber n) -> n @?= 1
+          _ -> assertFailure "jshark/rem/lit"
+        case bitAnd (number 7) (number 3) of
+          Literal (ValueNumber n) -> n @?= 3
+          _ -> assertFailure "jshark/bitand/lit"
+        case shl (number 23) (number 8) of
+          Literal (ValueNumber n) -> n @?= 5888
+          _ -> assertFailure "jshark/shl/lit"
+    , testCase "let_ of a literal betas" $
+        case let_ (number 1) (\x -> x + x) of
+          Literal (ValueNumber n) -> n @?= 2
+          _ -> assertFailure "jshark/let/lit"
     ]
 
 evaluatorTests :: TestTree

@@ -109,6 +109,18 @@ module JShark.Types
   , andE
   , orE
   , concatE
+  , remE
+  , bitAndE
+  , bitOrE
+  , bitXorE
+  , shlE
+  , shrE
+  , ushrE
+  , jsRem
+  , jsBit2
+  , jsShl
+  , jsShr
+  , jsUShr
   , EffectSyntax (..)
   , toSyntax
   , toSyntax_
@@ -127,7 +139,10 @@ where
 import Prelude hiding ((>>))
 import Control.Monad (ap)
 import Data.Array.Byte (ByteArray)
+import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
+import Data.Int (Int32)
 import Data.Kind (Type)
+import Data.Word (Word32)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -705,37 +720,37 @@ pattern FracDiv x y <- Std (Kernel (KFracDiv x y))
 pattern Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Rem x y <- Std (Kernel (KRem x y))
  where
-  Rem x y = Std (Kernel (KRem x y))
+  Rem = remE
 
 pattern BitAnd :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitAnd x y <- Std (Kernel (KBitAnd x y))
  where
-  BitAnd x y = Std (Kernel (KBitAnd x y))
+  BitAnd = bitAndE
 
 pattern BitOr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitOr x y <- Std (Kernel (KBitOr x y))
  where
-  BitOr x y = Std (Kernel (KBitOr x y))
+  BitOr = bitOrE
 
 pattern BitXor :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern BitXor x y <- Std (Kernel (KBitXor x y))
  where
-  BitXor x y = Std (Kernel (KBitXor x y))
+  BitXor = bitXorE
 
 pattern Shl :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Shl x y <- Std (Kernel (KShl x y))
  where
-  Shl x y = Std (Kernel (KShl x y))
+  Shl = shlE
 
 pattern Shr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern Shr x y <- Std (Kernel (KShr x y))
  where
-  Shr x y = Std (Kernel (KShr x y))
+  Shr = shrE
 
 pattern UShr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 pattern UShr x y <- Std (Kernel (KUShr x y))
  where
-  UShr x y = Std (Kernel (KUShr x y))
+  UShr = ushrE
 
 pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 pattern And x y <- Std (Kernel (KAnd x y))
@@ -989,6 +1004,74 @@ concatE (Literal (ValueString x)) (Literal (ValueString y)) =
 concatE x y = Std (Kernel (KConcat x y))
 {-# INLINE [1] concatE #-}
 
+-- | JS ToInt32 / ToUint32 for bitwise ops and @>>>@.
+toInt32 :: Double -> Int32
+toInt32 d
+  | isNaN d || isInfinite d = 0
+  | otherwise = fromInteger (truncate d)
+
+toUint32 :: Double -> Word32
+toUint32 d
+  | isNaN d || isInfinite d = 0
+  | otherwise = fromInteger (truncate d)
+
+jsBit2 :: (Int32 -> Int32 -> Int32) -> Double -> Double -> Double
+jsBit2 f a b = fromIntegral (f (toInt32 a) (toInt32 b))
+
+jsShl, jsShr, jsUShr :: Double -> Double -> Double
+jsShl a b = fromIntegral (shiftL (toInt32 a) (fromIntegral (toUint32 b .&. 31)))
+jsShr a b = fromIntegral (shiftR (toInt32 a) (fromIntegral (toUint32 b .&. 31)))
+jsUShr a b = fromIntegral (shiftR (toUint32 a) (fromIntegral (toUint32 b .&. 31)))
+
+-- | JS @%@ : remainder after truncating division, not Haskell @mod@.
+jsRem :: Double -> Double -> Double
+jsRem a b
+  | isNaN a || isNaN b || isInfinite a || b == 0 = 0 / 0
+  | isInfinite b = a
+  | otherwise = a - b * fromInteger (truncate (a / b))
+
+remE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+remE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsRem x y))
+remE x y = Std (Kernel (KRem x y))
+{-# INLINE [1] remE #-}
+
+bitAndE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitAndE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsBit2 (.&.) x y))
+bitAndE x y = Std (Kernel (KBitAnd x y))
+{-# INLINE [1] bitAndE #-}
+
+bitOrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitOrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsBit2 (.|.) x y))
+bitOrE x y = Std (Kernel (KBitOr x y))
+{-# INLINE [1] bitOrE #-}
+
+bitXorE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+bitXorE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsBit2 xor x y))
+bitXorE x y = Std (Kernel (KBitXor x y))
+{-# INLINE [1] bitXorE #-}
+
+shlE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+shlE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsShl x y))
+shlE x y = Std (Kernel (KShl x y))
+{-# INLINE [1] shlE #-}
+
+shrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+shrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsShr x y))
+shrE x y = Std (Kernel (KShr x y))
+{-# INLINE [1] shrE #-}
+
+ushrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+ushrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (jsUShr x y))
+ushrE x y = Std (Kernel (KUShr x y))
+{-# INLINE [1] ushrE #-}
+
 -- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.
 -- @>>>@ stays Number-only ('UShr').
 class NumericU (u :: Universe) where
@@ -1000,12 +1083,12 @@ class NumericU (u :: Universe) where
   shr :: Expr f u -> Expr f u -> Expr f u
 
 instance NumericU 'Number where
-  rem_ = Rem
-  bitAnd = BitAnd
-  bitOr = BitOr
-  bitXor = BitXor
-  shl = Shl
-  shr = Shr
+  rem_ = remE
+  bitAnd = bitAndE
+  bitOr = bitOrE
+  bitXor = bitXorE
+  shl = shlE
+  shr = shrE
 
 instance NumericU 'BigInt where
   rem_ = bigBin BRem
@@ -1182,6 +1265,34 @@ instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) wh
   forall x y.
     mkLTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
       Literal (ValueBool (x <= y))
+"jshark/rem/lit"
+  forall x y.
+    remE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsRem x y))
+"jshark/bitand/lit"
+  forall x y.
+    bitAndE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsBit2 (.&.) x y))
+"jshark/bitor/lit"
+  forall x y.
+    bitOrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsBit2 (.|.) x y))
+"jshark/bitxor/lit"
+  forall x y.
+    bitXorE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsBit2 xor x y))
+"jshark/shl/lit"
+  forall x y.
+    shlE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsShl x y))
+"jshark/shr/lit"
+  forall x y.
+    shrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsShr x y))
+"jshark/ushr/lit"
+  forall x y.
+    ushrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+      Literal (ValueNumber (jsUShr x y))
   #-}
 
 -- Monadic interface to expressions based on KeyMonad
