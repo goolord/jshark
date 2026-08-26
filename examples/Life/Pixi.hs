@@ -25,6 +25,7 @@ module Pixi
   , render
   , drawEraserGhost
   , clearEraserGhost
+  , drawGliderGhost
   )
 where
 
@@ -141,7 +142,7 @@ installShaderJs =
     <> " const sdfFilter = new PIXI.Filter(undefined, sdfFrag, {"
     <> "   uTexSize: scratch.texSize,"
     <> "   uPan: scratch.pan, uBg: [bgR, bgG, bgB],"
-    <> "   uAtlas: currTex, uPrevAtlas: atlasPrev, uCellPx: 3"
+    <> "   uAtlas: currTex, uPrevAtlas: atlasPrev, uCellPx: 3, uTime: 0"
     <> " });"
     <> " sdfFilter.autoFit = false;"
     <> " sdfFilter.padding = 0;"
@@ -252,6 +253,7 @@ presentGridJs =
     <> " }"
     <> " pSdf.autoFit = false;"
     <> " pSdf.uniforms.uCellPx = pSpr.scale && pSpr.scale.x ? pSpr.scale.x : 3;"
+    <> " pSdf.uniforms.uTime = (now || 0) * 0.001;"
     <> " pSpr.renderable = false;"
     <> " pSpr.visible = false;"
     <> " if (upload || stageDirty) app.renderer.render(app.stage);"
@@ -694,4 +696,65 @@ clearEraserGhost app viewport = do
           <> " })"
       )
       (arg app <: ArgEffect viewport <: RecNil)
+  done
+
+-- | Preview aimed glider cells + drag line on the Pixi stage (never the
+--   2D overlay canvas — that blanks WebGL).
+drawGliderGhost ::
+  Expr f ('MutableObject Application)
+  -> Effect f ('MutableObject ())
+  -> Expr f ('Array ('Array 'Number))
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+drawGliderGhost app viewport cells gx gy cx cy panX panY zoom px = do
+  toSyntax_
+    $ discard
+    $ ffi
+      ( "((app,viewport,cells,gx,gy,cx,cy,panX,panY,zoom,cellPx) => {"
+          <> " if (!app?.stage) return;"
+          <> " const gl = app.renderer?.gl;"
+          <> " if (gl?.isContextLost?.()) return;"
+          <> " let gfx = app.__eraserGhostGfx;"
+          <> " if (!gfx || gfx.destroyed) {"
+          <> "   gfx = new PIXI.Graphics();"
+          <> "   app.__eraserGhostGfx = gfx;"
+          <> " }"
+          <> " if (gfx.parent !== app.stage) app.stage.addChild(gfx);"
+          <> " gfx.visible = true;"
+          <> " gfx.clear();"
+          <> " const scale = cellPx * zoom;"
+          <> " gfx.beginFill(0x60a5fa, 0.42);"
+          <> " for (let i = 0; i < cells.length; i++) {"
+          <> "   const c = cells[i], x = gx + (c[0] | 0), y = gy + (c[1] | 0);"
+          <> "   gfx.drawRect(panX + x * scale, panY + y * scale, scale, scale);"
+          <> " }"
+          <> " gfx.endFill();"
+          <> " const ax = panX + (gx + 1.5) * scale;"
+          <> " const ay = panY + (gy + 1.5) * scale;"
+          <> " gfx.lineStyle(Math.max(1, scale * 0.12), 0x38bdf8, 0.85);"
+          <> " gfx.moveTo(ax, ay); gfx.lineTo(cx, cy);"
+          <> " app.__eraserGhostOn = true;"
+          <> " viewport.renderPanValid = false;"
+          <> " })"
+      )
+      ( arg app
+          <: ArgEffect viewport
+          <: arg cells
+          <: arg gx
+          <: arg gy
+          <: arg cx
+          <: arg cy
+          <: arg panX
+          <: arg panY
+          <: arg zoom
+          <: arg px
+          <: RecNil
+      )
   done

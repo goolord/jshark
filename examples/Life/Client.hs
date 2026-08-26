@@ -46,6 +46,7 @@ import JShark.Types (Effect (Lift), Expr (Literal, Var))
 import qualified JShark.Types as Ts
 import JShark.Worker (performanceNow)
 import Names (lookupDisplayName)
+import Patterns (gliderOrientationCells, gliderSpeciesSid)
 import qualified Pixi
 import Types
   ( LifeState
@@ -58,6 +59,8 @@ import Types
   , eraserMaxRadius
   , eraserMinRadius
   , eraserToolSid
+  , mouseToolSid
+  , gliderToolSid
   , gridH
   , gridW
   , hoverRadius
@@ -98,7 +101,6 @@ import Types
   , simBudgetMs
   , tickMaxMs
   , tickMinMs
-  , toggleToolSid
   , zoomLevelLabels
   , zoomLevels
   )
@@ -204,9 +206,9 @@ bootLoaded canvas app appH viewport renderDirty = do
   eraserRadius <- Dom.lookupId (string lifeEraserRadiusId)
   eraserRadiusVal <- Dom.lookupId (string lifeEraserRadiusValId)
   wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch
-  wireTools toolRef toolBtnsE canvas eraserSize
+  wireTools toolRef toolBtnsE canvas eraserSize viewport
   wireEraserSize toolRef eraserRadius eraserRadiusVal
-  syncEraserUi toolRef canvas eraserSize
+  syncEraserUi toolRef canvas eraserSize viewport
   wireCollapse
     toolsTray
     toolsCollapse
@@ -260,6 +262,8 @@ bootLoaded canvas app appH viewport renderDirty = do
       done
     tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
     tickEraserGhost toolRef tipRef state viewport eraserGhost
+    tickGliderGhost toolRef viewport
+    tickPanInertia viewport now
 
 wire ::
   Effect f ('MutableObject Dom.DomElement)
@@ -285,10 +289,45 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
   _ <- setProp tipRef "swatchSid" (number (-1))
   win <- hold window
   let
-    endDrag = do
+    mouseTool = number (fromIntegral mouseToolSid)
+    eraserTool = number (fromIntegral eraserToolSid)
+    gliderTool = number (fromIntegral gliderToolSid)
+    isMouseTool sid = sid .== mouseTool
+    isGliderTool sid = sid .== gliderTool
+    finishGliderAim = do
+      sid <- getProp toolRef "sid"
+      aiming <- getProp viewport "gliderAiming"
+      whenS (isGliderTool sid .&& aiming .== 1) $ do
+        gx <- getProp viewport "gliderGx"
+        gy <- getProp viewport "gliderGy"
+        dir <- getProp viewport "gliderDir"
+        let
+          cells = Array.index gliderOrientationsLit dir
+        placePattern
+          state
+          editScratch
+          cells
+          gx
+          gy
+          (number (fromIntegral gliderSpeciesSid))
+      app <- getProp viewport "app"
+      Pixi.clearEraserGhost app viewport
+      setProp viewport "gliderAiming" (number 0)
+    endPointer = do
       _ <- setProp viewport "dragging" (number 0)
       _ <- setProp viewport "erasing" (number 0)
-      syncEraserCursor canvas toolRef
+      _ <- setProp viewport "rightPanning" (number 0)
+      finishGliderAim
+      syncToolCursor canvas toolRef viewport
+  toSyntax_ $
+    ffi
+      ( "(function(canvas, toolRef, mouseSid) {"
+          <> " canvas.addEventListener('contextmenu', function(e) {"
+          <> "   if (toolRef.sid === mouseSid) e.preventDefault();"
+          <> " });"
+          <> "})"
+      )
+      (ArgEffect canvas <: ArgEffect toolRef <: arg mouseTool <: RecNil)
   addEventListener "keydown" win $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       code <- getProp' e "code"
@@ -342,7 +381,8 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
       toSyntax_ $ callMethod canvas "focus" RecNil
       btn <- getProp' e "button"
       shift <- getProp' e "shiftKey"
-      whenS (shift .&& btn .== 0) $ do
+      sid <- getProp toolRef "sid"
+      whenS (btn .== 0 .&& (shift .|| isMouseTool sid)) $ do
         toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
         cx <- getProp' e "clientX"
         cy <- getProp' e "clientY"
@@ -352,20 +392,76 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
         _ <- setProp viewport "dragStartX" cx
         _ <- setProp viewport "dragStartY" cy
         _ <- setProp viewport "moved" (number 0)
-        Dom.setStyleProperty canvas "cursor" (string "grabbing")
-      whenS (not_ shift .&& btn .== 0) $ do
-        sid <- getProp toolRef "sid"
-        whenS (sid .== number (fromIntegral eraserToolSid)) $ do
-          _ <- setProp viewport "erasing" (number 1)
-          cx <- getProp' e "clientX"
-          cy <- getProp' e "clientY"
-          ox <- getProp' e "offsetX"
-          oy <- getProp' e "offsetY"
-          (gx, gy) <- gridFromPointer canvas viewport ox oy
-          syncPointerTip viewport tipRef cx cy gx gy
-          applyErase state editScratch toolRef gx gy
-  addEventListener "mouseup" canvas $ \_ -> stmts endDrag
-  addEventListener "mouseup" win $ \_ -> stmts endDrag
+        _ <- setProp viewport "panVelX" (number 0)
+        _ <- setProp viewport "panVelY" (number 0)
+        syncToolCursor canvas toolRef viewport
+      whenS (btn .== 2 .&& isMouseTool sid) $ do
+        toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+        cx <- getProp' e "clientX"
+        cy <- getProp' e "clientY"
+        moveNow <- performanceNow
+        _ <- setProp viewport "rightPanning" (number 1)
+        _ <- setProp viewport "panVelX" (number 0)
+        _ <- setProp viewport "panVelY" (number 0)
+        _ <- setProp viewport "panLastMs" moveNow
+        _ <- setProp viewport "dragX" cx
+        _ <- setProp viewport "dragY" cy
+        syncToolCursor canvas toolRef viewport
+      whenS (not_ shift .&& btn .== 0 .&& sid .== eraserTool) $ do
+        _ <- setProp viewport "erasing" (number 1)
+        cx <- getProp' e "clientX"
+        cy <- getProp' e "clientY"
+        ox <- getProp' e "offsetX"
+        oy <- getProp' e "offsetY"
+        (gx, gy) <- gridFromPointer canvas viewport ox oy
+        syncPointerTip viewport tipRef cx cy gx gy
+        applyErase state editScratch toolRef gx gy
+      whenS (not_ shift .&& btn .== 0 .&& isGliderTool sid) $ do
+        ox <- getProp' e "offsetX"
+        oy <- getProp' e "offsetY"
+        (gx, gy) <- gridFromPointer canvas viewport ox oy
+        clientW <- getProp canvas "clientWidth"
+        let
+          bufScale = number canvasW / clientW
+          ax = ox * bufScale
+          ay = oy * bufScale
+        cx <- getProp' e "clientX"
+        cy <- getProp' e "clientY"
+        _ <- setProp viewport "gliderAiming" (number 1)
+        _ <- setProp viewport "gliderGx" gx
+        _ <- setProp viewport "gliderGy" gy
+        _ <- setProp viewport "gliderDir" (number 0)
+        _ <- setProp viewport "dragStartX" cx
+        _ <- setProp viewport "dragStartY" cy
+        _ <- setProp viewport "gliderAx" ax
+        _ <- setProp viewport "gliderAy" ay
+        _ <- setProp viewport "gliderCx" ax
+        _ <- setProp viewport "gliderCy" ay
+        setProp viewport "moved" (number 0)
+  addEventListener "mouseup" canvas $ \(e :: Expr f ('MutableObject ())) ->
+    stmts $ do
+      btn <- getProp' e "button"
+      whenS (btn .== 0) $ do
+        aiming <- getProp viewport "gliderAiming"
+        whenS (aiming .== 1) $ do
+          finishGliderAim
+        _ <- setProp viewport "dragging" (number 0)
+        setProp viewport "erasing" (number 0)
+      whenS (btn .== 2) $
+        setProp viewport "rightPanning" (number 0)
+      syncToolCursor canvas toolRef viewport
+  addEventListener "mouseup" win $ \(e :: Expr f ('MutableObject ())) ->
+    stmts $ do
+      btn <- getProp' e "button"
+      whenS (btn .== 0) $ do
+        aiming <- getProp viewport "gliderAiming"
+        whenS (aiming .== 1) $ do
+          finishGliderAim
+        _ <- setProp viewport "dragging" (number 0)
+        setProp viewport "erasing" (number 0)
+      whenS (btn .== 2) $
+        setProp viewport "rightPanning" (number 0)
+      syncToolCursor canvas toolRef viewport
   addEventListener "click" canvas $ \(e :: Expr f ('MutableObject ())) ->
     stmts $ do
       moved <- getProp viewport "moved"
@@ -381,7 +477,12 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
       cx <- getProp' e "clientX"
       cy <- getProp' e "clientY"
       dragging <- getProp viewport "dragging"
+      rightPanning <- getProp viewport "rightPanning"
+      gliderAiming <- getProp viewport "gliderAiming"
       erasing <- getProp viewport "erasing"
+      clientW <- getProp canvas "clientWidth"
+      let
+        bufScale = number canvasW / clientW
       ifS
         (dragging .== 1)
         ( do
@@ -389,9 +490,6 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
             dragY <- getProp viewport "dragY"
             panX <- getProp viewport "panX"
             panY <- getProp viewport "panY"
-            clientW <- getProp canvas "clientWidth"
-            let
-              bufScale = number canvasW / clientW
             _ <- setProp viewport "panX" (panX + (cx - dragX) * bufScale)
             _ <- setProp viewport "panY" (panY + (cy - dragY) * bufScale)
             clampPan viewport
@@ -407,25 +505,77 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
               setProp viewport "moved" (number 1)
         )
         ( ifS
-            (erasing .== 1)
+            (rightPanning .== 1)
             ( do
-                ox <- getProp' e "offsetX"
-                oy <- getProp' e "offsetY"
-                (gx, gy) <- gridFromPointer canvas viewport ox oy
-                syncPointerTip viewport tipRef cx cy gx gy
-                applyErase state editScratch toolRef gx gy
+                dragX <- getProp viewport "dragX"
+                dragY <- getProp viewport "dragY"
+                panX <- getProp viewport "panX"
+                panY <- getProp viewport "panY"
+                panLastMs <- getProp viewport "panLastMs"
+                moveNow <- performanceNow
+                let
+                  dx = (cx - dragX) * bufScale
+                  dy = (cy - dragY) * bufScale
+                  dt =
+                    Math.max ((moveNow - panLastMs) / number 1000) (number 0.001)
+                  instVx = dx / dt
+                  instVy = dy / dt
+                velX <- getProp viewport "panVelX"
+                velY <- getProp viewport "panVelY"
+                _ <- setProp viewport "panX" (panX + dx)
+                _ <- setProp viewport "panY" (panY + dy)
+                _ <-
+                  setProp viewport "panVelX" $
+                    velX * number 0.65 + instVx * number 0.35
+                _ <-
+                  setProp viewport "panVelY" $
+                    velY * number 0.65 + instVy * number 0.35
+                clampPan viewport
+                invalidateViewportRender viewport
+                _ <- setProp viewport "dragX" cx
+                _ <- setProp viewport "dragY" cy
+                setProp viewport "panLastMs" moveNow
             )
-            ( do
-                ox <- getProp' e "offsetX"
-                oy <- getProp' e "offsetY"
-                (gx, gy) <- gridFromPointer canvas viewport ox oy
-                syncPointerTip viewport tipRef cx cy gx gy
+            ( ifS
+                (gliderAiming .== 1)
+                ( do
+                    startX <- getProp viewport "dragStartX"
+                    startY <- getProp viewport "dragStartY"
+                    ox <- getProp' e "offsetX"
+                    oy <- getProp' e "offsetY"
+                    let
+                      dx = cx - startX
+                      dy = cy - startY
+                      aimX = ox * bufScale
+                      aimY = oy * bufScale
+                    _ <- setProp viewport "gliderCx" aimX
+                    _ <- setProp viewport "gliderCy" aimY
+                    _ <- setProp viewport "gliderDir" (gliderDirFromDrag dx dy)
+                    whenS (dx * dx + dy * dy .> 9) $
+                      setProp viewport "moved" (number 1)
+                )
+                ( ifS
+                    (erasing .== 1)
+                    ( do
+                        ox <- getProp' e "offsetX"
+                        oy <- getProp' e "offsetY"
+                        (gx, gy) <- gridFromPointer canvas viewport ox oy
+                        syncPointerTip viewport tipRef cx cy gx gy
+                        applyErase state editScratch toolRef gx gy
+                    )
+                    ( do
+                        ox <- getProp' e "offsetX"
+                        oy <- getProp' e "offsetY"
+                        (gx, gy) <- gridFromPointer canvas viewport ox oy
+                        syncPointerTip viewport tipRef cx cy gx gy
+                    )
+                )
             )
         )
   addEventListener "mouseleave" canvas $ \_ ->
     stmts $ do
       _ <- setProp tipRef "over" (number 0)
-      endDrag
+      endPointer
   toSyntax_ $ callMethod canvas "focus" RecNil
   done
 
@@ -474,7 +624,10 @@ tickHover ::
 tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef = do
   sid <- getProp toolRef "sid"
   ifS
-    (sid .== number (fromIntegral eraserToolSid))
+    ( sid .== number (fromIntegral eraserToolSid)
+        .|| sid .== number (fromIntegral mouseToolSid)
+        .|| sid .== number (fromIntegral gliderToolSid)
+    )
     (hideTooltip tipRef tooltip)
     ( do
         over <- getProp tipRef "over"
@@ -697,6 +850,19 @@ initViewport = do
   _ <- setProp viewport "dragStartY" (number 0)
   _ <- setProp viewport "moved" (number 0)
   _ <- setProp viewport "erasing" (number 0)
+  _ <- setProp viewport "rightPanning" (number 0)
+  _ <- setProp viewport "panVelX" (number 0)
+  _ <- setProp viewport "panVelY" (number 0)
+  _ <- setProp viewport "panLastMs" (number 0)
+  _ <- setProp viewport "panInertiaLastMs" (number 0)
+  _ <- setProp viewport "gliderAiming" (number 0)
+  _ <- setProp viewport "gliderGx" (number 0)
+  _ <- setProp viewport "gliderGy" (number 0)
+  _ <- setProp viewport "gliderDir" (number 0)
+  _ <- setProp viewport "gliderAx" (number 0)
+  _ <- setProp viewport "gliderAy" (number 0)
+  _ <- setProp viewport "gliderCx" (number 0)
+  _ <- setProp viewport "gliderCy" (number 0)
   _ <- setProp viewport "zoomLevels" zoomLevelsLit
   _ <- setProp viewport "zoomLabels" zoomLabelsLit
   _ <- setProp viewport "zoomIndices" zoomIndicesLit
@@ -716,6 +882,35 @@ zoomLevelsLit =
 zoomLabelsLit :: forall f. Expr f ('Array 'String)
 zoomLabelsLit =
   Literal $ Ts.ValueArray (map Ts.ValueString zoomLevelLabels)
+
+gliderOrientationsLit :: forall f. Expr f ('Array ('Array ('Array 'Number)))
+gliderOrientationsLit =
+  Literal $
+    Ts.ValueArray
+      [ Ts.ValueArray
+          ( map
+              ( \(x, y) ->
+                  Ts.ValueArray
+                    [ Ts.ValueNumber (fromIntegral x)
+                    , Ts.ValueNumber (fromIntegral y)
+                    ]
+              )
+              cells
+          )
+      | cells <- gliderOrientationCells
+      ]
+
+-- | Screen Y is down. Indices: 0 SE, 1 NE, 2 NW, 3 SW.
+gliderDirFromDrag :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+gliderDirFromDrag dx dy =
+  if_
+    (dx * dx + dy * dy .< number 64)
+    (number 0)
+    ( if_
+        (dx .>= 0)
+        (if_ (dy .< 0) (number 1) (number 0))
+        (if_ (dy .< 0) (number 2) (number 3))
+    )
 
 nearestZoomIndex ::
   Expr f ('Array 'Number)
@@ -822,7 +1017,7 @@ clampPan viewport = do
 initTool :: EffectSyntax f (Effect f ('MutableObject ()))
 initTool = do
   toolRef <- hold newObject
-  _ <- setProp toolRef "sid" (number (fromIntegral toggleToolSid))
+  _ <- setProp toolRef "sid" (number (fromIntegral mouseToolSid))
   _ <-
     setProp toolRef "eraserRadius" (number (fromIntegral eraserDefaultRadius))
   pure toolRef
@@ -843,21 +1038,20 @@ applyClick ::
   -> EffectSyntax f (f 'Unit)
 applyClick state editScratch toolRef toolsMap gx gy = do
   sid <- getProp toolRef "sid"
-  ifS
-    (sid .== number (fromIntegral toggleToolSid))
-    (flipCell state gx gy)
-    ( ifS
-        (sid .== number (fromIntegral eraserToolSid))
-        done
-        ( do
-            hit <- Map.lookup toolsMap sid
-            toSyntax $
-              optionCaseE
-                hit
-                noOp
-                (\cells -> fromSyntax $ placePattern state editScratch cells gx gy sid)
+  whenS
+    ( not_
+        ( sid .== number (fromIntegral eraserToolSid)
+            .|| sid .== number (fromIntegral mouseToolSid)
+            .|| sid .== number (fromIntegral gliderToolSid)
         )
     )
+    $ do
+      hit <- Map.lookup toolsMap sid
+      toSyntax $
+        optionCaseE
+          hit
+          noOp
+          (\cells -> fromSyntax $ placePattern state editScratch cells gx gy sid)
 
 applyErase ::
   Effect f (MutableObjectOf LifeState)
@@ -877,14 +1071,15 @@ wireTools ::
   -> Expr f ('Array ('MutableObject Dom.DomElement))
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-wireTools toolRef btns canvas eraserSize = do
+wireTools toolRef btns canvas eraserSize viewport = do
   forRange_ (number 0) (Array.length btns) $ \i -> do
     btn <- hold (expr (Array.index btns i))
     addEventListener "click" btn $ \_ ->
       stmts $ do
         raw <- Dom.getAttribute btn "data-tool"
-        selectTool toolRef btns (parseInt_ raw (number 10)) canvas eraserSize
+        selectTool toolRef btns (parseInt_ raw (number 10)) canvas eraserSize viewport
     done
 
 selectTool ::
@@ -893,8 +1088,9 @@ selectTool ::
   -> Expr f 'Number
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-selectTool toolRef btns sid canvas eraserSize = do
+selectTool toolRef btns sid canvas eraserSize viewport = do
   _ <- setProp toolRef "sid" sid
   forRange_ (number 0) (Array.length btns) $ \i -> do
     btn <- hold (expr (Array.index btns i))
@@ -912,14 +1108,15 @@ selectTool toolRef btns sid canvas eraserSize = do
         "aria-pressed"
         (if_ on (string "true") (string "false"))
     done
-  syncEraserUi toolRef canvas eraserSize
+  syncEraserUi toolRef canvas eraserSize viewport
 
 syncEraserUi ::
   Effect f ('MutableObject ())
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-syncEraserUi toolRef canvas eraserSize = do
+syncEraserUi toolRef canvas eraserSize viewport = do
   sid <- getProp toolRef "sid"
   let
     eraserOn = sid .== number (fromIntegral eraserToolSid)
@@ -938,18 +1135,66 @@ syncEraserUi toolRef canvas eraserSize = do
           _ <- Dom.setAttribute eraserSize "hidden" (string "")
           Dom.setAttribute eraserSize "aria-hidden" (string "true")
       )
-  syncEraserCursor canvas toolRef
+  syncToolCursor canvas toolRef viewport
 
-syncEraserCursor ::
+syncToolCursor ::
   Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
   -> EffectSyntax f (f 'Unit)
-syncEraserCursor canvas toolRef = do
+syncToolCursor canvas toolRef viewport = do
   sid <- getProp toolRef "sid"
+  dragging <- getProp viewport "dragging"
+  rightPanning <- getProp viewport "rightPanning"
   ifS
-    (sid .== number (fromIntegral eraserToolSid))
-    (Dom.setStyleProperty canvas "cursor" eraserCursor)
-    (Dom.setStyleProperty canvas "cursor" (string "crosshair"))
+    (sid .== number (fromIntegral mouseToolSid))
+    ( ifS
+        (dragging .== 1 .|| rightPanning .== 1)
+        (Dom.setStyleProperty canvas "cursor" (string "grabbing"))
+        (Dom.setStyleProperty canvas "cursor" (string "grab"))
+    )
+    ( ifS
+        (sid .== number (fromIntegral eraserToolSid))
+        (Dom.setStyleProperty canvas "cursor" eraserCursor)
+        (Dom.setStyleProperty canvas "cursor" (string "crosshair"))
+    )
+
+tickPanInertia ::
+  Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+tickPanInertia viewport now = do
+  inertiaLastMs <- getProp viewport "panInertiaLastMs"
+  ifS
+    (inertiaLastMs .== 0)
+    (setProp viewport "panInertiaLastMs" now)
+    ( do
+        rightPanning <- getProp viewport "rightPanning"
+        whenS (rightPanning .== 0) $ do
+          let
+            dt = Math.min ((now - inertiaLastMs) / number 1000) (number 0.05)
+          velX <- getProp viewport "panVelX"
+          velY <- getProp viewport "panVelY"
+          let
+            speed = Math.hypot velX velY
+          ifS
+            (speed .> number 0.5)
+            ( do
+                panX <- getProp viewport "panX"
+                panY <- getProp viewport "panY"
+                _ <- setProp viewport "panX" (panX + velX * dt)
+                _ <- setProp viewport "panY" (panY + velY * dt)
+                _ <- setProp viewport "panVelX" (velX * number 0.92)
+                _ <- setProp viewport "panVelY" (velY * number 0.92)
+                clampPan viewport
+                invalidateViewportRender viewport
+            )
+            ( do
+                _ <- setProp viewport "panVelX" (number 0)
+                setProp viewport "panVelY" (number 0)
+            )
+        setProp viewport "panInertiaLastMs" now
+    )
 
 wireEraserSize ::
   Effect f ('MutableObject ())
@@ -1050,6 +1295,36 @@ drawEraserGhostStm ghost alive w h gx gy radius panX panY zoom px = do
       )
   done
 
+tickGliderGhost ::
+  Effect f ('MutableObject ())
+  -> Effect f ('MutableObject ())
+  -> EffectSyntax f (f 'Unit)
+tickGliderGhost toolRef viewport = do
+  sid <- getProp toolRef "sid"
+  aiming <- getProp viewport "gliderAiming"
+  app <- getProp viewport "app"
+  ifS
+    ( sid .== number (fromIntegral gliderToolSid)
+        .&& aiming .== 1
+    )
+    ( do
+        gx <- getProp viewport "gliderGx"
+        gy <- getProp viewport "gliderGy"
+        dir <- getProp viewport "gliderDir"
+        cx <- getProp viewport "gliderCx"
+        cy <- getProp viewport "gliderCy"
+        panX <- getProp viewport "panX"
+        panY <- getProp viewport "panY"
+        zoom <- getProp viewport "zoom"
+        let
+          px = number (fromIntegral cellPx)
+          cells = Array.index gliderOrientationsLit dir
+        Pixi.drawGliderGhost app viewport cells gx gy cx cy panX panY zoom px
+    )
+    ( whenS (sid .== number (fromIntegral gliderToolSid)) $
+        Pixi.clearEraserGhost app viewport
+    )
+
 tickEraserGhost ::
   Effect f ('MutableObject ())
   -> Effect f ('MutableObject ())
@@ -1096,8 +1371,14 @@ tickEraserGhost toolRef tipRef state viewport ghost = do
           )
     )
     ( do
-        clearEraserGhostStm ghost
-        Pixi.clearEraserGhost app viewport
+        aiming <- getProp viewport "gliderAiming"
+        ifS
+          (aiming .== 1)
+          done
+          ( do
+              clearEraserGhostStm ghost
+              Pixi.clearEraserGhost app viewport
+          )
     )
 
 eraserCursor :: Expr f 'String
@@ -1235,6 +1516,8 @@ resetViewport viewport = do
   _ <- setProp viewport "zoom" (number 1)
   _ <- setProp viewport "panX" (number (canvasW / 2) - (w / number 2) * px)
   _ <- setProp viewport "panY" (number (canvasH / 2) - (h / number 2) * px)
+  _ <- setProp viewport "panVelX" (number 0)
+  _ <- setProp viewport "panVelY" (number 0)
   clampPan viewport
   invalidateViewportRender viewport
 

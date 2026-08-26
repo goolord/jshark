@@ -23,6 +23,9 @@ module Patterns
   , initialBoundY1
   , paletteBytes
   , speciesColor
+  , glider
+  , gliderOrientationCells
+  , gliderSpeciesSid
   )
 where
 
@@ -189,14 +192,10 @@ pat :: Int -> Int -> [(Int, Int)] -> PatternSpec
 pat i n cells = PatternSpec i n cells
 
 -- | Spaceships and methuselahs that break still-life / oscillator beds.
---   Order is the HUD order: gliders, xWSS, then the classic seeds.
+--   Order is the HUD order: xWSS, then the classic seeds.
 disturbSids :: [Int]
 disturbSids =
-  [ 45
-  , 57
-  , 58
-  , 59
-  , 46
+  [ 46
   , 47
   , 48
   , 60
@@ -375,6 +374,13 @@ tumbler =
 
 glider :: [(Int, Int)]
 glider = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)]
+
+-- | SE, NE, NW, SW — index matches drag-quadrant aim in the Glider tool.
+gliderOrientationCells :: [[(Int, Int)]]
+gliderOrientationCells = [glider, gliderUp, gliderLeft, gliderDown]
+
+gliderSpeciesSid :: Int
+gliderSpeciesSid = 45
 
 gliderAlt :: [(Int, Int)]
 gliderAlt = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 2)]
@@ -836,23 +842,32 @@ paletteBytes =
 
 speciesColor :: Int -> (Int, Int, Int)
 speciesColor n
-  | n == soupSpecies = hslRgb 192 0.40 0.50
-  | n == manualSpecies = hslRgb 268 0.38 0.52
+  | n == soupSpecies = hslRgb 200 palSoftSat palSoftLit
+  | n == manualSpecies = hslRgb 285 palSat (palLit + 0.02)
   | n >= stillMin && n <= stillMax =
-      hslRgb (198 + fromIntegral (n - stillMin) * 4.8) 0.42 0.50
+      hslRgb (220 + fromIntegral (n - stillMin) * 5.5) palSat palLit
   | n >= oscMin && n <= oscMax =
-      hslRgb (108 + fromIntegral (n - oscMin) * 4.2) 0.40 0.49
+      hslRgb (85 + fromIntegral (n - oscMin) * 5.0) palSat palLit
   | n >= shipMin && n <= shipMax =
-      hslRgb (16 + fromIntegral (n - shipMin) * 5.2) 0.41 0.48
+      hslRgb (355 + fromIntegral (n - shipMin) * 6.0) palSat palLit
   | n >= methuselahMin && n <= methuselahMax =
-      hslRgb (152 + fromIntegral (n - methuselahMin) * 6.0) 0.40 0.48
+      hslRgb (165 + fromIntegral (n - methuselahMin) * 7.0) palSat palLit
   | n >= eaterMin && n <= eaterMax =
-      hslRgb (34 + fromIntegral (n - eaterMin) * 6.5) 0.42 0.49
+      hslRgb (45 + fromIntegral (n - eaterMin) * 7.5) palSat palLit
   | n >= miscMin && n <= miscMax =
-      hslRgb (288 + fromIntegral (n - miscMin) * 4.5) 0.39 0.50
+      hslRgb (300 + fromIntegral (n - miscMin) * 5.5) palSat palLit
   | n >= discoverMin =
-      hslRgb (fromIntegral ((n * 137508) `mod` 360000) / 1000) 0.42 0.49
-  | otherwise = hslRgb 210 0.38 0.48
+      hslRgb
+        (fromIntegral ((n * 137508) `mod` 360000) / 1000)
+        palSat
+        palLit
+  | otherwise = hslRgb 210 palSat palLit
+ where
+  palSat, palLit, palSoftSat, palSoftLit :: Double
+  palSat = 0.62
+  palLit = 0.41
+  palSoftSat = 0.54
+  palSoftLit = 0.37
 
 packBytes :: [Word8] -> ByteArray
 packBytes = bytes

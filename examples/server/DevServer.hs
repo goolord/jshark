@@ -93,6 +93,7 @@ exportPaths =
 lifeEngineJs :: [(FilePath, FilePath)]
 lifeEngineJs =
   [ ("js/catalog.js", "examples/Life/js/catalog.js")
+  , ("js/Discover.js", "examples/Life/js/Discover.js")
   , ("js/LUTGenerator.js", "examples/Life/js/LUTGenerator.js")
   , ("js/LifeSimd.js", "examples/Life/js/LifeSimd.js")
   , ("js/pixi.min.js", "examples/Life/js/pixi.min.js")

@@ -8,6 +8,7 @@
 --    'catalogJs').
 module Catalog
   ( shapeHash
+  , canonicalShapeHash
   , catalogJs
   , nameWords
   , catalogKnown
@@ -39,18 +40,56 @@ import Patterns
   , initialCatalogCells
   )
 
-shapeHash :: [(Int, Int)] -> Text
-shapeHash cells =
+normalizeCells :: [(Int, Int)] -> [(Int, Int)]
+normalizeCells cells =
   let
     minX = minimum (map fst cells)
     minY = minimum (map snd cells)
-    norm =
-      sort
-        [ (x - minX, y - minY)
-        | (x, y) <- cells
-        ]
    in
-    T.intercalate ";" [T.pack (show x ++ "," ++ show y) | (x, y) <- norm]
+    sort [(x - minX, y - minY) | (x, y) <- cells]
+
+shapeHash :: [(Int, Int)] -> Text
+shapeHash cells =
+  T.intercalate ";" [T.pack (show x ++ "," ++ show y) | (x, y) <- normalizeCells cells]
+
+-- | Lexicographically smallest hash among the eight dihedral symmetries.
+--   Rotations/reflections of the same still life or spaceship orientation
+--   share one catalog key.
+canonicalShapeHash :: [(Int, Int)] -> Text
+canonicalShapeHash cells =
+  minimum (map shapeHash (d4Normalized cells))
+
+d4Normalized :: [(Int, Int)] -> [[(Int, Int)]]
+d4Normalized cells =
+  [ normalizeCells [f (x, y) | (x, y) <- cells] | f <- d4Transforms ]
+ where
+  d4Transforms :: [((Int, Int) -> (Int, Int))]
+  d4Transforms =
+    [ \(x, y) -> (x, y)
+    , \(x, y) -> (-y, x)
+    , \(x, y) -> (-x, -y)
+    , \(x, y) -> (y, -x)
+    , \(x, y) -> (-x, y)
+    , \(x, y) -> (y, x)
+    , \(x, y) -> (x, -y)
+    , \(x, y) -> (-y, -x)
+    ]
+
+-- | One canonical entry per shape; duplicate orientations keep the lowest sid.
+knownCatalog :: [(Text, Int)]
+knownCatalog =
+  foldr
+    ( \p acc ->
+        let
+          hash = canonicalShapeHash (patCells p)
+          sid = patId p
+         in
+          case lookup hash acc of
+            Just old | old <= sid -> acc
+            _ -> (hash, sid) : filter ((/= hash) . fst) acc
+    )
+    []
+    allPatterns
 
 -- | Word pools for procedural discovery names (also in 'catalogJs').
 nameWords :: ([Text], [Text], [Text], [Text], [Text])
@@ -67,7 +106,7 @@ catalogJs =
     T.concat
       [ "{"
       , "\"known\":"
-      , arrayJson (map knownEntry allPatterns)
+      , arrayJson (map knownEntry knownCatalog)
       , ",\"names\":"
       , arrayJson (map nameEntry allPatterns)
       , ",\"disturb\":"
@@ -78,12 +117,12 @@ catalogJs =
       , wordsJson
       , "}"
       ]
-  knownEntry p =
+  knownEntry (hash, sid) =
     T.concat
       [ "[\""
-      , shapeHash (patCells p)
+      , hash
       , "\","
-      , T.pack (show (patId p))
+      , T.pack (show sid)
       , "]"
       ]
   nameEntry p =

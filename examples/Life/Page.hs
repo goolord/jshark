@@ -6,7 +6,13 @@ import qualified Data.Text as T
 import Lucid
 import Lucid.Base (makeAttribute)
 import Names (patternLabel)
-import Patterns (PatternSpec (..), disturbPatterns, speciesColor)
+import Patterns
+  ( PatternSpec (..)
+  , disturbPatterns
+  , glider
+  , gliderSpeciesSid
+  , speciesColor
+  )
 import Types
   ( boardId
   , canvasH
@@ -15,6 +21,8 @@ import Types
   , eraserMaxRadius
   , eraserMinRadius
   , eraserToolSid
+  , gliderToolSid
+  , mouseToolSid
   , gridH
   , gridSizePresets
   , gridW
@@ -54,7 +62,6 @@ import Types
   , tickMaxMs
   , tickMinMs
   , tickStepMs
-  , toggleToolSid
   )
 
 -- | Shell page. Game runs in an iframe at @frameSrc@ (HTTP, not blob) so
@@ -164,7 +171,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
         span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
         span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
       p_ [class_ "help"] $
-        "Esc pauses. Shift+drag pans. +/− zoom. Clicking an empty cell pauses. Debug and settings work while paused. Tools: toggle, eraser (drag; slider sets size), or stamp a pattern. Hover a cell for its name."
+        "Esc pauses. Shift+drag pans. +/− zoom. Clicking an empty cell pauses. Debug and settings work while paused. Eraser (drag; slider sets size) or stamp a pattern. Hover a cell for its name."
       p_ $ do
         toHtml (T.pack (show gridW))
         "×"
@@ -177,6 +184,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
     lifeSourceSection
     script_ [src_ "js/pixi.min.js"] ("" :: Html ())
     script_ [src_ "js/catalog.js"] ("" :: Html ())
+    script_ [src_ "js/Discover.js"] ("" :: Html ())
     script_ [src_ "js/LUTGenerator.js"] ("" :: Html ())
     script_ [src_ "js/LifeSimd.js"] ("" :: Html ())
     script_ [src_ "js/Main.js"] ("" :: Html ())
@@ -434,7 +442,8 @@ toolsHud =
         ]
         "−"
       div_ [class_ "life-tools-body"] $ do
-        toolButton toggleToolSid "Toggle" [(1, 1)] (Just (3, 3)) True
+        toolButton mouseToolSid "Mouse" [(1, 1)] (Just (3, 3)) True
+        toolButton gliderToolSid "Glider" glider (Just (3, 3)) False
         toolButton eraserToolSid "Eraser" [(1, 1)] (Just (3, 3)) False
         mapM_ disturbButton disturbPatterns
       div_
@@ -502,8 +511,9 @@ toolPreview sid cells size =
  where
   (minX, minY, w, h) = previewBox cells size
   onColor
-    | sid == toggleToolSid = ink
     | sid == eraserToolSid = "#f87171"
+    | sid == mouseToolSid = "#60a5fa"
+    | sid == gliderToolSid = rgbCss (speciesColor gliderSpeciesSid)
     | otherwise = rgbCss (speciesColor sid)
   cellSpan :: (Int, Int) -> Html ()
   cellSpan (x, y) =

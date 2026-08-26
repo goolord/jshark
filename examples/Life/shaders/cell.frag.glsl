@@ -7,6 +7,18 @@ uniform vec4 inputSize;
 uniform vec2 uPan;
 uniform vec3 uBg;
 uniform float uCellPx;
+uniform float uTime;
+
+vec2 cellWiggle(vec2 cid, float amt) {
+  if (amt < 0.04) {
+    return vec2(0.0);
+  }
+  float ph = dot(cid, vec2(12.9898, 78.233));
+  float t = uTime;
+  vec2 w = vec2(sin(t * 6.283 + ph), cos(t * 5.17 + ph * 1.37));
+  w += vec2(sin(t * 11.3 + ph * 2.1), cos(t * 9.7 + ph * 0.83)) * 0.35;
+  return w * amt * 0.075;
+}
 
 vec4 sc(vec2 id, float dx, float dy) {
   vec2 nid = id + vec2(dx, dy);
@@ -22,7 +34,9 @@ vec4 mc(vec2 world, vec2 id, vec3 refC, float dx, float dy) {
   if (nc.a < 0.04) {
     return vec4(0.0);
   }
-  vec2 delta = world - (id + vec2(dx, dy) + 0.5);
+  vec2 cid = id + vec2(dx, dy);
+  float amt = step(0.04, nc.a);
+  vec2 delta = world - (cid + 0.5 + cellWiggle(cid, amt));
   float r2 = dot(delta, delta);
   float R = 0.56;
   float meta = (R * R) / (r2 + R * R * 0.09);
@@ -148,7 +162,8 @@ void main(void) {
   vec3 fluid = acc.rgb / max(field, 0.001);
   float body = smoothstep(0.90, 1.18, field);
   float live = step(0.04, center.a);
-  float core = exp(-dot(p, p) * 15.0) * live;
+  vec2 pW = p - cellWiggle(id, live) * 0.65;
+  float core = exp(-dot(pW, pW) * 15.0) * live;
   float corona = pow(clamp(field * 0.72, 0.0, 1.0), 2.8) * (1.0 - body * 0.80);
   vec3 rgb = mix(uBg, fluid * (0.62 + 0.38 * body), body);
   rgb += fluid * corona * 0.95;

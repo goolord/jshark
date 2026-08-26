@@ -77,12 +77,6 @@ data DiscoverScratch = DiscoverScratch
   }
   deriving Generic
 
-data Pt
-
-type instance Field Pt "x" = 'Number
-
-type instance Field Pt "y" = 'Number
-
 data SidCount
 
 type instance Field SidCount "sid" = 'Number
@@ -133,6 +127,7 @@ initRegistry = do
   _ <-
     Map.insert displayCache (number (fromIntegral manualSpecies)) (string "Manual")
   seen <- hold Map.new
+  pending <- hold Map.new
   names <- hold Map.new
   taken <- hold Set.new
   rec <- hold newObject
@@ -140,11 +135,13 @@ initRegistry = do
   catalogE <- bindExpr catalogNamesMap
   cacheE <- bindExpr displayCache
   seenE <- bindExpr seen
+  pendingE <- bindExpr pending
   namesE <- bindExpr names
   takenE <- bindExpr taken
   _ <- setProp rec "known" knownE
   _ <- setProp rec "catalogNames" catalogE
   _ <- setProp rec "seen" seenE
+  _ <- setProp rec "pending" pendingE
   _ <- setProp rec "names" namesE
   _ <- setProp rec "takenNames" takenE
   _ <- setProp rec "displayCache" cacheE
@@ -303,39 +300,119 @@ resolveComponent ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> EffectSyntax f (f 'Unit)
 resolveComponent scratch = do
-  hash <- componentHash scratch
+  alive <- getProp scratch "alive"
+  w0 <- scratch.w
+  cells <- getProp scratch "cells"
+  info <-
+    hold $
+      ffi
+        ( "(function(_a,w,c){const D=globalThis.LifeDiscover;"
+            <> "if(!D)return{key:'',hashes:[]};"
+            <> "return D.classify(_a,w,c);})"
+        )
+        (arg alive <: arg w0 <: arg cells <: RecNil)
+  key <- getProp info "key"
+  hashes <- getProp info "hashes"
   registry <- getProp scratch "registry"
   knownM <- getProp (Lift registry) "known"
-  knownHit <- Map.lookup (Lift knownM) hash
+  knownHit <- Map.lookup (Lift knownM) key
   toSyntax $
     optionCaseE
       knownHit
-      ( fromSyntax $ do
-          seenM <- getProp (Lift registry) "seen"
-          seenHit <- Map.lookup (Lift seenM) hash
-          toSyntax $
-            optionCaseE
-              seenHit
-              (fromSyntax (maybeMint scratch hash))
-              ( \sid ->
-                  fromSyntax $ do
-                    species <- getProp scratch "species"
-                    cells <- getProp scratch "cells"
-                    assignCells species cells sid
-              )
+      (fromSyntax $ resolveUnlabeled scratch key hashes)
+      (\sid -> fromSyntax $ assignSpecies scratch sid key hashes)
+
+resolveUnlabeled ::
+  Effect f (MutableObjectOf DiscoverScratch)
+  -> Expr f 'String
+  -> Expr f ('Array 'String)
+  -> EffectSyntax f (f 'Unit)
+resolveUnlabeled scratch key hashes = do
+  registry <- getProp scratch "registry"
+  seenM <- getProp (Lift registry) "seen"
+  keyHit <- Map.lookup (Lift seenM) key
+  toSyntax $
+    optionCaseE
+      keyHit
+      ( fromSyntax $
+          lookupHashThenPending scratch seenM key hashes (number 0)
       )
-      ( \sid ->
-          fromSyntax $ do
-            species <- getProp scratch "species"
-            cells <- getProp scratch "cells"
-            assignCells species cells sid
-      )
+      (\sid -> fromSyntax $ assignSpecies scratch sid key hashes)
+
+lookupHashThenPending ::
+  Effect f (MutableObjectOf DiscoverScratch)
+  -> Expr f ('Map 'String 'Number)
+  -> Expr f 'String
+  -> Expr f ('Array 'String)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+lookupHashThenPending scratch seenM key hashes k = do
+  ifS
+    (k .>= Array.length hashes)
+    (bumpPending scratch key hashes)
+    ( do
+        let
+          cellHash = Array.index hashes k
+        hit <- Map.lookup (Lift seenM) cellHash
+        toSyntax $
+          optionCaseE
+            hit
+            ( fromSyntax $
+                lookupHashThenPending scratch seenM key hashes (k + 1)
+            )
+            ( \sid ->
+                fromSyntax $ assignSpecies scratch sid key hashes
+            )
+    )
+
+bumpPending ::
+  Effect f (MutableObjectOf DiscoverScratch)
+  -> Expr f 'String
+  -> Expr f ('Array 'String)
+  -> EffectSyntax f (f 'Unit)
+bumpPending scratch key hashes = do
+  registry <- getProp scratch "registry"
+  pendingM <- getProp (Lift registry) "pending"
+  cntHit <- Map.lookup (Lift pendingM) key
+  nextCnt <-
+    bindExpr $
+      optionCaseE
+        cntHit
+        (expr (number 1))
+        (\c -> expr (c + 1))
+  _ <- Map.insert (Lift pendingM) key nextCnt
+  whenS (nextCnt .>= 2) (maybeMint scratch key hashes)
+
+assignSpecies ::
+  Effect f (MutableObjectOf DiscoverScratch)
+  -> Expr f 'Number
+  -> Expr f 'String
+  -> Expr f ('Array 'String)
+  -> EffectSyntax f (f 'Unit)
+assignSpecies scratch sid key hashes = do
+  registry <- getProp scratch "registry"
+  seenM <- getProp (Lift registry) "seen"
+  _ <- Map.insert (Lift seenM) key sid
+  _ <- registerHashAliases seenM hashes sid
+  species <- getProp scratch "species"
+  cells <- getProp scratch "cells"
+  assignCells species cells sid
+
+registerHashAliases ::
+  Expr f ('Map 'String 'Number)
+  -> Expr f ('Array 'String)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+registerHashAliases seenM hashes sid =
+  forRange_ (number 0) (Array.length hashes) $ \k ->
+    Map.insert (Lift seenM) (Array.index hashes k) sid
 
 maybeMint ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> Expr f 'String
+  -> Expr f ('Array 'String)
   -> EffectSyntax f (f 'Unit)
-maybeMint scratch hash = do
+maybeMint scratch key hashes = do
   nid <- scratch.nextId
   maxSid0 <- scratch.maxSid
   whenS (nid .<= maxSid0) $ do
@@ -350,7 +427,8 @@ maybeMint scratch hash = do
     _ <- Array.push_ minted nid
     registry <- getProp scratch "registry"
     seenM <- getProp (Lift registry) "seen"
-    _ <- Map.insert (Lift seenM) hash nid
+    _ <- Map.insert (Lift seenM) key nid
+    _ <- registerHashAliases seenM hashes nid
     set @"nextId" scratch (nid + 1)
     species <- getProp scratch "species"
     cells <- getProp scratch "cells"
@@ -365,50 +443,6 @@ assignCells species cells sid =
   forRange_ (number 0) (Array.length cells) $ \k ->
     setU8 species (Array.index cells k) sid
 
--- | Same order as 'Catalog.shapeHash' (numeric @(x,y)@, then @"x,y"@ join).
---   That is what @LifeCatalog.known@ stores, not JS lexicographic string sort.
-componentHash ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> EffectSyntax f (Expr f 'String)
-componentHash scratch = do
-  cells <- getProp scratch "cells"
-  w0 <- scratch.w
-  set @"minX" scratch (number 1e9)
-  set @"minY" scratch (number 1e9)
-  forRange_ (number 0) (Array.length cells) $ \k -> do
-    let
-      i = Array.index cells k
-      x = rem_ i w0
-      y = Math.floor (i / w0)
-    mx <- scratch.minX
-    my <- scratch.minY
-    whenS (x .< mx) (set @"minX" scratch x)
-    whenS (y .< my) (set @"minY" scratch y)
-  pts <- bindExpr $ Array.fromEffects []
-  mx <- scratch.minX
-  my <- scratch.minY
-  forRange_ (number 0) (Array.length cells) $ \k -> do
-    let
-      i = Array.index cells k
-      x = rem_ i w0 - mx
-      y = Math.floor (i / w0) - my
-    Array.push_ pts (pt x y)
-  let
-    sorted =
-      Array.toSorted pts $ \a b ->
-        let
-          dx = a.x - b.x
-         in
-          if_ (dx .!= 0) dx (a.y - b.y)
-    hash =
-      Array.join
-        (Array.map sorted $ \p -> toString p.x <> string "," <> toString p.y)
-        (string ";")
-  pure hash
-
-pt :: Expr f 'Number -> Expr f 'Number -> Expr f ('Object Pt)
-pt x y = frozen [field @"x" x, field @"y" y]
-
 sidCount :: Expr f 'Number -> Expr f 'Number -> Expr f ('Object SidCount)
 sidCount sid cnt = frozen [field @"sid" sid, field @"cnt" cnt]
 
@@ -417,8 +451,8 @@ discoverRgb ::
 discoverRgb n =
   let
     hue = rem_ (n * number 137.508) (number 360)
-    s = number 0.42
-    l = number 0.49
+    s = number 0.62
+    l = number 0.41
     c = (number 1 - abs (number 2 * l - number 1)) * s
     hp = hue / number 60
     hpMod = hp - number 2 * Math.floor (hp / number 2)

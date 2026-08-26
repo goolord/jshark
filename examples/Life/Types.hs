@@ -79,8 +79,9 @@ module Types
   , lifeStatZoomId
   , lifeStatTickId
   , lifeStatEngineId
-  , toggleToolSid
   , eraserToolSid
+  , mouseToolSid
+  , gliderToolSid
   , hoverRadius
   , zoomSteps
   , zoomLevels
@@ -324,13 +325,17 @@ lifeStatTickId = "life-stat-tick"
 lifeStatEngineId :: Text
 lifeStatEngineId = "life-stat-engine"
 
--- | HUD default: left-click flips a single cell (species 'manualSpecies').
-toggleToolSid :: Int
-toggleToolSid = 0
-
 -- | Left-click clears live cells only (never births).
 eraserToolSid :: Int
 eraserToolSid = -1
+
+-- | Pan the viewport: left drag or right drag with inertia.
+mouseToolSid :: Int
+mouseToolSid = -2
+
+-- | Click-drag to aim and stamp a glider.
+gliderToolSid :: Int
+gliderToolSid = -3
 
 -- | Chebyshev cells around the cursor that still count as hovering a species.
 hoverRadius :: Int

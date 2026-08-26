@@ -43,6 +43,7 @@ data-files:
   examples/static/*.css
   examples/static/hvm2-demo.wasm
   examples/Life/js/catalog.js
+  examples/Life/js/Discover.js
   examples/Life/js/LUTGenerator.js
   examples/Life/js/LifeSimd.js
   examples/Life/js/pixi.min.js

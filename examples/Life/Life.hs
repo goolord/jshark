@@ -8,10 +8,12 @@ module Life
   , initialCatalogCells
   , soupSeedPop
   , catalogJs
+  , canonicalShapeHash
+  , shapeHash
   )
 where
 
-import Catalog (catalogJs)
+import Catalog (canonicalShapeHash, catalogJs, shapeHash)
 import Client (mainJS)
 import Page (assetBaseFor, framePage, frameSrcFor, page)
 import Patterns (initialCatalogCells, initialPop, soupSeedPop)
