@@ -796,10 +796,22 @@ instance KnownScalar 'Regex where
   isScalarTy = True
 
 mkEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+mkEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x == y))
+mkEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
+  Literal (ValueBool (x == y))
+mkEq (Literal (ValueString x)) (Literal (ValueString y)) =
+  Literal (ValueBool (x == y))
 mkEq x y = Std (Kernel (KEq (not (isScalarTy @a)) x y))
 {-# INLINE [1] mkEq #-}
 
 mkNEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
+mkNEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x /= y))
+mkNEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
+  Literal (ValueBool (x /= y))
+mkNEq (Literal (ValueString x)) (Literal (ValueString y)) =
+  Literal (ValueBool (x /= y))
 mkNEq x y = Std (Kernel (KNEq (not (isScalarTy @a)) x y))
 {-# INLINE [1] mkNEq #-}
 
@@ -807,18 +819,26 @@ mkNEq x y = Std (Kernel (KNEq (not (isScalarTy @a)) x y))
 -- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
 -- separate type variables in GHC 9.14).
 mkGTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkGTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x > y))
 mkGTh x y = Std (Kernel (KGTh x y))
 {-# INLINE [1] mkGTh #-}
 
 mkLTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkLTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x < y))
 mkLTh x y = Std (Kernel (KLTh x y))
 {-# INLINE [1] mkLTh #-}
 
 mkGTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkGTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x >= y))
 mkGTEq x y = Std (Kernel (KGTEq x y))
 {-# INLINE [1] mkGTEq #-}
 
 mkLTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+mkLTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueBool (x <= y))
 mkLTEq x y = Std (Kernel (KLTEq x y))
 {-# INLINE [1] mkLTEq #-}
 
