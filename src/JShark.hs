@@ -2075,7 +2075,7 @@ lowerArg = \case
   ArgEffect e -> Ir.IrArgEffect (lowerEffect e)
 
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
-lowerArgAt t0 = \case
+lowerArgAt !t0 = \case
   ArgExpr e ->
     let
       (t1, e') = lowerExprAt t0 e
@@ -2089,7 +2089,7 @@ lowerArgAt t0 = \case
 
 lowerRecArgsAt ::
   Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us)
-lowerRecArgsAt t0 = \case
+lowerRecArgsAt !t0 = \case
   RecNil -> (t0, RecNil)
   RecCons x xs ->
     let
@@ -2104,7 +2104,7 @@ lowerArgsAt = lowerRecArgsAt
 
 lowerFixedArgsAt ::
   Int -> FixedArgs Stamp a b c -> (Int, Ir.IrFixedArgs a b c)
-lowerFixedArgsAt t0 = \case
+lowerFixedArgsAt !t0 = \case
   ArgsU x ->
     let
       (t1, x') = lowerExprAt t0 x
@@ -2125,7 +2125,7 @@ lowerFixedArgsAt t0 = \case
       (t3, Ir.IrArgsT x' y' z')
 
 lowerKernelKAt :: Int -> Kernel Stamp u -> (Int, Ir.IrKernel u)
-lowerKernelKAt t0 = \case
+lowerKernelKAt !t0 = \case
   KPlus x y ->
     let
       (t1, x') = lowerExprAt t0 x
@@ -2316,7 +2316,7 @@ reifyKernelK = \case
   Ir.KLTEq x y -> KLTEq (reifyExpr x) (reifyExpr y)
 
 lowerStdMethodAt :: Int -> Method Stamp u -> (Int, Ir.IrMethod u)
-lowerStdMethodAt t0 = \case
+lowerStdMethodAt !t0 = \case
   MethMap arr f ->
     let
       tag = t0
@@ -2398,7 +2398,7 @@ reifyStdMethod = \case
     MethFrom (reifyExpr n) (\s -> rebindExpr tag (reifyExpr body) s)
 
 lowerFieldLitAt :: Int -> FieldLit Stamp r -> (Int, Ir.IrFieldLit r)
-lowerFieldLitAt t0 = \case
+lowerFieldLitAt !t0 = \case
   FieldLit @k e ->
     let
       (t1, e') = lowerExprAt t0 e
@@ -2422,20 +2422,20 @@ lowerFieldLitAt t0 = \case
 
 lowerFieldLitsAt ::
   Int -> [FieldLit Stamp r] -> (Int, [Ir.IrFieldLit r])
-lowerFieldLitsAt t0 fs = goFieldLits t0 fs []
+lowerFieldLitsAt !t0 fs = goFieldLits t0 fs []
  where
-  goFieldLits t [] acc = (t, reverse acc)
-  goFieldLits t (fl : rest) acc =
+  goFieldLits !t [] acc = (t, reverse acc)
+  goFieldLits !t (fl : rest) acc =
     let
       (t1, fl') = lowerFieldLitAt t fl
      in
       goFieldLits t1 rest (fl' : acc)
 
 lowerEffectsAt :: Int -> [Effect Stamp u] -> (Int, [Ir.IrEffect u])
-lowerEffectsAt t0 es = goEffects t0 es []
+lowerEffectsAt !t0 es = goEffects t0 es []
  where
-  goEffects t [] acc = (t, reverse acc)
-  goEffects t (e : rest) acc =
+  goEffects !t [] acc = (t, reverse acc)
+  goEffects !t (e : rest) acc =
     let
       (t1, e') = lowerEffectAt t e
      in
@@ -2443,10 +2443,10 @@ lowerEffectsAt t0 es = goEffects t0 es []
 
 lowerEffectArmsAt ::
   Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Ir.IrEffect u)])
-lowerEffectArmsAt t0 arms = goArms t0 arms []
+lowerEffectArmsAt !t0 arms = goArms t0 arms []
  where
-  goArms t [] acc = (t, reverse acc)
-  goArms t ((k, e) : rest) acc =
+  goArms !t [] acc = (t, reverse acc)
+  goArms !t ((k, e) : rest) acc =
     let
       (t1, e') = lowerEffectAt t e
      in
@@ -2487,7 +2487,7 @@ lowerFnBody :: FnBody Stamp us r -> Ir.IrFnBody us r
 lowerFnBody body = snd (lowerFnBodyAt (-2) body)
 
 lowerFnBodyAt :: Int -> FnBody Stamp us r -> (Int, Ir.IrFnBody us r)
-lowerFnBodyAt t0 body =
+lowerFnBodyAt !t0 body =
   let
     (tags, tEnd) = allocFnTags t0 body
    in
@@ -2509,7 +2509,7 @@ lowerExpr :: Expr Stamp u -> Ir.IrExpr u
 lowerExpr e = snd (lowerExprAt (-2) e)
 
 lowerExprAt :: Int -> Expr Stamp u -> (Int, Ir.IrExpr u)
-lowerExprAt t0 = \case
+lowerExprAt !t0 = \case
   Literal v -> (t0, Ir.IrLiteral v)
   Var (Stamp i) -> (t0, Ir.IrVar i)
   Var (Embed e) ->
@@ -2684,7 +2684,7 @@ lowerEffect :: Effect Stamp u -> Ir.IrEffect u
 lowerEffect e = snd (lowerEffectAt (-2) e)
 
 lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u)
-lowerEffectAt t0 = \case
+lowerEffectAt !t0 = \case
   Lift x ->
     let
       (t1, x') = lowerExprAt t0 x
