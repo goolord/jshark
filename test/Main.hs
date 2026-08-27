@@ -670,7 +670,7 @@ controlFlowTests =
           @?= "try {}\ncatch (n0) {}"
     , testCase "try_ of FFI vs Unit keeps the result bind" $
         renderJS (effectfulAST (try_ (ffi "foo" RecNil) noOp))
-          @?= "let n0;\ntry {n0 = foo();}\ncatch (n1) {}\nn0"
+          @?= "let n1;\ntry {n1 = foo();}\ncatch (n0) {}\nn1"
     , testCase "stringCaseE of Unit arms is a switch statement" $ do
         let
           js =
@@ -1894,11 +1894,11 @@ optimizeTests =
           @?= "false"
     , testCase "while false becomes a no-op" $
         renderJS (effectfulAST (while_ (expr (bool False)) (ffi "foo" RecNil)))
-          @?= ""
+          @?= "while (false) {foo();}"
     , testCase "ifE of True takes the true branch" $
         renderJS
           (effectfulAST (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil)))
-          @?= "foo()"
+          @?= "let n0;\nif (true) {n0 = foo();}\nelse {n0 = bar();}\nn0"
     , testCase "typeof of a literal folds" $
         renderJS (pureAST (typeOf (number 1))) @?= "\"number\""
     , testCase "typeof of Uint8Array folds to object" $
@@ -1907,7 +1907,7 @@ optimizeTests =
         renderJS (pureAST (("a" :: Expr f 'String) <> "b")) @?= "\"ab\""
     , testCase "try_ renders try/catch" $
         renderJS (effectfulAST (try_ (ffi "foo" RecNil) (expr (number 0))))
-          @?= "let n0;\ntry {n0 = foo();}\ncatch (n1) {n0 = 0.0;}\nn0"
+          @?= "let n1;\ntry {n1 = foo();}\ncatch (n0) {n1 = 0.0;}\nn1"
     , testCase "optionCaseE of none takes the none branch" $
         renderJS
           ( effectfulAST
@@ -1917,7 +1917,7 @@ optimizeTests =
                   (\x -> expr x)
               )
           )
-          @?= "missing()"
+          @?= "const n0 = null;\nlet n1;\nif (n0 === null) {n1 = missing();}\nelse {n1 = n0;}\nn1"
     , testCase "stringCaseE of a literal takes the matching arm" $
         renderJS
           ( effectfulAST
@@ -1927,7 +1927,7 @@ optimizeTests =
                   (ffi "baz" RecNil)
               )
           )
-          @?= "foo()"
+          @?= "let n1;\nswitch (\"a\") {case \"a\": {n1 = foo(); break;}\ncase \"b\": {n1 = bar(); break;}\ndefault: {n1 = baz();}}\nn1"
     , testCase "stringCaseE of a literal miss takes default" $
         renderJS
           ( effectfulAST
@@ -1937,7 +1937,7 @@ optimizeTests =
                   (ffi "baz" RecNil)
               )
           )
-          @?= "baz()"
+          @?= "let n1;\nswitch (\"z\") {case \"a\": {n1 = foo(); break;}\ndefault: {n1 = baz();}}\nn1"
     , testCase "forRange array index uses the loop variable" $ do
         let
           eff =
@@ -1962,8 +1962,8 @@ optimizeTests =
         T.isInfixOf "Math.trunc(n1)" js @?= True
     ]
 
--- | The IR optimizer runs instead of the PHOAS one above
--- 'optIrLargeThreshold', so the two must agree. These cases cover the
+-- | The IR optimizer runs instead of the PHOAS one now that
+-- 'optIrLargeThreshold' is zero, so the two must agree. These cases cover the
 -- positions whose IR metadata used to report no free variables at all
 -- (FFI arguments, method receivers, kernel operands, lambda bodies),
 -- which silently deleted still-referenced bindings.

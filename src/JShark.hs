@@ -112,6 +112,7 @@ module JShark
   , nodeCountEff
   , closedEffectNodes
   , closedExprNodes
+  , lowerOptEffectIr
   , optIrLargeThreshold
   , optimizedExprSize
   , optimizedEffectSize
@@ -119,9 +120,11 @@ module JShark
   , pureAST
   , effectfulAST
   , effectfulASTFromFlat
+  , effectfulASTFromPrepared
   , effectfulASTIr
   , irEffectFromClosed
   , flatPrepareCore
+  , flatPrepareFromIr
   , flatProgramNodeCount
   , flatSoaParallelThreshold
   , irExprFromClosed
@@ -1112,14 +1115,7 @@ pureProgram e =
 
 -- | Effectful computation compiled to a self-contained JS program (IIFE).
 effectfulProgram :: ClosedEffect u -> JS
-effectfulProgram e
-  | closedEffectNodes e >= optIrLargeThreshold =
-      uncurry renderIIFE (flatEffectfulCodegen e)
-  | otherwise =
-      let
-        !(s0, eff) = unsafePerformIO (prepareEffectProgram e)
-       in
-        uncurry renderIIFE (effectfulAST' IM.empty s0 eff)
+effectfulProgram e = uncurry renderIIFE (flatEffectfulCodegen e)
 
 codesDecls :: [Code] -> JS
 codesDecls cs = vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
@@ -1223,37 +1219,32 @@ prepareEffectProgram e = do
 prepareFlatEffectProgram :: ClosedEffect u -> IO (Flat.FlatProgram, CG)
 prepareFlatEffectProgram e = do
   mCtx <- captureEmitCtx
-  (prog, _timing) <- flatPrepareCore e
+  (prog, _timing, _irNodes) <- flatPrepareCore e
   case mCtx of
     Nothing -> pure (prog, startCG)
     Just ctx -> do
       initEmitCtxTotal ctx (flatProgramNodeCount prog)
       pure (prog, startCG {cgEmitCtx = Just ctx})
+{-# NOINLINE prepareFlatEffectProgram #-}
 
-flatPrepareCore :: ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming)
-flatPrepareCore (e :: ClosedEffect u) = do
+flatPrepareFromIr :: Ir.IrEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming)
+flatPrepareFromIr irOpt = do
   mCtx <- captureEmitCtx
   t0 <- getMonotonicTime
-  let
-    (!_, !irRaw) = lowerEffectAt (-2) (flattenEff e)
-  t1 <- getMonotonicTime
-  let
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) irRaw
-  t2 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportPackPhase ctx 0 3
     Nothing -> pure ()
   let
     !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
     !packNodes = flatProgramNodeCount prog0
-  t3 <- getMonotonicTime
+  t1 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportPackPhase ctx 1 3
     Nothing -> pure ()
   let
     !(prog, _soa) = FlatSoA.optimizeFlatPack soa0 prog0
     !_ = packNodes
-  t4 <- getMonotonicTime
+  t2 <- getMonotonicTime
   case mCtx of
     Just ctx -> do
       reportPackPhase ctx 2 3
@@ -1262,15 +1253,40 @@ flatPrepareCore (e :: ClosedEffect u) = do
   let
     timing =
       FlatPrepareTiming
+        { fptLowerSec = 0
+        , fptIrOptSec = 0
+        , fptPackSec = seconds t0 t1
+        , fptFlatOptSec = seconds t1 t2
+        , fptTotalSec = seconds t0 t2
+        }
+  pure (prog, timing)
+{-# NOINLINE flatPrepareFromIr #-}
+
+flatPrepareCore :: ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming, Int)
+flatPrepareCore (e :: ClosedEffect u) = do
+  tAll0 <- getMonotonicTime
+  t0 <- getMonotonicTime
+  let
+    !irRaw = lowerEffectClosed e
+  t1 <- getMonotonicTime
+  let
+    !irOpt = optEffectClosed irRaw
+    !irNodes = Ir.irMetaSize (Ir.metaIrEffect irOpt)
+  t2 <- getMonotonicTime
+  (prog, packTiming) <- flatPrepareFromIr irOpt
+  tAll1 <- getMonotonicTime
+  let
+    timing =
+      FlatPrepareTiming
         { fptLowerSec = seconds t0 t1
         , fptIrOptSec = seconds t1 t2
-        , fptPackSec = seconds t2 t3
-        , fptFlatOptSec = seconds t3 t4
-        , fptTotalSec = seconds t0 t4
+        , fptPackSec = fptPackSec packTiming
+        , fptFlatOptSec = fptFlatOptSec packTiming
+        , fptTotalSec = seconds tAll0 tAll1
         }
   reportFlatPrepareTiming timing
-  pure (prog, timing)
-{-# NOINLINE prepareFlatEffectProgram #-}
+  pure (prog, timing, irNodes)
+{-# NOINLINE flatPrepareCore #-}
 
 {-# NOINLINE tickEmitCtxUnit #-}
 tickEmitCtxUnit :: EmitCtx -> Int -> ()
@@ -1574,12 +1590,32 @@ nodeCountEff e =
       )
 
 closedEffectNodes :: ClosedEffect u -> Int
-closedEffectNodes (e :: ClosedEffect u) =
-  let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff (e :: Effect Stamp u))
-   in
-    Ir.irMetaSize (Ir.metaIrEffect ir)
+closedEffectNodes e = snd (lowerOptEffectIr e)
 {-# NOINLINE closedEffectNodes #-}
+
+lowerEffectClosed :: ClosedEffect u -> Ir.IrEffect u
+lowerEffectClosed (e :: ClosedEffect u) =
+  let
+    (!_, !ir) = lowerEffectAt (-2) (flattenEff e)
+   in
+    ir
+{-# NOINLINE lowerEffectClosed #-}
+
+optEffectClosed :: Ir.IrEffect u -> Ir.IrEffect u
+optEffectClosed ir =
+  let
+    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+   in
+    irOpt
+{-# NOINLINE optEffectClosed #-}
+
+lowerOptEffectIr :: ClosedEffect u -> (Ir.IrEffect u, Int)
+lowerOptEffectIr e =
+  let
+    !irOpt = optEffectClosed (lowerEffectClosed e)
+   in
+    (irOpt, Ir.irMetaSize (Ir.metaIrEffect irOpt))
+{-# NOINLINE lowerOptEffectIr #-}
 
 closedExprNodes :: ClosedExpr u -> Int
 closedExprNodes (e :: ClosedExpr u) =
@@ -1686,7 +1722,7 @@ optSmall = 16
 
 -- | PHOAS 'optEffect' is quadratic on long bind chains; IR opt for huge ASTs.
 optIrLargeThreshold :: Int
-optIrLargeThreshold = 50000
+optIrLargeThreshold = 0
 
 -- | First-order reopen: rename the tag allocated by 'optUnder'. Never
 -- re-applies the original PHOAS @f@. Same tag is identity. The fold dummy
@@ -3087,26 +3123,16 @@ optimizeEffectIr e =
 {-# NOINLINE optimizeEffectIr #-}
 
 optimizeEffectTree :: ClosedEffect u -> Effect Stamp u
-optimizeEffectTree (e :: ClosedEffect u) =
-  if closedEffectNodes e >= optIrLargeThreshold
-    then optimizeEffectIr (e :: Effect Stamp u)
-    else
-      let
-        (_, final, _) = optEffect (-2) (e :: Effect Stamp u)
-       in
-        flattenEff final
+optimizeEffectTree e =
+  flattenEff (reifyEffect (fst (lowerOptEffectIr e)))
+{-# NOINLINE optimizeEffectTree #-}
 
 optimizeEffect :: ClosedEffect u -> Effect Stamp u
 optimizeEffect e = optimizeEffectTree e
 {-# NOINLINE optimizeEffect #-}
 
 irEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
-irEffectFromClosed (e :: ClosedEffect u) =
-  let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff e)
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
-   in
-    irOpt
+irEffectFromClosed e = fst (lowerOptEffectIr e)
 {-# NOINLINE irEffectFromClosed #-}
 
 irExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
@@ -3290,12 +3316,7 @@ optimizedExprSize (e :: ClosedExpr u) =
     Ir.irMetaSize md
 
 optimizedEffectSize :: ClosedEffect u -> Int
-optimizedEffectSize (e :: ClosedEffect u) =
-  let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff (e :: Effect Stamp u))
-    (!_, !_, !md) = Ir.optIrEffect (-2) ir
-   in
-    Ir.irMetaSize md
+optimizedEffectSize e = snd (lowerOptEffectIr e)
 
 -- | Tags step by two, keeping the optimizer on the even negatives.
 -- Codegen's 'allocTag' owns the odd ones, so neither can name a binder the
@@ -4946,6 +4967,12 @@ flatRenderKernel mode env s0 prog = \case
   Flat.FE_KLTEq x y -> flatRenderBin mode env "<=" s0 prog x y
   _ -> error "JShark.flatRenderKernel: unexpected node"
 
+flatEnvTag :: Env -> Int -> Int
+flatEnvTag env tag =
+  case IM.lookup tag env of
+    Just n -> n
+    Nothing -> error "JShark.flatEnvTag: missing binding"
+
 flatRenderCallbackMethod ::
   FlatEmitMode
   -> Env
@@ -4959,16 +4986,27 @@ flatRenderCallbackMethod ::
 flatRenderCallbackMethod mode env name s0 prog arrId tag bodyId =
   let
     (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arrId
-    (nParam, s2) = allocIdent s1
-    env' = IM.insert tag nParam env
-    (s3, Code exDecl exRef) = flatPureChild mode env' s2 prog bodyId
+    (nParam, s2, exDecl, exRef) =
+      case mode of
+        Just _ ->
+          let
+            (s', Code d r) = flatPureChild mode env s1 prog bodyId
+           in
+            (flatEnvTag env tag, s', d, r)
+        Nothing ->
+          let
+            (n, s') = allocIdent s1
+            env' = IM.insert tag n env
+            (s'', Code d r) = flatPureChild mode env' s' prog bodyId
+           in
+            (n, s'', d, r)
     call =
       flatWrapOperand prog arrId rRef
         <> "."
         <> jsString name
         <> parens (jsCallback [nJS nParam] exDecl exRef)
    in
-    (s3, Code rDecl call)
+    (s2, Code rDecl call)
 
 flatRenderFold ::
   FlatEmitMode
@@ -4986,17 +5024,33 @@ flatRenderFold mode env method s0 prog arrId zId tagA tagB bodyId =
   let
     (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arrId
     (s2, Code zDecl zRef) = flatPureChild mode env s1 prog zId
-    (nAcc, s3) = allocIdent s2
-    (nElem, s4) = allocIdent s3
-    env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
-    (s5, Code exDecl exRef) = flatPureChild mode env' s4 prog bodyId
+    (nAcc, nElem, s3, exDecl, exRef) =
+      case mode of
+        Just _ ->
+          let
+            (s', Code d r) = flatPureChild mode env s2 prog bodyId
+           in
+            ( flatEnvTag env tagA
+            , flatEnvTag env tagB
+            , s'
+            , d
+            , r
+            )
+        Nothing ->
+          let
+            (nA, sA) = allocIdent s2
+            (nE, sE) = allocIdent sA
+            env' = IM.insert tagA nA $ IM.insert tagB nE env
+            (s', Code d r) = flatPureChild mode env' sE prog bodyId
+           in
+            (nA, nE, s', d, r)
     cb = jsCallback [nJS nAcc, nJS nElem] exDecl exRef
     call =
       flatWrapOperand prog arrId rRef
         <> jsString method
         <> parens (cb <> ", " <> zRef)
    in
-    (s5, Code (rDecl $$ zDecl) call)
+    (s3, Code (rDecl $$ zDecl) call)
 
 flatRenderMethod ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Flat.FlatNode -> (CG, Code)
@@ -5010,36 +5064,69 @@ flatRenderMethod mode env s0 prog = \case
   Flat.FE_MethReduceRight arr z tagA tagB body ->
     flatRenderFold mode env ".reduceRight" s0 prog arr z tagA tagB body
   Flat.FE_MethToSorted arr tagA tagB body ->
-    let
-      (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arr
-      (nA, s2) = allocIdent s1
-      (nB, s3) = allocIdent s2
-      env' = IM.insert tagA nA $ IM.insert tagB nB env
-      (s4, Code exDecl exRef) = flatPureChild mode env' s3 prog body
-      cb = jsCallback [nJS nA, nJS nB] exDecl exRef
-     in
-      (s4, Code rDecl (flatWrapOperand prog arr rRef <> ".toSorted" <> parens cb))
+    case mode of
+      Just _ ->
+        let
+          (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arr
+          nA = flatEnvTag env tagA
+          nB = flatEnvTag env tagB
+          (s2, Code exDecl exRef) = flatPureChild mode env s1 prog body
+          cb = jsCallback [nJS nA, nJS nB] exDecl exRef
+         in
+          ( s2
+          , Code rDecl (flatWrapOperand prog arr rRef <> ".toSorted" <> parens cb)
+          )
+      Nothing ->
+        let
+          (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arr
+          (nA, s2) = allocIdent s1
+          (nB, s3) = allocIdent s2
+          env' = IM.insert tagA nA $ IM.insert tagB nB env
+          (s4, Code exDecl exRef) = flatPureChild mode env' s3 prog body
+          cb = jsCallback [nJS nA, nJS nB] exDecl exRef
+         in
+          ( s4
+          , Code rDecl (flatWrapOperand prog arr rRef <> ".toSorted" <> parens cb)
+          )
   Flat.FE_MethFrom n tag body ->
-    let
-      (s1, Code nDecl nRef) = flatPureChild mode env s0 prog n
-      (nHole, s2) = allocIdent s1
-      (nI, s3) = allocIdent s2
-      env' = IM.insert tag nI env
-      (s4, Code exDecl exRef) = flatPureChild mode env' s3 prog body
-      cb = jsCallback [nJS nHole, nJS nI] exDecl exRef
-     in
-      (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
+    case mode of
+      Just _ ->
+        let
+          (s1, Code nDecl nRef) = flatPureChild mode env s0 prog n
+          nI = flatEnvTag env tag
+          (s2, Code exDecl exRef) = flatPureChild mode env s1 prog body
+          cb = jsCallback ["_", nJS nI] exDecl exRef
+         in
+          (s2, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
+      Nothing ->
+        let
+          (s1, Code nDecl nRef) = flatPureChild mode env s0 prog n
+          (nHole, s2) = allocIdent s1
+          (nI, s3) = allocIdent s2
+          env' = IM.insert tag nI env
+          (s4, Code exDecl exRef) = flatPureChild mode env' s3 prog body
+          cb = jsCallback [nJS nHole, nJS nI] exDecl exRef
+         in
+          (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
   _ -> error "JShark.flatRenderMethod: unexpected node"
 
 flatRenderFnLit ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> [Int] -> Flat.NodeId -> (CG, Code)
 flatRenderFnLit mode env s0 prog tags bodyId =
-  let
-    (ids, s1) = allocNIdents s0 (length tags)
-    env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
-    (s2, Code d r) = flatPureChild mode env' s1 prog bodyId
-   in
-    (s2, Code mempty (jsCallback (map nJS ids) d r))
+  case mode of
+    Just _ ->
+      let
+        ids = map (flatEnvTag env) tags
+        (s1, Code d r) = flatPureChild mode env s0 prog bodyId
+       in
+        (s1, Code mempty (jsCallback (map nJS ids) d r))
+    Nothing ->
+      let
+        (ids, s1) = allocNIdents s0 (length tags)
+        env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
+        (s2, Code d r) = flatPureChild mode env' s1 prog bodyId
+       in
+        (s2, Code mempty (jsCallback (map nJS ids) d r))
 
 flatRenderResultCase ::
   FlatEmitMode
@@ -5362,6 +5449,76 @@ buildFlatEmitPlan prog root s0 =
                   writeSTRef sRef s'
                   let
                     env' = foldr (\(tag, i) -> IM.insert tag i) env (zip tags ids)
+                  writeEnv nid env'
+                  planGo env' bodyId
+                Flat.FE_MethMap arr tag bodyId -> do
+                  planGo env arr
+                  s <- readSTRef sRef
+                  let
+                    (ident, s') = allocIdent s
+                  writeSTRef sRef s'
+                  let
+                    env' = IM.insert tag ident env
+                  writeEnv nid env'
+                  planGo env' bodyId
+                Flat.FE_MethFilter arr tag bodyId -> do
+                  planGo env arr
+                  s <- readSTRef sRef
+                  let
+                    (ident, s') = allocIdent s
+                  writeSTRef sRef s'
+                  let
+                    env' = IM.insert tag ident env
+                  writeEnv nid env'
+                  planGo env' bodyId
+                Flat.FE_MethReduce arr z tagA tagB bodyId -> do
+                  planGo env arr
+                  planGo env z
+                  s <- readSTRef sRef
+                  let
+                    (ids, s') = allocNIdents s 2
+                  writeSTRef sRef s'
+                  let
+                    nAcc = ids !! 0
+                    nElem = ids !! 1
+                    env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
+                  writeEnv nid env'
+                  planGo env' bodyId
+                Flat.FE_MethReduceRight arr z tagA tagB bodyId -> do
+                  planGo env arr
+                  planGo env z
+                  s <- readSTRef sRef
+                  let
+                    (ids, s') = allocNIdents s 2
+                  writeSTRef sRef s'
+                  let
+                    nAcc = ids !! 0
+                    nElem = ids !! 1
+                    env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
+                  writeEnv nid env'
+                  planGo env' bodyId
+                Flat.FE_MethToSorted arr tagA tagB bodyId -> do
+                  planGo env arr
+                  s <- readSTRef sRef
+                  let
+                    (ids, s') = allocNIdents s 2
+                  writeSTRef sRef s'
+                  let
+                    nA = ids !! 0
+                    nB = ids !! 1
+                    env' = IM.insert tagA nA $ IM.insert tagB nB env
+                  writeEnv nid env'
+                  planGo env' bodyId
+                Flat.FE_MethFrom lenId tag bodyId -> do
+                  planGo env lenId
+                  s <- readSTRef sRef
+                  let
+                    (ids, s') = allocNIdents s 2
+                  writeSTRef sRef s'
+                  let
+                    nI = ids !! 1
+                    env' = IM.insert tag nI env
+                  writeEnv nid env'
                   planGo env' bodyId
                 Flat.FX_Bind tag xId bodyId -> do
                   planGo env xId
@@ -5826,11 +5983,9 @@ flatProgramNodeCount p = V.length (Flat.fpNodes p)
 flatSoaParallelThreshold :: Int
 flatSoaParallelThreshold = FlatSoA.flatSoaParallelThreshold
 
-flatEffectfulCodegen ::
-  ClosedEffect u -> (CG, Code)
-flatEffectfulCodegen (e :: ClosedEffect u) =
+flatEffectfulCodegenFromProg :: Flat.FlatProgram -> (CG, Code)
+flatEffectfulCodegenFromProg prog =
   let
-    !(prog, s0) = unsafePerformIO (prepareFlatEffectProgram e)
     root = Flat.fpRootEffect prog
     total = flatProgramNodeCount prog
    in
@@ -5838,26 +5993,32 @@ flatEffectfulCodegen (e :: ClosedEffect u) =
       then error "JShark.flatEffectfulCodegen: invalid root node"
       else
         let
-          (plan, s1) = buildFlatEmitPlan prog root s0
+          (plan, s1) = buildFlatEmitPlan prog root startCG
          in
           flatEmitLayered prog root plan s1
+{-# NOINLINE flatEffectfulCodegenFromProg #-}
+
+flatEffectfulCodegen ::
+  ClosedEffect u -> (CG, Code)
+flatEffectfulCodegen (e :: ClosedEffect u) =
+  let
+    !(prog, _s0) = unsafePerformIO (prepareFlatEffectProgram e)
+   in
+    flatEffectfulCodegenFromProg prog
 {-# NOINLINE flatEffectfulCodegen #-}
 
 effectfulASTFromFlat :: ClosedEffect u -> JS
 effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
 
-effectfulAST :: ClosedEffect u -> JS
-effectfulAST e
-  | closedEffectNodes e >= optIrLargeThreshold =
-      effectfulASTFromFlat e
-  | otherwise =
-      uncurry
-        renderWithHelpers
-        (effectfulAST' IM.empty startCG (optimizeEffectTree e))
+effectfulASTFromPrepared :: Flat.FlatProgram -> JS
+effectfulASTFromPrepared =
+  uncurry renderWithHelpers . flatEffectfulCodegenFromProg
 
--- | Flat IR codegen after 'Ir.optIrEffect'. Below 'optIrLargeThreshold',
--- 'effectfulAST' still uses the PHOAS pipeline; this always uses flat
--- pack + SoA opts. Output matches 'effectfulAST' on 'irParityTests'.
+effectfulAST :: ClosedEffect u -> JS
+effectfulAST = effectfulASTFromFlat
+
+-- | Flat IR codegen after 'Ir.optIrEffect'. Same path as 'effectfulAST'
+-- now that the flat pipeline is always selected.
 effectfulASTIr :: ClosedEffect u -> JS
 effectfulASTIr = effectfulASTFromFlat
 

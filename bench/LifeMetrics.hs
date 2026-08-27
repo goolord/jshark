@@ -7,8 +7,7 @@ module Main (main) where
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark
-  ( closedEffectNodes
-  , effectfulASTFromFlat
+  ( effectfulASTFromPrepared
   , flatPrepareCore
   , flatProgramNodeCount
   , nodeCountEff
@@ -25,10 +24,6 @@ import qualified Data.Text as T
 life :: ClosedEffect Unit
 life = stmts mainJS
 
-runRawNodes :: ClosedEffect Unit -> Int
-runRawNodes = closedEffectNodes
-{-# NOINLINE runRawNodes #-}
-
 runOptimize :: ClosedEffect Unit -> Int
 runOptimize e = nodeCountEff (optimizeEffect e)
 {-# NOINLINE runOptimize #-}
@@ -36,7 +31,9 @@ runOptimize e = nodeCountEff (optimizeEffect e)
 main :: IO ()
 main = do
   putStrLn $ "irThreshold," ++ show optIrLargeThreshold
-  putStrLn $ "rawNodes," ++ show (runRawNodes life)
+  (prog, FlatPrepareTiming {..}, irNodes) <- flatPrepareCore life
+  evaluate prog
+  putStrLn $ "rawNodes," ++ show irNodes
   t0 <- getMonotonicTime
   let
     optNodes = runOptimize life
@@ -44,8 +41,6 @@ main = do
   evaluate optNodes
   putStrLn $ "phoasOptimize," ++ show (seconds t0 t1)
   putStrLn $ "optNodes," ++ show optNodes
-  (prog, FlatPrepareTiming {..}) <- flatPrepareCore life
-  evaluate prog
   putStrLn $ "flatLower," ++ show fptLowerSec
   putStrLn $ "flatIrOpt," ++ show fptIrOptSec
   putStrLn $ "flatPack," ++ show fptPackSec
@@ -53,7 +48,7 @@ main = do
   putStrLn $ "flatPrepare," ++ show fptTotalSec
   putStrLn $ "flatNodes," ++ show (flatProgramNodeCount prog)
   t2 <- getMonotonicTime
-  js <- evaluate $ renderJSCompact (effectfulASTFromFlat life)
+  js <- evaluate $ renderJSCompact (effectfulASTFromPrepared prog)
   t3 <- getMonotonicTime
   putStrLn $ "flatEmit," ++ show (seconds t2 t3)
   putStrLn $ "jsBytes," ++ show (T.length js)
