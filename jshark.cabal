@@ -343,6 +343,7 @@ test-suite jshark-test
     , text
     , directory >= 1.3 && < 2
     , filepath
+    , containers >= 0.5 && < 1
     , process
     , unix
   default-language:

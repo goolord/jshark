@@ -34,12 +34,12 @@ defaultResolve = ResolveResult 0 0 0 0 0 ""
 discoverRgb :: Int -> (Int, Int, Int)
 discoverRgb n =
   let
-    hue = ((n * 137508) `mod` 360 + 360) `mod` 360
+    hue = fromIntegral ((n * 137508) `mod` 360000) / (1000 :: Double)
     s = 0.62 :: Double
     l = 0.41 :: Double
     c = (1 - abs (2 * l - 1)) * s
-    hp = fromIntegral hue / 60
-    hpMod = hp - 2 * fromIntegral (floor (hp / 2) :: Integer)
+    hp = hue / 60
+    hpMod = hp - 2 * fromIntegral (floor (hp / 2) :: Int)
     x = c * (1 - abs (hpMod - 1))
     m = l - c / 2
     (r1, g1, b1) =

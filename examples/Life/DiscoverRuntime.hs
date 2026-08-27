@@ -3,7 +3,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | JShark runtime for species shape keys and discovery (replaces Discover.js).
-module DiscoverRuntime (classifyAndResolveEffect) where
+module DiscoverRuntime (classifyAndResolveEffect, collectPhaseKey) where
 
 import Data.Text (Text)
 import DiscoverCore (discoverRgb)
@@ -26,13 +26,14 @@ classifyAndResolveEffect ::
   -> EffectSyntax f (Effect f ('MutableObject a))
 classifyAndResolveEffect scratch w cells nextId0 maxSid0 = do
   registry <- getProp scratch "registry"
+  rgbTable <- bindExpr discoverRgbTable
   coords <- extractCoords w cells
   (key, hashes) <- collectPhaseKey coords
   res <- hold newObject
   ifS
     (key .== string "")
     (fillDefault res)
-    (fillResolve res registry key hashes nextId0 maxSid0)
+    (fillResolve res registry key hashes nextId0 maxSid0 rgbTable)
   pure res
 
 registryField ::
@@ -391,59 +392,53 @@ collectPhaseKeyBody outSt coords = do
   _ <- setProp loopSt "done" false_
   history <- hold Set.new
   hashes <- bindExpr $ Array.fromEffects []
-  toSyntax_ $
-    while_
-      ( fromSyntax $ do
-          step <- getProp loopSt "step"
-          doneFlag <- getProp loopSt "done"
-          toSyntax $ expr (step .< 32 .&& not_ doneFlag)
-      )
-      ( fromSyntax $ do
-          grid <- getProp loopSt "grid"
-          live <- collectLiveLocal grid gw gh
-          whenS
-            (Array.length live .== 0)
-            ( do
-                _ <- setProp loopSt "done" true_
-                done
-            )
-          exact <- normCellsHash live
-          dup <- Set.member history exact
-          whenS
-            dup
-            ( do
-                _ <- setProp loopSt "done" true_
-                done
-            )
-          _ <- Set.insert history exact
-          _ <- Array.push_ hashes exact
-          step <- getProp loopSt "step"
-          whenS
-            (step .> 0)
-            ( do
-                absCoords <- bindExpr $ Array.fromEffects []
-                forRange_ (number 0) (Array.length live) $ \i -> do
-                  let
-                    pt = Array.index live i
-                    x = Array.index pt 0
-                    y = Array.index pt 1
-                  row <- bindExpr $ coordPair (x + ox) (y + oy)
-                  _ <- Array.push_ absCoords row
-                  done
-                (cx, cy) <- centroidCoords absCoords
-                whenS
-                  (abs (cx - c0x) + abs (cy - c0y) .> number 0.75)
-                  ( do
-                      _ <- setProp loopSt "done" true_
-                      done
-                  )
-            )
-          nextGrid <- sandboxStepGrid grid gw gh
-          _ <- setProp loopSt "grid" nextGrid
-          step' <- getProp loopSt "step"
-          setProp loopSt "step" (step' + 1)
-          done
-      )
+  forRange_ (number 0) (number 32) $ \_ -> do
+    doneFlag <- getProp loopSt "done"
+    whenS (not_ doneFlag) $ do
+      grid <- getProp loopSt "grid"
+      live <- collectLiveLocal grid gw gh
+      ifS
+        (Array.length live .== 0)
+        (setProp loopSt "done" true_)
+        ( do
+            exact <- normCellsHash live
+            dup <- Set.member history exact
+            ifS
+              dup
+              (setProp loopSt "done" true_)
+              ( do
+                  _ <- Set.insert history exact
+                  _ <- Array.push_ hashes exact
+                  step <- getProp loopSt "step"
+                  whenS
+                    (step .> 0)
+                    ( do
+                        absCoords <- bindExpr $ Array.fromEffects []
+                        forRange_ (number 0) (Array.length live) $ \i -> do
+                          let
+                            pt = Array.index live i
+                            x = Array.index pt 0
+                            y = Array.index pt 1
+                          row <- bindExpr $ coordPair (x + ox) (y + oy)
+                          _ <- Array.push_ absCoords row
+                          done
+                        (cx, cy) <- centroidCoords absCoords
+                        whenS
+                          (abs (cx - c0x) + abs (cy - c0y) .> number 0.75)
+                          (setProp loopSt "done" true_)
+                    )
+                  stillOpen <- getProp loopSt "done"
+                  whenS
+                    (not_ stillOpen)
+                    ( do
+                        nextGrid <- sandboxStepGrid grid gw gh
+                        _ <- setProp loopSt "grid" nextGrid
+                        step' <- getProp loopSt "step"
+                        setProp loopSt "step" (step' + 1)
+                    )
+              )
+        )
+    done
   let
     hLen = Array.length hashes
   ifS
@@ -502,10 +497,10 @@ discoverRgbTable =
     ]
 
 rgbForSid ::
-  Expr f 'Number
+  Expr f ('Array ('Array 'Number))
+  -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f 'Number, Expr f 'Number)
-rgbForSid sid = do
-  table <- bindExpr discoverRgbTable
+rgbForSid table sid = do
   let
     rgb = Array.index table sid
   pure (Array.index rgb 0, Array.index rgb 1, Array.index rgb 2)
@@ -564,12 +559,13 @@ fillPending ::
   Effect f ('MutableObject a)
   -> Effect f ('Map 'String 'Number)
   -> Effect f ('Map 'String 'Number)
+  -> Expr f ('Array ('Array 'Number))
   -> Expr f 'String
   -> Expr f ('Array 'String)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-fillPending res seen pending key hashes nextId0 maxSid0 = do
+fillPending res seen pending rgbTable key hashes nextId0 maxSid0 = do
   cntHit <- Map.lookup pending key
   let
     cnt0 = orElse cntHit (number 0)
@@ -592,7 +588,7 @@ fillPending res seen pending key hashes nextId0 maxSid0 = do
             done
         )
         ( do
-            (r, g, b) <- rgbForSid nextId0
+            (r, g, b) <- rgbForSid rgbTable nextId0
             _ <- Map.insert seen key nextId0
             _ <- registerAliases seen hashes nextId0
             _ <- Map.delete pending key
@@ -613,8 +609,9 @@ fillResolve ::
   -> Expr f ('Array 'String)
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f ('Array ('Array 'Number))
   -> EffectSyntax f (f 'Unit)
-fillResolve res registry key hashes nextId0 maxSid0 = do
+fillResolve res registry key hashes nextId0 maxSid0 rgbTable = do
   known <- registryField registry "known"
   seen <- registryField registry "seen"
   pending <- registryField registry "pending"
@@ -644,4 +641,4 @@ fillResolve res registry key hashes nextId0 maxSid0 = do
   stillOpen3 <- getProp st "resolved"
   whenS
     (not_ stillOpen3)
-    (fillPending res seenM pendingM key hashes nextId0 maxSid0)
+    (fillPending res seenM pendingM rgbTable key hashes nextId0 maxSid0)

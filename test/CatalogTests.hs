@@ -3,14 +3,25 @@
 module CatalogTests (catalogTests) where
 
 import Data.List (find)
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import DiscoverCore (collectPhaseKey)
-import Life (canonicalShapeHash, catalogJs)
-import Patterns (PatternSpec (..), allPatterns, glider)
-import System.Directory (getCurrentDirectory)
+import DiscoverCore
+  ( ResolveResult (..)
+  , classifyAndResolve
+  , collectPhaseKey
+  , discoverRgb
+  , extractCoords
+  )
+import JShark.Bun (evaluateEffectJSON)
+import Life (canonicalShapeHash, catalogJs, shapeHash)
+import LifeTestSupport (runtimeBlockPhaseHashLen, runtimeBlockPhaseKey)
+import Patterns (PatternSpec (..), allPatterns, glider, speciesColor)
+import System.Directory (findExecutable, getCurrentDirectory)
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
+import Types (discoverMin)
 
 catalogTests :: TestTree
 catalogTests =
@@ -29,6 +40,77 @@ catalogTests =
         phaseKey toadCells @?= phaseKey (stepPattern toadCells)
     , testCase "block stays single-phase" $
         length (phaseHashes block) @?= 1
+    , testCase "shapeHash normalizes and sorts coords" $
+        shapeHash block @?= "0,0;0,1;1,0;1,1"
+    , testCase "discoverRgb matches speciesColor golden angle" $ do
+        let
+          sid = discoverMin + 7
+        discoverRgb sid @?= speciesColor sid
+    , testCase "classifyAndResolve waits for second sighting" $ do
+        let
+          w = 10
+          cells = [0, 1, w, w + 1]
+          key = fst (collectPhaseKey (extractCoords w cells))
+          first =
+            classifyAndResolve Map.empty Map.empty Map.empty 100 255 w cells
+          second =
+            classifyAndResolve
+              Map.empty
+              Map.empty
+              (Map.singleton key 1)
+              100
+              255
+              w
+              cells
+        rrAction first @?= 0
+        rrKey first @?= key
+        rrAction second @?= 2
+        rrSid second @?= 100
+        discoverRgb 100 @?= (rrR second, rrG second, rrB second)
+    , testCase "classifyAndResolve known catalog hits on first sight" $ do
+        let
+          w = 10
+          cells = [0, 1, w, w + 1]
+          key = canonicalShapeHash block
+          sid = 42
+          res =
+            classifyAndResolve
+              (Map.singleton key sid)
+              Map.empty
+              Map.empty
+              100
+              255
+              w
+              cells
+        rrAction res @?= 1
+        rrSid res @?= sid
+    , withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+        testGroup
+          "runtime classifier parity"
+          [ testCase "bun is on PATH" $ do
+              m <- getBun
+              case m of
+                Nothing -> assertFailure "bun not found on PATH"
+                Just _ -> pure ()
+          , testCase "runtime collectPhaseKey key matches DiscoverCore for block" $ do
+              m <- getBun
+              case m of
+                Nothing -> pure ()
+                Just _ -> do
+                  let
+                    expected = phaseKey block
+                  got <- evaluateEffectJSON runtimeBlockPhaseKey
+                  jsonString got @?= expected
+          , testCase "runtime collectPhaseKey hash count matches DiscoverCore" $ do
+              m <- getBun
+              case m of
+                Nothing -> pure ()
+                Just _ -> do
+                  let
+                    expected = length (phaseHashes block)
+                  got <- evaluateEffectJSON runtimeBlockPhaseHashLen
+                  got @?= T.pack (show expected)
+          ]
     ]
  where
   block = [(0, 0), (0, 1), (1, 0), (1, 1)]
@@ -44,6 +126,14 @@ catalogTests =
   phaseKey coords = fst (collectPhaseKey coords)
 
   phaseHashes coords = snd (collectPhaseKey coords)
+
+  jsonString :: T.Text -> T.Text
+  jsonString t =
+    case T.uncons t of
+      Just ('"', rest) ->
+        case T.break (== '"') rest of
+          (s, _) -> s
+      _ -> t
 
   stepPattern coords =
     let

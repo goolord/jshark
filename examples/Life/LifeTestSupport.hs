@@ -25,8 +25,12 @@ module LifeTestSupport
   , blinkerHorizontalCoords
   , blinkerVerticalCoords
   , blinkerLutStepJson
+  , runtimeBlockPhaseKey
+  , runtimeBlockPhaseHashLen
   )
 where
+
+import DiscoverRuntime (collectPhaseKey)
 
 import Grid
   ( StepCtx (..)
@@ -312,3 +316,15 @@ blinkerLutStepJson = fromSyntax $ do
         "(function(b){return JSON.stringify(Array.from(b));})"
         (arg b <: RecNil)
   yield json
+
+runtimeBlockPhaseKey :: forall f. Effect f 'String
+runtimeBlockPhaseKey = fromSyntax $ do
+  coords <- blockCoords
+  (key, _) <- collectPhaseKey coords
+  yield key
+
+runtimeBlockPhaseHashLen :: forall f. Effect f 'Number
+runtimeBlockPhaseHashLen = fromSyntax $ do
+  coords <- blockCoords
+  (_, hashes) <- collectPhaseKey coords
+  yield (Array.length hashes)
