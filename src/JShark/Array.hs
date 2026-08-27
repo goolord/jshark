@@ -41,16 +41,39 @@ import JShark.Api
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
+import qualified Data.List as List
 import Prelude hiding (concat, filter, length, map, zipWith)
 
 -- | @arr[i]@ after 'Math.trunc'. Out of range is 'Error'.
 index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
 index arr i =
-  let_ (Math.trunc i) $ \n ->
-    if_
-      (And (GTEq n 0) (LTh n (length arr)))
-      (Index arr n)
-      (Error (Literal (ValueString "array index out of bounds")))
+  case foldArrayIndex arr i of
+    Just e -> e
+    Nothing -> Apply (Apply indexChecked arr) i
+
+foldArrayIndex ::
+  Expr f ('Array u) -> Expr f 'Number -> Maybe (Expr f u)
+foldArrayIndex arr i = case (arr, i) of
+  (Literal (ValueArray vs), Literal (ValueNumber d))
+    | finiteDouble d
+    , let idx = truncate d :: Int
+    , idx >= 0
+    , idx < List.length vs ->
+        Just (Literal (vs !! idx))
+  _ -> Nothing
+
+finiteDouble :: Double -> Bool
+finiteDouble d = not (isNaN d) && not (isInfinite d)
+
+indexChecked :: Expr f ('Function ('Array u) ('Function 'Number u))
+indexChecked =
+  namedLambda "arrayIndex" $ \arr ->
+    lambda $ \i ->
+      let_ (Math.trunc i) $ \n ->
+        if_
+          (And (GTEq n 0) (LTh n (length arr)))
+          (Index arr n)
+          (Error (Literal (ValueString "array index out of bounds")))
 
 -- | @arr.length@
 length :: Expr f ('Array u) -> Expr f 'Number

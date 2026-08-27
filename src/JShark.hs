@@ -160,12 +160,12 @@ import Control.Monad (foldM, forM_)
 import Control.Monad.ST (runST)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
-import Data.Char (digitToInt, isSpace)
+import Data.Char (digitToInt, isDigit, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
-import Data.List (mapAccumL)
+import Data.List (mapAccumL, nub, sortBy)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Monoid (All (..), Any (..), Sum (..))
@@ -695,7 +695,7 @@ evalAlg rec apply = \case
   Literal v -> pure v
   Var x -> pure x
   Apply g x -> unFunction <$> rec g <*> rec x
-  Lambda g -> pure (ValueFunction (apply g))
+  Lambda _ g -> pure (ValueFunction (apply g))
   Let x g -> rec x >>= rec . g
   LetRec r b ->
     let
@@ -1148,10 +1148,6 @@ arrayElemRef = fromMaybe "undefined"
 -- `cgTag` is a decreasing negative id used only for use-counting/inlining
 -- so nested Lets/Binds cannot collide (tags are never valid JS idents).
 -- `cgHelpers` is the set of runtime functions the program has called.
---
--- `cgTag` walks the odd negatives and the optimizer's tags
--- ('optimizeEffect') the even ones, so the two numberings can never name
--- the same binder.
 data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
@@ -1479,6 +1475,80 @@ allocIdent s = (cgIdent s, s {cgIdent = cgIdent s + 1})
 
 useHelperSrc :: Text -> Text -> CG -> CG
 useHelperSrc name src s = s {cgHelpers = M.insert name src (cgHelpers s)}
+
+hoistTagName :: Text -> Text
+hoistTagName tag = "$" <> tag
+
+-- | Alpha-rename @n0@, @n1@, … so the same hoisted lambda compares equal
+-- across codegen sites that picked different binder ids.
+canonicalHoistSrc :: Text -> Text
+canonicalHoistSrc src =
+  foldl' (\t (from, to) -> T.replace from to t) src renames
+  where
+    renames =
+      sortBy (\(a, _) (b, _) -> compare (T.length b) (T.length a)) $
+        zip ids (map (\(i :: Int) -> "p" <> T.pack (show i)) [0 .. length ids - 1])
+    ids = nub (hoistNIdents src)
+
+hoistNIdents :: Text -> [Text]
+hoistNIdents src = go 0 []
+  where
+    len = T.length src
+    go i acc
+      | i >= len = acc
+      | otherwise =
+          case T.uncons (T.drop i src) of
+            Nothing -> acc
+            Just ('n', rest) ->
+              case span isDigit (T.unpack rest) of
+                ([], _) -> go (i + 1) acc
+                (ds, _) ->
+                  let
+                    ident = "n" <> T.pack ds
+                    prev = if i > 0 then Just (T.index src (i - 1)) else Nothing
+                   in
+                    if isIdentCont prev
+                      then go (i + 1) acc
+                      else
+                        go (i + 1 + length ds) $
+                          if ident `elem` acc
+                            then acc
+                            else acc ++ [ident]
+            Just _ -> go (i + 1) acc
+    isIdentCont (Just c) = Char.isAlphaNum c || c == '_'
+    isIdentCont Nothing = False
+
+registerHoistedTag :: CG -> Text -> Text -> (CG, Text)
+registerHoistedTag s tag src =
+  let
+    name = hoistTagName tag
+    canon = canonicalHoistSrc src
+   in
+    case M.lookup name (cgHelpers s) of
+      Just existing
+        | existing == src || canonicalHoistSrc existing == canon -> (s, name)
+        | otherwise ->
+            error
+              ( "JShark.registerHoistedTag: hoist tag "
+                  <> T.unpack tag
+                  <> " already registered with different body"
+              )
+      Nothing ->
+        ( s {cgHelpers = M.insert name src (cgHelpers s)}
+        , name
+        )
+
+emitHoistedFnValue ::
+  CG -> FlatView.FlatIRView -> Flat.NodeId -> JS -> (CG, JS)
+emitHoistedFnValue s view nid fnJs =
+  case FlatView.firHoistTag view nid of
+    Nothing -> (s, fnJs)
+    Just tag ->
+      let
+        src = renderJS fnJs
+        (s', name) = registerHoistedTag s tag src
+       in
+        (s', jsText name)
 
 nestedDummyId :: Int
 nestedDummyId = minBound
@@ -2063,7 +2133,7 @@ mapExpr ge gf expr = case expr of
   Var s -> Var s
   Let x g -> Let (ge x) (ge . g)
   LetRec rhs body -> LetRec (ge . rhs) (ge . body)
-  Lambda g -> Lambda (ge . g)
+  Lambda hoist g -> Lambda hoist (ge . g)
   Apply f x -> Apply (ge f) (ge x)
   If c u v -> If (ge c) (ge u) (ge v)
   OptionCase o n s -> OptionCase (ge o) (ge n) (ge . s)
@@ -2185,7 +2255,7 @@ foldExpr dummy se le sf expr = case expr of
   Var {} -> mempty
   Let x g -> se x <> se (g dummy)
   LetRec r b -> le (r dummy) <> se (b dummy)
-  Lambda g -> le (g dummy)
+  Lambda _ g -> le (g dummy)
   Apply f x -> se f <> se x
   If c u v -> se c <> le u <> le v
   OptionCase o n s -> se o <> le n <> le (s dummy)
@@ -2906,13 +2976,13 @@ lowerExprAt !t0 expr = case expr of
       (t2, b') = lowerExprAt t1 (b (Name tag))
      in
       (t2, Ir.IrLetRec tag r' b')
-  Lambda g ->
+  Lambda hoist g ->
     let
       tag = t0
       tUnder = t0 - optStep
       (t1, body') = lowerExprAt tUnder (g (Name tag))
      in
-      (t1, Ir.IrLambda tag body')
+      (t1, Ir.IrLambda tag hoist body')
   Apply f x ->
     let
       (t1, f') = lowerExprAt t0 f
@@ -3022,8 +3092,8 @@ reifyExpr = \case
     LetRec
       (\s -> rebindExpr tag (reifyExpr r) s)
       (\s -> rebindExpr tag (reifyExpr b) s)
-  Ir.IrLambda tag body ->
-    Lambda (\s -> rebindExpr tag (reifyExpr body) s)
+  Ir.IrLambda tag hoist body ->
+    Lambda hoist (\s -> rebindExpr tag (reifyExpr body) s)
   Ir.IrApply f x -> Apply (reifyExpr f) (reifyExpr x)
   Ir.IrIf c t e -> If (reifyExpr c) (reifyExpr t) (reifyExpr e)
   Ir.IrOptionCase o n tag s ->
@@ -3604,7 +3674,7 @@ collectHvm2Kernels expr = collectAny (unsafeCoerce expr :: Expr Stamp u)
     Let x g -> collectAny x <> collectAny (g nestedDummy)
     LetRec r b ->
       collectAny (r nestedDummy) <> collectAny (b nestedDummy)
-    Lambda g -> collectAny (g nestedDummy)
+    Lambda _ g -> collectAny (g nestedDummy)
     Apply f x -> collectAny f <> collectAny x
     If c t eF -> collectAny c <> collectAny t <> collectAny eF
     OptionCase o n s ->
@@ -4302,10 +4372,10 @@ optExpr t0 expr = case expr of
       md = Metadata 1 True False <> mdR <> mdB
      in
       (t2, res, md)
-  Lambda f ->
+  Lambda hoist f ->
     let
       (t1, tag, body, mdBody) = optUnder t0 f
-      res = Lambda (keepExprCont t1 tag body mdBody f)
+      res = Lambda hoist (keepExprCont t1 tag body mdBody f)
       md = Metadata 1 True False <> mdBody
      in
       (t1, res, md)
@@ -4315,7 +4385,9 @@ optExpr t0 expr = case expr of
       (t2, x', mdX) = optExpr t1 x
      in
       case f' of
-        Lambda g -> optLet t2 x' g
+        fn@(Lambda (Just _) _) ->
+          (t2, Apply fn x', Metadata 1 True False <> mdF <> mdX)
+        Lambda Nothing g -> optLet t2 x' g
         _ -> (t2, Apply f' x', Metadata 1 True False <> mdF <> mdX)
   If c t e ->
     let
@@ -5097,11 +5169,21 @@ shouldParFlatSiblings view nids =
       >= flatParEmitBudgetThreshold
 {-# NOINLINE shouldParFlatSiblings #-}
 
+mergeCgHelpers :: M.Map Text Text -> M.Map Text Text -> M.Map Text Text
+mergeCgHelpers =
+  M.unionWith
+    ( \existing incoming ->
+        if existing == incoming || canonicalHoistSrc existing == canonicalHoistSrc incoming
+          then existing
+          else
+            error "JShark.mergeEmitCG: conflicting hoist helper definitions"
+    )
+
 mergeEmitCG :: CG -> CG -> CG
 mergeEmitCG a b =
   a
     { cgIdent = max (cgIdent a) (cgIdent b)
-    , cgHelpers = M.union (cgHelpers a) (cgHelpers b)
+    , cgHelpers = mergeCgHelpers (cgHelpers a) (cgHelpers b)
     , cgEmit = max (cgEmit a) (cgEmit b)
     }
 
@@ -6166,8 +6248,10 @@ flatPureASTGo !mode !env !sIn view nid =
           (nParam, s1) = flatPlanIdent mode s0 nid
           env' = IM.insert tag nParam env
           (s2, MkCode exprXDecl exprXRef _) = flatPureChild mode env' s1 view bodyId
+          (s3, fnJs) =
+            emitHoistedFnValue s2 view nid (renderFunction nParam exprXDecl exprXRef)
          in
-          (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+          (s3, Code mempty fnJs)
       Flat.FE_Apply fId xId ->
         let
           (s1, Code fDecl fRef) = flatPureChild mode env s0 view fId
@@ -6342,8 +6426,10 @@ flatEffectfulASTGo !mode !env !sIn view nid =
           (nParam, s1) = flatPlanIdent mode s0 nid
           env' = IM.insert tag nParam env
           (s2, MkCode exprXDecl exprXRef _) = flatEffectChild mode env' s1 view bodyId
+          (s3, fnJs) =
+            emitHoistedFnValue s2 view nid (renderFunction nParam exprXDecl exprXRef)
          in
-          (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+          (s3, Code mempty fnJs)
       Flat.FX_ApplyE fId xId ->
         let
           (s1, Code fDecl fRef) = flatEffectChild mode env s0 view fId
@@ -6978,7 +7064,13 @@ pureAST' !sIn env expr =
         ValueBool True -> (s0, Code mempty "true")
         ValueBool False -> (s0, Code mempty "false")
         ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
-      Lambda f -> emitExprLambda env s0 f
+      Lambda (Just tag) f ->
+        let
+          (s1, Code _ fnJs) = emitExprLambda env s0 f
+          (s2, name) = registerHoistedTag s1 tag (renderJS fnJs)
+         in
+          (s2, Code mempty (jsText name))
+      Lambda Nothing f -> emitExprLambda env s0 f
       -- `const` when shared or used under a lambda/loop/short-circuit.
       Let x g -> letCode env s0 x g
       LetRec r b ->

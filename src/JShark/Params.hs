@@ -125,7 +125,7 @@ instance
   LambdaFromRow (Param sym u ': row) r ('Function u fn)
   where
   lambdaFromRow k =
-    Lambda $ \x ->
+    Lambda Nothing $ \x ->
       lambdaFromRow @row (\rec -> k (ParamRecCons (Var x) rec))
 
 -- | Positional @function(a,b,…)@ from an explicit parameter row.

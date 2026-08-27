@@ -56,6 +56,7 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import JShark.Types (jsHelperValueEq)
+import Life (mainJS)
 import LifeTests (lifeTests)
 import LucidTests (lucidDomTests)
 import PerfTests (perfTests)
@@ -778,7 +779,7 @@ stdlibTests =
         let
           js =
             renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
-        T.isInfixOf "Math.trunc" js @?= True
+        T.isInfixOf "$arrayIndex" js @?= True
         T.isInfixOf "throw" js @?= True
     , testCase "Array.map evaluates" $
         case evaluate
@@ -1987,7 +1988,15 @@ optimizeTests =
         -- the first coordinate); column index 0 is expected to stay literal.
         T.isInfixOf "sink(" js @?= True
         T.isInfixOf "sink(1.0)" js @?= False
-        T.isInfixOf "Math.trunc(n1)" js @?= True
+        T.isInfixOf "$arrayIndex" js @?= True
+        -- Row index uses the for-loop counter, not a folded constant.
+        T.isInfixOf "(($arrayIndex)(n0))(n1)" js @?= True
+    , testCase "Life hoists arrayIndex once" $ do
+        let
+          js = renderJS (effectfulAST (fromSyntax mainJS))
+          boundsMsg = "array index out of bounds"
+        length (T.breakOnAll boundsMsg js) @?= 1
+        length (T.breakOnAll "const $arrayIndex =" js) @?= 1
     ]
 
 -- | The IR optimizer runs instead of the PHOAS one now that

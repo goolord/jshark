@@ -196,7 +196,7 @@ irKids = \case
   IrEmbedEff e -> [SomeIrEffect e]
   IrLet _ x b -> [SomeIrExpr x, SomeIrExpr b]
   IrLetRec _ r b -> [SomeIrExpr r, SomeIrExpr b]
-  IrLambda _ b -> [SomeIrExpr b]
+  IrLambda _ _ b -> [SomeIrExpr b]
   IrApply f x -> [SomeIrExpr f, SomeIrExpr x]
   IrIf c t eF -> [SomeIrExpr c, SomeIrExpr t, SomeIrExpr eF]
   IrOptionCase o n _ s -> [SomeIrExpr o, SomeIrExpr n, SomeIrExpr s]

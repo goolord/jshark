@@ -28,15 +28,18 @@ module JShark.Flat
   , packStateNodeCount
   , packStateSoaSide
   , packStateSideTables
+  , packStateHoistTags
   , PackState
   , SoaSideAcc (..)
   , sideAccToVectors
   )
 where
 
-import Control.Monad.State.Strict (State, get, put, runState)
+import Control.Monad.State.Strict (State, get, modify, put, runState)
 import Data.Foldable (toList)
 import Data.Int (Int32)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -355,6 +358,8 @@ emptyPackState =
     , psFieldGroupCount = 0
     , psArgGroups = Seq.empty
     , psArgGroupCount = 0
+    , psFFICache = Map.empty
+    , psHoistTags = Map.empty
     }
 
 data PackState = PackState
@@ -373,6 +378,8 @@ data PackState = PackState
   , psFieldGroupCount :: !Int
   , psArgGroups :: !(Seq [FlatArg])
   , psArgGroupCount :: !Int
+  , psFFICache :: !(Map FFIForm Int)
+  , psHoistTags :: !(Map NodeId Text)
   }
 
 packStateEncs :: PackState -> Seq Enc
@@ -383,6 +390,12 @@ packStateNodeCount = psNodeCount
 
 packStateSoaSide :: PackState -> SoaSideAcc
 packStateSoaSide = psSoaSide
+
+packStateHoistTags :: PackState -> Map NodeId Text
+packStateHoistTags = psHoistTags
+
+addHoistTag :: NodeId -> Text -> State PackState ()
+addHoistTag nid tag = modify $ \st -> st {psHoistTags = Map.insert nid tag (psHoistTags st)}
 
 packStateSideTables ::
   PackState
@@ -438,10 +451,18 @@ addText txt = do
 addFFI :: FFIForm -> State PackState Int
 addFFI form = do
   st <- get
-  let
-    i = psFFICount st
-  put st {psFFIs = psFFIs st Seq.|> form, psFFICount = i + 1}
-  pure i
+  case Map.lookup form (psFFICache st) of
+    Just i -> pure i
+    Nothing -> do
+      let
+        i = psFFICount st
+      put
+        st
+          { psFFIs = psFFIs st Seq.|> form
+          , psFFICount = i + 1
+          , psFFICache = Map.insert form i (psFFICache st)
+          }
+      pure i
 
 addStrCases :: [(Text, NodeId)] -> State PackState Int
 addStrCases cases = do
@@ -792,9 +813,13 @@ packExpr = \case
     nr <- packExpr r
     nb <- packExpr b
     addNode (FE_LetRec tag nr nb)
-  IrLambda tag body -> do
+  IrLambda tag hoist body -> do
     nb <- packExpr body
-    addNode (FE_Lambda tag nb)
+    n <- addNode (FE_Lambda tag nb)
+    case hoist of
+      Just name -> addHoistTag n name
+      Nothing -> pure ()
+    pure n
   IrApply f x -> do
     nf <- packExpr f
     nx <- packExpr x

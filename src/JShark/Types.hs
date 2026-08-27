@@ -206,6 +206,7 @@ data Value :: Universe -> Type where
 data FFIForm
   = FFICall !Text
   | FFILambda !Text
+  deriving stock (Eq, Ord)
 
 data Effect :: (Universe -> Type) -> Universe -> Type where
   Lift ::
@@ -379,9 +380,10 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -- ^ Recursive let. The rhs must be productive; 'JShark.evaluate' ties
     --         the knot, so one that forces its own binder diverges.
   Lambda ::
-    (f u -> Expr f v)
+    Maybe Text
+    -> (f u -> Expr f v)
     -> Expr f ('Function u v)
-    -- ^ Weak PHOAS lambda: binder is @f u@
+    -- ^ PHOAS lambda. 'Just' name is codegen-only ('namedLambda').
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
   Var ::
     f u
@@ -926,10 +928,10 @@ instance Semigroup (Expr f ('Result e a)) where
   l <> r = ResultCase l (\_ -> r) (\_ -> l)
 
 instance Semigroup (Expr f a) => Semigroup (Expr f ('Function r a)) where
-  g <> h = Lambda (\x -> Apply g (Var x) <> Apply h (Var x))
+  g <> h = Lambda Nothing (\x -> Apply g (Var x) <> Apply h (Var x))
 
 instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
-  mempty = Lambda (\_ -> mempty)
+  mempty = Lambda Nothing (\_ -> mempty)
 
 -- | 'Num' / 'Fractional' / 'Floating' for JS numbers:
 --

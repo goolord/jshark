@@ -111,12 +111,16 @@ renderStatsTable style mBatchWall stats =
 
 renderPlainStatsTable :: Maybe Double -> [CompileJobStats] -> String
 renderPlainStatsTable mBatchWall stats =
-  unlines (header : map (renderPlainRow cols) sorted ++ [footer])
+  unlines (header : map (renderPlainRow cols) sorted ++ footerRows)
  where
   sorted = sortBy (comparing cjsLabel) stats
   cols = statsColumns
   header = renderPlainHeader cols
-  footer = renderPlainFooter cols mBatchWall sorted
+  footerRows =
+    renderPlainFooter cols sorted
+      ++ case mBatchWall of
+          Nothing -> []
+          Just w -> [renderPlainWallRow cols w]
 
 renderTTYStatsTable :: Maybe Double -> [CompileJobStats] -> String
 renderTTYStatsTable mBatchWall stats =
@@ -125,9 +129,19 @@ renderTTYStatsTable mBatchWall stats =
         : styledRow boldSGR cols (map colHeader cols)
         : styled TerminalTTY dimSGR (boxLine cols "├" "┼" "┤" '─')
         : map (renderDataRow cols) sorted
-        ++ [ styled TerminalTTY dimSGR (boxLine cols "╰" "┴" "╯" '─')
-           , styledRow boldSGR cols (footerCells cols mBatchWall sorted)
+        ++ [ styled TerminalTTY dimSGR (boxLine cols "├" "┼" "┤" '─')
+           , styledRow boldSGR cols (footerCells cols sorted)
            ]
+        ++ case mBatchWall of
+          Nothing -> []
+          Just w ->
+            [ styledRow boldSGR cols (wallCells cols w)
+            , styled TerminalTTY dimSGR (boxLine cols "╰" "┴" "╯" '─')
+            ]
+        ++ case mBatchWall of
+          Nothing ->
+            [ styled TerminalTTY dimSGR (boxLine cols "╰" "┴" "╯" '─') ]
+          Just _ -> []
     )
  where
   sorted = sortBy (comparing cjsLabel) stats
@@ -157,7 +171,7 @@ data Column = Column
 statsColumns :: [Column]
 statsColumns =
   [ programCol
-  , secCol "total" 8 cjsTotalSec
+  , secCol "job-total" 8 cjsTotalSec
   , secCol "lint" 7 cjsLintSec
   , secCol "irprep" 7 cjsIrPrepareSec
   , secCol "pack" 7 cjsPackSec
@@ -206,30 +220,45 @@ renderPlainRow :: [Column] -> CompileJobStats -> String
 renderPlainRow cols stat =
   concat [colAlign c (colValue c stat) | c <- cols]
 
-renderPlainFooter :: [Column] -> Maybe Double -> [CompileJobStats] -> String
-renderPlainFooter (progCol : restCols) mBatchWall sorted =
-  padRight (colWidth progCol) "totals"
+renderPlainFooter :: [Column] -> [CompileJobStats] -> [String]
+renderPlainFooter (progCol : restCols) sorted =
+  [ padRight (colWidth progCol) "totals"
+      ++ concat
+        [ padLeft (colWidth c) (footerValue c sorted)
+        | c <- restCols
+        ]
+  ]
+renderPlainFooter [] _ = ["totals"]
+
+renderPlainWallRow :: [Column] -> Double -> String
+renderPlainWallRow (progCol : restCols) w =
+  padRight (colWidth progCol) "wall"
     ++ concat
-      [ padLeft (colWidth c) (footerValue c sorted mBatchWall)
+      [ padLeft (colWidth c) (wallValue c w)
       | c <- restCols
       ]
-renderPlainFooter [] _ _ = "totals"
+renderPlainWallRow [] _ = "wall"
 
-footerCells :: [Column] -> Maybe Double -> [CompileJobStats] -> [String]
-footerCells (_ : restCols) mBatchWall sorted =
-  "totals" : [footerValue c sorted mBatchWall | c <- restCols]
-footerCells [] _ _ = ["totals"]
+footerCells :: [Column] -> [CompileJobStats] -> [String]
+footerCells (_ : restCols) sorted =
+  "totals" : [footerValue c sorted | c <- restCols]
+footerCells [] _ = ["totals"]
 
-footerValue :: Column -> [CompileJobStats] -> Maybe Double -> String
-footerValue c sorted mBatchWall
-  | colHeader c == "total" =
-      fmtSec
-        ( case mBatchWall of
-            Just w -> w
-            Nothing -> sum (map cjsTotalSec sorted)
-        )
+wallCells :: [Column] -> Double -> [String]
+wallCells (_ : restCols) w =
+  "wall" : [wallValue c w | c <- restCols]
+wallCells [] _ = ["wall"]
+
+footerValue :: Column -> [CompileJobStats] -> String
+footerValue c sorted
+  | colHeader c == "job-total" = fmtSec (sum (map cjsTotalSec sorted))
   | colHeader c == "bytes" = show (sum (map cjsJsBytes sorted))
   | otherwise = fmtSec (sum (map (phaseSec c) sorted))
+
+wallValue :: Column -> Double -> String
+wallValue c w
+  | colHeader c == "job-total" = fmtSec w
+  | otherwise = "-"
 
 phaseSec :: Column -> CompileJobStats -> Double
 phaseSec c = case colHeader c of

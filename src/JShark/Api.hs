@@ -67,6 +67,7 @@ module JShark.Api
   , lambda
   , lambdaRow
   , fnLit
+  , namedLambda
   , ToFn (..)
   , ToLambda (..)
   , lambdaE
@@ -273,7 +274,11 @@ var :: f u -> Expr f u
 var = Var
 
 lambda :: (Expr f u -> Expr f v) -> Expr f ('Function u v)
-lambda f = Lambda (\x -> f (var x))
+lambda f = Lambda Nothing (\x -> f (var x))
+
+-- | Lambda with a stable JS helper name (@$name@ in 'helperDecls').
+namedLambda :: Text -> (Expr f u -> Expr f v) -> Expr f ('Function u v)
+namedLambda name f = Lambda (Just name) (\x -> f (var x))
 
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))

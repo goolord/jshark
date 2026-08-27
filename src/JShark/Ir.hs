@@ -204,7 +204,7 @@ data IrExpr :: Universe -> Type where
   IrLiteral :: Value u -> IrExpr u
   IrLet :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
   IrLetRec :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
-  IrLambda :: !Int -> IrExpr v -> IrExpr ('Function u v)
+  IrLambda :: !Int -> !(Maybe Text) -> IrExpr v -> IrExpr ('Function u v)
   IrApply :: IrExpr ('Function u v) -> IrExpr u -> IrExpr v
   IrVar :: !Int -> IrExpr u
   IrEmbedEff :: IrEffect u -> IrExpr u
@@ -383,7 +383,7 @@ foldIrExpr se le sf expr = case expr of
   IrEmbedEff e -> sf e
   IrLet _ x g -> se x <> se g
   IrLetRec _ r b -> se r <> se b
-  IrLambda _ g -> le g
+  IrLambda _ _ g -> le g
   IrApply f x -> se f <> se x
   IrIf c t e -> se c <> le t <> le e
   IrOptionCase o n _ s -> se o <> le n <> le s
@@ -539,7 +539,7 @@ mapIrExpr ge gf expr = case expr of
   IrEmbedEff e -> IrEmbedEff (gf e)
   IrLet tag x g -> IrLet tag (ge x) (ge g)
   IrLetRec tag r b -> IrLetRec tag (ge r) (ge b)
-  IrLambda tag g -> IrLambda tag (ge g)
+  IrLambda tag hoist g -> IrLambda tag hoist (ge g)
   IrApply f x -> IrApply (ge f) (ge x)
   IrIf c t e -> IrIf (ge c) (ge t) (ge e)
   IrOptionCase o n tag g -> IrOptionCase (ge o) (ge n) tag (ge g)
@@ -817,9 +817,19 @@ optIrExpr !t0 expr = case expr of
         (e', md') = elimIrLet mdX tag x' body' mdBody
        in
         (t2, e', md')
-  -- A JS call evaluates its argument before the body runs, so an applied
-  -- lambda is a let and gets the same inlining decision.
-  IrApply (IrLambda tag g) x ->
+  -- Named hoists (@Just@ tag) always stay as calls so codegen can emit one
+  -- shared helper (e.g. @$arrayIndex@). Literal partial application would
+  -- beta into an untagged inner lambda and duplicate the body at each site.
+  IrApply (IrLambda bindTag (Just hoistTag) g) x ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      (t2, g', mdG) = optIrExpr t1 g
+     in
+      ( t2
+      , IrApply (IrLambda bindTag (Just hoistTag) g') x'
+      , nodeMeta mdX mdG
+      )
+  IrApply (IrLambda tag Nothing g) x ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, g', mdG) = optIrExpr t1 g
@@ -870,11 +880,11 @@ optIrExprChildren !t0 expr = case expr of
       (t2, b', mdB) = optIrExpr t1 b
      in
       (t2, IrLetRec tag r' b', bindMeta tag (nodeMeta mdR mdB))
-  IrLambda tag g ->
+  IrLambda tag hoist g ->
     let
       (t1, g', md) = optIrExpr t0 g
      in
-      (t1, IrLambda tag g', bindMeta tag md)
+      (t1, IrLambda tag hoist g', bindMeta tag md)
   IrApply f x ->
     let
       (t1, f', mdF) = optIrExpr t0 f

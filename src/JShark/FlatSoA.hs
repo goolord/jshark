@@ -40,6 +40,8 @@ import Control.Monad.ST (runST)
 import Data.Bits ((.&.))
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
+import Data.Map.Strict ()
+import qualified Data.Map.Strict as Map
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
 import qualified Data.Vector as V
@@ -64,6 +66,7 @@ import JShark.Flat
   , packEffectProgramState
   , packStateEncs
   , packStateNodeCount
+  , packStateHoistTags
   , packStateSideTables
   , packStateSoaSide
   , sideAccToVectors
@@ -322,6 +325,7 @@ data FlatSoA = FlatSoA
   , fsaStrCases :: !(V.Vector [(Text, NodeId)])
   , fsaFieldGroups :: !(V.Vector [FlatField])
   , fsaArgGroups :: !(V.Vector [FlatArg])
+  , fsaHoistTags :: !(V.Vector (Maybe Text))
   , fsaRoot :: !NodeId
   , fsaSubtreeSizes :: !(V.Vector Int)
   }
@@ -341,6 +345,9 @@ freezeSoaFromPackState root st =
     (fx, fl, ag) = sideAccToVectors side
     (lits, texts, ffis, strCases, fieldGroups, argGroups) =
       packStateSideTables st
+    hoistMap = packStateHoistTags st
+    hoistTags =
+      V.generate n (\i -> Map.lookup i hoistMap)
     soa0 =
       FlatSoA
         { fsaOpcodes = opF
@@ -359,6 +366,7 @@ freezeSoaFromPackState root st =
         , fsaStrCases = strCases
         , fsaFieldGroups = fieldGroups
         , fsaArgGroups = argGroups
+        , fsaHoistTags = hoistTags
         , fsaRoot = root
         , fsaSubtreeSizes = V.empty
         }

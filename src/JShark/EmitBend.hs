@@ -378,7 +378,7 @@ emitLiteral = \case
 
 peelLambdasFn' :: IrExpr v -> ([Int], IrExpr v)
 peelLambdasFn' = \case
-  IrLambda tag body ->
+  IrLambda tag _ body ->
     let
       (tags, inner) = peelLambdasFn' (unsafeCoerce body)
      in
@@ -388,7 +388,7 @@ peelLambdasFn' = \case
 peelLambdas :: IrExpr u -> ([Int], IrExpr u)
 peelLambdas ir =
   case ir of
-    IrLambda tag body ->
+    IrLambda tag _ body ->
       let
         (rest, inner) = peelLambdasFn' body
        in
