@@ -17,10 +17,11 @@ cabal run build-hvm2-demo-wasm -v0
 )
 cp examples/Life/wasm/zig-out/bin/life-simd.wasm examples/Life/js/life-simd.wasm
 
-if [[ "$build_only" == false ]]; then
-  sha256sum \
-    examples/static/hvm2-demo.wasm \
-    examples/Life/js/life-simd.wasm \
-    > wasm/checksums.sha256
-  echo "WASM checksums written to wasm/checksums.sha256"
-fi
+# not deterministic
+# if [[ "$build_only" == false ]]; then
+#   sha256sum \
+#     examples/static/hvm2-demo.wasm \
+#     examples/Life/js/life-simd.wasm \
+#     > wasm/checksums.sha256
+#   echo "WASM checksums written to wasm/checksums.sha256"
+# fi
