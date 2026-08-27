@@ -35,6 +35,9 @@ module JShark.Ir
   , irNestedDummyId
   , elimIrBind
   , effectMd
+  , nodeMeta
+  , bindMeta
+  , optIrArgs
   )
 where
 

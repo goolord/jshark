@@ -427,6 +427,15 @@ executable jshark-life-iropt
   build-depends:
     , life
 
+executable jshark-life-lower
+  import: bench
+  main-is:
+    LifeLower.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
 executable jshark-life-full-emit
   import: bench
   main-is:

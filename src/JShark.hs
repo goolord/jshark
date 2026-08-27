@@ -130,6 +130,7 @@ module JShark
   , profileFlatOptFromIr
   , profileIrOptFromClosed
   , profileIrOptFromIr
+  , profileLowerFromClosed
   , flatSoaNodeCount
   , flatSoaParallelThreshold
   , irExprFromClosed
@@ -197,6 +198,7 @@ import JShark.CompileTiming
   ( FlatOptProfile (..)
   , FlatPrepareTiming (..)
   , IrOptProfile (..)
+  , LowerProfile (..)
   , PhoasPrepareTiming (..)
   , reportFlatPrepareTiming
   , reportPhoasPrepareTiming
@@ -1394,6 +1396,29 @@ profileIrOptFromClosed e = do
         }
 {-# NOINLINE profileIrOptFromClosed #-}
 
+profileLowerFromClosed :: ClosedEffect u -> IO LowerProfile
+profileLowerFromClosed e = do
+  tLazy0 <- getMonotonicTime
+  let
+    !irRaw = lowerEffectClosed e
+  tLazy1 <- getMonotonicTime
+  tForce0 <- getMonotonicTime
+  let
+    !rawNodes = Ir.irMetaSize (Ir.metaIrEffect irRaw)
+  tForce1 <- getMonotonicTime
+  let
+    lazySec = seconds tLazy0 tLazy1
+    forceSec = seconds tForce0 tForce1
+   in
+    pure
+      LowerProfile
+        { lopRawNodes = rawNodes
+        , lopLazySec = lazySec
+        , lopForceSec = forceSec
+        , lopTotalSec = lazySec + forceSec
+        }
+{-# NOINLINE profileLowerFromClosed #-}
+
 flatPrepareCore ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)
 flatPrepareCore (e :: ClosedEffect u) = do
@@ -1748,9 +1773,10 @@ optEffectClosed ir =
 lowerOptEffectIr :: ClosedEffect u -> (Ir.IrEffect u, Int)
 lowerOptEffectIr e =
   let
-    !irOpt = optEffectClosed (lowerEffectClosed e)
+    (!_, !irOpt, !mdOpt) = lowerOptEffectAt (-2) (flattenEff e)
+    !nodes = Ir.irMetaSize mdOpt
    in
-    (irOpt, Ir.irMetaSize (Ir.metaIrEffect irOpt))
+    Ir.metaIrEffect irOpt `seq` (irOpt, nodes)
 {-# NOINLINE lowerOptEffectIr #-}
 
 closedExprNodes :: ClosedExpr u -> Int
@@ -3185,6 +3211,271 @@ lowerEffectAt !t0 eff = case eff of
       (t1, es') = lowerEffectsAt t0 es
      in
       (t1, Ir.IrArrayLit es')
+
+lowerOptExprAt :: Int -> Expr Stamp u -> (Int, Ir.IrExpr u, Ir.IrMeta)
+lowerOptExprAt !t0 expr =
+  let
+    (t1, ir) = lowerExprAt t0 expr
+    (t2, ir', md) = Ir.optIrExpr t1 ir
+   in
+    (t2, ir', md)
+
+lowerOptArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u, Ir.IrMeta)
+lowerOptArgAt !t0 a = case a of
+  ArgExpr e ->
+    let
+      (t1, e', md) = lowerOptExprAt t0 e
+     in
+      (t1, Ir.IrArgExpr e', md)
+  ArgEffect e ->
+    let
+      (t1, e', md) = lowerOptEffectAt t0 e
+     in
+      (t1, Ir.IrArgEffect e', md)
+
+lowerOptArgsAt ::
+  Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us, Ir.IrMeta)
+lowerOptArgsAt !t0 args = case args of
+  RecNil -> (t0, RecNil, mempty)
+  RecCons x xs ->
+    let
+      (t1, x', mdX) = lowerOptArgAt t0 x
+      (t2, xs', mdXs) = lowerOptArgsAt t1 xs
+     in
+      (t2, RecCons x' xs', Ir.nodeMeta mdX mdXs)
+
+lowerOptFieldLitAt ::
+  Int -> FieldLit Stamp r -> (Int, Ir.IrFieldLit r, Ir.IrMeta)
+lowerOptFieldLitAt !t0 fl = case fl of
+  FieldLit @k e ->
+    let
+      (t1, e', md) = lowerOptExprAt t0 e
+     in
+      (t1, Ir.IrFieldLit @k e', md)
+  FieldLitEffect @k e ->
+    let
+      (t1, e', md) = lowerOptEffectAt t0 e
+     in
+      (t1, Ir.IrFieldLitEffect @k e', md)
+  FieldLitExtra @k e ->
+    let
+      (t1, e', md) = lowerOptExprAt t0 e
+     in
+      (t1, Ir.IrFieldLitExtra @k e', md)
+  FieldLitExtraEffect @k e ->
+    let
+      (t1, e', md) = lowerOptEffectAt t0 e
+     in
+      (t1, Ir.IrFieldLitExtraEffect @k e', md)
+
+lowerOptFieldLitsAt ::
+  Int -> [FieldLit Stamp r] -> (Int, [Ir.IrFieldLit r], Ir.IrMeta)
+lowerOptFieldLitsAt !t0 fs =
+  foldr
+    ( \fl (!t, acc, !md) ->
+        let
+          (t', fl', md') = lowerOptFieldLitAt t fl
+         in
+          (t', fl' : acc, md' <> md)
+    )
+    (t0, [], mempty)
+    fs
+
+lowerOptEffectsAt ::
+  Int -> [Effect Stamp u] -> (Int, [Ir.IrEffect u], Ir.IrMeta)
+lowerOptEffectsAt !t0 es =
+  foldr
+    ( \e (!t, acc, !md) ->
+        let
+          (t', e', md') = lowerOptEffectAt t e
+         in
+          (t', e' : acc, md' <> md)
+    )
+    (t0, [], mempty)
+    es
+
+lowerOptEffectArmsAt ::
+  Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Ir.IrEffect u)], Ir.IrMeta)
+lowerOptEffectArmsAt !t0 arms =
+  foldr
+    ( \(k, e) (!t, acc, !md) ->
+        let
+          (t', e', md') = lowerOptEffectAt t e
+         in
+          (t', (k, e') : acc, md' <> md)
+    )
+    (t0, [], mempty)
+    arms
+
+lowerOptEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u, Ir.IrMeta)
+lowerOptEffectAt !t0 eff = case eff of
+  Lift x ->
+    let
+      (t1, x', md) = lowerOptExprAt t0 x
+     in
+      (t1, Ir.IrLift x', md)
+  FFI n args ->
+    let
+      (t1, args', md) = lowerOptArgsAt t0 args
+     in
+      (t1, Ir.IrFFI n args', Ir.effectMd md)
+  UnsafeObject o -> (t0, Ir.IrUnsafeObject o, Ir.IrMeta 1 IM.empty False False)
+  UnsafeObjectGet x s ->
+    let
+      (t1, x', md) = lowerOptEffectAt t0 x
+     in
+      (t1, Ir.IrUnsafeObjectGet x' s, Ir.effectMd md)
+  UnsafeObjectAssign x y ->
+    let
+      (t1, x', mdX) = lowerOptEffectAt t0 x
+      (t2, y', mdY) = lowerOptEffectAt t1 y
+     in
+      (t2, Ir.IrUnsafeObjectAssign x' y', Ir.effectMd (Ir.nodeMeta mdX mdY))
+  CallMethod x n args ->
+    let
+      (t1, x', mdX) = lowerOptEffectAt t0 x
+      (t2, args', mdA) = lowerOptArgsAt t1 args
+     in
+      (t2, Ir.IrCallMethod x' n args', Ir.effectMd (Ir.nodeMeta mdX mdA))
+  Bind x f ->
+    let
+      tag = t0
+      tUnder = t0 - optStep
+      (_, x', mdX) = lowerOptEffectAt tUnder x
+      (t2, body', mdBody) = lowerOptEffectAt tUnder (flattenEff (f (Name tag)))
+      (e', md') = Ir.elimIrBind mdX tag x' body' mdBody
+     in
+      (t2, e', md')
+  ThenE x y ->
+    let
+      (t1, x', mdX) = lowerOptEffectAt t0 x
+      (t2, y', mdY) = lowerOptEffectAt t1 y
+     in
+      (t2, Ir.IrThenE x' y', Ir.nodeMeta mdX mdY)
+  BindRec rhs body ->
+    let
+      tag = t0
+      tUnder = t0 - optStep
+      (t1, r', mdR) = lowerOptEffectAt tUnder (flattenEff (rhs (Name tag)))
+      (t2, b', mdB) = lowerOptEffectAt t1 (flattenEff (body (Name tag)))
+     in
+      (t2, Ir.IrBindRec tag r' b', Ir.bindMeta tag (Ir.nodeMeta mdR mdB))
+  LambdaE f ->
+    let
+      tag = t0
+      tUnder = t0 - optStep
+      (t1, body', md) = lowerOptEffectAt tUnder (flattenEff (f (Name tag)))
+     in
+      (t1, Ir.IrLambdaE tag body', Ir.bindMeta tag md)
+  ApplyE f x ->
+    let
+      (t1, f', mdF) = lowerOptEffectAt t0 f
+      (t2, x', mdX) = lowerOptEffectAt t1 x
+     in
+      (t2, Ir.IrApplyE f' x', Ir.effectMd (Ir.nodeMeta mdF mdX))
+  IfE c t e ->
+    let
+      (t1, c', mdC) = lowerOptEffectAt t0 c
+      (t2, t', mdT) = lowerOptEffectAt t1 t
+      (t3, e', mdE) = lowerOptEffectAt t2 e
+     in
+      (t3, Ir.IrIfE c' t' e', Ir.nodeMeta mdC (Ir.nodeMeta mdT mdE))
+  While c b ->
+    let
+      (t1, c', mdC) = lowerOptEffectAt t0 c
+      (t2, b', mdB) = lowerOptEffectAt t1 b
+     in
+      (t2, Ir.IrWhile c' b', Ir.effectMd (Ir.nodeMeta mdC mdB))
+  ForRange s e f ->
+    let
+      tag = t0
+      tUnder = t0 - optStep
+      (t1, s', mdS) = lowerOptExprAt tUnder s
+      (t2, e', mdE) = lowerOptExprAt t1 e
+      (t3, body', mdB) = lowerOptEffectAt t2 (flattenEff (f (Name tag)))
+     in
+      ( t3
+      , Ir.IrForRange s' e' tag body'
+      , Ir.effectMd (Ir.nodeMeta mdS (Ir.nodeMeta mdE (Ir.bindMeta tag mdB)))
+      )
+  U8Set b i v ->
+    let
+      (t1, b', mdB) = lowerOptExprAt t0 b
+      (t2, i', mdI) = lowerOptExprAt t1 i
+      (t3, v', mdV) = lowerOptExprAt t2 v
+     in
+      (t3, Ir.IrU8Set b' i' v', Ir.effectMd (Ir.nodeMeta mdB (Ir.nodeMeta mdI mdV)))
+  U8Fill b v ->
+    let
+      (t1, b', mdB) = lowerOptExprAt t0 b
+      (t2, v', mdV) = lowerOptExprAt t1 v
+     in
+      (t2, Ir.IrU8Fill b' v', Ir.effectMd (Ir.nodeMeta mdB mdV))
+  OptionCaseE o n s ->
+    let
+      tag = t0
+      tUnder = t0 - optStep
+      (t1, o', mdO) = lowerOptExprAt tUnder o
+      (t2, n', mdN) = lowerOptEffectAt t1 n
+      (t3, s', mdS) = lowerOptEffectAt t2 (flattenEff (s (Name tag)))
+     in
+      ( t3
+      , Ir.IrOptionCaseE o' n' tag s'
+      , Ir.nodeMeta mdO (Ir.nodeMeta mdN (Ir.bindMeta tag mdS))
+      )
+  ResultCaseE o er ok ->
+    let
+      tagE = t0
+      t1 = t0 - optStep
+      tagO = t1
+      tUnder = t1 - optStep
+      (t2, o', mdO) = lowerOptExprAt tUnder o
+      (t3, er', mdE) = lowerOptEffectAt t2 (flattenEff (er (Name tagE)))
+      (t4, ok', mdS) = lowerOptEffectAt t3 (flattenEff (ok (Name tagO)))
+     in
+      ( t4
+      , Ir.IrResultCaseE o' tagE er' tagO ok'
+      , Ir.nodeMeta mdO (Ir.nodeMeta (Ir.bindMeta tagE mdE) (Ir.bindMeta tagO mdS))
+      )
+  StringCaseE s arms d ->
+    let
+      (t1, s', mdS) = lowerOptExprAt t0 s
+      (t2, arms', mdA) = lowerOptEffectArmsAt t1 arms
+      (t3, d', mdD) = lowerOptEffectAt t2 d
+     in
+      (t3, Ir.IrStringCaseE s' arms' d', Ir.nodeMeta mdS (Ir.nodeMeta mdA mdD))
+  Throw x ->
+    let
+      (t1, x', md) = lowerOptExprAt t0 x
+     in
+      (t1, Ir.IrThrow x', Ir.effectMd md)
+  Try a k ->
+    let
+      tag = t0
+      tUnder = t0 - optStep
+      (t1, a', mdA) = lowerOptEffectAt tUnder a
+      (t2, k', mdK) = lowerOptEffectAt t1 (flattenEff (k (Name tag)))
+     in
+      (t2, Ir.IrTry a' tag k', Ir.nodeMeta mdA (Ir.bindMeta tag mdK))
+  ObjectLit fs ->
+    let
+      (t1, fs', md) = lowerOptFieldLitsAt t0 fs
+     in
+      (t1, Ir.IrObjectLit fs', md)
+  DeleteProp o k ->
+    let
+      (t1, o', mdO) = lowerOptEffectAt t0 o
+      (t2, k', mdK) = lowerOptExprAt t1 k
+     in
+      (t2, Ir.IrDeleteProp o' k', Ir.effectMd (Ir.nodeMeta mdO mdK))
+  ArrayLit es ->
+    let
+      (t1, es', md) = lowerOptEffectsAt t0 es
+     in
+      (t1, Ir.IrArrayLit es', md)
+
+{-# NOINLINE lowerOptExprAt #-}
+{-# NOINLINE lowerOptEffectAt #-}
 
 reifyEffect :: Ir.IrEffect u -> Effect Stamp u
 reifyEffect = \case

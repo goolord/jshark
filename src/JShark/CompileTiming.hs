@@ -13,6 +13,7 @@ module JShark.CompileTiming
   , FlatPrepareTiming (..)
   , FlatOptProfile (..)
   , IrOptProfile (..)
+  , LowerProfile (..)
   , PhoasPrepareTiming (..)
   , timingEnabled
   , reportFlatPrepareTiming
@@ -67,6 +68,15 @@ data IrOptProfile = IrOptProfile
   , iopMetaOptSec :: !Double
   , iopPrepareSec :: !Double
   , iopTotalSec :: !Double
+  }
+  deriving (Eq, Show)
+
+-- | PHOAS-to-IR lower breakdown ('lowerEffectClosed' is lazy WHNF until forced).
+data LowerProfile = LowerProfile
+  { lopRawNodes :: !Int
+  , lopLazySec :: !Double
+  , lopForceSec :: !Double
+  , lopTotalSec :: !Double
   }
   deriving (Eq, Show)
 
