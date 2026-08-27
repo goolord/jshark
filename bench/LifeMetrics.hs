@@ -11,23 +11,17 @@ import JShark
   ( effectfulASTFromPrepared
   , flatPrepareCore
   , flatProgramNodeCount
-  , nodeCountEff
   , optIrLargeThreshold
-  , optimizeEffectFromIr
+  , phoasNodeCountFromIr
   , renderJSCompact
   )
 import JShark.Api (stmts)
 import JShark.CompileTiming (FlatPrepareTiming (..), seconds)
-import qualified JShark.Ir as Ir
 import JShark.Types (ClosedEffect, Universe (Unit))
 import Life (mainJS)
 
 life :: ClosedEffect Unit
 life = stmts mainJS
-
-runOptimizeFromIr :: Ir.IrEffect Unit -> Int
-runOptimizeFromIr ir = nodeCountEff (optimizeEffectFromIr ir)
-{-# NOINLINE runOptimizeFromIr #-}
 
 main :: IO ()
 main = do
@@ -37,7 +31,7 @@ main = do
   putStrLn $ "rawNodes," ++ show irNodes
   t0 <- getMonotonicTime
   let
-    optNodes = runOptimizeFromIr irOpt
+    optNodes = phoasNodeCountFromIr irOpt
   t1 <- getMonotonicTime
   evaluate optNodes
   putStrLn $ "phoasOptimize," ++ show (seconds t0 t1)

@@ -108,6 +108,7 @@ module JShark
   , optimize
   , optimizeEffect
   , optimizeEffectFromIr
+  , phoasNodeCountFromIr
   , optimizeEffectIr
   , nodeCountExpr
   , nodeCountEff
@@ -3162,6 +3163,10 @@ optimizeEffectTree e =
 optimizeEffectFromIr :: Ir.IrEffect u -> Effect Stamp u
 optimizeEffectFromIr ir = flattenEff (reifyEffect ir)
 {-# NOINLINE optimizeEffectFromIr #-}
+
+phoasNodeCountFromIr :: Ir.IrEffect u -> Int
+phoasNodeCountFromIr ir = nodeCountEff (optimizeEffectFromIr ir)
+{-# NOINLINE phoasNodeCountFromIr #-}
 
 optimizeEffect :: ClosedEffect u -> Effect Stamp u
 optimizeEffect e = optimizeEffectFromIr (fst (lowerOptEffectIr e))
