@@ -418,6 +418,15 @@ executable jshark-life-flatopt
   build-depends:
     , life
 
+executable jshark-life-iropt
+  import: bench
+  main-is:
+    LifeIrOpt.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
 executable jshark-life-full-emit
   import: bench
   main-is:

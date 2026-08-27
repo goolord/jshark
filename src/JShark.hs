@@ -128,6 +128,8 @@ module JShark
   , flatPrepareCore
   , flatPrepareFromIr
   , profileFlatOptFromIr
+  , profileIrOptFromClosed
+  , profileIrOptFromIr
   , flatSoaNodeCount
   , flatSoaParallelThreshold
   , irExprFromClosed
@@ -195,6 +197,7 @@ import JShark.CompileProgress
 import JShark.CompileTiming
   ( FlatOptProfile (..)
   , FlatPrepareTiming (..)
+  , IrOptProfile (..)
   , PhoasPrepareTiming (..)
   , reportFlatPrepareTiming
   , reportPhoasPrepareTiming
@@ -1332,6 +1335,66 @@ profileFlatOptFromIr irOpt = do
       , fopTotalSec = total
       }
 {-# NOINLINE profileFlatOptFromIr #-}
+
+profileIrOptFromIr :: Ir.IrEffect u -> IO IrOptProfile
+profileIrOptFromIr !irRaw = do
+  tMetaRaw0 <- getMonotonicTime
+  let
+    !rawNodes = Ir.irMetaSize (Ir.metaIrEffect irRaw)
+  tMetaRaw1 <- getMonotonicTime
+  tOpt0 <- getMonotonicTime
+  let
+    !(_, !irOpt, !mdOpt) = Ir.optIrEffect (-2) irRaw
+    !optNodes = Ir.irMetaSize mdOpt
+  tOpt1 <- getMonotonicTime
+  tMetaOpt0 <- getMonotonicTime
+  let
+    !_ = Ir.metaIrEffect irOpt
+  tMetaOpt1 <- getMonotonicTime
+  _ <- GHCIO.evaluate irOpt
+  let
+    metaRawSec = seconds tMetaRaw0 tMetaRaw1
+    optSec = seconds tOpt0 tOpt1
+    metaOptSec = seconds tMetaOpt0 tMetaOpt1
+   in
+    pure
+      IrOptProfile
+        { iopRawNodes = rawNodes
+        , iopOptNodes = optNodes
+        , iopLowerSec = 0
+        , iopMetaRawSec = metaRawSec
+        , iopOptSec = optSec
+        , iopMetaOptSec = metaOptSec
+        , iopPrepareSec = 0
+        , iopTotalSec = metaRawSec + optSec + metaOptSec
+        }
+{-# NOINLINE profileIrOptFromIr #-}
+
+profileIrOptFromClosed :: ClosedEffect u -> IO IrOptProfile
+profileIrOptFromClosed e = do
+  tLower0 <- getMonotonicTime
+  let
+    !irRaw = lowerEffectClosed e
+  tLower1 <- getMonotonicTime
+  tPrep0 <- getMonotonicTime
+  let
+    !irOpt = optEffectClosed irRaw
+    !optNodes = Ir.irMetaSize (Ir.metaIrEffect irOpt)
+  tPrep1 <- getMonotonicTime
+  _ <- GHCIO.evaluate irOpt
+  breakdown <- profileIrOptFromIr irRaw
+  let
+    lowerSec = seconds tLower0 tLower1
+    prepareSec = seconds tPrep0 tPrep1
+   in
+    pure
+      breakdown
+        { iopOptNodes = optNodes
+        , iopLowerSec = lowerSec
+        , iopPrepareSec = prepareSec
+        , iopTotalSec = lowerSec + prepareSec
+        }
+{-# NOINLINE profileIrOptFromClosed #-}
 
 flatPrepareCore ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)

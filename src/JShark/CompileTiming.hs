@@ -12,6 +12,7 @@ module JShark.CompileTiming
   , CompileJobStats (..)
   , FlatPrepareTiming (..)
   , FlatOptProfile (..)
+  , IrOptProfile (..)
   , PhoasPrepareTiming (..)
   , timingEnabled
   , reportFlatPrepareTiming
@@ -50,6 +51,24 @@ data FlatOptProfile = FlatOptProfile
   , fopPureCount :: !Int
   , fopAttachSec :: !Double
   , fopTotalSec :: !Double
+  }
+  deriving (Eq, Show)
+
+-- | Sub-step breakdown of 'fptIrOptSec' (lower vs optimize vs metadata).
+--
+-- 'iopLowerSec' is lazy PHOAS-to-IR WHNF (matches 'fptLowerSec').  Most
+-- lowering work is deferred into 'iopPrepareSec' ('optEffectClosed' forces
+-- the raw tree).  The meta/opt lines come from a second pass on the
+-- already-forced raw IR and isolate metadata walks from 'optIrEffect'.
+data IrOptProfile = IrOptProfile
+  { iopRawNodes :: !Int
+  , iopOptNodes :: !Int
+  , iopLowerSec :: !Double
+  , iopMetaRawSec :: !Double
+  , iopOptSec :: !Double
+  , iopMetaOptSec :: !Double
+  , iopPrepareSec :: !Double
+  , iopTotalSec :: !Double
   }
   deriving (Eq, Show)
 
