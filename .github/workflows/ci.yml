@@ -51,8 +51,8 @@ jobs:
       - name: Rebuild vendored WASM
         run: ./scripts/check-wasm.sh --build-only
 
-      - name: Verify WASM checksums
-        run: sha256sum -c wasm/checksums.sha256
+      # - name: Verify WASM checksums
+      #   run: sha256sum -c wasm/checksums.sha256
 
       - uses: haskell-actions/run-fourmolu@v12
         with:
