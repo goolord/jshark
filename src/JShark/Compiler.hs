@@ -944,8 +944,6 @@ batchProgressCore total jobs = do
   board <- CP.newProgressBoard total
   CP.setProgressBoardHandle board
   styleIO <- CR.progressStyleIO
-  let
-    cpStyle = CR.toCompileProgressStyle styleIO
   lineCount <- newCounter 0
   let
     refresh = do
@@ -956,7 +954,7 @@ batchProgressCore total jobs = do
         else do
           prev <- readCounter lineCount
           let
-            block = CP.renderBatchProgress cpStyle b prev
+            block = CP.renderBatchProgress styleIO b prev
             lineCount' =
               1
                 + length
@@ -974,9 +972,12 @@ batchProgressCore total jobs = do
             tJob0 <- getMonotonicTime
             CP.initJob board slot label
             CP.withProgressIO refresh
-            out <- CP.withActiveJob slot board $ compile slot
-            tJob1 <- getMonotonicTime
-            jobStats <- CP.snapshotJobStats label (seconds tJob0 tJob1)
+            (out, jobStats) <-
+              CP.withActiveJob slot board $ do
+                result <- compile slot
+                tJob1 <- getMonotonicTime
+                stats <- CP.snapshotJobStats label (seconds tJob0 tJob1)
+                pure (result, stats)
             CP.markJobDone board slot
             CP.withProgressIO refresh
             pure (slot, out, jobStats)

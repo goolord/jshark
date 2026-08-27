@@ -113,12 +113,14 @@ library
     JShark.Emit
     JShark.CompileProgress
     JShark.CompileReport
+    JShark.CompileTerminal
     JShark.Flat
     JShark.FlatSoA
     JShark.Ir
     JShark.JsNum
     JShark.EmitBend
   build-depends:
+    , ansi-terminal >= 1.0 && < 1.2
     , async >= 2.2 && < 2.4
     , base >= 4.17 && < 5
     , vector >= 0.12 && < 0.14

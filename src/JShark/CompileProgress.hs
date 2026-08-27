@@ -15,7 +15,7 @@ module JShark.CompileProgress
   , JobProgress (..)
   , ProgressBoard (..)
   , ProgressBoardHandle
-  , ProgressStyle (..)
+  , TerminalStyle (..)
   , newProgressBoard
   , readProgressBoard
   , initJob
@@ -80,6 +80,15 @@ import JShark.CompileProgressProtocol
   , progressFdFromEnv
   , writeProgressMessage
   )
+import JShark.CompileTerminal
+  ( TerminalStyle (..)
+  , boldSGR
+  , clearLine
+  , cursorUp
+  , cyanSGR
+  , dimSGR
+  , styled
+  )
 import JShark.CompileTiming
   ( CompileForm (..)
   , CompileJobStats (..)
@@ -113,9 +122,6 @@ data ProgressBoard = ProgressBoard
   , pbTotal :: !Int
   , pbJobs :: !(V.Vector JobProgress)
   }
-  deriving (Eq, Show)
-
-data ProgressStyle = ProgressPlain | ProgressTTY
   deriving (Eq, Show)
 
 data JobSlot = JobSlot
@@ -705,12 +711,12 @@ finishEmitPhase = do
     _ -> pure ()
 
 subBarWidth :: Int
-subBarWidth = 16
+subBarWidth = 18
 
 mainBarWidth :: Int
-mainBarWidth = 24
+mainBarWidth = 28
 
-renderBatchProgress :: ProgressStyle -> ProgressBoard -> Int -> String
+renderBatchProgress :: TerminalStyle -> ProgressBoard -> Int -> String
 renderBatchProgress style board prevLines =
   let
     done = pbDone board
@@ -718,14 +724,15 @@ renderBatchProgress style board prevLines =
     mainPct = fromIntegral done / fromIntegral total
     mainFilled = min mainBarWidth (floor (mainPct * fromIntegral mainBarWidth))
     mainEmpty = mainBarWidth - mainFilled
+    pctInt = floor (mainPct * 100 :: Double) :: Int
     mainLine =
-      progressHeader style
-        ++ " ["
-        ++ renderBar style mainFilled mainEmpty
-        ++ "] "
-        ++ progressCount style (show done ++ "/" ++ show total)
+      styled style boldSGR "compile"
         ++ " "
-        ++ progressPct style (show (floor (mainPct * 100 :: Double) :: Int) ++ "%")
+        ++ renderBar style mainFilled mainEmpty
+        ++ " "
+        ++ styled style boldSGR (padLeft 5 (show done ++ "/" ++ show total))
+        ++ " "
+        ++ styled style dimSGR (padLeft 4 (show pctInt ++ "%"))
     subLines =
       [ renderSubLine style j
       | j <- V.toList (pbJobs board)
@@ -733,14 +740,11 @@ renderBatchProgress style board prevLines =
       , not (T.null (jpLabel j))
       ]
     lines' = mainLine : subLines
-    up =
-      if prevLines > 0
-        then "\ESC[" ++ show prevLines ++ "A"
-        else ""
+    up = cursorUp prevLines
    in
-    up ++ unlines (map (progressClear ++) lines')
+    up ++ unlines (map (clearLine ++) lines')
 
-renderSubLine :: ProgressStyle -> JobProgress -> String
+renderSubLine :: TerminalStyle -> JobProgress -> String
 renderSubLine style j =
   let
     lbl = jpLabel j
@@ -767,44 +771,30 @@ renderSubLine style j =
         else ""
    in
     "  "
-      ++ progressLabel style name
+      ++ styled style cyanSGR name
       ++ " "
-      ++ progressPct style phase
+      ++ styled style dimSGR phase
       ++ idxShow
-      ++ " ["
+      ++ " "
       ++ renderBar style filled empty
-      ++ "] "
-      ++ progressPct style (show (floor (pct * 100 :: Double) :: Int) ++ "%")
+      ++ " "
+      ++ styled style dimSGR (show (floor (pct * 100 :: Double) :: Int) ++ "%")
 
-progressClear :: String
-progressClear = "\r\ESC[2K"
-
-progressHeader :: ProgressStyle -> String
-progressHeader = \case
-  ProgressPlain -> "compile"
-  ProgressTTY -> ansiBold ++ "compile" ++ ansiReset
-
-progressCount :: ProgressStyle -> String -> String
-progressCount ProgressPlain s = padLeft 5 s
-progressCount ProgressTTY s = ansiBold ++ padLeft 5 s ++ ansiReset
-
-progressPct :: ProgressStyle -> String -> String
-progressPct ProgressPlain s = padLeft 4 s
-progressPct ProgressTTY s = ansiDim ++ padLeft 4 s ++ ansiReset
-
-progressLabel :: ProgressStyle -> String -> String
-progressLabel ProgressPlain s = s
-progressLabel ProgressTTY s = ansiCyan ++ s ++ ansiReset
-
-renderBar :: ProgressStyle -> Int -> Int -> String
-renderBar ProgressPlain filled empty =
-  replicate filled '#' ++ replicate empty '-'
-renderBar ProgressTTY filled empty =
-  ansiCyan
-    ++ replicate filled (chr 9608)
-    ++ ansiDim
-    ++ replicate empty (chr 9617)
-    ++ ansiReset
+renderBar :: TerminalStyle -> Int -> Int -> String
+renderBar style filled empty =
+  let
+    body =
+      replicate filled (chr 9608)
+        ++ replicate empty (chr 9617)
+   in
+    case style of
+      TerminalPlain ->
+        "[" ++ body ++ "]"
+      TerminalTTY ->
+        "["
+          ++ styled style cyanSGR (replicate filled (chr 9608))
+          ++ styled style dimSGR (replicate empty (chr 9617))
+          ++ "]"
 
 truncateLabel :: Int -> String -> String
 truncateLabel n s
@@ -894,9 +884,3 @@ padRight w s =
     k = w - length s
    in
     if k > 0 then s ++ replicate k ' ' else take w s
-
-ansiReset, ansiBold, ansiDim, ansiCyan :: String
-ansiReset = "\ESC[0m"
-ansiBold = "\ESC[1m"
-ansiDim = "\ESC[2m"
-ansiCyan = "\ESC[36m"
