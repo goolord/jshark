@@ -2686,7 +2686,7 @@ lowerStdMethodAt !t0 m = case m of
       tag = t0
       tUnder = t0 - optStep
       (t1, arr') = lowerExprAt tUnder arr
-      (t2, body') = lowerExprAt t1 (flattenExpr (f (Name tag)))
+      (t2, body') = lowerExprAt t1 (f (Name tag))
      in
       (t2, Ir.IrMethMap arr' tag body')
   MethFilter arr f ->
@@ -2694,7 +2694,7 @@ lowerStdMethodAt !t0 m = case m of
       tag = t0
       tUnder = t0 - optStep
       (t1, arr') = lowerExprAt tUnder arr
-      (t2, body') = lowerExprAt t1 (flattenExpr (f (Name tag)))
+      (t2, body') = lowerExprAt t1 (f (Name tag))
      in
       (t2, Ir.IrMethFilter arr' tag body')
   MethReduce arr z f ->
@@ -2705,7 +2705,7 @@ lowerStdMethodAt !t0 m = case m of
       (t1, arr') = lowerExprAt tUnder arr
       (t2, z') = lowerExprAt t1 z
       (t3, body') =
-        lowerExprAt t2 (flattenExpr (f (Name tagA) (Name tagB)))
+        lowerExprAt t2 (f (Name tagA) (Name tagB))
      in
       (t3, Ir.IrMethReduce arr' z' tagA tagB body')
   MethReduceRight arr z f ->
@@ -2716,7 +2716,7 @@ lowerStdMethodAt !t0 m = case m of
       (t1, arr') = lowerExprAt tUnder arr
       (t2, z') = lowerExprAt t1 z
       (t3, body') =
-        lowerExprAt t2 (flattenExpr (f (Name tagA) (Name tagB)))
+        lowerExprAt t2 (f (Name tagA) (Name tagB))
      in
       (t3, Ir.IrMethReduceRight arr' z' tagA tagB body')
   MethToSorted arr f ->
@@ -2726,7 +2726,7 @@ lowerStdMethodAt !t0 m = case m of
       tUnder = t0 - 2 * optStep
       (t1, arr') = lowerExprAt tUnder arr
       (t2, body') =
-        lowerExprAt t1 (flattenExpr (f (Name tagA) (Name tagB)))
+        lowerExprAt t1 (f (Name tagA) (Name tagB))
      in
       (t2, Ir.IrMethToSorted arr' tagA tagB body')
   MethFrom n f ->
@@ -2734,7 +2734,7 @@ lowerStdMethodAt !t0 m = case m of
       tag = t0
       tUnder = t0 - optStep
       (t1, n') = lowerExprAt tUnder n
-      (t2, body') = lowerExprAt t1 (flattenExpr (f (Name tag)))
+      (t2, body') = lowerExprAt t1 (f (Name tag))
      in
       (t2, Ir.IrMethFrom n' tag body')
 
@@ -2895,22 +2895,22 @@ lowerExprAt !t0 expr = case expr of
       tag = t0
       tUnder = t0 - optStep
       (_, x') = lowerExprAt tUnder x
-      (t2, body') = lowerExprAt tUnder (flattenExpr (g (Name tag)))
+      (t2, body') = lowerExprAt tUnder (g (Name tag))
      in
       (t2, Ir.IrLet tag x' body')
   LetRec r b ->
     let
       tag = t0
       tUnder = t0 - optStep
-      (t1, r') = lowerExprAt tUnder (flattenExpr (r (Name tag)))
-      (t2, b') = lowerExprAt t1 (flattenExpr (b (Name tag)))
+      (t1, r') = lowerExprAt tUnder (r (Name tag))
+      (t2, b') = lowerExprAt t1 (b (Name tag))
      in
       (t2, Ir.IrLetRec tag r' b')
   Lambda g ->
     let
       tag = t0
       tUnder = t0 - optStep
-      (t1, body') = lowerExprAt tUnder (flattenExpr (g (Name tag)))
+      (t1, body') = lowerExprAt tUnder (g (Name tag))
      in
       (t1, Ir.IrLambda tag body')
   Apply f x ->
@@ -2932,7 +2932,7 @@ lowerExprAt !t0 expr = case expr of
       tUnder = t0 - optStep
       (t1, o') = lowerExprAt tUnder o
       (t2, n') = lowerExprAt t1 n
-      (t3, s') = lowerExprAt t2 (flattenExpr (s (Name tag)))
+      (t3, s') = lowerExprAt t2 (s (Name tag))
      in
       (t3, Ir.IrOptionCase o' n' tag s')
   ResultOk x ->
@@ -2952,8 +2952,8 @@ lowerExprAt !t0 expr = case expr of
       tagO = t1
       tUnder = t1 - optStep
       (t2, o') = lowerExprAt tUnder o
-      (t3, er') = lowerExprAt t2 (flattenExpr (er (Name tagE)))
-      (t4, ok') = lowerExprAt t3 (flattenExpr (ok (Name tagO)))
+      (t3, er') = lowerExprAt t2 (er (Name tagE))
+      (t4, ok') = lowerExprAt t3 (ok (Name tagO))
      in
       (t4, Ir.IrResultCase o' tagE er' tagO ok')
   Index arr idx ->
@@ -3090,7 +3090,7 @@ lowerEffectAt !t0 eff = case eff of
       tag = t0
       tUnder = t0 - optStep
       (_, x') = lowerEffectAt tUnder x
-      (t2, body') = lowerEffectAt tUnder (flattenEff (f (Name tag)))
+      (t2, body') = lowerEffectAt tUnder (f (Name tag))
      in
       (t2, Ir.IrBind tag x' body')
   ThenE x y ->
@@ -3103,15 +3103,15 @@ lowerEffectAt !t0 eff = case eff of
     let
       tag = t0
       tUnder = t0 - optStep
-      (t1, r') = lowerEffectAt tUnder (flattenEff (rhs (Name tag)))
-      (t2, b') = lowerEffectAt t1 (flattenEff (body (Name tag)))
+      (t1, r') = lowerEffectAt tUnder (rhs (Name tag))
+      (t2, b') = lowerEffectAt t1 (body (Name tag))
      in
       (t2, Ir.IrBindRec tag r' b')
   LambdaE f ->
     let
       tag = t0
       tUnder = t0 - optStep
-      (t1, body') = lowerEffectAt tUnder (flattenEff (f (Name tag)))
+      (t1, body') = lowerEffectAt tUnder (f (Name tag))
      in
       (t1, Ir.IrLambdaE tag body')
   ApplyE f x ->
@@ -3139,7 +3139,7 @@ lowerEffectAt !t0 eff = case eff of
       tUnder = t0 - optStep
       (t1, s') = lowerExprAt tUnder s
       (t2, e') = lowerExprAt t1 e
-      (t3, body') = lowerEffectAt t2 (flattenEff (f (Name tag)))
+      (t3, body') = lowerEffectAt t2 (f (Name tag))
      in
       (t3, Ir.IrForRange s' e' tag body')
   U8Set b i v ->
@@ -3161,7 +3161,7 @@ lowerEffectAt !t0 eff = case eff of
       tUnder = t0 - optStep
       (t1, o') = lowerExprAt tUnder o
       (t2, n') = lowerEffectAt t1 n
-      (t3, s') = lowerEffectAt t2 (flattenEff (s (Name tag)))
+      (t3, s') = lowerEffectAt t2 (s (Name tag))
      in
       (t3, Ir.IrOptionCaseE o' n' tag s')
   ResultCaseE o er ok ->
@@ -3171,8 +3171,8 @@ lowerEffectAt !t0 eff = case eff of
       tagO = t1
       tUnder = t1 - optStep
       (t2, o') = lowerExprAt tUnder o
-      (t3, er') = lowerEffectAt t2 (flattenEff (er (Name tagE)))
-      (t4, ok') = lowerEffectAt t3 (flattenEff (ok (Name tagO)))
+      (t3, er') = lowerEffectAt t2 (er (Name tagE))
+      (t4, ok') = lowerEffectAt t3 (ok (Name tagO))
      in
       (t4, Ir.IrResultCaseE o' tagE er' tagO ok')
   StringCaseE s arms d ->
@@ -3192,7 +3192,7 @@ lowerEffectAt !t0 eff = case eff of
       tag = t0
       tUnder = t0 - optStep
       (t1, a') = lowerEffectAt tUnder a
-      (t2, k') = lowerEffectAt t1 (flattenEff (k (Name tag)))
+      (t2, k') = lowerEffectAt t1 (k (Name tag))
      in
       (t2, Ir.IrTry a' tag k')
   ObjectLit fs ->
@@ -3342,7 +3342,7 @@ lowerOptEffectAt !t0 eff = case eff of
       tag = t0
       tUnder = t0 - optStep
       (_, x', mdX) = lowerOptEffectAt tUnder x
-      (t2, body', mdBody) = lowerOptEffectAt tUnder (flattenEff (f (Name tag)))
+      (t2, body', mdBody) = lowerOptEffectAt tUnder (f (Name tag))
       (e', md') = Ir.elimIrBind mdX tag x' body' mdBody
      in
       (t2, e', md')
@@ -3356,15 +3356,15 @@ lowerOptEffectAt !t0 eff = case eff of
     let
       tag = t0
       tUnder = t0 - optStep
-      (t1, r', mdR) = lowerOptEffectAt tUnder (flattenEff (rhs (Name tag)))
-      (t2, b', mdB) = lowerOptEffectAt t1 (flattenEff (body (Name tag)))
+      (t1, r', mdR) = lowerOptEffectAt tUnder (rhs (Name tag))
+      (t2, b', mdB) = lowerOptEffectAt t1 (body (Name tag))
      in
       (t2, Ir.IrBindRec tag r' b', Ir.bindMeta tag (Ir.nodeMeta mdR mdB))
   LambdaE f ->
     let
       tag = t0
       tUnder = t0 - optStep
-      (t1, body', md) = lowerOptEffectAt tUnder (flattenEff (f (Name tag)))
+      (t1, body', md) = lowerOptEffectAt tUnder (f (Name tag))
      in
       (t1, Ir.IrLambdaE tag body', Ir.bindMeta tag md)
   ApplyE f x ->
@@ -3392,7 +3392,7 @@ lowerOptEffectAt !t0 eff = case eff of
       tUnder = t0 - optStep
       (t1, s', mdS) = lowerOptExprAt tUnder s
       (t2, e', mdE) = lowerOptExprAt t1 e
-      (t3, body', mdB) = lowerOptEffectAt t2 (flattenEff (f (Name tag)))
+      (t3, body', mdB) = lowerOptEffectAt t2 (f (Name tag))
      in
       ( t3
       , Ir.IrForRange s' e' tag body'
@@ -3417,7 +3417,7 @@ lowerOptEffectAt !t0 eff = case eff of
       tUnder = t0 - optStep
       (t1, o', mdO) = lowerOptExprAt tUnder o
       (t2, n', mdN) = lowerOptEffectAt t1 n
-      (t3, s', mdS) = lowerOptEffectAt t2 (flattenEff (s (Name tag)))
+      (t3, s', mdS) = lowerOptEffectAt t2 (s (Name tag))
      in
       ( t3
       , Ir.IrOptionCaseE o' n' tag s'
@@ -3430,8 +3430,8 @@ lowerOptEffectAt !t0 eff = case eff of
       tagO = t1
       tUnder = t1 - optStep
       (t2, o', mdO) = lowerOptExprAt tUnder o
-      (t3, er', mdE) = lowerOptEffectAt t2 (flattenEff (er (Name tagE)))
-      (t4, ok', mdS) = lowerOptEffectAt t3 (flattenEff (ok (Name tagO)))
+      (t3, er', mdE) = lowerOptEffectAt t2 (er (Name tagE))
+      (t4, ok', mdS) = lowerOptEffectAt t3 (ok (Name tagO))
      in
       ( t4
       , Ir.IrResultCaseE o' tagE er' tagO ok'
@@ -3454,7 +3454,7 @@ lowerOptEffectAt !t0 eff = case eff of
       tag = t0
       tUnder = t0 - optStep
       (t1, a', mdA) = lowerOptEffectAt tUnder a
-      (t2, k', mdK) = lowerOptEffectAt t1 (flattenEff (k (Name tag)))
+      (t2, k', mdK) = lowerOptEffectAt t1 (k (Name tag))
      in
       (t2, Ir.IrTry a' tag k', Ir.nodeMeta mdA (Ir.bindMeta tag mdK))
   ObjectLit fs ->
@@ -3475,6 +3475,7 @@ lowerOptEffectAt !t0 eff = case eff of
       (t1, Ir.IrArrayLit es', md)
 
 {-# NOINLINE lowerOptExprAt #-}
+
 {-# NOINLINE lowerOptEffectAt #-}
 
 reifyEffect :: Ir.IrEffect u -> Effect Stamp u
