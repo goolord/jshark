@@ -127,6 +127,7 @@ module JShark
   , irEffectFromClosed
   , flatPrepareCore
   , flatPrepareFromIr
+  , profileFlatOptFromIr
   , flatProgramNodeCount
   , flatSoaParallelThreshold
   , irExprFromClosed
@@ -176,6 +177,7 @@ import qualified Data.Vector.Mutable as MV
 import GHC.Clock (getMonotonicTime)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
 import GHC.IO.Unsafe (unsafePerformIO)
+import qualified GHC.IO as GHCIO
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
 import JShark.CompileProgress
@@ -191,7 +193,8 @@ import JShark.CompileProgress
   , tickEmitCtx
   )
 import JShark.CompileTiming
-  ( FlatPrepareTiming (..)
+  ( FlatOptProfile (..)
+  , FlatPrepareTiming (..)
   , PhoasPrepareTiming (..)
   , reportFlatPrepareTiming
   , reportPhoasPrepareTiming
@@ -1251,6 +1254,7 @@ flatPrepareFromIr irOpt = do
   let
     !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
     !packNodes = flatProgramNodeCount prog0
+    !_ = FlatSoA.soaPureCount soa0
   t1 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportPackPhase ctx 1 1
@@ -1261,9 +1265,14 @@ flatPrepareFromIr irOpt = do
   case mCtx of
     Just ctx -> reportFlatOptPhase ctx 0 1
     Nothing -> pure ()
-  let
-    !(prog, _soa) = FlatSoA.optimizeFlatPack soa0 prog0
-    !_ = packNodes
+  !(prog, soaOpt) <-
+    pure (FlatSoA.optimizeFlatPack soa0 prog0)
+  _ <-
+    GHCIO.evaluate
+      ( packNodes
+          `seq` FlatSoA.soaPureCount soaOpt
+          `seq` flatProgramNodeCount prog
+      )
   t3 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportFlatOptPhase ctx 1 1
@@ -1279,6 +1288,63 @@ flatPrepareFromIr irOpt = do
         }
   pure (prog, timing)
 {-# NOINLINE flatPrepareFromIr #-}
+
+profileFlatOptFromIr :: Ir.IrEffect u -> IO FlatOptProfile
+profileFlatOptFromIr irOpt = do
+  let
+    !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
+    !nodeCount = flatProgramNodeCount prog0
+  _ <- GHCIO.evaluate (FlatSoA.soaPureCount soa0)
+  tFold0 <- getMonotonicTime
+  let
+    !(soa1, foldPasses, folded) = FlatSoA.constantFoldWithStats soa0
+  tFold1 <- getMonotonicTime
+  tFoldSeq0 <- getMonotonicTime
+  _ <- GHCIO.evaluate (FlatSoA.optConstantFoldNumOnce soa0)
+  tFoldSeq1 <- getMonotonicTime
+  tPure0 <- getMonotonicTime
+  let
+    !(soa2, purePasses) = FlatSoA.propagatePureWithStats soa1
+    !pureCount = FlatSoA.soaPureCount soa2
+  tPure1 <- getMonotonicTime
+  tAttach0 <- getMonotonicTime
+  let
+    !_ = FlatSoA.soaPureVector soa2
+  tAttach1 <- getMonotonicTime
+  tTo0 <- getMonotonicTime
+  let
+    !progRepack =
+      if folded
+        then FlatSoA.toProgram soa2
+        else prog0
+  tTo1 <- getMonotonicTime
+  let
+    !_ = progRepack
+  let
+    foldSec = seconds tFold0 tFold1
+    foldSeqSec = seconds tFoldSeq0 tFoldSeq1
+    pureSec = seconds tPure0 tPure1
+    attachSec = seconds tAttach0 tAttach1
+    toProgSec =
+      if folded
+        then seconds tTo0 tTo1
+        else 0
+    total = foldSec + pureSec + attachSec + toProgSec
+  pure
+    FlatOptProfile
+      { fopNodeCount = nodeCount
+      , fopFoldSec = foldSec
+      , fopFoldSeqSec = foldSeqSec
+      , fopFoldPasses = foldPasses
+      , fopFolded = folded
+      , fopPureSec = pureSec
+      , fopPurePasses = purePasses
+      , fopPureCount = pureCount
+      , fopAttachSec = attachSec
+      , fopToProgramSec = toProgSec
+      , fopTotalSec = total
+      }
+{-# NOINLINE profileFlatOptFromIr #-}
 
 flatPrepareCore ::
   ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming, Int, Ir.IrEffect u)

@@ -11,6 +11,7 @@ module JShark.CompileTiming
   ( CompileForm (..)
   , CompileJobStats (..)
   , FlatPrepareTiming (..)
+  , FlatOptProfile (..)
   , PhoasPrepareTiming (..)
   , timingEnabled
   , reportFlatPrepareTiming
@@ -34,6 +35,22 @@ data FlatPrepareTiming = FlatPrepareTiming
   , fptPackSec :: !Double
   , fptFlatOptSec :: !Double
   , fptTotalSec :: !Double
+  }
+  deriving (Eq, Show)
+
+-- | Sub-step breakdown of 'fptFlatOptSec' (constant fold vs pure propagation).
+data FlatOptProfile = FlatOptProfile
+  { fopNodeCount :: !Int
+  , fopFoldSec :: !Double
+  , fopFoldSeqSec :: !Double
+  , fopFoldPasses :: !Int
+  , fopFolded :: !Bool
+  , fopPureSec :: !Double
+  , fopPurePasses :: !Int
+  , fopPureCount :: !Int
+  , fopAttachSec :: !Double
+  , fopToProgramSec :: !Double
+  , fopTotalSec :: !Double
   }
   deriving (Eq, Show)
 

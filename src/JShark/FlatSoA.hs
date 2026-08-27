@@ -24,6 +24,10 @@ module JShark.FlatSoA
   , packEffectProgramDirect
   , optimizeFlatPack
   , soaPureCount
+  , soaPureVector
+  , constantFoldWithStats
+  , propagatePureWithStats
+  , optConstantFoldNumOnce
   , exprMask
   , soaColumnsEqual
   )
@@ -39,6 +43,7 @@ import Data.Int (Int32)
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
 import qualified Data.Vector as V
+import qualified Data.Vector.Generic as GV
 import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
@@ -57,7 +62,6 @@ import JShark.Flat
   )
 import JShark.Ir (IrEffect)
 import JShark.Types (BigBinOp (..), FFIForm (..), Value (..))
-import Data.Maybe (catMaybes)
 import GHC.IO.Unsafe (unsafePerformIO)
 
 type Op = Word16
@@ -328,9 +332,9 @@ packEffectProgramDirect e =
 optimizeFlatPack :: FlatSoA -> FlatProgram -> (FlatProgram, FlatSoA)
 optimizeFlatPack soa0 prog0 =
   let
-    (soa1, folded) = optConstantFoldNumWithChangedPar soa0
-    soa2 = propagatePureFlagsPar soa1
-    pureV = V.fromList (VU.toList (fsaPure soa2))
+    !(soa1, folded) = optConstantFoldNumWithChangedPar soa0
+    !soa2 = propagatePureFlagsPar soa1
+    !pureV = unboxedToBoxedPure (fsaPure soa2)
    in
     if folded
       then (toProgram soa2, soa2)
@@ -338,6 +342,10 @@ optimizeFlatPack soa0 prog0 =
 
 i32 :: Int -> Int32
 i32 = fromIntegral
+
+unboxedToBoxedPure :: VU.Vector Word8 -> V.Vector Word8
+unboxedToBoxedPure = GV.convert
+{-# INLINE unboxedToBoxedPure #-}
 
 data Enc = Enc !Op !Int32 !Int32 !Int32 !Int32 !Int32
 
@@ -400,7 +408,7 @@ fromProgram p =
           }
  where
   pureColumn fp n
-    | V.length fp == n = VU.generate n (\i -> fp V.! i)
+    | V.length fp == n = GV.convert fp
     | otherwise = VU.replicate n 0
 
   encodeNode node fx fl ag = case node of
@@ -530,7 +538,7 @@ toProgram soa =
     , fpStrCases = fsaStrCases soa
     , fpFieldGroups = fsaFieldGroups soa
     , fpArgGroups = fsaArgGroups soa
-    , fpPure = V.fromList (VU.toList (fsaPure soa))
+    , fpPure = unboxedToBoxedPure (fsaPure soa)
     , fpRoot = fsaRoot soa
     }
  where
@@ -805,6 +813,9 @@ propagatePureFlagsPass soa =
 
 soaPureCount :: FlatSoA -> Int
 soaPureCount = fromIntegral . VU.sum . fsaPure
+
+soaPureVector :: FlatSoA -> V.Vector Word8
+soaPureVector soa = unboxedToBoxedPure (fsaPure soa)
 
 litAsNumber :: FlatLit -> Maybe Double
 litAsNumber (FLit (ValueNumber d)) = Just d
@@ -1087,72 +1098,10 @@ propagatePureFlagsPar soa0 =
     go soa0
 
 optConstantFoldNumOncePar :: FlatSoA -> (FlatSoA, Bool)
-optConstantFoldNumOncePar soa0
-  | VU.length (fsaOpcodes soa0) < flatSoaParallelThreshold =
-      optConstantFoldNumOnce soa0
-  | otherwise =
-      unsafePerformIO $
-        optConstantFoldNumOnceIO soa0
+optConstantFoldNumOncePar = optConstantFoldNumOnce
+-- Parallel scan used IO per node; on Life (~88k nodes) that was ~100s+ for
+-- a no-op pass. Sequential 'runST' scan is sub-millisecond when nothing folds.
 {-# NOINLINE optConstantFoldNumOncePar #-}
-
-optConstantFoldNumOnceIO :: FlatSoA -> IO (FlatSoA, Bool)
-optConstantFoldNumOnceIO soa0 = do
-  let
-    n = VU.length (fsaOpcodes soa0)
-  caps <- max 1 <$> getNumCapabilities
-  let
-    chunk = max 256 (n `div` (caps * 4))
-    ranges = chunkRanges n chunk
-    readLit li = litAsNumber (fsaLits soa0 V.! fromIntegral (li :: Int32))
-    scanFold i = do
-      let
-        op = fsaOpcodes soa0 VU.! i
-        x = fsaA soa0 VU.! i
-        y = fsaB soa0 VU.! i
-      case op of
-        o
-          | o == oFE_KPLUS ->
-              tryPair i x y (+)
-        o
-          | o == oFE_KTIMES ->
-              tryPair i x y (*)
-        o
-          | o == oFE_KMINUS ->
-              tryPair i x y (-)
-        _ -> pure Nothing
-     where
-      tryPair idx xa ya f = do
-        let
-          ox = fsaOpcodes soa0 VU.! fromIntegral xa
-          oy = fsaOpcodes soa0 VU.! fromIntegral ya
-        if ox == oFE_LITERAL && oy == oFE_LITERAL
-          then case (readLit xa, readLit ya) of
-            (Just dx, Just dy) -> pure (Just (idx, f dx dy))
-            _ -> pure Nothing
-          else pure Nothing
-  hitsNested <- mapConcurrently (\ixs -> mapM scanFold ixs) ranges
-  let
-    hits = catMaybes (concat hitsNested)
-  if null hits
-    then pure (soa0, False)
-    else do
-      opM <- VU.unsafeThaw (fsaOpcodes soa0)
-      aM <- VU.unsafeThaw (fsaA soa0)
-      bM <- VU.unsafeThaw (fsaB soa0)
-      litsRef <- newIORef (fsaLits soa0)
-      forM_ hits $ \(i, d) -> do
-        lits <- readIORef litsRef
-        let
-          liNew = i32 (V.length lits)
-          lits' = lits V.// [(V.length lits, FLit (ValueNumber d))]
-        writeIORef litsRef lits'
-        MVU.write opM i oFE_LITERAL
-        MVU.write aM i liNew
-        MVU.write bM i 0
-      opF <- VU.unsafeFreeze opM
-      aF <- VU.unsafeFreeze aM
-      litsF <- readIORef litsRef
-      pure (soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}, True)
 
 optConstantFoldNumWithChangedPar :: FlatSoA -> (FlatSoA, Bool)
 optConstantFoldNumWithChangedPar soa0 =
@@ -1165,6 +1114,32 @@ optConstantFoldNumWithChangedPar soa0 =
    in
     go soa0 False
 
+constantFoldWithStats :: FlatSoA -> (FlatSoA, Int, Bool)
+constantFoldWithStats soa0 =
+  let
+    go soa passes didFold =
+      let
+        (soa', changed) = optConstantFoldNumOncePar soa
+       in
+        if changed
+          then go soa' (passes + 1) True
+          else (soa, passes, didFold)
+   in
+    go soa0 0 False
+{-# NOINLINE constantFoldWithStats #-}
+
+propagatePureWithStats :: FlatSoA -> (FlatSoA, Int)
+propagatePureWithStats soa0 =
+  let
+    go soa passes =
+      let
+        (soa', changed) = propagatePureFlagsPassPar soa
+       in
+        if changed then go soa' (passes + 1) else (soa, passes + 1)
+   in
+    go soa0 0
+{-# NOINLINE propagatePureWithStats #-}
+
 -- | Run SoA opts and attach 'fpPure' (staging metadata; emit ignores for now).
 optimizeFlatProgram :: FlatProgram -> FlatProgram
 optimizeFlatProgram p =
@@ -1172,7 +1147,7 @@ optimizeFlatProgram p =
     soa0 = fromProgram p
     (soa1, folded) = optConstantFoldNumWithChangedPar soa0
     soa2 = propagatePureFlagsPar soa1
-    pureV = V.fromList (VU.toList (fsaPure soa2))
+    pureV = unboxedToBoxedPure (fsaPure soa2)
    in
     if folded
       then toProgram soa2
