@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | JS @Array.prototype@ wrappers. Read wrappers are 'Std' / kernel
@@ -37,6 +39,7 @@ module JShark.Array
   )
 where
 
+import JShark.Params (Param)
 import JShark.Api
 import qualified JShark.Math as Math
 import JShark.Rec (Rec (..), (<:))
@@ -49,7 +52,7 @@ index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
 index arr i =
   case foldArrayIndex arr i of
     Just e -> e
-    Nothing -> Apply (Apply indexChecked arr) i
+    Nothing -> applyNamed2 indexChecked arr i
 
 foldArrayIndex ::
   Expr f ('Array u) -> Expr f 'Number -> Maybe (Expr f u)
@@ -65,14 +68,18 @@ foldArrayIndex arr i = case (arr, i) of
 finiteDouble :: Double -> Bool
 finiteDouble d = not (isNaN d) && not (isInfinite d)
 
-indexChecked :: Expr f ('Function ('Array u) ('Function 'Number u))
+indexChecked ::
+  forall f u.
+  Expr f ('Function ('Array u) ('Function 'Number u))
 indexChecked =
-  namedLambda "arrayIndex" $ \arr ->
-    lambda $ \i ->
-      let_ (Math.trunc i) $ \n ->
+  namedLambdaRow
+    @('[Param "arr" ('Array u), Param "i" 'Number])
+    "arrayIndex"
+    $ \p ->
+      let_ (Math.trunc p.i) $ \n ->
         if_
-          (And (GTEq n 0) (LTh n (length arr)))
-          (Index arr n)
+          (And (GTEq n 0) (LTh n (length p.arr)))
+          (Index p.arr n)
           (Error (Literal (ValueString "array index out of bounds")))
 
 -- | @arr.length@
@@ -176,38 +183,47 @@ groupBy ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f 'String)
   -> Expr f ('Array ('Object (GroupBy u)))
-groupBy arr keyFn =
-  reduce arr (Literal (ValueArray [])) $ \groups x ->
-    let
-      k = keyFn x
-     in
-      let_
-        ( reduce groups (Literal (ValueBool False)) $ \found g ->
-            Or found (GetField @"key" g .== k)
-        )
-        $ \found ->
-          if_
-            found
-            ( map groups $ \g ->
-                if_
-                  (GetField @"key" g .== k)
-                  ( FrozenLit
-                      [ FieldLit @"key" k
-                      , FieldLit @"items" (concat (GetField @"items" g) (singleton x))
-                      ]
-                  )
-                  g
-            )
-            ( concat
-                groups
-                ( singleton
+groupBy arr keyFn = applyNamed2 groupByChecked arr (toLambda keyFn)
+
+groupByChecked ::
+  forall f u.
+  Expr f ('Function ('Array u) ('Function ('Function u 'String) ('Array ('Object (GroupBy u)))))
+groupByChecked =
+  namedLambdaRow
+    @('[Param "arr" ('Array u), Param "keyFn" ('Function u 'String)])
+    "groupBy"
+    $ \p ->
+      reduce p.arr (Literal (ValueArray [])) $ \groups x ->
+        let
+          k = Apply p.keyFn x
+         in
+        let_
+          ( reduce groups (Literal (ValueBool False)) $ \found g ->
+              Or found (GetField @"key" g .== k)
+          )
+          $ \found ->
+            if_
+              found
+              ( map groups $ \g ->
+                  if_
+                    (GetField @"key" g .== k)
                     ( FrozenLit
                         [ FieldLit @"key" k
-                        , FieldLit @"items" (singleton x)
+                        , FieldLit @"items" (concat (GetField @"items" g) (singleton x))
                         ]
                     )
-                )
-            )
+                    g
+              )
+              ( concat
+                  groups
+                  ( singleton
+                      ( FrozenLit
+                          [ FieldLit @"key" k
+                          , FieldLit @"items" (singleton x)
+                          ]
+                      )
+                  )
+              )
 
 -- | @zipWith@; result length is 'Math.min'. @Array.from@ over the indices.
 zipWith ::

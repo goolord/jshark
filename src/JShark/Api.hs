@@ -68,12 +68,14 @@ module JShark.Api
   , lambdaRow
   , fnLit
   , namedLambda
+  , namedLambdaRow
   , ToFn (..)
   , ToLambda (..)
   , lambdaE
   , apply
   , apply2
   , apply3
+  , applyNamed2
   , let_
   , letRec
   , bindRec
@@ -187,7 +189,9 @@ import GHC.TypeLits (KnownSymbol)
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
 import JShark.Params
-  ( ToFn (..)
+  ( NamedLambdaRow (..)
+  , ParamRec
+  , ToFn (..)
   , ToLambda (..)
   , fnLit
   , lambdaRow
@@ -270,6 +274,16 @@ apply3 ::
   -> Expr f d
 apply3 f x y z = apply (apply2 f x y) z
 
+-- | Uncurried call for hoisted two-arg helpers (@f(x, y)@, not @f(x)(y)@).
+--
+-- Use with helpers from 'namedLambdaRow' only; 'apply2' emits curried JS.
+applyNamed2 ::
+  Expr f ('Function a ('Function b r))
+  -> Expr f a
+  -> Expr f b
+  -> Expr f r
+applyNamed2 f x y = expr3 FixCall2 f x y
+
 var :: f u -> Expr f u
 var = Var
 
@@ -279,6 +293,14 @@ lambda f = Lambda Nothing (\x -> f (var x))
 -- | Lambda with a stable JS helper name (@$name@ in 'helperDecls').
 namedLambda :: Text -> (Expr f u -> Expr f v) -> Expr f ('Function u v)
 namedLambda name f = Lambda (Just name) (\x -> f (var x))
+
+-- | Binary 'namedLambda' over a parameter row (one uncurried JS function).
+namedLambdaRow ::
+  NamedLambdaRow row r fn =>
+  Text ->
+  (ParamRec f row -> Expr f r) ->
+  Expr f fn
+namedLambdaRow = namedLambdaFromRow
 
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))

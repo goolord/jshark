@@ -514,6 +514,8 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixSlice :: FixedOp 'String 'Number 'Number 'String
   FixArrSlice :: FixedOp ('Array u) 'Number 'Number ('Array u)
   FixReplace :: FixedOp 'String 'String 'String 'String
+  FixCall2 ::
+    FixedOp ('Function a ('Function b r)) a b r
 
 data FixedArgs f a b c where
   ArgsU :: Expr f a -> FixedArgs f a 'Unit 'Unit

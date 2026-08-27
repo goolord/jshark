@@ -925,6 +925,12 @@ evalFixed rec op args = case (op, args) of
     as <- arrayValues <$> rec x
     bs <- arrayValues <$> rec y
     pure (ValueArray (as ++ bs))
+  (FixCall2, ArgsT f x y) -> do
+    -- Same semantics as nested 'Apply' (curried 'ValueFunction').
+    fv <- rec f
+    xv <- rec x
+    yv <- rec y
+    pure (unFunction (unFunction fv xv) yv)
   (FixIncludes, ArgsB xs y) -> do
     yv <- rec y
     evalAsArray rec xs $ \vs ->
@@ -1549,6 +1555,68 @@ emitHoistedFnValue s view nid fnJs =
         (s', name) = registerHoistedTag s tag src
        in
         (s', jsText name)
+
+shouldFlattenBinaryHoist :: (Stamp u -> Expr Stamp v) -> Bool
+shouldFlattenBinaryHoist f =
+  case f nestedDummy of
+    Lambda Nothing g ->
+      case g nestedDummy of
+        Lambda Nothing _ -> False
+        _ -> True
+    _ -> False
+
+emitBinaryHoistedLambda ::
+  Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code)
+emitBinaryHoistedLambda env s0 f =
+  let
+    -- PHOAS guarantees @g@'s binder matches @b@ when 'shouldFlattenBinaryHoist' holds.
+    go a b =
+      case f a of
+        Lambda Nothing g -> unsafeCoerce g b
+        _ -> error "JShark.emitBinaryHoistedLambda: expected inner lambda"
+    fnBody = JfCons (\a -> JfCons (\b -> JfNil (go a b)))
+    (s1, Code _ fnJs) = renderFn env s0 fnBody
+   in
+    (s1, Code mempty fnJs)
+
+emitHoistedLambdaValue ::
+  Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, JS)
+emitHoistedLambdaValue env s0 f =
+  if shouldFlattenBinaryHoist f
+    then
+      let
+        (s1, Code _ fnJs) = emitBinaryHoistedLambda env s0 f
+       in
+        (s1, fnJs)
+    else
+      let
+        (s1, Code _ fnJs) = emitExprLambda env s0 f
+       in
+        (s1, fnJs)
+
+jsBinaryCallback :: [Int] -> JS -> JS -> JS
+jsBinaryCallback ids decl ref =
+  jsCallback (map nJS ids) decl ref
+
+flatRenderBinaryHoistedLambda ::
+  FlatEmitMode
+  -> Env
+  -> CG
+  -> FlatView.FlatIRView
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> Int
+  -> Flat.NodeId
+  -> (CG, JS)
+flatRenderBinaryHoistedLambda mode env s0 view nidOuter tagA nidInner tagB bodyId =
+  let
+    (nA, s1) = flatPlanIdent mode s0 nidOuter
+    (nB, s2) = flatPlanIdent mode s1 nidInner
+    env' = IM.insert tagA nA $ IM.insert tagB nB env
+    (s3, Code d r) = flatPureChild mode env' s2 view bodyId
+   in
+    (s3, jsBinaryCallback [nA, nB] d r)
 
 nestedDummyId :: Int
 nestedDummyId = minBound
@@ -6244,14 +6312,43 @@ flatPureASTGo !mode !env !sIn view nid =
           , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
           )
       Flat.FE_Lambda tag bodyId ->
-        let
-          (nParam, s1) = flatPlanIdent mode s0 nid
-          env' = IM.insert tag nParam env
-          (s2, MkCode exprXDecl exprXRef _) = flatPureChild mode env' s1 view bodyId
-          (s3, fnJs) =
-            emitHoistedFnValue s2 view nid (renderFunction nParam exprXDecl exprXRef)
-         in
-          (s3, Code mempty fnJs)
+        case (FlatView.firHoistTag view nid, FlatView.firNode view bodyId) of
+          (Just _, Flat.FE_Lambda tag2 body2Id) ->
+            let
+              (s1, fnJs) =
+                flatRenderBinaryHoistedLambda
+                  mode
+                  env
+                  s0
+                  view
+                  nid
+                  tag
+                  bodyId
+                  tag2
+                  body2Id
+              (s2, hoisted) = emitHoistedFnValue s1 view nid fnJs
+             in
+              (s2, Code mempty hoisted)
+          (Just _, _) ->
+            let
+              (nParam, s1) = flatPlanIdent mode s0 nid
+              env' = IM.insert tag nParam env
+              (s2, MkCode exprXDecl exprXRef _) = flatPureChild mode env' s1 view bodyId
+              (s3, fnJs) =
+                emitHoistedFnValue
+                  s2
+                  view
+                  nid
+                  (renderFunction nParam exprXDecl exprXRef)
+             in
+              (s3, Code mempty fnJs)
+          (Nothing, _) ->
+            let
+              (nParam, s1) = flatPlanIdent mode s0 nid
+              env' = IM.insert tag nParam env
+              (s2, MkCode exprXDecl exprXRef _) = flatPureChild mode env' s1 view bodyId
+             in
+              (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
       Flat.FE_Apply fId xId ->
         let
           (s1, Code fDecl fRef) = flatPureChild mode env s0 view fId
@@ -7066,7 +7163,7 @@ pureAST' !sIn env expr =
         ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
       Lambda (Just tag) f ->
         let
-          (s1, Code _ fnJs) = emitExprLambda env s0 f
+          (s1, fnJs) = emitHoistedLambdaValue env s0 f
           (s2, name) = registerHoistedTag s1 tag (renderJS fnJs)
          in
           (s2, Code mempty (jsText name))

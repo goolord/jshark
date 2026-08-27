@@ -805,12 +805,40 @@ stdlibTests =
         case evaluate (Eq keys (Literal (ValueArray [ValueString "one", ValueString "two"]))) of
           ValueBool b -> b @?= True
         evaluateNumber (Array.length firstItems) @?= 2
-    , testCase "Array.groupBy is map/filter/reduce, not a helper" $ do
+    , testCase "Array.groupBy hoists $groupBy helper" $ do
         let
           js = renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))
-        T.isInfixOf "$groupBy" js @?= False
+        T.isInfixOf "const $groupBy =" js @?= True
+        T.isInfixOf "function (n0, n1)" js @?= True
         T.isInfixOf ".reduce" js @?= True
         T.isInfixOf "\"key\"" js @?= True
+        T.isInfixOf "($groupBy)(n0)(n1)" js @?= False
+    , testCase "Array.groupBy hoists once when used twice" $ do
+        let
+          js =
+            renderJS
+              ( pureAST
+                  ( let_ (Array.groupBy numArray (\_ -> string "a")) $ \g1 ->
+                        let_ (Array.groupBy numArray (\_ -> string "b")) $ \g2 ->
+                          Array.length g1 + Array.length g2
+                  )
+              )
+        T.count "const $groupBy =" js @?= 1
+    , testCase "binary hoists match in pureAST and effectfulAST" $ do
+        let
+          pureJs =
+            renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))
+          effJs =
+            renderJS
+              ( effectfulAST
+                  (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index)
+              )
+        T.isInfixOf "function (n" pureJs @?= True
+        T.isInfixOf "function (n" effJs @?= True
+        T.isInfixOf ", n" pureJs @?= True
+        T.isInfixOf ", n" effJs @?= True
+        T.isInfixOf "($groupBy)(n0)(n1)" pureJs @?= False
+        T.isInfixOf "(($arrayIndex)(n0)(n1)" effJs @?= False
     , testCase "Array.zipWith is Array.from, not a helper" $ do
         let
           js = renderJS (pureAST (Array.zipWith (+) numArray numArray))
@@ -1989,14 +2017,16 @@ optimizeTests =
         T.isInfixOf "sink(" js @?= True
         T.isInfixOf "sink(1.0)" js @?= False
         T.isInfixOf "$arrayIndex" js @?= True
-        -- Row index uses the for-loop counter, not a folded constant.
-        T.isInfixOf "(($arrayIndex)(n0))(n1)" js @?= True
+        T.isInfixOf "function (n" js @?= True
+        T.isInfixOf ", n" js @?= True
+        T.isInfixOf "(n0, n1)" js @?= True
+        T.isInfixOf "(($arrayIndex)(n0)(n1)" js @?= False
     , testCase "Life hoists arrayIndex once" $ do
         let
           js = renderJS (effectfulAST (fromSyntax mainJS))
           boundsMsg = "array index out of bounds"
-        length (T.breakOnAll boundsMsg js) @?= 1
-        length (T.breakOnAll "const $arrayIndex =" js) @?= 1
+        T.count boundsMsg js @?= 1
+        T.count "const $arrayIndex =" js @?= 1
     ]
 
 -- | The IR optimizer runs instead of the PHOAS one now that

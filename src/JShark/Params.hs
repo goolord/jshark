@@ -26,6 +26,7 @@ module JShark.Params
   , RowFn
   , ParamAt
   , UniqueRow
+  , NamedLambdaRow (..)
   , FnFromRow (..)
   , LambdaFromRow (..)
   , fnLit
@@ -36,6 +37,7 @@ module JShark.Params
 where
 
 import Data.Kind (Constraint, Type)
+import Data.Text (Text)
 import GHC.Records (HasField (..))
 import GHC.TypeLits (ErrorMessage (..), Symbol, TypeError)
 import JShark.Types (Expr (..), FnBody (..), Universe (..))
@@ -100,6 +102,45 @@ instance
   where
   getField (ParamRecCons _ rec) = getField @sym rec
 
+class NamedLambdaRow row r fn where
+  namedLambdaFromRow ::
+    forall f.
+    Text ->
+    (ParamRec f row -> Expr f r) ->
+    Expr f fn
+
+instance
+  TypeError
+    ( 'Text "namedLambdaRow: unary row — use namedLambda instead"
+    ) =>
+  NamedLambdaRow (Param sym u ': '[]) r fn
+  where
+  namedLambdaFromRow _ _ =
+    error "namedLambdaRow: unary row — use namedLambda instead"
+
+instance
+  TypeError ('Text "namedLambdaRow: empty parameter row") =>
+  NamedLambdaRow '[] r fn
+  where
+  namedLambdaFromRow _ _ = error "namedLambdaRow: empty parameter row"
+
+instance
+  TypeError
+    ( 'Text "namedLambdaRow: only binary rows supported"
+    ) =>
+  NamedLambdaRow (p1 ': p2 ': p3 ': rest) r fn
+  where
+  namedLambdaFromRow _ _ =
+    error "namedLambdaRow: only binary rows supported"
+
+instance LambdaFromRow row r fn => NamedLambdaRow row r fn where
+  namedLambdaFromRow name k =
+    case lambdaFromRow k of
+      Lambda Nothing f -> Lambda (Just name) f
+      _ ->
+        error
+          "JShark.namedLambdaRow: parameter row must produce a lambda spine"
+
 class FnFromRow row us | row -> us where
   fnFromRow :: forall f r. (ParamRec f row -> Expr f r) -> FnBody f us r
 
@@ -162,6 +203,12 @@ class ToLambda k where
   type ToLambdaBinder k :: (Universe -> Type)
   type ToLambdaResult k :: Universe
   toLambda :: k -> Expr (ToLambdaBinder k) (ToLambdaResult k)
+
+instance forall f a b. ToLambda (Expr f a -> Expr f b) where
+  type ToLambdaBinder (Expr f a -> Expr f b) = f
+  type ToLambdaResult (Expr f a -> Expr f b) = 'Function a b
+  toLambda g =
+    lambdaFromRow @('[Param "a" a]) (\p -> g p.a)
 
 instance forall f a b c. ToLambda (Expr f a -> Expr f b -> Expr f c) where
   type ToLambdaBinder (Expr f a -> Expr f b -> Expr f c) = f

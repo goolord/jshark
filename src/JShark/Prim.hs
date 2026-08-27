@@ -235,6 +235,7 @@ fixedBinaryJS n r a = case n of
 
 fixedTernaryJS :: FixedOp a b c u -> JS -> JS -> JS -> JS
 fixedTernaryJS n r a b = case n of
+  FixCall2 -> parens r <> parens (a <> ", " <> b)
   FixSlice -> slice
   FixArrSlice -> slice
   FixReplace -> r <> ".replace" <> parens (a <> ", " <> b)
