@@ -34,8 +34,7 @@ module JShark.CompileProgress
   , initEmitCtxTotal
   , reportPackPhase
   , reportFlatOptPhase
-  , reportLowerPhase
-  , reportIrOptPhase
+  , reportIrPreparePhase
   , tickEmitCtx
   , recordJobLintSec
   , recordJobCodegenSec
@@ -100,8 +99,7 @@ import System.CPUTime (getCPUTime)
 
 data CompilePhase
   = PhaseLint
-  | PhaseLower
-  | PhaseIrOpt
+  | PhaseIrPrepare
   | PhasePack
   | PhaseFlatOpt
   | PhaseEmit
@@ -212,22 +210,23 @@ lookupJobTiming :: IO (Maybe JobTiming)
 lookupJobTiming = fmap ajsTiming <$> lookupActiveJob
 
 resetJobTiming :: JobTiming -> IO ()
-resetJobTiming JobTiming
-                 { jtForm
-                 , jtLintSec
-                 , jtCodegenSec
-                 , jtMinifySec
-                 , jtJsBytes
-                 , jtFlatPrepare
-                 , jtPhoasPrepare
-                 } = do
-  writeIORef jtForm FormMinified
-  writeIORef jtLintSec 0
-  writeIORef jtCodegenSec 0
-  writeIORef jtMinifySec 0
-  writeIORef jtJsBytes 0
-  writeIORef jtFlatPrepare Nothing
-  writeIORef jtPhoasPrepare Nothing
+resetJobTiming
+  JobTiming
+    { jtForm
+    , jtLintSec
+    , jtCodegenSec
+    , jtMinifySec
+    , jtJsBytes
+    , jtFlatPrepare
+    , jtPhoasPrepare
+    } = do
+    writeIORef jtForm FormMinified
+    writeIORef jtLintSec 0
+    writeIORef jtCodegenSec 0
+    writeIORef jtMinifySec 0
+    writeIORef jtJsBytes 0
+    writeIORef jtFlatPrepare Nothing
+    writeIORef jtPhoasPrepare Nothing
 
 snapshotJobStatsFromTiming ::
   JobTiming -> Text -> Double -> IO CompileJobStats
@@ -251,8 +250,7 @@ snapshotJobStatsFromTiming
     flat <- readIORef jtFlatPrepare
     phoas <- readIORef jtPhoasPrepare
     let
-      lower = maybe 0 fptLowerSec flat
-      irOpt = maybe 0 fptIrOptSec flat
+      irPrepare = maybe 0 fptIrPrepareSec flat
       pack = maybe 0 fptPackSec flat
       flatOpt = maybe 0 fptFlatOptSec flat
       phoasOpt = maybe 0 pptOptimizeSec phoas
@@ -269,8 +267,7 @@ snapshotJobStatsFromTiming
           { cjsLabel = label
           , cjsForm = form
           , cjsLintSec = lint
-          , cjsLowerSec = lower
-          , cjsIrOptSec = irOpt
+          , cjsIrPrepareSec = irPrepare
           , cjsPackSec = pack
           , cjsFlatOptSec = flatOpt
           , cjsPhoasOptSec = phoasOpt
@@ -290,8 +287,7 @@ snapshotJobStats label totalSec = do
           { cjsLabel = label
           , cjsForm = FormMinified
           , cjsLintSec = 0
-          , cjsLowerSec = 0
-          , cjsIrOptSec = 0
+          , cjsIrPrepareSec = 0
           , cjsPackSec = 0
           , cjsFlatOptSec = 0
           , cjsPhoasOptSec = 0
@@ -376,13 +372,9 @@ reportFlatOptPhase :: EmitCtx -> Int -> Int -> IO ()
 reportFlatOptPhase EmitCtx {ecBoard, ecSlot} idx tot =
   reportJobPhaseDirect ecBoard ecSlot PhaseFlatOpt idx tot
 
-reportLowerPhase :: EmitCtx -> Int -> Int -> IO ()
-reportLowerPhase EmitCtx {ecBoard, ecSlot} idx tot =
-  reportJobPhaseDirect ecBoard ecSlot PhaseLower idx tot
-
-reportIrOptPhase :: EmitCtx -> Int -> Int -> IO ()
-reportIrOptPhase EmitCtx {ecBoard, ecSlot} idx tot =
-  reportJobPhaseDirect ecBoard ecSlot PhaseIrOpt idx tot
+reportIrPreparePhase :: EmitCtx -> Int -> Int -> IO ()
+reportIrPreparePhase EmitCtx {ecBoard, ecSlot} idx tot =
+  reportJobPhaseDirect ecBoard ecSlot PhaseIrPrepare idx tot
 
 reportPackPhase :: EmitCtx -> Int -> Int -> IO ()
 reportPackPhase EmitCtx {ecBoard, ecSlot} idx tot =
@@ -524,31 +516,28 @@ lookupActiveJob = do
 phaseToInt :: CompilePhase -> Int
 phaseToInt = \case
   PhaseLint -> 0
-  PhaseLower -> 1
-  PhaseIrOpt -> 2
-  PhasePack -> 3
-  PhaseFlatOpt -> 4
-  PhaseEmit -> 5
-  PhaseMinify -> 6
-  PhaseDone -> 7
+  PhaseIrPrepare -> 1
+  PhasePack -> 2
+  PhaseFlatOpt -> 3
+  PhaseEmit -> 4
+  PhaseMinify -> 5
+  PhaseDone -> 6
 
 phaseFromInt :: Int -> CompilePhase
 phaseFromInt = \case
   0 -> PhaseLint
-  1 -> PhaseLower
-  2 -> PhaseIrOpt
-  3 -> PhasePack
-  4 -> PhaseFlatOpt
-  5 -> PhaseEmit
-  6 -> PhaseMinify
-  7 -> PhaseDone
+  1 -> PhaseIrPrepare
+  2 -> PhasePack
+  3 -> PhaseFlatOpt
+  4 -> PhaseEmit
+  5 -> PhaseMinify
+  6 -> PhaseDone
   _ -> PhaseLint
 
 phaseWeight :: CompilePhase -> Double
 phaseWeight = \case
   PhaseLint -> 0.03
-  PhaseLower -> 0.05
-  PhaseIrOpt -> 0.05
+  PhaseIrPrepare -> 0.10
   PhasePack -> 0.05
   PhaseFlatOpt -> 0.05
   PhaseEmit -> 0.62
@@ -558,19 +547,17 @@ phaseWeight = \case
 phaseOrder :: CompilePhase -> Int
 phaseOrder = \case
   PhaseLint -> 0
-  PhaseLower -> 1
-  PhaseIrOpt -> 2
-  PhasePack -> 3
-  PhaseFlatOpt -> 4
-  PhaseEmit -> 5
-  PhaseMinify -> 6
-  PhaseDone -> 7
+  PhaseIrPrepare -> 1
+  PhasePack -> 2
+  PhaseFlatOpt -> 3
+  PhaseEmit -> 4
+  PhaseMinify -> 5
+  PhaseDone -> 6
 
 phaseLabel :: CompilePhase -> String
 phaseLabel = \case
   PhaseLint -> "lint"
-  PhaseLower -> "lowr"
-  PhaseIrOpt -> "iopt"
+  PhaseIrPrepare -> "irpr"
   PhasePack -> "pack"
   PhaseFlatOpt -> "fopt"
   PhaseEmit -> "emit"
@@ -583,8 +570,7 @@ completedPhaseWeight phase =
     [ phaseWeight p
     | p <-
         [ PhaseLint
-        , PhaseLower
-        , PhaseIrOpt
+        , PhaseIrPrepare
         , PhasePack
         , PhaseFlatOpt
         , PhaseEmit
@@ -844,8 +830,7 @@ truncateLabel n s
 
 phaseUsesIndex :: CompilePhase -> Bool
 phaseUsesIndex = \case
-  PhaseLower -> True
-  PhaseIrOpt -> True
+  PhaseIrPrepare -> True
   PhasePack -> True
   PhaseFlatOpt -> True
   PhaseEmit -> True

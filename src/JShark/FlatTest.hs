@@ -27,7 +27,11 @@ import JShark.CompileProgress
   , snapshotJobStatsFromSlot
   , withActiveJob
   )
-import JShark.CompileTiming (FlatPrepareTiming (..), cjsLintSec, cjsLowerSec)
+import JShark.CompileTiming
+  ( FlatPrepareTiming (..)
+  , cjsIrPrepareSec
+  , cjsLintSec
+  )
 import qualified JShark.FlatEnc as FlatEnc
 import qualified JShark.FlatSoA as FlatSoA
 import qualified JShark.Ir as Ir
@@ -107,12 +111,11 @@ batchJobSlotTimingOk = do
       recordJobLintSec 0.001
       recordJobFlatPrepare
         FlatPrepareTiming
-          { fptLowerSec = 0.01
-          , fptIrOptSec = 0
+          { fptIrPrepareSec = 0.01
           , fptPackSec = 0
           , fptFlatOptSec = 0
           , fptTotalSec = 0.01
           }
       pure ()
   stats <- snapshotJobStatsFromSlot board 0 "test" 0.05
-  pure (cjsLintSec stats == 0.001 && cjsLowerSec stats == 0.01)
+  pure (cjsLintSec stats == 0.001 && cjsIrPrepareSec stats == 0.01)

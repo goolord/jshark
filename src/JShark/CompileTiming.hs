@@ -31,8 +31,7 @@ data CompileForm
   deriving (Eq, Show)
 
 data FlatPrepareTiming = FlatPrepareTiming
-  { fptLowerSec :: !Double
-  , fptIrOptSec :: !Double
+  { fptIrPrepareSec :: !Double
   , fptPackSec :: !Double
   , fptFlatOptSec :: !Double
   , fptTotalSec :: !Double
@@ -54,12 +53,11 @@ data FlatOptProfile = FlatOptProfile
   }
   deriving (Eq, Show)
 
--- | Sub-step breakdown of 'fptIrOptSec' (lower vs optimize vs metadata).
+-- | Sub-step breakdown of 'fptIrPrepareSec' (lower vs optimize vs metadata).
 --
--- 'iopLowerSec' is lazy PHOAS-to-IR WHNF (matches 'fptLowerSec').  Most
--- lowering work is deferred into 'iopPrepareSec' ('optEffectClosed' forces
--- the raw tree).  The meta/opt lines come from a second pass on the
--- already-forced raw IR and isolate metadata walks from 'optIrEffect'.
+-- 'iopLowerSec' is lazy PHOAS-to-IR WHNF.  Most lowering work is deferred
+-- into 'iopPrepareSec' ('optEffectClosed' forces the raw tree).  The
+-- meta/opt lines come from a second pass on the already-forced raw IR.
 data IrOptProfile = IrOptProfile
   { iopRawNodes :: !Int
   , iopOptNodes :: !Int
@@ -82,8 +80,7 @@ data CompileJobStats = CompileJobStats
   { cjsLabel :: !Text
   , cjsForm :: !CompileForm
   , cjsLintSec :: !Double
-  , cjsLowerSec :: !Double
-  , cjsIrOptSec :: !Double
+  , cjsIrPrepareSec :: !Double
   , cjsPackSec :: !Double
   , cjsFlatOptSec :: !Double
   , cjsPhoasOptSec :: !Double
@@ -104,8 +101,7 @@ reportFlatPrepareTiming t = do
     $ hPutStrLn stderr
     $ unlines
       [ "JShark flat prepare timing (seconds):"
-      , "  lower:    " ++ show (fptLowerSec t)
-      , "  ir-opt:   " ++ show (fptIrOptSec t)
+      , "  ir-prep:  " ++ show (fptIrPrepareSec t)
       , "  pack:     " ++ show (fptPackSec t)
       , "  flat-opt: " ++ show (fptFlatOptSec t)
       , "  total:    " ++ show (fptTotalSec t)

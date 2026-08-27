@@ -19,13 +19,13 @@ printProfile IrOptProfile {..} = do
   putStrLn $
     "lower,"
       ++ show iopLowerSec
-      ++ ",lazyWhnf matchesFlatLower=1"
+      ++ ",lazyWhnf diagnostic=1"
   putStrLn $
     "prepare,"
       ++ show iopPrepareSec
       ++ ",opt+meta optNodes="
       ++ show iopOptNodes
-      ++ " matchesFlatIrOpt=1"
+      ++ " matchesFlatIrPrepare=1"
   putStrLn $ "irOptTotal," ++ show iopTotalSec ++ ",nodes=" ++ show iopOptNodes
   putStrLn "phase,seconds,detail,breakdownOnForcedRaw"
   putStrLn $

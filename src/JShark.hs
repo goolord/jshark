@@ -189,8 +189,7 @@ import JShark.CompileProgress
   , recordJobFlatPrepare
   , recordJobPhoasPrepare
   , reportFlatOptPhase
-  , reportIrOptPhase
-  , reportLowerPhase
+  , reportIrPreparePhase
   , reportPackPhase
   , tickEmitCtx
   )
@@ -1284,8 +1283,7 @@ flatPrepareFromIr irOpt = do
   let
     timing =
       FlatPrepareTiming
-        { fptLowerSec = 0
-        , fptIrOptSec = 0
+        { fptIrPrepareSec = 0
         , fptPackSec = packSec
         , fptFlatOptSec = seconds t2 t3
         , fptTotalSec = seconds t0 t3
@@ -1402,32 +1400,21 @@ flatPrepareCore (e :: ClosedEffect u) = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
   case mCtx of
-    Just ctx -> reportLowerPhase ctx 0 1
+    Just ctx -> reportIrPreparePhase ctx 0 1
     Nothing -> pure ()
   t0 <- getMonotonicTime
   let
-    !irRaw = lowerEffectClosed e
+    !(irOpt, irNodes) = lowerOptEffectIr e
   t1 <- getMonotonicTime
   case mCtx of
-    Just ctx -> reportLowerPhase ctx 1 1
-    Nothing -> pure ()
-  case mCtx of
-    Just ctx -> reportIrOptPhase ctx 0 1
-    Nothing -> pure ()
-  let
-    !irOpt = optEffectClosed irRaw
-    !irNodes = Ir.irMetaSize (Ir.metaIrEffect irOpt)
-  t2 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportIrOptPhase ctx 1 1
+    Just ctx -> reportIrPreparePhase ctx 1 1
     Nothing -> pure ()
   (soa, packTiming) <- flatPrepareFromIr irOpt
   tAll1 <- getMonotonicTime
   let
     timing =
       FlatPrepareTiming
-        { fptLowerSec = seconds t0 t1
-        , fptIrOptSec = seconds t1 t2
+        { fptIrPrepareSec = seconds t0 t1
         , fptPackSec = fptPackSec packTiming
         , fptFlatOptSec = fptFlatOptSec packTiming
         , fptTotalSec = seconds tAll0 tAll1

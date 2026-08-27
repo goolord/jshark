@@ -36,8 +36,7 @@ main = do
   evaluate optNodes
   putStrLn $ "phoasOptimize," ++ show (seconds t0 t1)
   putStrLn $ "optNodes," ++ show optNodes
-  putStrLn $ "flatLower," ++ show fptLowerSec
-  putStrLn $ "flatIrOpt," ++ show fptIrOptSec
+  putStrLn $ "flatIrPrepare," ++ show fptIrPrepareSec
   putStrLn $ "flatPack," ++ show fptPackSec
   putStrLn $ "flatOpt," ++ show fptFlatOptSec
   putStrLn $ "flatPrepare," ++ show fptTotalSec

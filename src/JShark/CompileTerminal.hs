@@ -159,8 +159,7 @@ statsColumns =
   [ programCol
   , secCol "total" 8 cjsTotalSec
   , secCol "lint" 7 cjsLintSec
-  , secCol "lower" 7 cjsLowerSec
-  , secCol "iopt" 7 cjsIrOptSec
+  , secCol "irprep" 7 cjsIrPrepareSec
   , secCol "pack" 7 cjsPackSec
   , secCol "fopt" 7 cjsFlatOptSec
   , secCol "phopt" 7 cjsPhoasOptSec
@@ -235,8 +234,7 @@ footerValue c sorted mBatchWall
 phaseSec :: Column -> CompileJobStats -> Double
 phaseSec c = case colHeader c of
   "lint" -> cjsLintSec
-  "lower" -> cjsLowerSec
-  "iopt" -> cjsIrOptSec
+  "irprep" -> cjsIrPrepareSec
   "pack" -> cjsPackSec
   "fopt" -> cjsFlatOptSec
   "phopt" -> cjsPhoasOptSec
