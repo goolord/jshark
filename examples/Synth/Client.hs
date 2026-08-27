@@ -77,7 +77,7 @@ noteForKey :: Expr f 'String -> Effect f 'String
 noteForKey k =
   stringCaseE
     k
-    [(keyChar key, expr (string (noteId key))) | key <- keys]
+    [(char, expr (string note)) | (char, note) <- keyBindings]
     (expr noNote)
 
 -- | Equal temperament, worked out in Haskell and emitted as a switch.

@@ -1,0 +1,1 @@
+var o="\x1B[31m",c="\x1B[32m",r="\x1B[90m",t="\x1B[33m",e="\x1B[34m",l="\x1B[35m",n="\x1B[36m";var m={deleted:o,var:o,err:o,kwd:l,num:t,class:t,cmnt:r,insert:c,str:c,bool:n,type:e,oper:e,section:l,func:e};export{m as default};

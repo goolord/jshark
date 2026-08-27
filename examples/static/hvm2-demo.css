@@ -1,106 +1,54 @@
-/* hvm2 demo, same palette as examples/static/index.css */
-
-html,
-body {
-  margin: 0;
-  min-height: 100%;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: Georgia, serif;
-  font-size: 16px;
-  line-height: 1.5;
-}
-
 .hvm2 {
   max-width: 36rem;
-  margin: 2rem auto;
-  padding: 0 1rem 3rem;
 }
 
 .hvm2-header {
-  margin-bottom: 1.25rem;
-}
-
-.hvm2 h1 {
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  font-size: 1.5rem;
-  margin: 0 0 0.35rem;
-}
-
-.hvm2 .lede {
-  color: #94a3b8;
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
-}
-
-.hvm2 .lede code,
-.hvm2 .hint code,
-.hvm2 .info code {
-  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 0.88em;
-  color: #cbd5e1;
+  margin-bottom: 0.75rem;
 }
 
 .hvm2 .path {
-  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 0.75rem;
-  color: #64748b;
-  margin: 0 0 1.25rem;
-}
-
-.hvm2 .panel {
-  border: 1px solid #334155;
-  border-radius: 6px;
-  background: #1e293b;
-  padding: 1rem;
+  font: 0.75rem var(--mono);
+  color: var(--faint);
+  margin: 0.15rem 0 0;
 }
 
 .hvm2 .controls {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem 1rem;
-  margin-bottom: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid #334155;
+  align-items: flex-end;
+  gap: 0.65rem 0.75rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border);
 }
 
-.hvm2 fieldset {
-  border: none;
-  margin: 0;
-  padding: 0;
-}
-
-.hvm2 legend {
-  font: 0.72rem system-ui, sans-serif;
-  color: #64748b;
-  padding: 0;
-  margin-bottom: 0.35rem;
+.hvm2 .control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .hvm2 .btn-row {
   display: flex;
-  gap: 0.35rem;
+  gap: 0.25rem;
 }
 
 .hvm2 button {
-  font: 0.82rem system-ui, sans-serif;
+  font: inherit;
+  font-size: 0.8125rem;
   cursor: pointer;
-  border: 1px solid #334155;
-  background: #0f172a;
-  color: #e2e8f0;
-  border-radius: 4px;
-  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 0.2rem 0.45rem;
 }
 
 .hvm2 button:hover {
-  border-color: #475569;
+  border-color: var(--faint);
 }
 
 .hvm2 button.active {
-  border-color: #38bdf8;
-  background: #172554;
+  border-color: var(--accent);
 }
 
 .hvm2 button.bench {
@@ -108,31 +56,25 @@ body {
 }
 
 .hvm2 button.pause.active {
-  border-color: #fbbf24;
-  background: #422006;
+  border-color: var(--muted);
 }
 
 .hvm2-viewport {
   display: flex;
   justify-content: center;
-  padding: 0.75rem;
-  background: #0b1220;
-  border: 1px solid #334155;
-  border-radius: 4px;
+  padding: 0.5rem;
+  background: #0a0a0a;
+  border: 1px solid var(--border);
 }
 
 .hvm2 .res-select {
-  font: 0.82rem system-ui, sans-serif;
+  font: inherit;
+  font-size: 0.8125rem;
   cursor: pointer;
-  border: 1px solid #334155;
-  background: #0f172a;
-  color: #e2e8f0;
-  border-radius: 4px;
-  padding: 0.35rem 0.5rem;
-}
-
-.hvm2 .res-select:hover {
-  border-color: #475569;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 0.2rem 0.35rem;
 }
 
 .hvm2 canvas {
@@ -145,23 +87,22 @@ body {
 }
 
 .hvm2-telemetry {
-  margin-top: 0.75rem;
-  padding: 0.75rem 0.85rem;
-  border-top: 1px solid #334155;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
 }
 
 .hvm2-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.35rem 1.25rem;
-  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 0.78rem;
-  line-height: 1.45;
+  gap: 0.2rem 1rem;
+  font: 0.75rem var(--mono);
+  line-height: var(--line);
 }
 
 .hvm2-metric {
   display: grid;
-  grid-template-columns: 4.75rem minmax(4.5ch, 1fr) auto;
+  grid-template-columns: 3.75rem minmax(4ch, 1fr) auto;
   gap: 0.35rem;
   align-items: baseline;
   min-width: 0;
@@ -169,15 +110,15 @@ body {
 
 .hvm2-metric-wide {
   grid-column: 1 / -1;
-  grid-template-columns: 4.75rem minmax(0, 1fr);
+  grid-template-columns: 3.75rem minmax(0, 1fr);
 }
 
 .hvm2-metric-k {
-  color: #64748b;
+  color: var(--muted);
 }
 
 .hvm2-metric-v {
-  color: #cbd5e1;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -190,25 +131,23 @@ body {
 }
 
 .hvm2-metric-u {
-  color: #64748b;
+  color: var(--faint);
 }
 
 .hvm2-metric-v.error {
-  color: #fca5a5;
+  color: #e88;
 }
 
 .hvm2-metric-v.warn {
-  color: #fcd34d;
+  color: #da8;
 }
 
 .hvm2 .status {
-  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 0.78rem;
-  color: #94a3b8;
+  font: 0.75rem var(--mono);
+  color: var(--muted);
   margin: 0.35rem 0 0;
   min-height: 1.45em;
   word-break: break-word;
-  line-height: 1.45;
 }
 
 .hvm2 .status-alert:empty {
@@ -216,31 +155,11 @@ body {
 }
 
 .hvm2 .status.error {
-  color: #fca5a5;
-  font-weight: 600;
+  color: #e88;
 }
 
 .hvm2 .status.warn {
-  color: #fcd34d;
-  font-weight: 600;
-}
-
-.hvm2 .hint {
-  font-size: 0.82rem;
-  color: #64748b;
-  margin: 0.5rem 0 0;
-  line-height: 1.45;
-}
-
-.hvm2 .info {
-  margin-top: 1.5rem;
-  padding: 0.85rem 0 0.5rem;
-  font-size: 0.85rem;
-  color: #64748b;
-}
-
-.hvm2 .info p {
-  margin: 0;
+  color: #da8;
 }
 
 @media (max-width: 28rem) {

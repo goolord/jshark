@@ -92,21 +92,21 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "JShark / hvm2 mandelbrot"
+    title_ "Mandelbrot"
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/base.css")]
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/hvm2-demo.css")]
     headExtra
   body_ $ do
-    main_ [class_ "hvm2"] $ do
-      div_ [class_ "hvm2-header"] $ do
-        h1_ "mandelbrot / hvm2"
-        p_ [class_ "lede"] $ do
+    main_ [class_ "page hvm2"] $ do
+      header_ [class_ "hvm2-header page-header"] $ do
+        h1_ "Mandelbrot"
+        p_ [class_ "page-meta"] $ do
           code_ "mandel(cr, ci)"
-          " in JShark, compiled to Bend then WASM."
-        p_ [class_ "path"] "Expr → Bend → WASM → canvas"
+          " · Expr → Bend → WASM"
+        p_ [class_ "path"] "hvm2 demo"
       div_ [class_ "panel"] $ do
         div_ [class_ "controls"] $ do
-          fieldset_ $ do
-            legend_ "backend"
+          div_ [class_ "control-group"] $
             div_ [class_ "btn-row"] $ do
               button_
                 [ id_ modeWasmId
@@ -126,8 +126,7 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $ do
                 , class_ "mode"
                 ]
                 "js"
-          fieldset_ $ do
-            legend_ "resolution"
+          div_ [class_ "control-group"] $
             select_ [id_ resSelectId, class_ "res-select"] $
               forM_ resolutionPresets $ \(presetW, presetH, presetLabel) -> do
                 let
@@ -138,8 +137,8 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $ do
                       <> [selected_ "selected" | isDefault]
                   )
                   (toHtml presetLabel)
-          button_ [id_ pauseId, type_ "button", class_ "pause"] "pause"
-          button_ [id_ benchId, type_ "button", class_ "bench"] "bench all backends"
+          button_ [id_ pauseId, type_ "button", class_ "pause"] "Pause"
+          button_ [id_ benchId, type_ "button", class_ "bench"] "Bench all"
         div_ [class_ "hvm2-viewport"] $
           canvas_
             [ id_ boardId
@@ -161,20 +160,22 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $ do
               span_ [class_ "hvm2-metric-k"] "backend"
               span_ [id_ metricBackendId, class_ "hvm2-metric-v"] "…"
           p_ [id_ statusId, class_ "status status-alert"] ""
-          p_ [class_ "hint"] $
-            do
-              toHtml (show blockPx)
-              "×"
-              toHtml (show blockPx)
-              " px blocks, "
-              toHtml (show maxIter)
-              " iters. Telemetry uses desync canvas + wall-clock ms (not vsync). wasm = SIMD128 grid; hvm2 = Bend book on HVM2 evaluator ("
-              <> toHtml (show (4 :: Int))
-              <> " wasm threads via Web Workers + shared memory, needs COOP/COEP); js = mandelJsSource. Bench times all backends."
-      footer_ [class_ "info"] $
+          p_ [class_ "page-hint"] $ do
+            toHtml (show blockPx)
+            "×"
+            toHtml (show blockPx)
+            " px blocks · "
+            toHtml (show maxIter)
+            " iters · wall-clock telemetry"
+      footer_ [class_ "page-footer"] $ do
         p_ $ do
-          "wasm: "
+          "Build wasm: "
           code_ "cabal run build-hvm2-demo-wasm"
+        p_ $
+          "WebAssembly is still single-threaded in browsers, so the hvm2 path "
+            <> "(Bend → HVM evaluator in wasm) runs slower than the hand-written "
+            <> "SIMD kernel. It’s here mostly because wiring that pipeline up "
+            <> "seemed fun."
     script_ [src_ (demoAsset "hvm2-wasm.js")] ("" :: Html ())
     source
     script_ [src_ scriptSrc] ("" :: Html ())

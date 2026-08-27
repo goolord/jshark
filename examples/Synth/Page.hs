@@ -7,7 +7,6 @@ import qualified Data.Text as T
 import Keys
 import Lucid
 import Lucid.Base (makeAttribute)
-import Numeric (showFFloat)
 
 -- | @staticRoot@ is the shared assets prefix; @headExtra@ / @source@ are the
 -- highlighter and the JS pane.
@@ -16,62 +15,48 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "JShark • Synthesizer"
+    title_ "Synth"
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/base.css")]
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth.css")]
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth-keys.css")]
     headExtra
   body_ $ do
-    main_ [class_ "synth"] $ do
-      h1_ "synth"
-      p_ [class_ "hint"] $ do
-        "Click the keys or use your keyboard ("
-        code_ "a"
-        "–"
-        code_ "k"
-        "). Notes are held until you let go."
+    main_ [class_ "page synth"] $ do
+      header_ [class_ "page-header"] $ do
+        h1_ "Synth"
+        p_ [class_ "page-hint"] $
+          "z–/ then q–] on keyboard · click keys · held until release"
       div_ [class_ "controls"] $ do
         fieldset_ $ do
           legend_ "wave"
           div_ [class_ "waves"] (mapM_ waveButton waves)
         fieldset_ $ do
           legend_ "filter"
-          slider idCutoff "cutoff" "200" "8000" "2200"
-          slider idResonance "resonance" "0" "20" "6"
+          slider idCutoff "Cutoff" "200" "8000" "2200"
+          slider idResonance "Res" "0" "20" "6"
         fieldset_ $ do
           legend_ "envelope"
-          slider idRelease "release" "0.05" "1.5" "0.35"
+          slider idRelease "Release" "0.05" "1.5" "0.35"
       div_ [class_ "meter"] $ div_ [id_ idMeterBar, class_ "meter-bar"] mempty
       div_ [id_ idKeyboard, class_ "keyboard"] (mapM_ keyButton keys)
-      p_ [id_ idStatus, class_ "status"] "click a key to start audio"
-    footer_ [class_ "info"] $
-      p_ $ do
-        "Web Audio via JShark's "
-        code_ "ffi"
-        ". Envelopes and pitch are "
-        code_ "AudioParam"
-        " automation, so timing lives on the audio thread."
+      p_ [id_ idStatus, class_ "status"] "Click a key to start audio"
+      footer_ [class_ "page-footer"] $
+        p_ "Web Audio via JShark FFI · envelopes on the audio thread"
     source
     script_ [src_ scriptSrc] ("" :: Html ())
 
--- | A key. A black key is absolutely positioned, and its offset comes
--- from 'blackLeft' rather than the stylesheet, so the layout has one source
--- of truth.
+-- | Black key offsets live in @synth-keys.css@ (must match 'blackLeft').
 keyButton :: Key -> Html ()
 keyButton k =
   button_
-    ( [ id_ (noteId k)
-      , class_ (if black k then "key black" else "key white")
-      , makeAttribute dataNote (noteId k)
-      , type_ "button"
-      ]
-        ++ [style_ ("left:" <> pct (blackLeft k)) | black k]
-    )
+    [ id_ (noteId k)
+    , class_ (if black k then "key black" else "key white")
+    , makeAttribute dataNote (noteId k)
+    , type_ "button"
+    ]
     $ do
       span_ [class_ "note"] (toHtml (label k))
       span_ [class_ "kbd"] (toHtml (keyChar k))
-
--- | A percentage, for a style attribute.
-pct :: Double -> T.Text
-pct x = T.pack (showFFloat (Just 2) x "") <> "%"
 
 waveButton :: Wave -> Html ()
 waveButton w =

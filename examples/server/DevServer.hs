@@ -13,7 +13,7 @@ where
 
 import Control.Exception (IOException)
 import qualified Control.Exception as Exception
-import Control.Monad (forM_, when)
+import Control.Monad (forM, forM_, when)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -27,11 +27,13 @@ import Paths_jshark (getDataFileName)
 import System.Directory
   ( copyFile
   , createDirectoryIfMissing
+  , doesDirectoryExist
   , doesFileExist
   , doesPathExist
+  , listDirectory
   , removePathForcibly
   )
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import System.IO.Error (isAlreadyInUseError)
 import Web.Scotty
@@ -39,14 +41,17 @@ import Web.Scotty
 resolveDataFile :: FilePath -> IO FilePath
 resolveDataFile rel = do
   installed <- getDataFileName rel
-  exists <- doesFileExist installed
-  if exists
+  installedOk <- pathExists installed
+  if installedOk
     then pure installed
     else do
-      cwdOk <- doesFileExist rel
-      if cwdOk
-        then pure rel
-        else fail ("serve: missing data-file " <> rel)
+      cwdOk <- pathExists rel
+      if cwdOk then pure rel else fail ("serve: missing data-file " <> rel)
+
+pathExists :: FilePath -> IO Bool
+pathExists p = do
+  ok <- doesFileExist p
+  if ok then pure True else doesDirectoryExist p
 
 -- | One compiled example, mounted at @/<name>@ (or @<name>/@ on a static site).
 data Example = Example
@@ -140,6 +145,9 @@ serveExamples startPort examples = do
   assets <-
     fmap concat $
       traverse staticAsset staticFiles
+  treeAssets <- speedHighlightAssets
+  let
+    allAssets = assets ++ treeAssets
   lifeJs <- traverse demoAssetPath lifeEngineJs
   hvm2Js <- traverse demoAssetPath hvm2DemoAssets
   tryServe
@@ -147,7 +155,7 @@ serveExamples startPort examples = do
     startPort
     (startPort + 100)
     shots
-    assets
+    allAssets
     lifeJs
     hvm2Js
     examples
@@ -266,6 +274,7 @@ exportExamples dest examples = do
   TL.writeFile (dest </> "index.html") (renderText (indexPage exportPaths shots))
   writeFile (dest </> ".nojekyll") ""
   forM_ staticFiles (copyStatic dest)
+  copySpeedHighlight dest
   forM_ shots $ \(ex, path) ->
     case path of
       Nothing -> pure ()
@@ -339,6 +348,49 @@ staticAsset name = do
   exists <- doesFileExist path
   pure [(name, path) | exists]
 
+-- | URL segment under @/static/@ for vendored speed-highlight. Must match
+-- @source-pane.js@ import @./speed-highlight/index.js@.
+speedHighlightPrefix :: FilePath
+speedHighlightPrefix = "speed-highlight"
+
+speedHighlightMissing :: String
+speedHighlightMissing =
+  "missing speed-highlight tree — run scripts/vendor-speed-highlight.sh"
+
+speedHighlightAssets :: IO [(String, FilePath)]
+speedHighlightAssets = do
+  root <- resolveDataFile ("examples/static/" <> speedHighlightPrefix)
+  exists <- doesDirectoryExist root
+  if not exists
+    then fail ("serve: " <> speedHighlightMissing)
+    else do
+      assets <- walkStaticTree root speedHighlightPrefix
+      when (null assets) $
+        fail ("serve: " <> speedHighlightMissing)
+      pure assets
+
+walkStaticTree :: FilePath -> FilePath -> IO [(String, FilePath)]
+walkStaticTree dir routePrefix = do
+  entries <- listDirectory dir
+  fmap concat $
+    forM entries $ \entry -> do
+      let
+        path = dir </> entry
+        route = routePrefix </> entry
+      isDir <- doesDirectoryExist path
+      if isDir then walkStaticTree path route else pure [(route, path)]
+
+copySpeedHighlight :: FilePath -> IO ()
+copySpeedHighlight dest = do
+  assets <- speedHighlightAssets
+  when (null assets) $
+    fail ("export: " <> speedHighlightMissing)
+  forM_ assets $ \(route, src) -> do
+    let
+      out = dest </> "static" </> route
+    createDirectoryIfMissing True (takeDirectory out)
+    copyFile src out
+
 demoAssetPath :: (FilePath, FilePath) -> IO (FilePath, FilePath)
 demoAssetPath (route, rel) = do
   path <- resolveDataFile rel
@@ -362,13 +414,15 @@ indexPage paths shots = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "JShark examples"
+    title_ "Examples"
+    link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/base.css")]
     link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/index.css")]
   body_ $
-    main_ $ do
-      h1_ "examples"
-      p_ "JShark compiled to JS. Click a card."
-      ul_ $ mapM_ (exampleCard paths) shots
+    main_ [class_ "page"] $ do
+      header_ [class_ "page-header"] $ do
+        h1_ "Examples"
+        p_ [class_ "page-meta"] "JShark → JavaScript"
+      ul_ [class_ "example-grid"] $ mapM_ (exampleCard paths) shots
 
 exampleCard :: SitePaths -> (Example, Maybe FilePath) -> Html ()
 exampleCard paths (ex, shot) =
@@ -385,14 +439,19 @@ exampleCard paths (ex, shot) =
 
 staticFiles :: [FilePath]
 staticFiles =
-  [ "highlight.min.js"
-  , "github-dark.min.css"
+  [ "source-pane.js"
+  , "base.css"
   , "source.css"
   , "index.css"
   , "breakout.css"
   , "synth.css"
   , "todo-mvc.css"
+  , "todomvc-common-base.css"
+  , "todomvc-app-index.css"
   , "life.css"
+  , "life-shell.css"
+  , "life-tool-preview.css"
+  , "synth-keys.css"
   , "hvm2-demo.css"
   , "hvm2-demo.wasm"
   , "hvm2-wasm.js"

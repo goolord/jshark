@@ -1,92 +1,163 @@
-.js-source {
-  box-sizing: border-box;
-  position: static;
-  max-width: 48rem;
-  margin: 2rem auto;
-  padding: 0 1rem 2rem;
-  color: #e2e8f0;
-  font-family: system-ui, sans-serif;
+:root {
+  --bg: #111;
+  --surface: #181818;
+  --border: #333;
+  --text: #e8e8e8;
+  --muted: #888;
+  --faint: #555;
+  --accent: #fff;
+  --max-w: 48rem;
+  --pad-x: 1rem;
+}
+
+.source-stack {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 2rem var(--pad-x) 2.5rem;
+}
+
+.js-source,
+.life-source {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
   text-align: left;
 }
 
-.js-source-summary {
+.source-stack .js-source + .js-source {
+  margin-top: 0.65rem;
+}
+
+.js-source-summary,
+.life-source-summary {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: 0.5rem;
   cursor: pointer;
-  padding: 0.4rem 0;
-  color: #94a3b8;
-  list-style: none;
+  padding: 0.6rem 0.85rem;
+  user-select: none;
 }
 
-.js-source-summary::-webkit-details-marker {
-  display: none;
-}
-
-.js-source-chevron {
-  flex: 0 0 auto;
-  display: inline-block;
-  width: 1em;
-  color: #94a3b8;
-  font-size: 0.95em;
+.js-source-summary::before,
+.life-source-summary::before {
+  content: "▸";
+  flex: 0 0 0.9rem;
+  width: 0.9rem;
+  color: var(--text);
+  font-size: 0.9rem;
   line-height: 1;
-  transition: transform 0.15s ease;
+  text-align: center;
+  transform-origin: center;
 }
 
-.js-source[open] > .js-source-summary .js-source-chevron {
+.js-source[open] > .js-source-summary::before,
+.life-source[open] > .life-source-summary::before {
   transform: rotate(90deg);
 }
 
-.js-source-label {
+.js-source-summary:hover::before,
+.life-source-summary:hover::before {
+  color: var(--accent);
+}
+
+.js-source[open] > .js-source-summary,
+.life-source[open] > .life-source-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.js-source-summary-inner,
+.life-source-summary-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.js-source-copy {
+.js-source-label,
+.life-source-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.js-source-expand-hint,
+.life-source-expand-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.js-source[open] .js-source-expand-hint,
+.life-source[open] .life-source-expand-hint {
+  display: none;
+}
+
+.js-source-copy,
+.life-source-copy {
+  appearance: none;
   flex: 0 0 auto;
+  margin-left: auto;
   cursor: pointer;
-  padding: 0.25rem 0.65rem;
-  border: 1px solid #334155;
-  border-radius: 4px;
-  background: #1e293b;
-  color: #cbd5e1;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--muted);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
-.js-source-copy:hover:not(:disabled) {
-  background: #334155;
-  color: #f1f5f9;
+.js-source-copy:hover:not(:disabled),
+.life-source-copy:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--faint);
+  background: #1a1a1a;
 }
 
-.js-source-copy:disabled {
+.js-source-copy:disabled,
+.life-source-copy:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.45;
 }
 
-.js-source pre {
-  margin: 0.5rem 0 0;
+.js-source pre,
+.life-source-pre {
+  margin: 0;
   max-height: 28rem;
   overflow: auto;
   overscroll-behavior: contain;
   contain: content;
   content-visibility: auto;
-  border-radius: 6px;
+  background: #0a0a0a;
 }
 
-.js-source code {
-  font-size: 0.85rem;
-}
-
-.source-stack {
-  max-width: 40rem;
-  margin: 0 auto;
-  padding: 0 1rem 3rem;
-}
-
-.source-stack .js-source {
+.js-source pre code,
+.js-source pre [class*="shj-lang-"],
+.life-source-pre code,
+.life-source-pre [class*="shj-lang-"] {
+  display: block;
   margin: 0;
-  padding: 0 0 0.75rem;
   max-width: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0.85rem 1rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  background: #0d1117;
+  color: var(--text);
+}
+
+.js-source code:not([class*="shj-lang-"]),
+.life-source-code:not([class*="shj-lang-"]) {
+  color: var(--text);
+}
+
+/* Life frame: source sits inside main after the sim chrome. */
+main .life-source {
+  margin-top: 2rem;
 }

@@ -103,6 +103,7 @@ import Types
   , zoomLevelLabels
   , zoomLevels
   )
+
 data Fps = Fps
   { lastMs :: Double
   , fps :: Double
@@ -215,17 +216,17 @@ bootLoaded canvas app appH viewport renderDirty = do
   wireCollapse
     debugTray
     debugCollapse
-    "Collapse debug"
-    "Expand debug"
+    "Collapse stats"
+    "Expand stats"
     "−"
-    "debug"
+    "Stats"
   wireCollapse
     settingsTray
     settingsCollapse
     "Collapse settings"
     "Expand settings"
     "−"
-    "settings"
+    "Settings"
   wireSettings viewport settingsZoomIn settingsZoomOut settingsReset
   wireSimSettings state viewport settingsGrid settingsTick settingsTickVal
   renderLife viewport renderDirty state fallback2d
@@ -462,6 +463,7 @@ wire ::
   -> EffectSyntax f (f 'Unit)
 wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
+  _ <- Dom.setStyleProperty tooltip "pointerEvents" (string "none")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
   _ <- setProp tipRef "over" (number 0)
   _ <- setProp tipRef "gx" (number (-1))
@@ -668,7 +670,7 @@ tickHover ::
 tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef = do
   sid <- getProp toolRef "sid"
   ifS
-    (isNonPaintToolSid sid)
+    (isEraserToolSid sid)
     (hideTooltip tipRef tooltip)
     ( do
         over <- getProp tipRef "over"

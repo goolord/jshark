@@ -294,15 +294,16 @@ zipWithChecked =
     "zipWith"
     $ \p ->
       let_
-        (Math.min (length (GetField @"xs" p.pair)) (length (GetField @"ys" p.pair))) $ \n ->
-        Std
-          ( Method
-              ( MethFrom n $ \i ->
-                  apply
-                    (Apply p.zipFn (index (GetField @"xs" p.pair) (var i)))
-                    (index (GetField @"ys" p.pair) (var i))
-              )
-          )
+        (Math.min (length (GetField @"xs" p.pair)) (length (GetField @"ys" p.pair)))
+        $ \n ->
+          Std
+            ( Method
+                ( MethFrom n $ \i ->
+                    apply
+                      (Apply p.zipFn (index (GetField @"xs" p.pair) (var i)))
+                      (index (GetField @"ys" p.pair) (var i))
+                )
+            )
 
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::

@@ -130,7 +130,7 @@ texH = fromIntegral gridH
 
 -- | Canvas background @#RRGGBB@ (also drives 'canvasBg' / 'canvasBgPixi').
 canvasBgHex :: Int
-canvasBgHex = 0x0f172a
+canvasBgHex = 0x111111
 
 hexColorText :: Int -> Text
 hexColorText n =
@@ -153,16 +153,16 @@ seedW, seedH :: Int
 seedW = 512
 seedH = 384
 
--- | Canvas background (#0f172a) as @0xAABBGGRR@ for RGBA buffers.
+-- | Canvas background (#111) as @0xAABBGGRR@ for RGBA buffers.
 canvasBgRgba :: Int
-canvasBgRgba = 0xFF22170F
+canvasBgRgba = 0xFF111111
 
 seedOx, seedOy :: Int
 seedOx = (gridW - seedW) `div` 2
 seedOy = (gridH - seedH) `div` 2
 
 ink :: Text
-ink = "#e2e8f0"
+ink = "#e8e8e8"
 
 soupSpecies :: Int
 soupSpecies = 0

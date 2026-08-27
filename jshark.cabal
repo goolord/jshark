@@ -1,4 +1,4 @@
-cabal-version: 2.2
+cabal-version: 2.4
 name:
   jshark
 version:
@@ -42,6 +42,11 @@ data-files:
   examples/static/*.js
   examples/static/*.css
   examples/static/hvm2-demo.wasm
+  examples/static/speed-highlight/**/*.js
+  examples/static/speed-highlight/**/*.css
+  examples/static/speed-highlight/**/*.ts
+  examples/static/speed-highlight/**/*.map
+  examples/static/speed-highlight/**/*.json
   examples/Life/js/catalog.js
   examples/Life/js/pixi.min.js
   examples/Life/js/EngineWorker.js
@@ -199,10 +204,10 @@ library synth
   import: example-lib
   exposed-modules:
     Synth
+    Keys
   other-modules:
     Audio
     Client
-    Keys
     Page
   hs-source-dirs:
     examples/Synth
@@ -323,6 +328,7 @@ test-suite jshark-test
     ExampleTests
     LifeTests
     LifeWorkerTests
+    StaticCssTests
     PerfTests
     Hvm2Tests
   hs-source-dirs:

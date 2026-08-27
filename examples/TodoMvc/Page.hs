@@ -13,15 +13,9 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "JShark • TodoMVC"
-    link_
-      [ rel_ "stylesheet"
-      , href_ "https://unpkg.com/todomvc-common@1.0.5/base.css"
-      ]
-    link_
-      [ rel_ "stylesheet"
-      , href_ "https://unpkg.com/todomvc-app-css@2.4.3/index.css"
-      ]
+    title_ "Todos"
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/todomvc-common-base.css")]
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/todomvc-app-index.css")]
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/todo-mvc.css")]
     headExtra
   body_ $ do
@@ -43,12 +37,8 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
           span_ [id_ idTodoCountSuffix] " items left"
         ul_ [class_ "filters"] $ mapM_ filterLink routes
         button_ [class_ "clear-completed", id_ idClearCompleted] "Clear completed"
-    footer_ [class_ "info"] $ do
-      p_ "Enter to add a todo"
-      p_ $ do
-        "Created with "
-        a_ [href_ "https://github.com/goolord/jshark"] "JShark"
-        ", Scotty, and Lucid"
+    footer_ [class_ "info"] $
+      p_ "Enter to add · filters in footer"
     source
     script_ [src_ scriptSrc] ("" :: Html ())
 

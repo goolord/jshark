@@ -48,6 +48,12 @@ jobs:
 
       - run: cabal update
 
+      - name: Static assets
+        run: |
+          ./scripts/vendor-speed-highlight.sh
+          ./scripts/gen-synth-keys-css.sh
+          ./scripts/gen-life-tool-preview-css.sh
+
       - name: Rebuild vendored WASM
         run: ./scripts/check-wasm.sh --build-only
 
@@ -109,6 +115,12 @@ jobs:
             ${{ runner.os }}-ghc-9.14.1-
 
       - run: cabal update
+
+      - name: Static assets
+        run: |
+          ./scripts/vendor-speed-highlight.sh
+          ./scripts/gen-synth-keys-css.sh
+          ./scripts/gen-life-tool-preview-css.sh
 
       - name: Export static site
         run: cabal run examples -- export _site

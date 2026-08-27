@@ -1,129 +1,91 @@
-:root {
-  --ink: #e7e7ea;
-  --bg: #131317;
-  --dim: #8b8b96;
-  --hot: #8ef0c8;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
-}
-
 .synth {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 32px 20px;
+  max-width: 56rem;
 }
 
-h1 {
-  font-size: 20px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  margin: 0 0 4px;
-}
-
-.hint {
-  color: var(--dim);
-  margin: 0 0 20px;
-}
-
-code {
-  background: #20202a;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-.controls {
+.synth .controls {
   display: flex;
-  gap: 16px;
+  gap: 1rem 1.25rem;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  align-items: flex-start;
+  margin: 0.75rem 0;
 }
 
-fieldset {
-  border: 1px solid #2a2a35;
-  border-radius: 8px;
-  padding: 10px 14px;
+.synth .controls fieldset {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
   margin: 0;
 }
 
-legend {
-  color: var(--dim);
-  font-size: 11px;
-  letter-spacing: 0.14em;
+.synth .controls legend {
+  color: var(--muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  padding: 0 0.25rem;
 }
 
-.waves {
+.synth .waves {
   display: flex;
-  gap: 6px;
+  gap: 0.25rem;
 }
 
-.wave {
-  background: #20202a;
-  color: var(--ink);
-  border: 1px solid #2f2f3b;
-  border-radius: 6px;
-  padding: 5px 10px;
+.synth .wave {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.45rem;
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
-.wave.on {
-  background: var(--hot);
-  color: #10241c;
-  border-color: var(--hot);
+.synth .wave.on {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-.slider {
+.synth .slider {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--dim);
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
-.slider span {
-  min-width: 68px;
+.synth .slider span {
+  min-width: 3.25rem;
 }
 
-.slider input {
-  width: 150px;
+.synth .slider input {
+  width: 9rem;
+  accent-color: var(--text);
 }
 
-.meter {
-  height: 6px;
-  background: #20202a;
-  border-radius: 3px;
-  overflow: hidden;
-  margin-bottom: 22px;
+.synth .meter {
+  height: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  margin-bottom: 0.75rem;
 }
 
-.meter-bar {
+.synth .meter-bar {
   height: 100%;
   width: 0;
-  background: var(--hot);
+  background: var(--text);
   transition: width 60ms linear;
 }
 
-.keyboard {
+.synth .keyboard {
   position: relative;
   display: flex;
-  height: 180px;
+  height: 10rem;
   user-select: none;
   touch-action: none;
+  border: 1px solid var(--border);
+  overflow-x: auto;
 }
 
-.key {
+.synth .key {
   position: relative;
   border: 0;
   cursor: pointer;
@@ -132,57 +94,46 @@ legend {
   flex-direction: column;
   justify-content: flex-end;
   align-items: center;
-  gap: 6px;
-  padding-bottom: 10px;
+  gap: 0.25rem;
+  padding-bottom: 0.5rem;
 }
 
-/* 1px separator, not margin: white keys are exactly 1/8 width. */
-.key.white {
-  flex: 1;
-  background: #f2f2f5;
-  color: #2a2a35;
-  border-radius: 0 0 5px 5px;
-  border-right: 1px solid #d3d3dc;
+.synth .key.white {
+  flex: 1 0 2.125rem;
+  min-width: 2.125rem;
+  background: #ddd;
+  color: #222;
+  border-right: 1px solid #bbb;
 }
 
-/* Must match Keys.blackWidth (5.4). Horizontal offset is inline per key. */
-.key.black {
+.synth .key.black {
   position: absolute;
   z-index: 2;
   width: 5.4%;
   height: 62%;
-  background: #1b1b22;
-  color: #d8d8e0;
-  border-radius: 0 0 4px 4px;
-  border: 1px solid #33333f;
+  background: #1a1a1a;
+  color: #ccc;
+  border: 1px solid var(--border);
 }
 
-.key.held {
-  background: var(--hot);
-  color: #10241c;
+.synth .key.held {
+  background: var(--text);
+  color: var(--bg);
 }
 
-.note {
-  font-size: 12px;
+.synth .note {
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
-.kbd {
-  font-size: 10px;
+.synth .kbd {
+  font-size: 0.625rem;
   opacity: 0.55;
   text-transform: uppercase;
 }
 
-.status {
-  color: var(--dim);
-  font-size: 12px;
-  margin-top: 16px;
-}
-
-.info {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 20px 40px;
-  color: var(--dim);
-  font-size: 13px;
+.synth .status {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
 }

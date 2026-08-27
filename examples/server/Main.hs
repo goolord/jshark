@@ -19,7 +19,7 @@ import JShark.Compiler
 import JShark.Hvm2 (bendModule)
 import Kernels (hvm2Entries, mandelJsSource)
 import qualified Life
-import SourcePane (hvm2SourcePanes, sourceHead, sourcePane)
+import SourcePane (hvm2SourcePanes, sourceHead, sourceHeadLite, sourcePane)
 import qualified Synth
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -86,7 +86,7 @@ main = do
           ( \script static ->
               TodoMvc.page
                 static
-                (sourceHead static)
+                (sourceHeadLite static)
                 (sourcePane static (sourceJs todoJs))
                 script
           )

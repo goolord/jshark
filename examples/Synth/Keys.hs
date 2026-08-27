@@ -6,6 +6,8 @@
 module Keys
   ( Key (..)
   , keys
+  , keyBindings
+  , primaryKey
   , whiteKeys
   , Wave (..)
   , waves
@@ -27,6 +29,7 @@ module Keys
   )
 where
 
+import Data.List (find)
 import Data.Text (Text)
 
 -- | One playable note. 'keyChar' is the computer key; 'noteId' doubles as
@@ -39,22 +42,102 @@ data Key = Key
   , black :: Bool
   }
 
--- | An octave and a bit of C major, laid out like a tracker keyboard.
+-- | Bottom row from C: @z s x d c v g b h n j m , l . ; /@, then top row
+-- from the next C: @q 2 w 3 e r 5 t 6 y 7 u i 9 o 0 p [ = ]@. Earlier
+-- entries win when a computer key is shared.
+keyBindings :: [(Text, Text)]
+keyBindings =
+  bottomRowBindings
+    ++ topRowBindings
+ where
+  bottomRowBindings =
+    [ ("z", "C4")
+    , ("s", "Cs4")
+    , ("x", "D4")
+    , ("d", "Ds4")
+    , ("c", "E4")
+    , ("v", "F4")
+    , ("g", "Fs4")
+    , ("b", "G4")
+    , ("h", "Gs4")
+    , ("n", "A4")
+    , ("j", "As4")
+    , ("m", "B4")
+    , (",", "C5")
+    , ("l", "Cs5")
+    , (".", "D5")
+    , (";", "Ds5")
+    , ("/", "E5")
+    ]
+  topRowBindings =
+    [ ("q", "C5")
+    , ("2", "Cs5")
+    , ("w", "D5")
+    , ("3", "Ds5")
+    , ("e", "E5")
+    , ("r", "F5")
+    , ("5", "Fs5")
+    , ("t", "G5")
+    , ("6", "Gs5")
+    , ("y", "A5")
+    , ("7", "As5")
+    , ("u", "B5")
+    , ("i", "C6")
+    , ("9", "Cs6")
+    , ("o", "D6")
+    , ("0", "Ds6")
+    , ("p", "E6")
+    , ("[", "F6")
+    , ("=", "Fs6")
+    , ("]", "G6")
+    ]
+
+-- | On-screen keys, low to high. 'keyChar' is the first entry in
+-- 'keyBindings' for that note (bottom row wins over top).
 keys :: [Key]
 keys =
-  [ Key "C4" "C" "a" 60 False
-  , Key "Cs4" "C#" "w" 61 True
-  , Key "D4" "D" "s" 62 False
-  , Key "Ds4" "D#" "e" 63 True
-  , Key "E4" "E" "d" 64 False
-  , Key "F4" "F" "f" 65 False
-  , Key "Fs4" "F#" "t" 66 True
-  , Key "G4" "G" "g" 67 False
-  , Key "Gs4" "G#" "y" 68 True
-  , Key "A4" "A" "h" 69 False
-  , Key "As4" "A#" "u" 70 True
-  , Key "B4" "B" "j" 71 False
-  , Key "C5" "C" "k" 72 False
+  [ Key note noteLabel (primaryKey note) noteMidi isBlack
+  | (note, noteLabel, noteMidi, isBlack) <- keySpecs
+  ]
+
+primaryKey :: Text -> Text
+primaryKey note =
+  maybe "" fst (find ((== note) . snd) keyBindings)
+
+keySpecs :: [(Text, Text, Int, Bool)]
+keySpecs =
+  [ ("C4", "C", 60, False)
+  , ("Cs4", "C#", 61, True)
+  , ("D4", "D", 62, False)
+  , ("Ds4", "D#", 63, True)
+  , ("E4", "E", 64, False)
+  , ("F4", "F", 65, False)
+  , ("Fs4", "F#", 66, True)
+  , ("G4", "G", 67, False)
+  , ("Gs4", "G#", 68, True)
+  , ("A4", "A", 69, False)
+  , ("As4", "A#", 70, True)
+  , ("B4", "B", 71, False)
+  , ("C5", "C", 72, False)
+  , ("Cs5", "C#", 73, True)
+  , ("D5", "D", 74, False)
+  , ("Ds5", "D#", 75, True)
+  , ("E5", "E", 76, False)
+  , ("F5", "F", 77, False)
+  , ("Fs5", "F#", 78, True)
+  , ("G5", "G", 79, False)
+  , ("Gs5", "G#", 80, True)
+  , ("A5", "A", 81, False)
+  , ("As5", "A#", 82, True)
+  , ("B5", "B", 83, False)
+  , ("C6", "C", 84, False)
+  , ("Cs6", "C#", 85, True)
+  , ("D6", "D", 86, False)
+  , ("Ds6", "D#", 87, True)
+  , ("E6", "E", 88, False)
+  , ("F6", "F", 89, False)
+  , ("Fs6", "F#", 90, True)
+  , ("G6", "G", 91, False)
   ]
 
 -- | The naturals, which carry the layout; black keys are positioned over them.

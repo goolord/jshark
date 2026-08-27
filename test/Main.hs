@@ -61,6 +61,7 @@ import LifeTests (lifeTests)
 import LifeWorkerTests (lifeWorkerTests)
 import LucidTests (lucidDomTests)
 import PerfTests (perfTests)
+import StaticCssTests (staticCssTests)
 import Support
 import System.Directory
   ( createDirectoryIfMissing
@@ -102,6 +103,7 @@ tests =
     , hvm2Tests
     , catalogTests
     , lifeWorkerTests
+    , staticCssTests
     ]
 
 bigIntTests :: TestTree

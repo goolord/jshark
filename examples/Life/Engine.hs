@@ -81,6 +81,7 @@ import Types
   , texW
   , tickDefaultMs
   )
+
 initLife ::
   Effect f ('MutableObject Pixi.Application)
   -> Effect f ('MutableObject ())
