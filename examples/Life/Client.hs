@@ -31,19 +31,19 @@ import Grid
   , u8Get
   )
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf, toObject)
+import qualified JShark.Api.Generic as G
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (Effect (Lift), Expr (Literal, Var))
+import qualified JShark.Api.Types as Ts
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
-import JShark.Generic (MutableObjectOf, toObject)
-import qualified JShark.Generic as G
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import JShark.Promise (promiseThen)
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.String as String
 import qualified JShark.Timers as Timers
-import JShark.Types (Effect (Lift), Expr (Literal, Var))
-import qualified JShark.Types as Ts
 import JShark.Worker (performanceNow)
 import Names (lookupDisplayName)
 import Patterns (gliderOrientationCells, gliderSpeciesSid)

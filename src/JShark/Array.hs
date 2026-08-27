@@ -44,10 +44,10 @@ where
 
 import qualified Data.List as List
 import JShark.Api
+import JShark.Api.Params (Param)
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import qualified JShark.Math as Math
-import JShark.Params (Param)
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
 import Prelude hiding (concat, filter, length, map, zipWith)
 
 -- | @arr[i]@ after 'Math.trunc'. Out of range is 'Error'.
@@ -178,7 +178,7 @@ reduceRight ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
 reduceRight arr z f = Std (Method (MethReduceRight arr z (\a x -> f (var a) (var x))))
 
--- | @[x]@. One-element array; used by 'JShark.Classes.pure'.
+-- | @[x]@. One-element array; used by 'JShark.Api.Classes.pure'.
 singleton :: Expr f u -> Expr f ('Array u)
 singleton x = map (Literal (ValueArray [ValueUnit])) (\_ -> x)
 

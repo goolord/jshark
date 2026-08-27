@@ -16,8 +16,8 @@ import JShark
   , renderJSCompact
   )
 import JShark.Api (stmts)
-import JShark.CompileTiming (FlatPrepareTiming (..), seconds)
-import JShark.Types (ClosedEffect, Universe (Unit))
+import JShark.Api.Types (ClosedEffect, Universe (Unit))
+import JShark.Compiler.CompileTiming (FlatPrepareTiming (..), seconds)
 import Life (mainJS)
 
 life :: ClosedEffect Unit

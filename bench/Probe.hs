@@ -12,8 +12,8 @@ import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark (ClosedEffect, effectfulAST, renderJSCompact)
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import qualified JShark.Types as T
+import JShark.Api.Rec (Rec (..), (<:))
+import qualified JShark.Api.Types as T
 import System.Environment (getArgs)
 
 -- | Nested binds + while nests scaled by depth.

@@ -39,8 +39,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Records (HasField (..))
 import GHC.TypeLits
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 
 -- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is
 -- 'getField' on 'Effect' or 'Expr' @'MutableObject@ (both yield

@@ -24,9 +24,9 @@ module JShark.Map
 where
 
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (Effect (..), Expr (Var))
 import JShark.Object (unsafeObjectGet)
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types (Effect (..), Expr (Var))
 import Prelude hiding (lookup, mapM_)
 
 -- | @new Map()@. Leading @(@ on the FFI string selects @FFICall@ so the

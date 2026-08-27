@@ -5,18 +5,18 @@ module Hvm2Tests (hvm2Tests) where
 import qualified Data.Text as T
 import JShark (effectfulAST, pureAST, renderJS)
 import JShark.Api
+import JShark.Api.Types (Hvm2KernelEntry (..))
 import JShark.Compiler
   ( applyCompilerArgs
   , configWarnHvm2Candidates
   , readableConfig
   )
-import JShark.Hvm2
-import JShark.Hvm2Lint
+import JShark.Compiler.Hvm2Lint
   ( Hvm2Candidate (..)
   , defaultHvm2MinCandidateSize
   , hvm2CandidatesFromExpr
   )
-import JShark.Types (Hvm2KernelEntry (..))
+import JShark.Hvm2
 import Kernels (hvm2Entries, mandelJsSource, maxIter)
 import Test.Tasty
 import Test.Tasty.HUnit

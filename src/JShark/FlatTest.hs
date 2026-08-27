@@ -20,22 +20,22 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8)
 import JShark (ClosedEffect, irEffectFromClosed)
-import JShark.CompileProgress
+import JShark.Api.Types (Universe (Unit), Value (..))
+import JShark.Compiler.CompileProgress
   ( newProgressBoard
   , recordJobFlatPrepare
   , recordJobLintSec
   , snapshotJobStatsFromSlot
   , withActiveJob
   )
-import JShark.CompileTiming
+import JShark.Compiler.CompileTiming
   ( FlatPrepareTiming (..)
   , cjsIrPrepareSec
   , cjsLintSec
   )
-import qualified JShark.FlatEnc as FlatEnc
-import qualified JShark.FlatSoA as FlatSoA
-import qualified JShark.Ir as Ir
-import JShark.Types (Universe (Unit), Value (..))
+import qualified JShark.Compiler.FlatEnc as FlatEnc
+import qualified JShark.Compiler.FlatSoA as FlatSoA
+import qualified JShark.Compiler.Ir as Ir
 
 freezeEncColumnsOrderOk :: Bool
 freezeEncColumnsOrderOk = FlatEnc.freezeEncColumnsOrderOk

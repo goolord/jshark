@@ -28,7 +28,12 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import JShark (collectHvm2Kernels, irExprFromClosed)
-import JShark.EmitBend
+import JShark.Api.Types
+  ( ClosedExpr
+  , Expr
+  , Hvm2KernelEntry (..)
+  )
+import JShark.Compiler.EmitBend
   ( Hvm2Error (..)
   , bendDefExports
   , bendDefNames
@@ -37,11 +42,6 @@ import JShark.EmitBend
   , emitKernelExportsC
   , emitKernelWasmBridge
   , sanitizeKernelCForWasm
-  )
-import JShark.Types
-  ( ClosedExpr
-  , Expr
-  , Hvm2KernelEntry (..)
   )
 import System.Directory (createDirectoryIfMissing, makeAbsolute)
 import System.Exit (ExitCode (..))

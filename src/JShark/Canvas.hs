@@ -43,9 +43,9 @@ module JShark.Canvas
 where
 
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import JShark.Dom (DomElement)
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
 
 -- | @CanvasRenderingContext2D@.
 data Context2D

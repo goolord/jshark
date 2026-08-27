@@ -50,8 +50,8 @@ import GHC.Generics (Generic)
 import GHC.ST (ST (..), runST)
 import GHC.Word (Word8 (..))
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import System.IO
   ( BufferMode (..)
   , hClose

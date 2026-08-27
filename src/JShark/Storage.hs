@@ -14,8 +14,8 @@ module JShark.Storage
 where
 
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Object hiding (get, set)
-import JShark.Rec (Rec (..), (<:))
 
 -- | An opaque phantom type representing a @Storage@ object.
 data Storage

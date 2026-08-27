@@ -25,7 +25,7 @@ module Kernels
 where
 
 import JShark.Api
-import JShark.Types (ClosedExpr, Hvm2KernelEntry (..))
+import JShark.Api.Types (ClosedExpr, Hvm2KernelEntry (..))
 
 resolutionPresets :: [(Int, Int, String)]
 resolutionPresets =

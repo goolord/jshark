@@ -8,6 +8,7 @@ import qualified Data.List as List
 import qualified Data.Text as T
 import DevServer (Example (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
+import JShark.Api.Types (fromSyntax)
 import JShark.Compiler
   ( applyCompilerArgs
   , compileJobsLabeled
@@ -16,7 +17,6 @@ import JShark.Compiler
   , prettyJS
   )
 import JShark.Hvm2 (bendModule)
-import JShark.Types (fromSyntax)
 import Kernels (hvm2Entries, mandelJsSource)
 import qualified Life
 import SourcePane (hvm2SourcePanes, sourceHead, sourcePane)

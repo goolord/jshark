@@ -8,8 +8,8 @@ module Main (main) where
 import qualified Data.Text as T
 import JShark
 import JShark.Api
+import JShark.Api.Rec (Rec (..))
 import JShark.Lucid
-import JShark.Rec (Rec (..))
 import Lucid (button_, class_, div_, label_, li_, type_)
 import System.CPUTime
 import Text.Printf

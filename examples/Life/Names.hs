@@ -17,10 +17,10 @@ where
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
+import JShark.Api.Types (Effect (Lift), Expr (Var))
 import qualified JShark.Array as Array
 import qualified JShark.Map as Map
 import qualified JShark.Set as Set
-import JShark.Types (Effect (Lift), Expr (Var))
 import Types (discoverMin, manualSpecies, soupSpecies)
 
 patternLabel :: Int -> Text

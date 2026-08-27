@@ -80,7 +80,12 @@ library
     JShark
     JShark.Api
     JShark.Array
-    JShark.Classes
+    JShark.Api.Types
+    JShark.Api.Params
+    JShark.Api.Prim
+    JShark.Api.Rec
+    JShark.Api.Classes
+    JShark.Api.Generic
     JShark.Console
     JShark.Json
     JShark.Map
@@ -91,47 +96,42 @@ library
     JShark.String
     JShark.Timers
     JShark.Worker
-    JShark.Types
     JShark.Ajax
     JShark.Object
-    JShark.Params
-    JShark.Prim
     JShark.Dom
     JShark.Canvas
-    JShark.Generic
-    JShark.Rec
     JShark.Regex
     JShark.Compiler
     JShark.Hvm2
-    JShark.Hvm2Lint
+    JShark.Compiler.Hvm2Lint
     JShark.Bun
     JShark.Bun.Internal
     JShark.FlatTest
-    JShark.CompileTiming
-    JShark.CompileProgressProtocol
+    JShark.Compiler.CompileTiming
+    JShark.Compiler.CompileProgressProtocol
   other-modules:
-    JShark.Binder
-    JShark.Emit
-    JShark.CompileProgress
-    JShark.CompileReport
-    JShark.CompileTerminal
-    JShark.Flat
-    JShark.FlatEnc
-    JShark.FlatSoA
-    JShark.FlatView
-    JShark.Ir
-    JShark.JsNum
-    JShark.EmitBend
-    JShark.Evaluate
-    JShark.Metadata
-    JShark.Flatten
-    JShark.Lower
-    JShark.Optimize
-    JShark.Hoist
-    JShark.Hoist.Canonical
-    JShark.Codegen.Core
-    JShark.Codegen.Flat
-    JShark.Codegen.Phoas
+    JShark.Compiler.Binder
+    JShark.Compiler.Emit
+    JShark.Compiler.CompileProgress
+    JShark.Compiler.CompileReport
+    JShark.Compiler.CompileTerminal
+    JShark.Compiler.Flat
+    JShark.Compiler.FlatEnc
+    JShark.Compiler.FlatSoA
+    JShark.Compiler.FlatView
+    JShark.Compiler.Ir
+    JShark.Compiler.JsNum
+    JShark.Compiler.EmitBend
+    JShark.Compiler.Evaluate
+    JShark.Compiler.Metadata
+    JShark.Compiler.Flatten
+    JShark.Compiler.Lower
+    JShark.Compiler.Optimize
+    JShark.Compiler.Hoist
+    JShark.Compiler.Hoist.Canonical
+    JShark.Compiler.Codegen.Core
+    JShark.Compiler.Codegen.Flat
+    JShark.Compiler.Codegen.Phoas
   build-depends:
     , ansi-terminal >= 1.0 && < 1.2
     , async >= 2.2 && < 2.4

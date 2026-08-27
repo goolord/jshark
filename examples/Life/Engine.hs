@@ -45,9 +45,9 @@ import Grid
   , writeCellState
   )
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
-import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
 import JShark.Worker (performanceNow)
 import Names (recordDiscoveredName, refreshTakenNames, uniqueNameSid)

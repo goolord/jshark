@@ -8,8 +8,8 @@ import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark (closedEffectNodes, effectfulAST, optimizeEffect, renderJSCompact)
 import JShark.Api (stmts)
-import JShark.Types (ClosedEffect)
-import qualified JShark.Types as Ty
+import JShark.Api.Types (ClosedEffect)
+import qualified JShark.Api.Types as Ty
 import Life (mainJS)
 
 life :: ClosedEffect Ty.Unit

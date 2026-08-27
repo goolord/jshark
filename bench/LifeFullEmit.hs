@@ -6,8 +6,8 @@ module Main (main) where
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark.Api (stmts)
-import JShark.Types (ClosedEffect)
-import qualified JShark.Types as T
+import JShark.Api.Types (ClosedEffect)
+import qualified JShark.Api.Types as T
 import Life (mainJS)
 import Stages (emitLen)
 

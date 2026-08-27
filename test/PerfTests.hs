@@ -20,8 +20,8 @@ import JShark
   , renderJSCompact
   )
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import qualified JShark.Types as Ty
+import JShark.Api.Rec (Rec (..), (<:))
+import qualified JShark.Api.Types as Ty
 import Life (mainJS)
 import System.Mem (getAllocationCounter)
 import Test.Tasty

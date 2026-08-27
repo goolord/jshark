@@ -2,7 +2,7 @@ module Main where
 
 import JShark
 import JShark.Api
-import JShark.Types
+import JShark.Api.Types
 import Life
 
 main :: IO ()

@@ -13,13 +13,13 @@ module Client (mainJS) where
 
 import GHC.Generics (Generic)
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf, SumOf)
+import qualified JShark.Api.Generic as G
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
-import JShark.Generic (MutableObjectOf, SumOf)
-import qualified JShark.Generic as G
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Types
   ( Ball

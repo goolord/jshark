@@ -19,9 +19,9 @@ module JShark.Set
 where
 
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (Effect (..), Expr (Var))
 import JShark.Object (unsafeObjectGet)
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types (Effect (..), Expr (Var))
 import Prelude hiding (mapM_)
 
 -- | @new Set()@. See 'JShark.Map.new' for the @(()=>…)()@ FFI shape.

@@ -2,10 +2,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
--- | Impure evaluator: compile a closed 'JShark.Types.Effect' and run it
+-- | Impure evaluator: compile a closed 'JShark.Api.Types.Effect' and run it
 -- with bun.
 --
--- 'JShark.evaluate' walks a pure 'JShark.Types.Expr' in Haskell. Effects
+-- 'JShark.evaluate' walks a pure 'JShark.Api.Types.Expr' in Haskell. Effects
 -- have FFI, mutation, and I/O, so there is no host tree-walk for them; bun
 -- is the runtime.
 --
@@ -30,13 +30,13 @@ where
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark (effectfulProgram, escapeJsString, renderJSCompact)
+import JShark.Api.Types (ClosedEffect)
 import JShark.Bun.Internal
   ( JSProgram (..)
   , bunTimeoutMicroseconds
   , plainProgram
   , runProgram
   )
-import JShark.Types (ClosedEffect)
 
 -- | How to run the program: the JS globals it may reach for, and how
 -- long it may take.
@@ -98,15 +98,15 @@ domBunConfig =
     , bunEnv = HappyDom defaultHappyDomOptions
     }
 
--- | Compile a closed 'JShark.Types.Effect' to a self-contained IIFE and
+-- | Compile a closed 'JShark.Api.Types.Effect' to a self-contained IIFE and
 -- run it with bun under 'defaultBunConfig'. The result is
 -- @JSON.stringify@ of the program's value (@\"undefined\"@ when that value
 -- is JS @undefined@).
 --
--- JSON text, not a 'JShark.Types.Value': a @'JShark.Types.MutableObject'@
--- or a function has no 'JShark.Types.Value' constructor, so the universe
+-- JSON text, not a 'JShark.Api.Types.Value': a @'JShark.Api.Types.MutableObject'@
+-- or a function has no 'JShark.Api.Types.Value' constructor, so the universe
 -- index @u@ cannot survive the round trip. That is the asymmetry with
--- 'JShark.evaluate', which returns @'JShark.Types.Value' u@.
+-- 'JShark.evaluate', which returns @'JShark.Api.Types.Value' u@.
 --
 -- Writes to stdout from the program itself ('JShark.Console.log') do not
 -- corrupt the result, and a promise-valued program (see 'JShark.Promise',

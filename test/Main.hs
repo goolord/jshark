@@ -22,16 +22,20 @@ import Hvm2Tests (hvm2Tests)
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
+import qualified JShark.Api.Classes as C
+import qualified JShark.Api.Generic as G
+import JShark.Api.Params (Param)
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (jsHelperValueEq)
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
-import qualified JShark.Classes as C
-import JShark.CompileProgressProtocol
+import JShark.Compiler
+import JShark.Compiler.CompileProgressProtocol
   ( ProgressNode (..)
   , ProgressParent (..)
   , decodeProgressMessage
   , encodeProgressMessage
   )
-import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.FlatTest
@@ -43,19 +47,15 @@ import JShark.FlatTest
   , freezeEncColumnsOrderOk
   , optIrEffectForRangeImpure
   )
-import qualified JShark.Generic as G
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
-import JShark.Params (Param)
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Regex as Regex
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
-import JShark.Types (jsHelperValueEq)
 import Life (mainJS)
 import LifeTests (lifeTests)
 import LucidTests (lucidDomTests)

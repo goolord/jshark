@@ -18,8 +18,8 @@ where
 
 import Grid (StepCtx)
 import JShark.Api
-import JShark.Generic (MutableObjectOf)
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Generic (MutableObjectOf)
+import JShark.Api.Rec (Rec (..), (<:))
 
 initWorkerEngine :: Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 initWorkerEngine w h =

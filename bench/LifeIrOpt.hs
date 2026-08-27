@@ -6,8 +6,8 @@ module Main (main) where
 
 import JShark (profileIrOptFromClosed)
 import JShark.Api (stmts)
-import JShark.CompileTiming (IrOptProfile (..))
-import JShark.Types (ClosedEffect, Universe (Unit))
+import JShark.Api.Types (ClosedEffect, Universe (Unit))
+import JShark.Compiler.CompileTiming (IrOptProfile (..))
 import Life (mainJS)
 
 life :: ClosedEffect Unit

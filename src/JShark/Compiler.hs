@@ -133,15 +133,18 @@ import JShark
   , pureProgram
   , renderJSCompact
   )
-import qualified JShark.CompileProgress as CP
-import qualified JShark.CompileReport as CR
-import JShark.CompileTiming
+import qualified JShark.Compiler.CompileProgress as CP
+import qualified JShark.Compiler.CompileReport as CR
+import JShark.Compiler.CompileTiming
   ( CompileForm (..)
   , CompileJobStats (..)
   , seconds
   )
-import JShark.Emit (JS, renderJS)
-import JShark.Hvm2Lint (warnHvm2CandidatesEffect, warnHvm2CandidatesExpr)
+import JShark.Compiler.Emit (JS, renderJS)
+import JShark.Compiler.Hvm2Lint
+  ( warnHvm2CandidatesEffect
+  , warnHvm2CandidatesExpr
+  )
 import Numeric (showHex)
 import qualified Streaming.ByteString as Q
   ( hGetContents
@@ -659,8 +662,8 @@ formatJS = go 0
 -- | Compile an effectful JShark computation. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 --
--- Batch slot phases use 'JShark.CompileProgress' directly (see
--- 'JShark.CompileReport').
+-- Batch slot phases use 'JShark.Compiler.CompileProgress' directly (see
+-- 'JShark.Compiler.CompileReport').
 compileTreeEff ::
   (CR.CompileReport :> es, IOE :> es) =>
   CompilerConfig
@@ -674,7 +677,7 @@ compileTreeEff cfg doc = do
     !js = renderJSCompact (doc style)
   tCodegen1 <- liftIO getMonotonicTime
   liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
-  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.CompileReport'.
+  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.Compiler.CompileReport'.
   liftIO CP.finishEmitPhase
   let
     postCfg = styleConfig cfg
@@ -718,7 +721,7 @@ compileEffectEff cfg eff = do
   start <- liftIO getCPUTime
   liftIO $ CP.recordJobForm (compileForm cfg)
   tLint0 <- liftIO getMonotonicTime
-  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.CompileReport'.
+  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.Compiler.CompileReport'.
   case configProgressSlot cfg of
     Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 0 1
     Nothing -> pure ()
@@ -752,7 +755,7 @@ compilePureEff ::
   -> ClosedExpr u
   -> Eff es Text
 compilePureEff cfg e = do
-  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.CompileReport'.
+  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.Compiler.CompileReport'.
   case configProgressSlot cfg of
     Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 0 1
     Nothing -> pure ()

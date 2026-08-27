@@ -8,8 +8,8 @@ module Main (main) where
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark.Api
-import JShark.Types (ClosedEffect)
-import qualified JShark.Types as T
+import JShark.Api.Types (ClosedEffect)
+import qualified JShark.Api.Types as T
 import LifeTestSupport (runStepGridOnce, seedBlock)
 import Stages (emitLen)
 

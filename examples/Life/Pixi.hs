@@ -31,10 +31,10 @@ where
 
 import qualified Data.Text as T
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf)
+import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Dom (DomElement)
-import JShark.Generic (MutableObjectOf)
 import JShark.Promise (Promise)
-import JShark.Rec (Rec (..), (<:))
 import Types (LifeState, canvasBgPixi, canvasH, canvasW, cellPx, texH, texW)
 
 -- | Fragment shader served beside @js/@ in the Life frame.

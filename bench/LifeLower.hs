@@ -6,8 +6,8 @@ module Main (main) where
 
 import JShark (profileLowerFromClosed)
 import JShark.Api (stmts)
-import JShark.CompileTiming (LowerProfile (..))
-import JShark.Types (ClosedEffect, Universe (Unit))
+import JShark.Api.Types (ClosedEffect, Universe (Unit))
+import JShark.Compiler.CompileTiming (LowerProfile (..))
 import Life (mainJS)
 
 life :: ClosedEffect Unit

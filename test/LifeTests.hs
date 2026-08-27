@@ -12,12 +12,12 @@ import qualified Data.Text as T
 import Grid (StepCtx (StepCtx), rebuildPackedCounts)
 import JShark (effectfulProgram, renderJSCompact)
 import JShark.Api
+import JShark.Api.Generic (toObject)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Bun (evaluateEffectJSON)
 import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
-import JShark.Generic (toObject)
 import qualified JShark.Math as Math
-import JShark.Rec (Rec (..), (<:))
 import LifeTestSupport
   ( beehiveCoords
   , blinkerHorizontalCoords

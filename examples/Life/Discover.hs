@@ -35,9 +35,10 @@ import Catalog
 import GHC.Generics (Generic)
 import Grid (cellIdx, clampLiveBounds, packedIsAlive, setU8, u8Get)
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf, newRecord)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
-import JShark.Generic (MutableObjectOf, newRecord)
 import JShark.Lucid
   ( JsHtml
   , renderFragment
@@ -45,7 +46,6 @@ import JShark.Lucid
   )
 import qualified JShark.Map as Map
 import JShark.Object (field, frozen)
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)

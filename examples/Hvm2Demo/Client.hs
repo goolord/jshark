@@ -13,13 +13,13 @@ module Client (mainJS) where
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf, newRecord)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
-import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Math as Math
 import JShark.Promise (promiseCatch, promiseThen)
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Kernels
   ( blockPx

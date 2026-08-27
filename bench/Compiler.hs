@@ -31,15 +31,15 @@ import GHC.Word (Word8 (..))
 import Grid (RenderDirty (..))
 import JShark (Expr (Literal))
 import JShark.Api
+import JShark.Api.Generic (newRecord, toObject)
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (ClosedEffect, ClosedExpr)
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
-import JShark.Generic (newRecord, toObject)
 import qualified JShark.Object as Object
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
-import JShark.Types (ClosedEffect, ClosedExpr)
 import LifeTestSupport (runStepGridOnce, seedBlock)
 import Stages
   ( codepathStages

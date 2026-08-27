@@ -30,11 +30,11 @@ import qualified Audio
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
+import JShark.Api.Generic (newRecord)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Dom as Dom
-import JShark.Generic (newRecord)
 import JShark.Object (field, obj)
 import qualified JShark.Object as Object
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Keys
 

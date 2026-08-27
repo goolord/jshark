@@ -20,9 +20,9 @@ module ExampleTests (exampleTests) where
 import qualified Breakout
 import qualified Data.Text as T
 import JShark.Api (stmts)
+import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import JShark.Bun.Internal (runJS)
 import JShark.Compiler (compileEffect, readableConfig)
-import JShark.Types (ClosedEffect, Universe (Unit))
 import qualified Life
 import qualified Synth
 import Test.Tasty

@@ -81,8 +81,8 @@ import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Dom as Dom
-import JShark.Rec (Rec (..), (<:))
 import Lucid.Base (Attribute (..), Term (..), With (..))
 
 -- | A DOM fragment. The @a@ parameter exists so @do@ blocks sequence

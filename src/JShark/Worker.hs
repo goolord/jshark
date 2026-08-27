@@ -18,7 +18,7 @@ module JShark.Worker
 where
 
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Rec (Rec (..), (<:))
 
 crossOriginIsolated :: EffectSyntax f (Expr f 'Bool)
 crossOriginIsolated =

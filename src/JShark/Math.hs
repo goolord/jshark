@@ -31,8 +31,8 @@ module JShark.Math
 where
 
 import JShark.Api (ffi, lambda)
-import JShark.Rec (Rec (..))
-import JShark.Types
+import JShark.Api.Rec (Rec (..))
+import JShark.Api.Types
 import Prelude hiding (atan2, floor, max, min, round)
 
 inc :: Expr f ('Function 'Number 'Number)

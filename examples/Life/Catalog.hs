@@ -29,8 +29,8 @@ import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types (Effect (FFI), FFIForm (FFILambda))
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (Effect (FFI), FFIForm (FFILambda))
 import Names (patternLabel)
 import Numeric (showHex)
 import Patterns

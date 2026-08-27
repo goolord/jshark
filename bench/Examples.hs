@@ -13,7 +13,7 @@ module Main (main) where
 
 import qualified Breakout
 import JShark.Api (stmts)
-import JShark.Types (ClosedEffect, Universe (Unit))
+import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import qualified Life
 import Stages (emitLen, nfClosed, stageBenches)
 import qualified Synth

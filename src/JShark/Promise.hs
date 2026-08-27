@@ -11,8 +11,8 @@ module JShark.Promise
 where
 
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 
 -- | An opaque phantom type representing a @Promise@ resolving to a value of
 -- universe @u@.

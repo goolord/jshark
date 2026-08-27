@@ -39,7 +39,7 @@ where
 import Data.Text (Text)
 import JShark
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Rec (Rec (..), (<:))
 
 -- | An opaque phantom type representing a DOM element (what
 -- @document.getElementById@ /etc. return in the browser). Modeled as an

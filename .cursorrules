@@ -16,7 +16,12 @@
 - Recoverable errors: `Either`/`ExceptT`; `error` only for impossible invariants
 
 ## Layout
-- `src/JShark/` — core library (Api, Compiler, Prim, Dom, Canvas, …)
+- `src/JShark/Api/` — PHOAS AST (`Types`), params, `Prim`, `Rec`, `Classes`, `Generic`
+- `src/JShark/Api.hs` — smart constructors and syntax helpers
+- `src/JShark/Compiler/` — pipeline (Flatten, Lower, Optimize, Codegen, Emit, …)
+- `src/JShark/Compiler.hs` — compile driver (`compileEffect`, minify config)
+- `src/JShark/` — JS API bridgers (`Array`, `Dom`, `Ajax`, `Timers`, …)
+- `src/JShark.hs` — public compiler facade (`pureProgram`, `effectfulProgram`)
 - `jshark-lucid/` — Lucid integration
 - `examples/{Breakout,Life,Synth,TodoMvc,server,static}/`
 - `test/`, `bench/`

@@ -5,37 +5,37 @@
 
 -- | JShark compiler facade: PHOAS terms to JavaScript.
 --
--- User-facing syntax lives in 'JShark.Types' and 'JShark.Api'. This module
+-- User-facing syntax lives in 'JShark.Api.Types' and 'JShark.Api'. This module
 -- re-exports the compile pipeline and the two entry points
 -- ('pureProgram', 'effectfulProgram').
 --
 -- == Pipeline (read top to bottom)
 --
 -- @
--- ClosedExpr / ClosedEffect          -- 'JShark.Types'
+-- ClosedExpr / ClosedEffect          -- 'JShark.Api.Types'
 --       |
 --       v
--- Flatten  ('JShark.Flatten')        -- tree normalize before lower/opt
+-- Flatten  ('JShark.Compiler.Flatten')        -- tree normalize before lower/opt
 --       |
 --       v
--- Lower    ('JShark.Lower')          -- PHOAS -> first-order IR
+-- Lower    ('JShark.Compiler.Lower')          -- PHOAS -> first-order IR
 --       |
 --       v
--- Optimize ('JShark.Optimize')      -- PHOAS + IR passes
+-- Optimize ('JShark.Compiler.Optimize')      -- PHOAS + IR passes
 --       |
 --       +-- pure:  Codegen.Phoas     -- direct PHOAS -> JS ('pureAST')
 --       |
 --       +-- effect: Flat -> SoA -> Codegen.Flat
---                 ('JShark.Flat', 'JShark.FlatSoA', 'JShark.Codegen.Flat')
+--                 ('JShark.Compiler.Flat', 'JShark.Compiler.FlatSoA', 'JShark.Compiler.Codegen.Flat')
 --
--- Evaluate ('JShark.Evaluate')      -- reference interpreter (tests, REPL)
--- Hoist    ('JShark.Hoist')         -- named @$tag@ helper registration
---           ('JShark.Hoist.Canonical') -- dedup by alpha-renamed source
--- Codegen.Core ('JShark.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
+-- Evaluate ('JShark.Compiler.Evaluate')      -- reference interpreter (tests, REPL)
+-- Hoist    ('JShark.Compiler.Hoist')         -- named @$tag@ helper registration
+--           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
+-- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
 -- @
 --
 -- Named lambdas ('Lambda' with 'Just' tag) hoist to shared helpers via
--- 'JShark.Hoist.registerHoistedTag' (see 'JShark.Api.namedLambda',
+-- 'JShark.Compiler.Hoist.registerHoistedTag' (see 'JShark.Api.namedLambda',
 -- 'namedLambdaRow', 'applyNamed2').
 module JShark
   ( Expr
@@ -164,7 +164,8 @@ where
 
 import qualified Data.IntMap.Strict as IM
 import GHC.IO.Unsafe (unsafePerformIO)
-import JShark.Codegen.Core
+import JShark.Api.Types
+import JShark.Compiler.Codegen.Core
   ( flatPrepareCore
   , flatPrepareFromIr
   , flatSoaNodeCount
@@ -177,28 +178,28 @@ import JShark.Codegen.Core
   , profileLowerFromClosed
   , renderIIFE
   )
-import JShark.Codegen.Flat
+import JShark.Compiler.Codegen.Flat
   ( effectfulAST
   , effectfulASTFromFlat
   , effectfulASTFromSoA
   , effectfulASTIr
   , flatEffectfulCodegen
   )
-import JShark.Codegen.Phoas (pureAST, pureAST')
-import JShark.Emit (JS, renderJS, renderJSCompact)
-import JShark.Evaluate
+import JShark.Compiler.Codegen.Phoas (pureAST, pureAST')
+import JShark.Compiler.Emit (JS, renderJS, renderJSCompact)
+import JShark.Compiler.Evaluate
   ( escapeJsString
   , evaluate
   , evaluateBigInt
   , evaluateCached
   , evaluateNumber
   )
-import JShark.Lower
+import JShark.Compiler.Lower
   ( irEffectFromClosed
   , irExprFromClosed
   , lowerOptEffectIr
   )
-import JShark.Optimize
+import JShark.Compiler.Optimize
   ( closedEffectNodes
   , closedExprNodes
   , collectHvm2Kernels
@@ -215,7 +216,6 @@ import JShark.Optimize
   , optimizedExprSize
   , phoasNodeCountFromIr
   )
-import JShark.Types
 
 pureProgram :: ClosedExpr u -> JS
 pureProgram e =

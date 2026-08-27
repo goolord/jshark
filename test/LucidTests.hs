@@ -12,6 +12,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import JShark.Bun
   ( BunConfig (..)
   , BunEnv (..)
@@ -22,8 +24,6 @@ import JShark.Bun
   )
 import qualified JShark.Dom as Dom
 import JShark.Lucid
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
 import Lucid (button_, class_, div_, label_, li_, renderText, type_)
 import Lucid.Base (Attribute, Html, Term)
 import Test.Tasty

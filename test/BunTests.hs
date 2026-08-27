@@ -15,6 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Bun
   ( BunConfig (..)
@@ -33,7 +34,6 @@ import qualified JShark.Dom as Dom
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Life (initialCatalogCells, initialPop, soupSeedPop)

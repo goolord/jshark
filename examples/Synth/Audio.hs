@@ -77,9 +77,9 @@ where
 
 import Data.Text (Text)
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import JShark.Object (unsafeObjectAssign, unsafeObjectGet)
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
 
 -- | An @AudioContext@.
 data AudioCtx

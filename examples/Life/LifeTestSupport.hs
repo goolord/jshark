@@ -38,9 +38,9 @@ import Grid
   , u8Get
   )
 import JShark.Api
+import JShark.Api.Generic (toObject)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
-import JShark.Generic (toObject)
-import JShark.Rec (Rec (..), (<:))
 
 assertEqual :: Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 assertEqual expected actual = do

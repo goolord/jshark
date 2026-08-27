@@ -18,8 +18,8 @@ where
 
 import Control.Monad (void)
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 
 callbackFFI ::
   String

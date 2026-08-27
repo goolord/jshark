@@ -6,7 +6,7 @@ module Main (main) where
 
 import JShark
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Rec (Rec (..), (<:))
 import Stages (codepathStages, codepathStagesPure)
 import Test.Tasty.Bench
 

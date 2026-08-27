@@ -186,9 +186,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word (Word8)
 import GHC.TypeLits (KnownSymbol)
-import JShark.Object hiding (get, set)
-import qualified JShark.Object as Object
-import JShark.Params
+import JShark.Api.Params
   ( NamedLambdaRow (..)
   , ParamRec
   , ToFn (..)
@@ -198,8 +196,10 @@ import JShark.Params
   , toFn
   , toLambda
   )
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
+import JShark.Object hiding (get, set)
+import qualified JShark.Object as Object
 
 data Window
 
