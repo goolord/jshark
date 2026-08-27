@@ -25,6 +25,16 @@ module JShark.FlatSoA
   , packEffectProgram
   , optimizeFlatPack
   , flatSoaNodeCount
+  , flatSoaNode
+  , flatSoaLitValue
+  , flatSoaText
+  , flatSoaFFI
+  , flatSoaStrCases
+  , flatSoaFieldGroup
+  , flatSoaArgGroup
+  , flatSoaNodePackRefs
+  , flatSoaIdentBudget
+  , flatSoaLayerBuckets
   , toFlatProgram
   , soaPureCount
   , soaPureVector
@@ -48,6 +58,7 @@ import Data.Text (Text)
 import qualified Data.Vector as V
 import qualified Data.Vector.Generic as GV
 import qualified Data.Vector.Generic.Mutable as GM
+import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
 import Data.Word (Word16, Word8)
@@ -63,7 +74,9 @@ import JShark.Flat
   , PackState
   , emptySoaSideAcc
   , encodeFlatNode
-  , fpPure
+  , flatArgRef
+  , flatFieldRef
+  , flatNodeChildRefs
   , packEffectProgramState
   , packStateEncs
   , packStateSideTables
@@ -74,6 +87,7 @@ import JShark.Flat
 import JShark.FlatEnc (Enc (..), freezeEncColumns)
 import JShark.Ir (IrEffect)
 import JShark.Types (BigBinOp (..), FFIForm (..), Value (..))
+import Unsafe.Coerce (unsafeCoerce)
 
 type Op = Word16
 
@@ -384,7 +398,7 @@ packEffectProgram e =
    in
     validateFlatProgram prog `seq` prog
 
--- | SoA optimizer passes; returns optimized SoA (emit calls 'toFlatProgram').
+-- | SoA optimizer passes; returns optimized SoA (emit decodes nodes on demand).
 optimizeFlatPack :: FlatSoA -> FlatSoA
 optimizeFlatPack soa0 =
   let
@@ -589,6 +603,126 @@ tagBigOp = \case
   8 -> BShl
   9 -> BShr
   _ -> BPlus
+
+flatSoaNode :: FlatSoA -> NodeId -> FlatNode
+flatSoaNode soa idx =
+  let
+    op = fsaOpcodes soa VU.! idx
+    ix = fromIntegral (fsaA soa VU.! idx) :: Int
+    iy = fromIntegral (fsaB soa VU.! idx) :: Int
+    iz = fromIntegral (fsaC soa VU.! idx) :: Int
+    iw = fromIntegral (fsaD soa VU.! idx) :: Int
+    iv = fromIntegral (fsaE soa VU.! idx) :: Int
+   in
+    decodeOp soa op ix iy iz iw iv
+
+flatSoaLit :: FlatSoA -> Int -> FlatLit
+flatSoaLit soa i = fsaLits soa V.! i
+
+flatSoaLitValue :: FlatSoA -> Int -> Value u
+flatSoaLitValue soa i = case flatSoaLit soa i of
+  FLit v -> unsafeCoerce v
+
+flatSoaText :: FlatSoA -> Int -> Text
+flatSoaText soa i = fsaTexts soa V.! i
+
+flatSoaFFI :: FlatSoA -> Int -> FFIForm
+flatSoaFFI soa i = fsaFFIs soa V.! i
+
+flatSoaStrCases :: FlatSoA -> Int -> [(Text, NodeId)]
+flatSoaStrCases soa i = fsaStrCases soa V.! i
+
+flatSoaFieldGroup :: FlatSoA -> Int -> [FlatField]
+flatSoaFieldGroup soa i = fsaFieldGroups soa V.! i
+
+flatSoaArgGroup :: FlatSoA -> Int -> [FlatArg]
+flatSoaArgGroup soa i = fsaArgGroups soa V.! i
+
+flatSoaNodeSideRefs :: FlatSoA -> FlatNode -> [NodeId]
+flatSoaNodeSideRefs soa = \case
+  FE_Fixed _ -> []
+  FE_FnLit _ _ -> []
+  FE_FrozenLit gi -> map flatFieldRef (flatSoaFieldGroup soa gi)
+  FX_FFI _ ai -> map flatArgRef (flatSoaArgGroup soa ai)
+  FX_CallMethod _ _ ai -> map flatArgRef (flatSoaArgGroup soa ai)
+  FX_StringCaseE _ ai _ -> map snd (flatSoaStrCases soa ai)
+  FX_ObjectLit gi -> map flatFieldRef (flatSoaFieldGroup soa gi)
+  FX_ArrayLit _ -> []
+  _ -> []
+
+flatSoaNodePackRefs :: FlatSoA -> FlatNode -> [NodeId]
+flatSoaNodePackRefs soa node =
+  flatNodeChildRefs node ++ flatSoaNodeSideRefs soa node
+
+flatSoaSubtreeSizes :: FlatSoA -> V.Vector Int
+flatSoaSubtreeSizes soa =
+  let
+    n = flatSoaNodeCount soa
+   in
+    snd $
+      foldl'
+        ( \(_, acc) i ->
+            let
+              node = flatSoaNode soa i
+              sz =
+                1
+                  + sum
+                    [ acc V.! r
+                    | r <- flatSoaNodePackRefs soa node
+                    ]
+              acc' = acc V.// [(i, sz)]
+             in
+              ((), acc')
+        )
+        ((), V.replicate n 0)
+        [0 .. n - 1]
+
+flatSoaIdentBudget :: FlatSoA -> NodeId -> Int
+flatSoaIdentBudget soa i =
+  let
+    sizes = flatSoaSubtreeSizes soa
+   in
+    if i >= 0 && i < V.length sizes then sizes V.! i else 1
+
+flatSoaReachableDepths :: FlatSoA -> NodeId -> V.Vector Int
+flatSoaReachableDepths soa root =
+  let
+    n = flatSoaNodeCount soa
+   in
+    runST $ do
+      md <- MV.new n
+      MV.set md (-1)
+      let
+        go i =
+          MV.read md i >>= \case
+            d | d >= 0 -> pure d
+            _ -> do
+              let
+                refs = flatSoaNodePackRefs soa (flatSoaNode soa i)
+              d <-
+                if null refs
+                  then pure 0
+                  else (1 +) . maximum <$> mapM go refs
+              MV.write md i d
+              pure d
+      _ <- go root
+      V.unsafeFreeze md
+
+flatSoaLayerBuckets :: FlatSoA -> NodeId -> V.Vector (V.Vector NodeId)
+flatSoaLayerBuckets soa root =
+  let
+    depths = flatSoaReachableDepths soa root
+    n = V.length depths
+    maxD = V.foldl' max 0 depths
+    bucket d =
+      V.fromList
+        [ i
+        | i <- [0 .. n - 1]
+        , depths V.! i == d
+        , depths V.! i >= 0
+        ]
+   in
+    V.fromList [bucket d | d <- [0 .. maxD]]
 
 exprMask :: FlatSoA -> VU.Vector Word8
 exprMask soa =

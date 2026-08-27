@@ -117,6 +117,7 @@ library
     JShark.Flat
     JShark.FlatEnc
     JShark.FlatSoA
+    JShark.FlatView
     JShark.Ir
     JShark.JsNum
     JShark.EmitBend

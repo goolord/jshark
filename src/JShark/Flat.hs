@@ -37,6 +37,9 @@ module JShark.Flat
   , flatLayerBuckets
   , flatNodeIsEffect
   , flatNodePackRefs
+  , flatNodeChildRefs
+  , flatArgRef
+  , flatFieldRef
   , encodeFlatNode
   , emptySoaSideAcc
   , packStateEncs
