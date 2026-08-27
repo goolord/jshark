@@ -10,7 +10,7 @@
 
 module Client (mainJS) where
 
-import Catalog (catalogDisturb)
+import Catalog (buildDisturbMap)
 import Discover
   ( IndexTracker
   , Registry
@@ -1070,9 +1070,7 @@ initTool = do
 
 initDisturbCatalog ::
   EffectSyntax f (Effect f ('Map 'Number ('Array ('Array 'Number))))
-initDisturbCatalog = do
-  pairs <- bindExpr catalogDisturb
-  hold $ Map.fromEntries pairs
+initDisturbCatalog = buildDisturbMap
 
 applyClick ::
   Effect f (MutableObjectOf LifeState)

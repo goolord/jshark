@@ -11,15 +11,15 @@ module Catalog
   , canonicalShapeHash
   , catalogJs
   , nameWords
-  , catalogKnown
-  , catalogNames
-  , catalogDisturb
+  , buildKnownMap
+  , buildNamesMap
+  , buildDisturbMap
+  , catalogInitialCells
   , catalogPrefixes
   , catalogSuffixes
   , catalogNouns
   , catalogAdjectives
   , catalogVerbsIng
-  , catalogInitialCells
   , stampCatalogCells
   )
 where
@@ -28,9 +28,10 @@ import Data.Char (ord)
 import Data.List (sort)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Grid (setU8)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
-import JShark.Api.Types (Effect (FFI), FFIForm (FFILambda))
+import qualified JShark.Array as Array
+import qualified JShark.Map as Map
 import Names (patternLabel)
 import Numeric (showHex)
 import Patterns
@@ -176,27 +177,73 @@ catalogJs =
       | (i, w) <- initialCatalogCells
       ]
 
-catalogKnown
-  , catalogNames
-  , catalogDisturb
-  , catalogInitialCells ::
-    forall f u. Effect f u
-catalogKnown = ffi "(()=>globalThis.__lifeCatalog().known)" RecNil
-catalogNames = ffi "(()=>globalThis.__lifeCatalog().names)" RecNil
-catalogDisturb = ffi "(()=>globalThis.__lifeCatalog().disturb)" RecNil
-catalogInitialCells = ffi "(()=>globalThis.__lifeCatalog().initialCells)" RecNil
+buildKnownMap :: EffectSyntax f (Effect f ('Map 'String 'Number))
+buildKnownMap = do
+  m <- hold Map.new
+  sequence_
+    [ Map.insert m (string h) (number (fromIntegral sid))
+    | (h, sid) <- knownCatalog
+    ]
+  pure m
+
+buildNamesMap :: EffectSyntax f (Effect f ('Map 'Number 'String))
+buildNamesMap = do
+  m <- hold Map.new
+  sequence_
+    [ Map.insert
+        m
+        (number (fromIntegral (patId p)))
+        (string (patternLabel (patId p)))
+    | p <- allPatterns
+    ]
+  pure m
+
+patternCellsArray :: PatternSpec -> Effect f ('Array ('Array 'Number))
+patternCellsArray p =
+  Array.fromEffects
+    [ Array.fromEffects
+        [ expr (number (fromIntegral x))
+        , expr (number (fromIntegral y))
+        ]
+    | (x, y) <- patCells p
+    ]
+
+buildDisturbMap ::
+  EffectSyntax f (Effect f ('Map 'Number ('Array ('Array 'Number))))
+buildDisturbMap = do
+  m <- hold Map.new
+  sequence_
+    [ do
+        cells <- bindExpr $ patternCellsArray p
+        Map.insert m (number (fromIntegral (patId p))) cells
+    | p <- disturbPatterns
+    ]
+  pure m
+
+catalogInitialCells ::
+  forall f. Effect f ('Array ('Array 'Number))
+catalogInitialCells =
+  Array.fromEffects
+    [ Array.fromEffects
+        [ expr (number (fromIntegral i))
+        , expr (number (fromIntegral w))
+        ]
+    | (i, w) <- initialCatalogCells
+    ]
 
 stampCatalogCells ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f ('Array ('Array 'Number))
-  -> Effect f 'Unit
+  -> EffectSyntax f (f 'Unit)
 stampCatalogCells alive species cells =
-  FFI
-    ( FFILambda
-        "(a,s,p)=>{for(let k=0;k<p.length;k++){const t=p[k];a[t[0]]=1;s[t[0]]=t[1];}}"
-    )
-    (arg alive <: arg species <: arg cells <: RecNil)
+  forRange_ (number 0) (Array.length cells) $ \k -> do
+    let
+      row = Array.index cells k
+      i = Array.index row 0
+      w = Array.index row 1
+    _ <- setU8 alive i (number 1)
+    setU8 species i w
 
 catalogPrefixes
   , catalogSuffixes
@@ -204,11 +251,11 @@ catalogPrefixes
   , catalogAdjectives
   , catalogVerbsIng ::
     forall f. Effect f ('Array 'String)
-catalogPrefixes = ffi "(()=>globalThis.__lifeCatalog().words.prefixes)" RecNil
-catalogSuffixes = ffi "(()=>globalThis.__lifeCatalog().words.suffixes)" RecNil
-catalogNouns = ffi "(()=>globalThis.__lifeCatalog().words.nouns)" RecNil
-catalogAdjectives = ffi "(()=>globalThis.__lifeCatalog().words.adjectives)" RecNil
-catalogVerbsIng = ffi "(()=>globalThis.__lifeCatalog().words.verbsIng)" RecNil
+catalogPrefixes = Array.fromEffects [expr (string w) | w <- prefixes]
+catalogSuffixes = Array.fromEffects [expr (string w) | w <- suffixes]
+catalogNouns = Array.fromEffects [expr (string w) | w <- nouns]
+catalogAdjectives = Array.fromEffects [expr (string w) | w <- adjectives]
+catalogVerbsIng = Array.fromEffects [expr (string w) | w <- verbsIng]
 
 jsonString :: Text -> Text
 jsonString t =

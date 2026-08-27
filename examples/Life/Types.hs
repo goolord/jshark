@@ -410,5 +410,8 @@ data LifeState = LifeState
   , worldW :: Int
   , worldH :: Int
   , tickMs :: Double
+  , engineLut :: ByteArray
+  , engineGridA :: ByteArray
+  , engineGridB :: ByteArray
   }
   deriving Generic

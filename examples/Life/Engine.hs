@@ -24,6 +24,7 @@ where
 
 import Catalog (catalogInitialCells, stampCatalogCells)
 import Discover (Registry, discoverLife)
+import EngineFinish (initEngineGrids)
 import Grid
   ( BoundScratch
   , RenderDirty (..)
@@ -109,7 +110,7 @@ initLife app viewport = do
       (number (fromIntegral gridW))
       (number (fromIntegral soupRngSeed))
   cells <- bindExpr catalogInitialCells
-  toSyntax_ (stampCatalogCells alive species cells)
+  _ <- stampCatalogCells alive species cells
   let
     w = number (fromIntegral gridW)
     h = number (fromIntegral gridH)
@@ -177,6 +178,11 @@ initLife app viewport = do
       (number (fromIntegral initialBoundY1))
       liveList
   _ <- initWorkerEngine w h
+  (engineLut, engineGridA, engineGridB) <-
+    initEngineGrids (number (fromIntegral gridN))
+  set @"engineLut" state engineLut
+  set @"engineGridA" state engineGridA
+  set @"engineGridB" state engineGridB
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
@@ -301,6 +307,9 @@ stepGeneration state stepCtx = do
         birthCounts <- state.birthCounts
         birthTouched <- state.birthTouched
         canEngine <- engineCanStep
+        engineLut <- state.engineLut
+        engineGridA <- state.engineGridA
+        engineGridB <- state.engineGridB
         useEngine <- pure canEngine
         ifS
           useEngine
@@ -311,6 +320,9 @@ stepGeneration state stepCtx = do
                   species
                   nextAlive
                   nextSpecies
+                  engineGridA
+                  engineGridB
+                  engineLut
                   w
                   h
                   x0e
@@ -590,6 +602,10 @@ resizeWorld state viewport w h = do
   sprite <- getProp viewport "sprite"
   _ <- Pixi.installLifeShader appH viewport sprite tex w h
   _ <- initWorkerEngine w h
+  (engineLut, engineGridA, engineGridB) <- initEngineGrids (w * h)
+  set @"engineLut" state engineLut
+  set @"engineGridA" state engineGridA
+  set @"engineGridB" state engineGridB
   let
     cx = ox + seedW' / number 2
     cy = oy + seedH' / number 2

@@ -9,14 +9,13 @@
 module LifeTests (lifeTests) where
 
 import qualified Data.Text as T
-import Grid (StepCtx (StepCtx), rebuildPackedCounts)
-import JShark (effectfulProgram, renderJSCompact)
+import EngineFinish (finishStep, initEngineGrids)
+import Grid (StepCtx (StepCtx), rebuildPackedCounts, setU8)
 import JShark.Api
 import JShark.Api.Generic (toObject)
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Bun (evaluateEffectJSON)
-import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
 import qualified JShark.Math as Math
 import LifeTestSupport
   ( beehiveCoords
@@ -33,8 +32,9 @@ import LifeTestSupport
   , setAlive
   )
 import qualified LifeTestSupport as LifeAssert
-import System.Directory (findExecutable, getCurrentDirectory)
-import System.FilePath ((</>))
+import qualified Lut
+import LutCore (computeNextByte, lifeLutEntry)
+import System.Directory (findExecutable)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Types (canvasH, canvasW, cellPx, zoomLevelLabels, zoomLevels)
@@ -82,20 +82,19 @@ lifeTests =
               testViewportGridCoord
           ]
       , testGroup
-          "js engine"
-          [ lifeJsCase "LifeLUT.stepCell matches Conway rules" testJsStepCell
-          , lifeJsCase "LifeLUT.stepRegionLUT matches stepCell on blinker" testJsLutRegion
-          , lifeJsCase
+          "lut engine"
+          [ lifeCase "LifeLUT.stepCell matches Conway rules" testLutStepCell
+          , lifeCase "LifeLUT.stepRegionLUT matches stepCell on blinker" testLutRegion
+          , lifeCase
               "LifeLUT.stepRegionLUT matches stepCell for glider on 8-cell seam"
-              testJsLutGliderSeam
-          , lifeJsCase "LifeEngine.step keeps block stable" testJsEngineBlock
-          , lifeJsCase "LifeEngineSync.finishStep rebuilds packed counts" testJsFinishStep
-          , lifeJsCase
-              "LifeEngineSync.finishStep reuses _stepOut object"
-              testJsFinishStepReuse
-          , lifeJsCase "engineStepGeneration keeps block stable" testEngineStepGeneration
-          , lifeJsCase "stepTile row slices match full LUT step" testJsStepTile
-          , lifeJsCase "initWorkerEngine registers LifeEngine" testEngineInit
+              testLutGliderSeam
+          , lifeCase "finishStep keeps block stable" testFinishStepBlock
+          , lifeCase "finishStep rebuilds packed counts" testFinishStepPacked
+          , lifeCase "engineStepGeneration keeps block stable" testEngineStepGeneration
+          , lifeCase "initEngineGrids allocates LUT and grids" testEngineInit
+          , lifeCase "stepRegionLUT row slices match full LUT step" testLutStepTile
+          , testCase "LutCore computeNextByte matches table entry" $
+              lifeLutEntry 0x0101 @?= computeNextByte 1 1 0 0 0 0 0 0 0
           ]
       ]
 
@@ -104,27 +103,229 @@ lifeCase name eff = testCase name $ do
   got <- T.unpack <$> evaluateEffectJSON eff
   assertBool (name ++ " should complete") (got == "undefined" || got == "null")
 
-lifeJsCase :: String -> (forall f. Effect f 'Unit) -> TestTree
-lifeJsCase name eff = testCase name $ do
-  prelude <- loadLifeJsPrelude
-  let
-    js = T.unpack (renderJSCompact (effectfulProgram eff))
-    prog =
-      JSProgram
-        { jsFlags = []
-        , jsPrelude = prelude
-        , jsExpression = js
-        , jsEpilogue = ""
-        }
-  got <- T.unpack <$> runProgram bunTimeoutMicroseconds prog
-  assertBool (name ++ " should complete") (got == "undefined" || got == "null")
+testLutStepCell :: forall f. Effect f 'Unit
+testLutStepCell = fromSyntax $ do
+  alive <- bindExpr (newByteArray (number 25))
+  next <- bindExpr (newByteArray (number 25))
+  toSyntax_ (u8Fill alive (number 0))
+  toSyntax_ (u8Fill next (number 0))
+  _ <- setU8 alive (number 6) (number 1)
+  _ <- setU8 alive (number 7) (number 1)
+  _ <- setU8 alive (number 11) (number 1)
+  _ <- Lut.stepCell alive next (number 5) (number 5) (number 2) (number 2)
+  LifeAssert.assertEqual (number 1) (u8Index next (number 12))
+  toSyntax_ (u8Fill alive (number 0))
+  toSyntax_ (u8Fill next (number 0))
+  _ <- setU8 alive (number 6) (number 1)
+  _ <- Lut.stepCell alive next (number 5) (number 5) (number 1) (number 1)
+  LifeAssert.assertEqual (number 0) (u8Index next (number 6))
+  done
 
-loadLifeJsPrelude :: IO String
-loadLifeJsPrelude = do
-  root <- getCurrentDirectory
-  lut <- readFile (root </> "examples/Life/js/LUTGenerator.js")
-  main <- readFile (root </> "examples/Life/js/Main.js")
-  pure (lut ++ "\n" ++ main ++ "\n")
+testLutRegion :: forall f. Effect f 'Unit
+testLutRegion = fromSyntax $ do
+  let
+    w = number 8
+    h = number 8
+    n = w * h
+  lut <- Lut.createLifeLUT
+  a <- bindExpr (newByteArray n)
+  b <- bindExpr (newByteArray n)
+  c <- bindExpr (newByteArray n)
+  _ <- setU8 a (number 18) (number 1)
+  _ <- setU8 a (number 19) (number 1)
+  _ <- setU8 a (number 20) (number 1)
+  _ <- Lut.stepRegionLUT lut a b w h (number 0) h
+  forRange_ (number 0) h $ \y ->
+    forRange_ (number 0) w $ \x -> do
+      _ <- Lut.stepCell a c w h x y
+      let
+        i = y * w + x
+        bi = u8Index b i
+        ci = u8Index c i
+      whenS (bitAnd bi (number 1) .!= bitAnd ci (number 1)) $ do
+        toSyntax_ $ ffi "(()=>{throw new Error('lut mismatch');})" RecNil
+        done
+      done
+  done
+
+testLutGliderSeam :: forall f. Effect f 'Unit
+testLutGliderSeam = fromSyntax $ do
+  let
+    w = number 16
+    h = number 16
+    n = w * h
+  lut <- Lut.createLifeLUT
+  a <- bindExpr (newByteArray n)
+  b <- bindExpr (newByteArray n)
+  c <- bindExpr (newByteArray n)
+  _ <- setU8 a (number (8 + 2 * 16)) (number 1)
+  _ <- setU8 a (number (9 + 3 * 16)) (number 1)
+  _ <- setU8 a (number (7 + 4 * 16)) (number 1)
+  _ <- setU8 a (number (8 + 4 * 16)) (number 1)
+  _ <- setU8 a (number (9 + 4 * 16)) (number 1)
+  _ <- Lut.stepRegionLUT lut a b w h (number 0) h
+  forRange_ (number 0) h $ \y ->
+    forRange_ (number 0) w $ \x -> do
+      _ <- Lut.stepCell a c w h x y
+      let
+        i = y * w + x
+      whenS (bitAnd (u8Index b i) (number 1) .!= bitAnd (u8Index c i) (number 1)) $ do
+        toSyntax_ $ ffi "(()=>{throw new Error('seam mismatch');})" RecNil
+        done
+      done
+  st <- hold newObject
+  dst0 <- bindExpr (newByteArray n)
+  _ <- setProp st "src" b
+  _ <- setProp st "dst" dst0
+  forRange_ (number 0) (number 3) $ \_ -> do
+    src <- getProp st "src"
+    dst <- getProp st "dst"
+    _ <- Lut.stepRegionLUT lut src dst w h (number 0) h
+    _ <- setProp st "src" dst
+    setProp st "dst" src
+    done
+  src <- getProp st "src"
+  popN <- gridPop src w h
+  LifeAssert.assertEqual (number 5) popN
+  done
+
+testFinishStepBlock :: forall f. Effect f 'Unit
+testFinishStepBlock = fromSyntax $ do
+  let
+    w = number 8
+    h = number 8
+  alive <- bindExpr (newByteArray (w * h))
+  species <- bindExpr (newByteArray (w * h))
+  nextAlive <- bindExpr (newByteArray (w * h))
+  nextSpecies <- bindExpr (newByteArray (w * h))
+  (lut, gridA, gridB) <- initEngineGrids (w * h)
+  seedBlock alive w h
+  rebuildPackedCounts alive w h
+  nextLiveList <- bindExpr $ Array.fromEffects []
+  nextChangedList <- bindExpr $ Array.fromEffects []
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
+  _ <-
+    finishStep
+      alive
+      species
+      nextAlive
+      nextSpecies
+      gridA
+      gridB
+      lut
+      w
+      h
+      (number 0)
+      (number 0)
+      (number 7)
+      (number 7)
+      nextLiveList
+      nextChangedList
+      stepCtx
+  popN <- stepCtx.pop
+  LifeAssert.assertEqual (number 4) popN
+  _ <-
+    finishStep
+      alive
+      species
+      nextAlive
+      nextSpecies
+      gridA
+      gridB
+      lut
+      w
+      h
+      (number 0)
+      (number 0)
+      (number 7)
+      (number 7)
+      nextLiveList
+      nextChangedList
+      stepCtx
+  popN2 <- stepCtx.pop
+  LifeAssert.assertEqual (number 4) popN2
+  done
+
+testFinishStepPacked :: forall f. Effect f 'Unit
+testFinishStepPacked = fromSyntax $ do
+  let
+    w = number 8
+    h = number 8
+  alive <- bindExpr (newByteArray (w * h))
+  species <- bindExpr (newByteArray (w * h))
+  nextAlive <- bindExpr (newByteArray (w * h))
+  nextSpecies <- bindExpr (newByteArray (w * h))
+  (lut, gridA, gridB) <- initEngineGrids (w * h)
+  _ <- setU8 alive (number 9) (number 1)
+  _ <- setU8 alive (number 10) (number 1)
+  _ <- setU8 alive (number 17) (number 1)
+  _ <- setU8 alive (number 18) (number 1)
+  rebuildPackedCounts alive w h
+  nextLiveList <- bindExpr $ Array.fromEffects []
+  nextChangedList <- bindExpr $ Array.fromEffects []
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
+  _ <-
+    finishStep
+      alive
+      species
+      nextAlive
+      nextSpecies
+      gridA
+      gridB
+      lut
+      w
+      h
+      (number 0)
+      (number 0)
+      (number 7)
+      (number 7)
+      nextLiveList
+      nextChangedList
+      stepCtx
+  popN <- stepCtx.pop
+  LifeAssert.assertEqual (number 4) popN
+  LifeAssert.assertEqual
+    (number 1)
+    (bitAnd (u8Index nextAlive (number 9)) (number 1))
+  whenS (shr (u8Index nextAlive (number 9)) (number 1) .== 0) $ do
+    toSyntax_ $ ffi "(()=>{throw new Error('packed count');})" RecNil
+    done
+  done
+
+testEngineInit :: forall f. Effect f 'Unit
+testEngineInit = fromSyntax $ do
+  (_lut, gridA, gridB) <- initEngineGrids (number 64)
+  lenA <- bindExpr $ ffi "(a=>a.length)" (arg gridA <: RecNil)
+  lenB <- bindExpr $ ffi "(a=>a.length)" (arg gridB <: RecNil)
+  LifeAssert.assertEqual (number 64) lenA
+  LifeAssert.assertEqual (number 64) lenB
+  done
+
+testLutStepTile :: forall f. Effect f 'Unit
+testLutStepTile = fromSyntax $ do
+  let
+    w = number 8
+    h = number 8
+    n = w * h
+  lut <- Lut.createLifeLUT
+  a <- bindExpr (newByteArray n)
+  full <- bindExpr (newByteArray n)
+  tile <- bindExpr (newByteArray n)
+  _ <- setU8 a (number 18) (number 1)
+  _ <- setU8 a (number 19) (number 1)
+  _ <- setU8 a (number 20) (number 1)
+  _ <- Lut.stepRegionLUT lut a full w h (number 0) h
+  forRange_ (number 0) h $ \y0 -> do
+    _ <- Lut.stepRegionLUT lut a tile w h y0 (y0 + number 1)
+    forRange_ (number 0) w $ \x -> do
+      let
+        i = y0 * w + x
+      whenS
+        (bitAnd (u8Index full i) (number 1) .!= bitAnd (u8Index tile i) (number 1)) $ do
+        toSyntax_ $ ffi "(()=>{throw new Error('stepTile mismatch');})" RecNil
+        done
+    done
+  done
 
 -- | 7×7 miniature grid helpers shared by rule tests.
 miniGrid ::
@@ -340,164 +541,8 @@ testViewportGridCoord = fromSyntax $ do
   LifeAssert.assertEqual cy gy
   done
 
-testJsStepCell :: forall f. Effect f 'Unit
-testJsStepCell = fromSyntax $ do
-  alive <- bindExpr (newByteArray (number 25))
-  next <- bindExpr (newByteArray (number 25))
-  toSyntax_ $
-    ffi
-      ( "((a,b)=>{"
-          <> "a.fill(0);b.fill(0);"
-          <> "a[6]=1;a[7]=1;a[11]=1;"
-          <> "LifeLUT.stepCell(a,b,5,5,2,2);"
-          <> "if((b[12]&1)!==1)throw new Error('birth failed');"
-          <> "a.fill(0);b.fill(0);"
-          <> "a[6]=1;"
-          <> "LifeLUT.stepCell(a,b,5,5,1,1);"
-          <> "if((b[6]&1)!==0)throw new Error('underpop failed');"
-          <> "})"
-      )
-      (arg alive <: arg next <: RecNil)
-  done
-
-testJsLutRegion :: forall f. Effect f 'Unit
-testJsLutRegion = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      ( "(()=>{"
-          <> "const w=8,h=8,n=w*h;"
-          <> "const lut=LifeLUT.createLifeLUT();"
-          <> "const a=new Uint8Array(n);"
-          <> "const b=new Uint8Array(n);"
-          <> "const c=new Uint8Array(n);"
-          <> "a[18]=1;a[19]=1;a[20]=1;"
-          <> "LifeLUT.stepRegionLUT(lut,a,b,w,h,0,h);"
-          <> "for(let y=0;y<h;y++)for(let x=0;x<w;x++){"
-          <> "LifeLUT.stepCell(a,c,w,h,x,y);"
-          <> "const i=y*w+x;"
-          <> "if((b[i]&1)!==(c[i]&1))throw new Error('lut mismatch at '+i);"
-          <> "}"
-          <> "})"
-      )
-      RecNil
-  done
-
-testJsLutGliderSeam :: forall f. Effect f 'Unit
-testJsLutGliderSeam = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      ( "(()=>{"
-          <> "const w=16,h=16,n=w*h;"
-          <> "const lut=LifeLUT.createLifeLUT();"
-          <> "const a=new Uint8Array(n);"
-          <> "const b=new Uint8Array(n);"
-          <> "const c=new Uint8Array(n);"
-          <> "const cells=[[8,2],[9,3],[7,4],[8,4],[9,4]];"
-          <> "for(const [x,y] of cells)a[y*w+x]=1;"
-          <> "LifeLUT.stepRegionLUT(lut,a,b,w,h,0,h);"
-          <> "for(let y=0;y<h;y++)for(let x=0;x<w;x++){"
-          <> "LifeLUT.stepCell(a,c,w,h,x,y);"
-          <> "const i=y*w+x;"
-          <> "if((b[i]&1)!==(c[i]&1))throw new Error('seam mismatch at '+i);"
-          <> "}"
-          <> "let src=b,dst=new Uint8Array(n);"
-          <> "for(let g=0;g<3;g++){"
-          <> "LifeLUT.stepRegionLUT(lut,src,dst,w,h,0,h);"
-          <> "const tmp=src;src=dst;dst=tmp;"
-          <> "}"
-          <> "let pop=0;for(let i=0;i<n;i++)if(src[i]&1)pop++;"
-          <> "if(pop!==5)throw new Error('glider pop after 4 '+pop);"
-          <> "})"
-      )
-      RecNil
-  done
-
-testJsEngineBlock :: forall f. Effect f 'Unit
-testJsEngineBlock = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      ( "(()=>{"
-          <> "const w=8,h=8,n=w*h;"
-          <> "LifeEngine.init({width:w,height:h,workerCount:0});"
-          <> "const g=LifeEngine.gridA;"
-          <> "g[9]=1;g[10]=1;g[17]=1;g[18]=1;"
-          <> "LifeEngine.step();"
-          <> "let pop=0;"
-          <> "for(let i=0;i<n;i++)if(g[i]&1)pop++;"
-          <> "if(pop!==4)throw new Error('block pop '+pop);"
-          <> "LifeEngine.step();"
-          <> "pop=0;"
-          <> "for(let i=0;i<n;i++)if(g[i]&1)pop++;"
-          <> "if(pop!==4)throw new Error('block pop after 2 '+pop);"
-          <> "})"
-      )
-      RecNil
-  done
-
-testJsFinishStep :: forall f. Effect f 'Unit
-testJsFinishStep = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      ( "(()=>{"
-          <> "const w=8,h=8,n=w*h;"
-          <> "LifeEngine.init({width:w,height:h,workerCount:0});"
-          <> "const alive=new Uint8Array(n);"
-          <> "const species=new Uint8Array(n);"
-          <> "const nextAlive=new Uint8Array(n);"
-          <> "const nextSpecies=new Uint8Array(n);"
-          <> "const live=[];"
-          <> "const changed=[];"
-          <> "alive[9]=1;alive[10]=1;alive[17]=1;alive[18]=1;"
-          <> "LifeEngineSync.rebuildPackedCounts(alive,w,h);"
-          <> "const r=LifeEngineSync.finishStep("
-          <> "alive,species,nextAlive,nextSpecies,w,h,0,0,7,7,live,changed);"
-          <> "if(!r||r.pop!==4)throw new Error('finishStep pop');"
-          <> "if((nextAlive[9]&1)!==1)throw new Error('packed bit');"
-          <> "if((nextAlive[9]>>1)===0)throw new Error('packed count');"
-          <> "})"
-      )
-      RecNil
-  done
-
-testJsFinishStepReuse :: forall f. Effect f 'Unit
-testJsFinishStepReuse = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      ( "(()=>{"
-          <> "const w=8,h=8,n=w*h;"
-          <> "LifeEngine.init({width:w,height:h,workerCount:0});"
-          <> "const alive=new Uint8Array(n);"
-          <> "const species=new Uint8Array(n);"
-          <> "const nextAlive=new Uint8Array(n);"
-          <> "const nextSpecies=new Uint8Array(n);"
-          <> "const live=[];"
-          <> "const changed=[];"
-          <> "alive[9]=1;alive[10]=1;alive[17]=1;alive[18]=1;"
-          <> "LifeEngineSync.rebuildPackedCounts(alive,w,h);"
-          <> "const a=LifeEngineSync.finishStep("
-          <> "alive,species,nextAlive,nextSpecies,w,h,0,0,7,7,live,changed);"
-          <> "const b=LifeEngineSync.finishStep("
-          <> "alive,species,nextAlive,nextSpecies,w,h,0,0,7,7,live,changed);"
-          <> "if(!a||!b||a!==b)throw new Error('finishStep must reuse _stepOut');"
-          <> "})"
-      )
-      RecNil
-  done
-
-testEngineInit :: forall f. Effect f 'Unit
-testEngineInit = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      "(()=>{const E=globalThis.LifeEngine;if(!E)throw new Error('missing');E.init({width:8,height:8,workerCount:0});if(E.mode==='none')throw new Error('LifeEngine missing');})"
-      RecNil
-  done
-
 testEngineStepGeneration :: forall f. Effect f 'Unit
 testEngineStepGeneration = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      "(()=>{LifeEngine.init({width:8,height:8,workerCount:0});})"
-      RecNil
   let
     w = number 8
     h = number 8
@@ -505,7 +550,9 @@ testEngineStepGeneration = fromSyntax $ do
   species <- bindExpr (newByteArray (w * h))
   nextAlive <- bindExpr (newByteArray (w * h))
   nextSpecies <- bindExpr (newByteArray (w * h))
+  (lut, gridA, gridB) <- initEngineGrids (w * h)
   seedBlock alive w h
+  rebuildPackedCounts alive w h
   nextLiveList <- bindExpr $ Array.fromEffects []
   nextChangedList <- bindExpr $ Array.fromEffects []
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
@@ -515,6 +562,9 @@ testEngineStepGeneration = fromSyntax $ do
       species
       nextAlive
       nextSpecies
+      gridA
+      gridB
+      lut
       w
       h
       (number 1)
@@ -529,28 +579,4 @@ testEngineStepGeneration = fromSyntax $ do
   LifeAssert.assertEqual (number 4) popN
   cells <- blockCoords
   coordsMatch nextAlive w cells
-  done
-
-testJsStepTile :: forall f. Effect f 'Unit
-testJsStepTile = fromSyntax $ do
-  toSyntax_ $
-    ffi
-      ( "(()=>{"
-          <> "const w=8,h=8,n=w*h;"
-          <> "const lut=LifeLUT.createLifeLUT();"
-          <> "const a=new Uint8Array(n);"
-          <> "const full=new Uint8Array(n);"
-          <> "const tile=new Uint8Array(n);"
-          <> "a[18]=1;a[19]=1;a[20]=1;"
-          <> "LifeLUT.stepRegionLUT(lut,a,full,w,h,0,h);"
-          <> "for(let y0=0;y0<h;y0++){"
-          <> "LifeLUT.stepRegionLUT(lut,a,tile,w,h,y0,y0+1);"
-          <> "for(let x=0;x<w;x++){"
-          <> "const i=y0*w+x;"
-          <> "if((full[i]&1)!==(tile[i]&1))throw new Error('stepTile mismatch at '+i);"
-          <> "}"
-          <> "}"
-          <> "})"
-      )
-      RecNil
   done

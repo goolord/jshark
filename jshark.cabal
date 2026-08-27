@@ -43,12 +43,9 @@ data-files:
   examples/static/*.css
   examples/static/hvm2-demo.wasm
   examples/Life/js/catalog.js
-  examples/Life/js/Discover.js
-  examples/Life/js/LUTGenerator.js
   examples/Life/js/LifeSimd.js
   examples/Life/js/pixi.min.js
   examples/Life/js/EngineWorker.js
-  examples/Life/js/Main.js
   examples/Life/js/life-simd.wasm
   examples/Life/shaders/cell.frag.glsl
 
@@ -185,6 +182,7 @@ common example-lib
     Haskell2010
   build-depends:
     , base
+    , containers >= 0.5 && < 1
     , jshark
     , text
 
@@ -237,10 +235,15 @@ library life
     Patterns
     Types
     WorkerBridge
+    DiscoverCore
+    LutCore
+    Lut
+    EngineFinish
   other-modules:
     Catalog
     Client
     Discover
+    DiscoverRuntime
     Names
     Page
     Pixi

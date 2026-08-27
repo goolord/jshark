@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
--- | Bridge to the JS LifeEngine (LUT, workers, SIMD) in @js/Main.js@.
+-- | Haskell LUT engine (replaces Main.js LifeEngineSync bridge).
 module WorkerBridge
   ( initWorkerEngine
   , engineCanStep
@@ -16,56 +16,40 @@ module WorkerBridge
   )
 where
 
+import EngineFinish (finishStep)
 import Grid (StepCtx)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
 import JShark.Api.Rec (Rec (..), (<:))
 
 initWorkerEngine :: Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
-initWorkerEngine w h =
-  toSyntax $
+initWorkerEngine w h = do
+  toSyntax_ $
     ffi
-      ( "((w,h)=>{const E=globalThis.LifeEngine;if(!E)return;"
-          <> "E.init({width:w|0,height:h|0,workerCount:0});"
-          <> "E._wasmReady=false;"
-          <> "void E.loadWasm('js/life-simd.wasm');"
+      ( "((w,h)=>{const s=globalThis.LifeSimd;if(!s||!s.load)return;"
+          <> "void s.load('js/life-simd.wasm',w,h);"
           <> "})"
       )
       (arg w <: arg h <: RecNil)
+  done
 
 engineCanStep :: EffectSyntax f (Expr f 'Bool)
-engineCanStep =
-  bindExpr $
-    ffi
-      ( "(()=>{const E=globalThis.LifeEngine;"
-          <> "return!!(E&&E.ready&&E.mode!=='none');"
-          <> "})"
-      )
-      RecNil
+engineCanStep = pure true_
 
 engineTickMs :: EffectSyntax f (Expr f 'Number)
-engineTickMs =
-  bindExpr $
-    ffi
-      "(()=>{const E=globalThis.LifeEngine;return E?E.lastTickMs:0;})"
-      RecNil
+engineTickMs = pure (number 0)
 
 engineModeLabel :: EffectSyntax f (Expr f 'String)
-engineModeLabel =
-  bindExpr $
-    ffi
-      "(()=>{const E=globalThis.LifeEngine;return E?E.mode:'none';})"
-      RecNil
+engineModeLabel = pure (string "haskell-lut")
 
 setEngineRenderMs :: Expr f 'Number -> EffectSyntax f (f 'Unit)
-setEngineRenderMs ms =
-  toSyntax $
-    ffi
-      "ms=>{const E=globalThis.LifeEngine;if(E)E.setRenderMs(ms);}"
-      (arg ms <: RecNil)
+setEngineRenderMs _ = done
 
 engineStepGeneration ::
   Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -79,43 +63,5 @@ engineStepGeneration ::
   -> Expr f ('Array 'Number)
   -> Effect f (MutableObjectOf StepCtx)
   -> EffectSyntax f (Expr f 'Bool)
-engineStepGeneration
-  alive
-  species
-  nextAlive
-  nextSpecies
-  w
-  h
-  x0
-  y0
-  x1
-  y1
-  nextLiveList
-  nextChangedList
-  stepCtx = do
-    bindExpr $
-      ffi
-        ( "((alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList,scratch)=>{"
-            <> "const S=globalThis.LifeEngineSync;"
-            <> "const r=S?S.finishStep(alive,species,nextAlive,nextSpecies,w,h,x0,y0,x1,y1,nextLiveList,nextChangedList):null;"
-            <> "if(!r)return false;"
-            <> "scratch.pop=r.pop;"
-            <> "scratch.bx0=r.bx0;scratch.by0=r.by0;scratch.bx1=r.bx1;scratch.by1=r.by1;"
-            <> "return true;"
-            <> "})"
-        )
-        ( arg alive
-            <: arg species
-            <: arg nextAlive
-            <: arg nextSpecies
-            <: arg w
-            <: arg h
-            <: arg x0
-            <: arg y0
-            <: arg x1
-            <: arg y1
-            <: arg nextLiveList
-            <: arg nextChangedList
-            <: ArgEffect stepCtx
-            <: RecNil
-        )
+engineStepGeneration =
+  finishStep

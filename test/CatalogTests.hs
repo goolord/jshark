@@ -2,10 +2,10 @@
 
 module CatalogTests (catalogTests) where
 
-import Data.List (find, sort)
-import qualified Data.Text as T
+import Data.List (find)
 import qualified Data.Text.IO as T
-import Life (canonicalShapeHash, catalogJs, shapeHash)
+import DiscoverCore (collectPhaseKey)
+import Life (canonicalShapeHash, catalogJs)
 import Patterns (PatternSpec (..), allPatterns, glider)
 import System.Directory (getCurrentDirectory)
 import System.FilePath ((</>))
@@ -41,54 +41,9 @@ catalogTests =
       Just p -> p
       Nothing -> error "toad missing from catalog"
 
-  phaseKey coords =
-    case phaseHashes coords of
-      [_] -> canonicalShapeHash coords
-      hashes -> T.intercalate "|" (sort hashes)
+  phaseKey coords = fst (collectPhaseKey coords)
 
-  phaseHashes coords =
-    let
-      (minX, minY, maxX, maxY) = bounds coords
-      pad = 2
-      ox = minX - pad
-      oy = minY - pad
-      gw = maxX - minX + 1 + 2 * pad
-      gh = maxY - minY + 1 + 2 * pad
-      grid0 = stamp coords ox oy gw gh
-     in
-      collect grid0 gw gh ox oy coords [] []
-
-  collect grid gw gh ox oy origCoords history acc
-    | null liveLocal = acc
-    | exact `elem` history = acc
-    | length acc >= 32 = acc
-    | otherwise =
-        let
-          nextAcc = exact : acc
-          (ocx, ocy) = centroid origCoords
-          (cx, cy) = centroid [(x + ox, y + oy) | (x, y) <- liveLocal]
-          moved = abs (cx - ocx) + abs (cy - ocy) > (0.75 :: Double)
-         in
-          if moved && not (null acc)
-            then acc
-            else
-              collect
-                (stepGrid grid gw gh)
-                gw
-                gh
-                ox
-                oy
-                origCoords
-                (exact : history)
-                nextAcc
-   where
-    liveLocal =
-      [ (x, y)
-      | y <- [0 .. gh - 1]
-      , x <- [0 .. gw - 1]
-      , grid !! (y * gw + x)
-      ]
-    exact = shapeHash liveLocal
+  phaseHashes coords = snd (collectPhaseKey coords)
 
   stepPattern coords =
     let
@@ -148,10 +103,3 @@ catalogTests =
         n == (3 :: Int) || (grid !! i && n == (2 :: Int))
     count nx ny =
       if grid !! (ny * gw + nx) then 1 else 0
-
-  centroid cs =
-    let
-      n = fromIntegral (length cs) :: Double
-      (sx, sy) = foldr (\(x, y) (a, b) -> (a + fromIntegral x, b + fromIntegral y)) (0, 0) cs
-     in
-      (sx / n, sy / n)

@@ -24,14 +24,15 @@ module Discover
 where
 
 import Catalog
-  ( catalogAdjectives
-  , catalogKnown
-  , catalogNames
+  ( buildKnownMap
+  , buildNamesMap
+  , catalogAdjectives
   , catalogNouns
   , catalogPrefixes
   , catalogSuffixes
   , catalogVerbsIng
   )
+import DiscoverRuntime (classifyAndResolveEffect)
 import GHC.Generics (Generic)
 import Grid (cellIdx, clampLiveBounds, packedIsAlive, setU8, u8Get)
 import JShark.Api
@@ -111,16 +112,14 @@ initSeenSpecies = hold Set.new
 initRegistry ::
   EffectSyntax f (Effect f ('MutableObject Registry))
 initRegistry = do
-  knownPairs <- bindExpr catalogKnown
-  namePairs <- bindExpr catalogNames
   prefixes <- bindExpr catalogPrefixes
   suffixes <- bindExpr catalogSuffixes
   nouns <- bindExpr catalogNouns
   adjectives <- bindExpr catalogAdjectives
   verbsIng <- bindExpr catalogVerbsIng
-  known <- hold $ Map.fromEntries knownPairs
-  catalogNamesMap <- hold $ Map.fromEntries namePairs
-  displayCache <- hold $ Map.fromEntries namePairs
+  known <- buildKnownMap
+  catalogNamesMap <- buildNamesMap
+  displayCache <- buildNamesMap
   _ <- Map.insert displayCache (number (fromIntegral soupSpecies)) (string "Soup")
   _ <-
     Map.insert displayCache (number (fromIntegral manualSpecies)) (string "Manual")
@@ -298,26 +297,11 @@ resolveComponent ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> EffectSyntax f (f 'Unit)
 resolveComponent scratch = do
-  alive <- getProp scratch "alive"
   w0 <- scratch.w
   cells <- getProp scratch "cells"
-  registry <- getProp scratch "registry"
   nextId0 <- scratch.nextId
   maxSid0 <- scratch.maxSid
-  res <-
-    hold $
-      ffi
-        ( "(function(reg,a,w,c,nid,mx){const D=globalThis.LifeDiscover;"
-            <> "return D?D.classifyAndResolve(reg,a,w,c,nid,mx):{action:0,sid:0};})"
-        )
-        ( arg registry
-            <: arg alive
-            <: arg w0
-            <: arg cells
-            <: arg nextId0
-            <: arg maxSid0
-            <: RecNil
-        )
+  res <- classifyAndResolveEffect scratch w0 cells nextId0 maxSid0
   action <- getProp res "action"
   sid <- getProp res "sid"
   ifS
@@ -405,19 +389,19 @@ stepIndexTracker alive species palette registry tracker seen container now x0 y0
     )
 
 -- | 16-bit count in a 512-byte buffer: @lo@ at @sid*2@, @hi@ at @sid*2+1@.
---   Grid is 49152 cells, so one species fits in 16 bits.
--- | Flat codegen elides nested @setU8@ in the index scan; keep the increment
---   in FFI until the flat path preserves @incCount@ effects.
 incCount :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 incCount counts sid = do
-  toSyntax_ $
-    ffi
-      ( "(function(counts,sid){const base=sid*2;const lo=counts[base];"
-          <> "if(lo===255){counts[base]=0;counts[base+1]++;}"
-          <> "else{counts[base]=lo+1;}})"
-      )
-      (arg counts <: arg sid <: RecNil)
-  done
+  let
+    base = sid * number 2
+  lo <- u8Get counts base
+  ifS
+    (lo .== 255)
+    ( do
+        setU8 counts base (number 0)
+        hi <- u8Get counts (base + 1)
+        setU8 counts (base + 1) (hi + 1)
+    )
+    (setU8 counts base (lo + 1))
 
 countOf :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number
 countOf counts sid =
