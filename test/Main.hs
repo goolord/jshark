@@ -35,6 +35,16 @@ import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.FlatTest
+  ( batchJobSlotTimingOk
+  , flatDirectPackForRangeOk
+  , flatDirectPackMatchesFromProgram
+  , flatDirectPackOptimizeEqual
+  , flatProgramRoundTrip
+  , flatSoaColumnsRoundTrip
+  , flatSoaPureNodeCount
+  , freezeEncColumnsOrderOk
+  , optIrEffectForRangeImpure
+  )
 import qualified JShark.Generic as G
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
@@ -2044,6 +2054,14 @@ flatSoATests =
     , testCase "flat matches phoas on kernel" $
         renderJS (effectfulASTIr kernelAndLambdaUse)
           @?= renderJS (effectfulAST kernelAndLambdaUse)
+    , testCase "freezeEncColumns preserves row order" $
+        freezeEncColumnsOrderOk @?= True
+    , testCase "direct pack matches fromProgram (kernel)" $
+        flatDirectPackMatchesFromProgram kernelAndLambdaUse @?= True
+    , testCase "direct pack matches fromProgram (forRange u8set)" $
+        flatDirectPackForRangeOk @?= True
+    , testCase "direct pack optimize matches reference" $
+        flatDirectPackOptimizeEqual kernelAndLambdaUse @?= True
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number

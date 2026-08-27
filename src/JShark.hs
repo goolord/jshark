@@ -123,12 +123,14 @@ module JShark
   , effectfulAST
   , effectfulASTFromFlat
   , effectfulASTFromPrepared
+  , effectfulASTFromSoA
   , effectfulASTIr
   , irEffectFromClosed
   , flatPrepareCore
   , flatPrepareFromIr
   , profileFlatOptFromIr
   , flatProgramNodeCount
+  , flatSoaNodeCount
   , flatSoaParallelThreshold
   , irExprFromClosed
   , irOptimizedEffectFromClosed
@@ -176,8 +178,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import GHC.Clock (getMonotonicTime)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
-import GHC.IO.Unsafe (unsafePerformIO)
 import qualified GHC.IO as GHCIO
+import GHC.IO.Unsafe (unsafePerformIO)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
 import JShark.CompileProgress
@@ -1236,7 +1238,9 @@ prepareEffectProgram e = do
 prepareFlatEffectProgram :: ClosedEffect u -> IO (Flat.FlatProgram, CG)
 prepareFlatEffectProgram e = do
   mCtx <- captureEmitCtx
-  (prog, _timing, _irNodes, _ir) <- flatPrepareCore e
+  (soa, _timing, _irNodes, _ir) <- flatPrepareCore e
+  let
+    !prog = FlatSoA.toFlatProgram soa
   case mCtx of
     Nothing -> pure (prog, startCG)
     Just ctx -> do
@@ -1244,7 +1248,7 @@ prepareFlatEffectProgram e = do
       pure (prog, startCG {cgEmitCtx = Just ctx})
 {-# NOINLINE prepareFlatEffectProgram #-}
 
-flatPrepareFromIr :: Ir.IrEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming)
+flatPrepareFromIr :: Ir.IrEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
 flatPrepareFromIr irOpt = do
   mCtx <- captureEmitCtx
   t0 <- getMonotonicTime
@@ -1252,8 +1256,8 @@ flatPrepareFromIr irOpt = do
     Just ctx -> reportPackPhase ctx 0 1
     Nothing -> pure ()
   let
-    !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
-    !packNodes = flatProgramNodeCount prog0
+    !soa0 = FlatSoA.packEffectProgramDirect irOpt
+    !packNodes = FlatSoA.flatSoaNodeCount soa0
     !_ = FlatSoA.soaPureCount soa0
   t1 <- getMonotonicTime
   case mCtx of
@@ -1265,13 +1269,13 @@ flatPrepareFromIr irOpt = do
   case mCtx of
     Just ctx -> reportFlatOptPhase ctx 0 1
     Nothing -> pure ()
-  !(prog, soaOpt) <-
-    pure (FlatSoA.optimizeFlatPack soa0 prog0)
+  let
+    !soaOpt = FlatSoA.optimizeFlatPack soa0
   _ <-
     GHCIO.evaluate
       ( packNodes
           `seq` FlatSoA.soaPureCount soaOpt
-          `seq` flatProgramNodeCount prog
+          `seq` FlatSoA.flatSoaNodeCount soaOpt
       )
   t3 <- getMonotonicTime
   case mCtx of
@@ -1286,14 +1290,14 @@ flatPrepareFromIr irOpt = do
         , fptFlatOptSec = seconds t2 t3
         , fptTotalSec = seconds t0 t3
         }
-  pure (prog, timing)
+  pure (soaOpt, timing)
 {-# NOINLINE flatPrepareFromIr #-}
 
 profileFlatOptFromIr :: Ir.IrEffect u -> IO FlatOptProfile
 profileFlatOptFromIr irOpt = do
   let
-    !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
-    !nodeCount = flatProgramNodeCount prog0
+    !soa0 = FlatSoA.packEffectProgramDirect irOpt
+    !nodeCount = FlatSoA.flatSoaNodeCount soa0
   _ <- GHCIO.evaluate (FlatSoA.soaPureCount soa0)
   tFold0 <- getMonotonicTime
   let
@@ -1313,10 +1317,7 @@ profileFlatOptFromIr irOpt = do
   tAttach1 <- getMonotonicTime
   tTo0 <- getMonotonicTime
   let
-    !progRepack =
-      if folded
-        then FlatSoA.toProgram soa2
-        else prog0
+    !progRepack = FlatSoA.toFlatProgram soa2
   tTo1 <- getMonotonicTime
   let
     !_ = progRepack
@@ -1325,10 +1326,7 @@ profileFlatOptFromIr irOpt = do
     foldSeqSec = seconds tFoldSeq0 tFoldSeq1
     pureSec = seconds tPure0 tPure1
     attachSec = seconds tAttach0 tAttach1
-    toProgSec =
-      if folded
-        then seconds tTo0 tTo1
-        else 0
+    toProgSec = seconds tTo0 tTo1
     total = foldSec + pureSec + attachSec + toProgSec
   pure
     FlatOptProfile
@@ -1347,7 +1345,7 @@ profileFlatOptFromIr irOpt = do
 {-# NOINLINE profileFlatOptFromIr #-}
 
 flatPrepareCore ::
-  ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming, Int, Ir.IrEffect u)
+  ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)
 flatPrepareCore (e :: ClosedEffect u) = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
@@ -1371,7 +1369,7 @@ flatPrepareCore (e :: ClosedEffect u) = do
   case mCtx of
     Just ctx -> reportIrOptPhase ctx 1 1
     Nothing -> pure ()
-  (prog, packTiming) <- flatPrepareFromIr irOpt
+  (soa, packTiming) <- flatPrepareFromIr irOpt
   tAll1 <- getMonotonicTime
   let
     timing =
@@ -1384,7 +1382,7 @@ flatPrepareCore (e :: ClosedEffect u) = do
         }
   reportFlatPrepareTiming timing
   recordJobFlatPrepare timing
-  pure (prog, timing, irNodes, irOpt)
+  pure (soa, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareCore #-}
 
 {-# NOINLINE tickEmitCtxUnit #-}
@@ -4848,7 +4846,7 @@ emitFlatSiblings ::
   -> (CG, [Code])
 emitFlatSiblings mode emit env s0 prog nids =
   case mode of
-    LayeredEmit{} -> emitFlatSiblingsSeq emit env s0 prog nids
+    LayeredEmit {} -> emitFlatSiblingsSeq emit env s0 prog nids
     DirectEmit
       | shouldParFlatSiblings prog nids ->
           parEmitSiblingsDirect emit env s0 prog nids
@@ -4915,7 +4913,7 @@ flatRenderArgList mode env s0 prog ai =
     args = Flat.flatArgGroup prog ai
    in
     case mode of
-      LayeredEmit{} ->
+      LayeredEmit {} ->
         flatRenderArgListSeq mode env s0 prog args
       DirectEmit ->
         let
@@ -5139,7 +5137,7 @@ flatRenderCallbackMethod mode env name s0 prog arrId tag bodyId =
     (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arrId
     (nParam, s2, exDecl, exRef) =
       case mode of
-        LayeredEmit{} ->
+        LayeredEmit {} ->
           let
             (s', Code d r) = flatPureChild mode env s1 prog bodyId
            in
@@ -5177,7 +5175,7 @@ flatRenderFold mode env method s0 prog arrId zId tagA tagB bodyId =
     (s2, Code zDecl zRef) = flatPureChild mode env s1 prog zId
     (nAcc, nElem, s3, exDecl, exRef) =
       case mode of
-        LayeredEmit{} ->
+        LayeredEmit {} ->
           let
             (s', Code d r) = flatPureChild mode env s2 prog bodyId
            in
@@ -5216,7 +5214,7 @@ flatRenderMethod mode env s0 prog = \case
     flatRenderFold mode env ".reduceRight" s0 prog arr z tagA tagB body
   Flat.FE_MethToSorted arr tagA tagB body ->
     case mode of
-      LayeredEmit{} ->
+      LayeredEmit {} ->
         let
           (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arr
           nA = flatEnvTag env tagA
@@ -5241,7 +5239,7 @@ flatRenderMethod mode env s0 prog = \case
           )
   Flat.FE_MethFrom n tag body ->
     case mode of
-      LayeredEmit{} ->
+      LayeredEmit {} ->
         let
           (s1, Code nDecl nRef) = flatPureChild mode env s0 prog n
           nI = flatEnvTag env tag
@@ -5271,7 +5269,7 @@ flatRenderFnLit ::
   -> (CG, Code)
 flatRenderFnLit mode env s0 prog tags bodyId =
   case mode of
-    LayeredEmit{} ->
+    LayeredEmit {} ->
       let
         ids = map (flatEnvTag env) tags
         (s1, Code d r) = flatPureChild mode env s0 prog bodyId
@@ -5288,7 +5286,7 @@ flatRenderFnLit mode env s0 prog tags bodyId =
 flatResultUnwrapIdent :: FlatEmitMode -> Env -> CG -> Int -> (Int, CG)
 flatResultUnwrapIdent mode env s tag =
   case mode of
-    LayeredEmit{} -> (flatEnvTag env tag, s)
+    LayeredEmit {} -> (flatEnvTag env tag, s)
     DirectEmit ->
       let
         (n, s') = allocIdent s
@@ -6151,6 +6149,9 @@ flatEffectfulASTGo !mode !env !sIn prog nid =
 flatProgramNodeCount :: Flat.FlatProgram -> Int
 flatProgramNodeCount p = V.length (Flat.fpNodes p)
 
+flatSoaNodeCount :: FlatSoA.FlatSoA -> Int
+flatSoaNodeCount = FlatSoA.flatSoaNodeCount
+
 flatSoaParallelThreshold :: Int
 flatSoaParallelThreshold = FlatSoA.flatSoaParallelThreshold
 
@@ -6184,6 +6185,10 @@ effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
 effectfulASTFromPrepared :: Flat.FlatProgram -> JS
 effectfulASTFromPrepared =
   uncurry renderWithHelpers . flatEffectfulCodegenFromProg
+
+effectfulASTFromSoA :: FlatSoA.FlatSoA -> JS
+effectfulASTFromSoA soa =
+  effectfulASTFromPrepared (FlatSoA.toFlatProgram soa)
 
 effectfulAST :: ClosedEffect u -> JS
 effectfulAST = effectfulASTFromFlat

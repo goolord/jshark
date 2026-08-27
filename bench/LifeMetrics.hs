@@ -8,9 +8,9 @@ import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark
-  ( effectfulASTFromPrepared
+  ( effectfulASTFromSoA
   , flatPrepareCore
-  , flatProgramNodeCount
+  , flatSoaNodeCount
   , optIrLargeThreshold
   , phoasNodeCountFromIr
   , renderJSCompact
@@ -26,8 +26,8 @@ life = stmts mainJS
 main :: IO ()
 main = do
   putStrLn $ "irThreshold," ++ show optIrLargeThreshold
-  (prog, FlatPrepareTiming {..}, irNodes, irOpt) <- flatPrepareCore life
-  evaluate prog
+  (soa, FlatPrepareTiming {..}, irNodes, irOpt) <- flatPrepareCore life
+  evaluate soa
   putStrLn $ "rawNodes," ++ show irNodes
   t0 <- getMonotonicTime
   let
@@ -41,9 +41,9 @@ main = do
   putStrLn $ "flatPack," ++ show fptPackSec
   putStrLn $ "flatOpt," ++ show fptFlatOptSec
   putStrLn $ "flatPrepare," ++ show fptTotalSec
-  putStrLn $ "flatNodes," ++ show (flatProgramNodeCount prog)
+  putStrLn $ "flatNodes," ++ show (flatSoaNodeCount soa)
   t2 <- getMonotonicTime
-  js <- evaluate $ renderJSCompact (effectfulASTFromPrepared prog)
+  js <- evaluate $ renderJSCompact (effectfulASTFromSoA soa)
   t3 <- getMonotonicTime
   putStrLn $ "flatEmit," ++ show (seconds t2 t3)
   putStrLn $ "jsBytes," ++ show (T.length js)

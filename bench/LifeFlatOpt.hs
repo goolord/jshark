@@ -35,8 +35,7 @@ printProfile FlatOptProfile {..} = do
   putStrLn $
     "toProgram,"
       ++ show fopToProgramSec
-      ++ ","
-      ++ (if fopFolded then "repacked" else "skipped")
+      ++ ",emit boundary"
   putStrLn $ "flatOptTotal," ++ show fopTotalSec ++ ",nodes=" ++ show fopNodeCount
 
 main :: IO ()

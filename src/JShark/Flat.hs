@@ -20,9 +20,7 @@ module JShark.Flat
   , FlatLit (FLit)
   , packExpr
   , packEffect
-  , packEffectProgram
   , packEffectProgramState
-  , buildFlatProgram
   , fpRootEffect
   , flatNode
   , flatLit
@@ -39,22 +37,34 @@ module JShark.Flat
   , flatLayerBuckets
   , flatNodeIsEffect
   , flatNodePackRefs
+  , encodeFlatNode
+  , emptySoaSideAcc
+  , packStateEncs
+  , packStateSoaSide
+  , packStateSideTables
+  , PackState
+  , SoaSideAcc (..)
+  , sideAccToVectors
+  , validateFlatProgram
   )
 where
 
+import Control.Monad.ST (runST)
 import Control.Monad.State.Strict (State, get, put, runState)
+import Data.Int (Int32)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Control.Monad.ST (runST)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word8)
 import GHC.TypeLits (KnownSymbol, symbolVal)
+import JShark.FlatEnc (Enc (..))
+import qualified JShark.FlatEnc as FE
 import JShark.Ir
 import JShark.Rec (Rec (..))
-import JShark.Types (BigBinOp, FFIForm (..), FixedOp, Value (..))
+import JShark.Types (BigBinOp (..), FFIForm (..), FixedOp, Value (..))
 import Unsafe.Coerce (unsafeCoerce)
 
 type NodeId = Int
@@ -174,10 +184,173 @@ data FlatProgram = FlatProgram
 fpRootEffect :: FlatProgram -> NodeId
 fpRootEffect = fpRoot
 
+data SoaSideAcc = SoaSideAcc
+  { saFixed :: ![FlatFixed]
+  , saFnLit :: ![([Int], NodeId)]
+  , saArrays :: ![[NodeId]]
+  }
+
+emptySoaSideAcc :: SoaSideAcc
+emptySoaSideAcc = SoaSideAcc [] [] []
+
+sideAccToVectors ::
+  SoaSideAcc
+  -> ( Vector FlatFixed
+     , Vector ([Int], NodeId)
+     , Vector (Vector NodeId)
+     )
+sideAccToVectors side =
+  ( V.fromList (saFixed side)
+  , V.fromList (saFnLit side)
+  , V.fromList (map V.fromList (saArrays side))
+  )
+
+encI32 :: Int -> Int32
+encI32 = fromIntegral
+
+encBigOp :: BigBinOp -> Int32
+encBigOp =
+  encI32 . \case
+    BPlus -> (0 :: Int)
+    BMinus -> 1
+    BTimes -> 2
+    BQuot -> 3
+    BRem -> 4
+    BBitAnd -> 5
+    BBitOr -> 6
+    BBitXor -> 7
+    BShl -> 8
+    BShr -> 9
+
+encodeFlatNode :: FlatNode -> SoaSideAcc -> (Enc, SoaSideAcc)
+encodeFlatNode node side = case node of
+  FE_Literal li -> (Enc FE.oFE_LITERAL (encI32 li) 0 0 0 0, side)
+  FE_Var v -> (Enc FE.oFE_VAR (encI32 v) 0 0 0 0, side)
+  FE_Let tag x b -> (Enc FE.oFE_LET (encI32 tag) (encI32 x) (encI32 b) 0 0, side)
+  FE_LetRec tag r b -> (Enc FE.oFE_LETREC (encI32 tag) (encI32 r) (encI32 b) 0 0, side)
+  FE_Lambda tag b -> (Enc FE.oFE_LAMBDA (encI32 tag) (encI32 b) 0 0 0, side)
+  FE_Apply f x -> (Enc FE.oFE_APPLY (encI32 f) (encI32 x) 0 0 0, side)
+  FE_EmbedEff e -> (Enc FE.oFE_EMBEDEFF (encI32 e) 0 0 0 0, side)
+  FE_If c t e -> (Enc FE.oFE_IF (encI32 c) (encI32 t) (encI32 e) 0 0, side)
+  FE_OptionCase o n tag s ->
+    (Enc FE.oFE_OPTIONCASE (encI32 o) (encI32 n) (encI32 tag) (encI32 s) 0, side)
+  FE_ResultOk x -> (Enc FE.oFE_RESOK (encI32 x) 0 0 0 0, side)
+  FE_ResultErr x -> (Enc FE.oFE_RESERR (encI32 x) 0 0 0 0, side)
+  FE_ResultCase o tagE er tagO ok ->
+    ( Enc
+        FE.oFE_RESCASE
+        (encI32 o)
+        (encI32 tagE)
+        (encI32 er)
+        (encI32 tagO)
+        (encI32 ok)
+    , side
+    )
+  FE_Index a idx -> (Enc FE.oFE_INDEX (encI32 a) (encI32 idx) 0 0 0, side)
+  FE_U8Index b idx -> (Enc FE.oFE_U8INDEX (encI32 b) (encI32 idx) 0 0 0, side)
+  FE_Error m -> (Enc FE.oFE_ERROR (encI32 m) 0 0 0 0, side)
+  FE_Fixed fix ->
+    let
+      fi = length (saFixed side)
+     in
+      (Enc FE.oFE_FIXED (encI32 fi) 0 0 0 0, side {saFixed = saFixed side ++ [fix]})
+  FE_FnLit tags b ->
+    let
+      fi = length (saFnLit side)
+     in
+      ( Enc FE.oFE_FNLIT (encI32 fi) (encI32 b) 0 0 0
+      , side {saFnLit = saFnLit side ++ [(tags, b)]}
+      )
+  FE_UnsafeNullable x -> (Enc FE.oFE_UNSAFENULL (encI32 x) 0 0 0 0, side)
+  FE_FrozenLit gi -> (Enc FE.oFE_FROZEN (encI32 gi) 0 0 0 0, side)
+  FE_GetField ti o -> (Enc FE.oFE_GETFIELD (encI32 ti) (encI32 o) 0 0 0, side)
+  FE_Hvm2Ref ti -> (Enc FE.oFE_HVM2REF (encI32 ti) 0 0 0 0, side)
+  FE_KConcat x y -> (Enc FE.oFE_KCONCAT (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KPlus x y -> (Enc FE.oFE_KPLUS (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KTimes x y -> (Enc FE.oFE_KTIMES (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KMinus x y -> (Enc FE.oFE_KMINUS (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KNegate x -> (Enc FE.oFE_KNEG (encI32 x) 0 0 0 0, side)
+  FE_KFracDiv x y -> (Enc FE.oFE_KDIV (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KRem x y -> (Enc FE.oFE_KREM (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KBitAnd x y -> (Enc FE.oFE_KBITAND (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KBitOr x y -> (Enc FE.oFE_KBITOR (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KBitXor x y -> (Enc FE.oFE_KBITXOR (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KShl x y -> (Enc FE.oFE_KSHL (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KShr x y -> (Enc FE.oFE_KSHR (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KUShr x y -> (Enc FE.oFE_KUSHR (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KBig op x y -> (Enc FE.oFE_KBIG (encBigOp op) (encI32 x) (encI32 y) 0 0, side)
+  FE_KBigNeg x -> (Enc FE.oFE_KBIGNEG (encI32 x) 0 0 0 0, side)
+  FE_KAnd x y -> (Enc FE.oFE_KAND (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KOr x y -> (Enc FE.oFE_KOR (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KEq s x y -> (Enc FE.oFE_KEQ (if s then 1 else 0) (encI32 x) (encI32 y) 0 0, side)
+  FE_KNEq s x y -> (Enc FE.oFE_KNEQ (if s then 1 else 0) (encI32 x) (encI32 y) 0 0, side)
+  FE_KGTh x y -> (Enc FE.oFE_KGTH (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KLTh x y -> (Enc FE.oFE_KLTH (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KGTEq x y -> (Enc FE.oFE_KGTEQ (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KLTEq x y -> (Enc FE.oFE_KLTEQ (encI32 x) (encI32 y) 0 0 0, side)
+  FE_KShow x -> (Enc FE.oFE_KSHOW (encI32 x) 0 0 0 0, side)
+  FE_KTypeOf x -> (Enc FE.oFE_KTYPEOF (encI32 x) 0 0 0 0, side)
+  FE_MethMap a tag b -> (Enc FE.oFE_MMAP (encI32 a) (encI32 tag) (encI32 b) 0 0, side)
+  FE_MethFilter a tag b -> (Enc FE.oFE_MFILTER (encI32 a) (encI32 tag) (encI32 b) 0 0, side)
+  FE_MethReduce a z ta tb body ->
+    ( Enc FE.oFE_MREDUCE (encI32 a) (encI32 z) (encI32 ta) (encI32 tb) (encI32 body)
+    , side
+    )
+  FE_MethReduceRight a z ta tb body ->
+    ( Enc FE.oFE_MREDUCER (encI32 a) (encI32 z) (encI32 ta) (encI32 tb) (encI32 body)
+    , side
+    )
+  FE_MethToSorted a ta tb b ->
+    (Enc FE.oFE_MTOSORTED (encI32 a) (encI32 ta) (encI32 tb) (encI32 b) 0, side)
+  FE_MethFrom n tag b -> (Enc FE.oFE_MFROM (encI32 n) (encI32 tag) (encI32 b) 0 0, side)
+  FX_Lift x -> (Enc FE.oFX_LIFT (encI32 x) 0 0 0 0, side)
+  FX_FFI fi ai -> (Enc FE.oFX_FFI (encI32 fi) (encI32 ai) 0 0 0, side)
+  FX_UnsafeObject t -> (Enc FE.oFX_UNSAFEOBJ (encI32 t) 0 0 0 0, side)
+  FX_UnsafeObjectGet x t -> (Enc FE.oFX_UNSAFEOBJGET (encI32 x) (encI32 t) 0 0 0, side)
+  FX_UnsafeObjectAssign x y ->
+    (Enc FE.oFX_UNSAFEOBJSET (encI32 x) (encI32 y) 0 0 0, side)
+  FX_CallMethod r m ai -> (Enc FE.oFX_CALLMETHOD (encI32 r) (encI32 m) (encI32 ai) 0 0, side)
+  FX_Bind tag x b -> (Enc FE.oFX_BIND (encI32 tag) (encI32 x) (encI32 b) 0 0, side)
+  FX_ThenE x y -> (Enc FE.oFX_THENE (encI32 x) (encI32 y) 0 0 0, side)
+  FX_BindRec tag r b -> (Enc FE.oFX_BINDREC (encI32 tag) (encI32 r) (encI32 b) 0 0, side)
+  FX_LambdaE tag b -> (Enc FE.oFX_LAMBDAE (encI32 tag) (encI32 b) 0 0 0, side)
+  FX_ApplyE f x -> (Enc FE.oFX_APPLYE (encI32 f) (encI32 x) 0 0 0, side)
+  FX_IfE c t e -> (Enc FE.oFX_IFE (encI32 c) (encI32 t) (encI32 e) 0 0, side)
+  FX_While c b -> (Enc FE.oFX_WHILE (encI32 c) (encI32 b) 0 0 0, side)
+  FX_ForRange s e tag b ->
+    (Enc FE.oFX_FORRANGE (encI32 s) (encI32 e) (encI32 tag) (encI32 b) 0, side)
+  FX_U8Set b i v -> (Enc FE.oFX_U8SET (encI32 b) (encI32 i) (encI32 v) 0 0, side)
+  FX_U8Fill b v -> (Enc FE.oFX_U8FILL (encI32 b) (encI32 v) 0 0 0, side)
+  FX_OptionCaseE o n tag s ->
+    (Enc FE.oFX_OPTCASEE (encI32 o) (encI32 n) (encI32 tag) (encI32 s) 0, side)
+  FX_ResultCaseE o tagE er tagO ok ->
+    ( Enc
+        FE.oFX_RESCASEE
+        (encI32 o)
+        (encI32 tagE)
+        (encI32 er)
+        (encI32 tagO)
+        (encI32 ok)
+    , side
+    )
+  FX_StringCaseE s ai d -> (Enc FE.oFX_STRCASEE (encI32 s) (encI32 ai) (encI32 d) 0 0, side)
+  FX_Throw x -> (Enc FE.oFX_THROW (encI32 x) 0 0 0 0, side)
+  FX_Try a tag k -> (Enc FE.oFX_TRY (encI32 a) (encI32 tag) (encI32 k) 0 0, side)
+  FX_ObjectLit gi -> (Enc FE.oFX_OBJLIT (encI32 gi) 0 0 0 0, side)
+  FX_DeleteProp o k -> (Enc FE.oFX_DELETEPROP (encI32 o) (encI32 k) 0 0 0, side)
+  FX_ArrayLit ns ->
+    let
+      ai = length (saArrays side)
+     in
+      ( Enc FE.oFX_ARRAYLIT (encI32 ai) 0 0 0 0
+      , side {saArrays = saArrays side ++ [ns]}
+      )
+
 emptyPackState :: PackState
 emptyPackState =
   PackState
-    { psNodes = []
+    { psEncs = []
+    , psSoaSide = emptySoaSideAcc
     , psLits = []
     , psTexts = []
     , psFFIs = []
@@ -185,13 +358,6 @@ emptyPackState =
     , psFieldGroups = []
     , psArgGroups = []
     }
-
-packEffectProgram :: IrEffect u -> FlatProgram
-packEffectProgram e =
-  let
-    (root, st) = runState (packEffect e) emptyPackState
-   in
-    finalizePack root st
 
 flatNode :: FlatProgram -> NodeId -> FlatNode
 flatNode p i = fpNodes p V.! i
@@ -226,7 +392,8 @@ flatArgGroup :: FlatProgram -> Int -> [FlatArg]
 flatArgGroup p i = fpArgGroups p V.! i
 
 data PackState = PackState
-  { psNodes :: ![FlatNode]
+  { psEncs :: ![Enc]
+  , psSoaSide :: !SoaSideAcc
   , psLits :: ![FlatLit]
   , psTexts :: ![Text]
   , psFFIs :: ![FFIForm]
@@ -235,6 +402,30 @@ data PackState = PackState
   , psArgGroups :: ![[FlatArg]]
   }
 
+packStateEncs :: PackState -> [Enc]
+packStateEncs = psEncs
+
+packStateSoaSide :: PackState -> SoaSideAcc
+packStateSoaSide = psSoaSide
+
+packStateSideTables ::
+  PackState
+  -> ( Vector FlatLit
+     , Vector Text
+     , Vector FFIForm
+     , Vector [(Text, NodeId)]
+     , Vector [FlatField]
+     , Vector [FlatArg]
+     )
+packStateSideTables st =
+  ( V.fromList (reverse (psLits st))
+  , V.fromList (reverse (psTexts st))
+  , V.fromList (reverse (psFFIs st))
+  , V.fromList (reverse (psStrCases st))
+  , V.fromList (reverse (psFieldGroups st))
+  , V.fromList (reverse (psArgGroups st))
+  )
+
 fieldKeyText :: forall k. KnownSymbol k => Text
 fieldKeyText = T.pack (symbolVal (Proxy @k))
 
@@ -242,8 +433,13 @@ addNode :: FlatNode -> State PackState NodeId
 addNode node = do
   st <- get
   let
-    n = length (psNodes st)
-  put st {psNodes = node : psNodes st}
+    n = length (psEncs st)
+    (enc, side') = encodeFlatNode node (psSoaSide st)
+  put
+    st
+      { psEncs = enc : psEncs st
+      , psSoaSide = side'
+      }
   pure n
 
 addLit :: FlatLit -> State PackState Int
@@ -293,25 +489,6 @@ addArgGroup args = do
     i = length (psArgGroups st)
   put st {psArgGroups = args : psArgGroups st}
   pure i
-
-finalizePack :: NodeId -> PackState -> FlatProgram
-finalizePack root st = validateFlatProgram prog `seq` prog
- where
-  prog = buildFlatProgram root st
-
-buildFlatProgram :: NodeId -> PackState -> FlatProgram
-buildFlatProgram root st =
-  FlatProgram
-    { fpNodes = V.fromList (reverse (psNodes st))
-    , fpLits = V.fromList (reverse (psLits st))
-    , fpTexts = V.fromList (reverse (psTexts st))
-    , fpFFIs = V.fromList (reverse (psFFIs st))
-    , fpStrCases = V.fromList (reverse (psStrCases st))
-    , fpFieldGroups = V.fromList (reverse (psFieldGroups st))
-    , fpArgGroups = V.fromList (reverse (psArgGroups st))
-    , fpPure = V.empty
-    , fpRoot = root
-    }
 
 packEffectProgramState :: IrEffect u -> (NodeId, PackState)
 packEffectProgramState e = runState (packEffect e) emptyPackState
@@ -519,30 +696,30 @@ flatLayerBuckets p root =
 
 flatNodeIsEffect :: FlatNode -> Bool
 flatNodeIsEffect = \case
-  FX_Lift{} -> True
-  FX_FFI{} -> True
-  FX_UnsafeObject{} -> True
-  FX_UnsafeObjectGet{} -> True
-  FX_UnsafeObjectAssign{} -> True
-  FX_CallMethod{} -> True
-  FX_Bind{} -> True
-  FX_ThenE{} -> True
-  FX_BindRec{} -> True
-  FX_LambdaE{} -> True
-  FX_ApplyE{} -> True
-  FX_IfE{} -> True
-  FX_While{} -> True
-  FX_ForRange{} -> True
-  FX_U8Set{} -> True
-  FX_U8Fill{} -> True
-  FX_OptionCaseE{} -> True
-  FX_ResultCaseE{} -> True
-  FX_StringCaseE{} -> True
-  FX_Throw{} -> True
-  FX_Try{} -> True
-  FX_ObjectLit{} -> True
-  FX_DeleteProp{} -> True
-  FX_ArrayLit{} -> True
+  FX_Lift {} -> True
+  FX_FFI {} -> True
+  FX_UnsafeObject {} -> True
+  FX_UnsafeObjectGet {} -> True
+  FX_UnsafeObjectAssign {} -> True
+  FX_CallMethod {} -> True
+  FX_Bind {} -> True
+  FX_ThenE {} -> True
+  FX_BindRec {} -> True
+  FX_LambdaE {} -> True
+  FX_ApplyE {} -> True
+  FX_IfE {} -> True
+  FX_While {} -> True
+  FX_ForRange {} -> True
+  FX_U8Set {} -> True
+  FX_U8Fill {} -> True
+  FX_OptionCaseE {} -> True
+  FX_ResultCaseE {} -> True
+  FX_StringCaseE {} -> True
+  FX_Throw {} -> True
+  FX_Try {} -> True
+  FX_ObjectLit {} -> True
+  FX_DeleteProp {} -> True
+  FX_ArrayLit {} -> True
   _ -> False
 
 validateFlatProgram :: FlatProgram -> ()

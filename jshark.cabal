@@ -115,6 +115,7 @@ library
     JShark.CompileReport
     JShark.CompileTerminal
     JShark.Flat
+    JShark.FlatEnc
     JShark.FlatSoA
     JShark.Ir
     JShark.JsNum

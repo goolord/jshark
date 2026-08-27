@@ -22,7 +22,10 @@ module JShark.FlatSoA
   , optimizeSoA
   , packEffectProgramSoA
   , packEffectProgramDirect
+  , packEffectProgram
   , optimizeFlatPack
+  , flatSoaNodeCount
+  , toFlatProgram
   , soaPureCount
   , soaPureVector
   , constantFoldWithStats
@@ -37,8 +40,8 @@ import Control.Concurrent (getNumCapabilities)
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Monad (foldM, forM_, when)
 import Control.Monad.ST (runST)
-import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Bits ((.&.))
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
@@ -48,6 +51,7 @@ import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
 import Data.Word (Word16, Word8)
+import GHC.IO.Unsafe (unsafePerformIO)
 import JShark.Flat
   ( FlatArg (..)
   , FlatField (..)
@@ -56,13 +60,20 @@ import JShark.Flat
   , FlatNode (..)
   , FlatProgram (..)
   , NodeId
+  , PackState
+  , emptySoaSideAcc
+  , encodeFlatNode
   , fpPure
   , packEffectProgramState
-  , buildFlatProgram
+  , packStateEncs
+  , packStateSideTables
+  , packStateSoaSide
+  , sideAccToVectors
+  , validateFlatProgram
   )
+import JShark.FlatEnc (Enc (..), freezeEncColumns)
 import JShark.Ir (IrEffect)
 import JShark.Types (BigBinOp (..), FFIForm (..), Value (..))
-import GHC.IO.Unsafe (unsafePerformIO)
 
 type Op = Word16
 
@@ -317,28 +328,69 @@ data FlatSoA = FlatSoA
   }
 
 packEffectProgramSoA :: IrEffect u -> FlatSoA
-packEffectProgramSoA e = fst (packEffectProgramDirect e)
+packEffectProgramSoA = packEffectProgramDirect
 
--- | Pack IR to SoA + 'FlatProgram' in one encode pass (no 'validateFlatProgram').
-packEffectProgramDirect :: IrEffect u -> (FlatSoA, FlatProgram)
+flatSoaNodeCount :: FlatSoA -> Int
+flatSoaNodeCount soa = VU.length (fsaOpcodes soa)
+
+-- | Materialize 'FlatProgram' for emit (single O(n) decode at pipeline boundary).
+toFlatProgram :: FlatSoA -> FlatProgram
+toFlatProgram = toProgram
+
+freezeSoaFromPackState :: NodeId -> PackState -> FlatSoA
+freezeSoaFromPackState root st =
+  let
+    encs = reverse (packStateEncs st)
+    side = packStateSoaSide st
+    (opF, aF, bF, cF, dF, eF) = freezeEncColumns encs
+    n = length encs
+    (fx, fl, ag) = sideAccToVectors side
+    (lits, texts, ffis, strCases, fieldGroups, argGroups) =
+      packStateSideTables st
+   in
+    FlatSoA
+      { fsaOpcodes = opF
+      , fsaA = aF
+      , fsaB = bF
+      , fsaC = cF
+      , fsaD = dF
+      , fsaE = eF
+      , fsaPure = VU.replicate n 0
+      , fsaFixed = fx
+      , fsaFnLit = fl
+      , fsaArrayGroups = ag
+      , fsaLits = lits
+      , fsaTexts = texts
+      , fsaFFIs = ffis
+      , fsaStrCases = strCases
+      , fsaFieldGroups = fieldGroups
+      , fsaArgGroups = argGroups
+      , fsaRoot = root
+      }
+
+-- | Pack IR directly to SoA (no 'FlatProgram' during pack).
+packEffectProgramDirect :: IrEffect u -> FlatSoA
 packEffectProgramDirect e =
   let
     (root, st) = packEffectProgramState e
-    prog = buildFlatProgram root st
    in
-    (fromProgram prog, prog)
+    freezeSoaFromPackState root st
 
--- | SoA optimizer passes without re-packing from 'FlatProgram'.
-optimizeFlatPack :: FlatSoA -> FlatProgram -> (FlatProgram, FlatSoA)
-optimizeFlatPack soa0 prog0 =
+-- | Validated 'FlatProgram' for tests and legacy callers.
+packEffectProgram :: IrEffect u -> FlatProgram
+packEffectProgram e =
   let
-    !(soa1, folded) = optConstantFoldNumWithChangedPar soa0
-    !soa2 = propagatePureFlagsPar soa1
-    !pureV = unboxedToBoxedPure (fsaPure soa2)
+    prog = toProgram (packEffectProgramDirect e)
    in
-    if folded
-      then (toProgram soa2, soa2)
-      else (prog0 {fpPure = pureV}, soa2)
+    validateFlatProgram prog `seq` prog
+
+-- | SoA optimizer passes; returns optimized SoA (emit calls 'toFlatProgram').
+optimizeFlatPack :: FlatSoA -> FlatSoA
+optimizeFlatPack soa0 =
+  let
+    !(soa1, _folded) = optConstantFoldNumWithChangedPar soa0
+   in
+    propagatePureFlagsPar soa1
 
 i32 :: Int -> Int32
 i32 = fromIntegral
@@ -346,8 +398,6 @@ i32 = fromIntegral
 unboxedToBoxedPure :: VU.Vector Word8 -> V.Vector Word8
 unboxedToBoxedPure = GV.convert
 {-# INLINE unboxedToBoxedPure #-}
-
-data Enc = Enc !Op !Int32 !Int32 !Int32 !Int32 !Int32
 
 fromProgram :: FlatProgram -> FlatSoA
 fromProgram p =
@@ -371,21 +421,22 @@ fromProgram p =
           MVU.write cM i c
           MVU.write dM i d
           MVU.write eM i e
-        go !i !fx !fl !ag
-          | i >= n = pure (fx, fl, ag)
+        go !i !side
+          | i >= n = pure side
           | otherwise = do
               let
-                (enc, fx', fl', ag') =
-                  encodeNode (nodes V.! i) fx fl ag
+                (enc, side') = encodeFlatNode (nodes V.! i) side
               writeEnc i enc
-              go (i + 1) fx' fl' ag'
-      (fx, fl, ag) <- go 0 V.empty V.empty V.empty
+              go (i + 1) side'
+      sideFinal <- go 0 emptySoaSideAcc
       opF <- VU.unsafeFreeze opM
       aF <- VU.unsafeFreeze aM
       bF <- VU.unsafeFreeze bM
       cF <- VU.unsafeFreeze cM
       dF <- VU.unsafeFreeze dM
       eF <- VU.unsafeFreeze eM
+      let
+        (fx, fl, ag) = sideAccToVectors sideFinal
       pure
         FlatSoA
           { fsaOpcodes = opF
@@ -410,123 +461,6 @@ fromProgram p =
   pureColumn fp n
     | V.length fp == n = GV.convert fp
     | otherwise = VU.replicate n 0
-
-  encodeNode node fx fl ag = case node of
-    FE_Literal li -> (Enc oFE_LITERAL (i32 li) 0 0 0 0, fx, fl, ag)
-    FE_Var v -> (Enc oFE_VAR (i32 v) 0 0 0 0, fx, fl, ag)
-    FE_Let tag x b -> (Enc oFE_LET (i32 tag) (i32 x) (i32 b) 0 0, fx, fl, ag)
-    FE_LetRec tag r b -> (Enc oFE_LETREC (i32 tag) (i32 r) (i32 b) 0 0, fx, fl, ag)
-    FE_Lambda tag b -> (Enc oFE_LAMBDA (i32 tag) (i32 b) 0 0 0, fx, fl, ag)
-    FE_Apply f x -> (Enc oFE_APPLY (i32 f) (i32 x) 0 0 0, fx, fl, ag)
-    FE_EmbedEff e -> (Enc oFE_EMBEDEFF (i32 e) 0 0 0 0, fx, fl, ag)
-    FE_If c t e -> (Enc oFE_IF (i32 c) (i32 t) (i32 e) 0 0, fx, fl, ag)
-    FE_OptionCase o n tag s ->
-      (Enc oFE_OPTIONCASE (i32 o) (i32 n) (i32 tag) (i32 s) 0, fx, fl, ag)
-    FE_ResultOk x -> (Enc oFE_RESOK (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_ResultErr x -> (Enc oFE_RESERR (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_ResultCase o tagE er tagO ok ->
-      ( Enc oFE_RESCASE (i32 o) (i32 tagE) (i32 er) (i32 tagO) (i32 ok)
-      , fx
-      , fl
-      , ag
-      )
-    FE_Index a idx -> (Enc oFE_INDEX (i32 a) (i32 idx) 0 0 0, fx, fl, ag)
-    FE_U8Index b idx -> (Enc oFE_U8INDEX (i32 b) (i32 idx) 0 0 0, fx, fl, ag)
-    FE_Error m -> (Enc oFE_ERROR (i32 m) 0 0 0 0, fx, fl, ag)
-    FE_Fixed fix ->
-      let
-        fi = V.length fx
-       in
-        (Enc oFE_FIXED (i32 fi) 0 0 0 0, fx `V.snoc` fix, fl, ag)
-    FE_FnLit tags b ->
-      let
-        fi = V.length fl
-       in
-        (Enc oFE_FNLIT (i32 fi) (i32 b) 0 0 0, fx, fl `V.snoc` (tags, b), ag)
-    FE_UnsafeNullable x -> (Enc oFE_UNSAFENULL (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_FrozenLit gi -> (Enc oFE_FROZEN (i32 gi) 0 0 0 0, fx, fl, ag)
-    FE_GetField ti o -> (Enc oFE_GETFIELD (i32 ti) (i32 o) 0 0 0, fx, fl, ag)
-    FE_Hvm2Ref ti -> (Enc oFE_HVM2REF (i32 ti) 0 0 0 0, fx, fl, ag)
-    FE_KConcat x y -> (Enc oFE_KCONCAT (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KPlus x y -> (Enc oFE_KPLUS (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KTimes x y -> (Enc oFE_KTIMES (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KMinus x y -> (Enc oFE_KMINUS (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KNegate x -> (Enc oFE_KNEG (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_KFracDiv x y -> (Enc oFE_KDIV (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KRem x y -> (Enc oFE_KREM (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KBitAnd x y -> (Enc oFE_KBITAND (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KBitOr x y -> (Enc oFE_KBITOR (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KBitXor x y -> (Enc oFE_KBITXOR (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KShl x y -> (Enc oFE_KSHL (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KShr x y -> (Enc oFE_KSHR (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KUShr x y -> (Enc oFE_KUSHR (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KBig op x y -> (Enc oFE_KBIG (bigOpTag op) (i32 x) (i32 y) 0 0, fx, fl, ag)
-    FE_KBigNeg x -> (Enc oFE_KBIGNEG (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_KAnd x y -> (Enc oFE_KAND (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KOr x y -> (Enc oFE_KOR (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KEq s x y -> (Enc oFE_KEQ (if s then 1 else 0) (i32 x) (i32 y) 0 0, fx, fl, ag)
-    FE_KNEq s x y -> (Enc oFE_KNEQ (if s then 1 else 0) (i32 x) (i32 y) 0 0, fx, fl, ag)
-    FE_KGTh x y -> (Enc oFE_KGTH (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KLTh x y -> (Enc oFE_KLTH (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KGTEq x y -> (Enc oFE_KGTEQ (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KLTEq x y -> (Enc oFE_KLTEQ (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FE_KShow x -> (Enc oFE_KSHOW (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_KTypeOf x -> (Enc oFE_KTYPEOF (i32 x) 0 0 0 0, fx, fl, ag)
-    FE_MethMap a tag b -> (Enc oFE_MMAP (i32 a) (i32 tag) (i32 b) 0 0, fx, fl, ag)
-    FE_MethFilter a tag b -> (Enc oFE_MFILTER (i32 a) (i32 tag) (i32 b) 0 0, fx, fl, ag)
-    FE_MethReduce a z ta tb body ->
-      (Enc oFE_MREDUCE (i32 a) (i32 z) (i32 ta) (i32 tb) (i32 body), fx, fl, ag)
-    FE_MethReduceRight a z ta tb body ->
-      (Enc oFE_MREDUCER (i32 a) (i32 z) (i32 ta) (i32 tb) (i32 body), fx, fl, ag)
-    FE_MethToSorted a ta tb b ->
-      (Enc oFE_MTOSORTED (i32 a) (i32 ta) (i32 tb) (i32 b) 0, fx, fl, ag)
-    FE_MethFrom n tag b -> (Enc oFE_MFROM (i32 n) (i32 tag) (i32 b) 0 0, fx, fl, ag)
-    FX_Lift x -> (Enc oFX_LIFT (i32 x) 0 0 0 0, fx, fl, ag)
-    FX_FFI fi ai -> (Enc oFX_FFI (i32 fi) (i32 ai) 0 0 0, fx, fl, ag)
-    FX_UnsafeObject t -> (Enc oFX_UNSAFEOBJ (i32 t) 0 0 0 0, fx, fl, ag)
-    FX_UnsafeObjectGet x t -> (Enc oFX_UNSAFEOBJGET (i32 x) (i32 t) 0 0 0, fx, fl, ag)
-    FX_UnsafeObjectAssign x y ->
-      (Enc oFX_UNSAFEOBJSET (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FX_CallMethod r m ai -> (Enc oFX_CALLMETHOD (i32 r) (i32 m) (i32 ai) 0 0, fx, fl, ag)
-    FX_Bind tag x b -> (Enc oFX_BIND (i32 tag) (i32 x) (i32 b) 0 0, fx, fl, ag)
-    FX_ThenE x y -> (Enc oFX_THENE (i32 x) (i32 y) 0 0 0, fx, fl, ag)
-    FX_BindRec tag r b -> (Enc oFX_BINDREC (i32 tag) (i32 r) (i32 b) 0 0, fx, fl, ag)
-    FX_LambdaE tag b -> (Enc oFX_LAMBDAE (i32 tag) (i32 b) 0 0 0, fx, fl, ag)
-    FX_ApplyE f x -> (Enc oFX_APPLYE (i32 f) (i32 x) 0 0 0, fx, fl, ag)
-    FX_IfE c t e -> (Enc oFX_IFE (i32 c) (i32 t) (i32 e) 0 0, fx, fl, ag)
-    FX_While c b -> (Enc oFX_WHILE (i32 c) (i32 b) 0 0 0, fx, fl, ag)
-    FX_ForRange s e tag b ->
-      (Enc oFX_FORRANGE (i32 s) (i32 e) (i32 tag) (i32 b) 0, fx, fl, ag)
-    FX_U8Set b i v -> (Enc oFX_U8SET (i32 b) (i32 i) (i32 v) 0 0, fx, fl, ag)
-    FX_U8Fill b v -> (Enc oFX_U8FILL (i32 b) (i32 v) 0 0 0, fx, fl, ag)
-    FX_OptionCaseE o n tag s ->
-      (Enc oFX_OPTCASEE (i32 o) (i32 n) (i32 tag) (i32 s) 0, fx, fl, ag)
-    FX_ResultCaseE o tagE er tagO ok ->
-      (Enc oFX_RESCASEE (i32 o) (i32 tagE) (i32 er) (i32 tagO) (i32 ok), fx, fl, ag)
-    FX_StringCaseE s ai d -> (Enc oFX_STRCASEE (i32 s) (i32 ai) (i32 d) 0 0, fx, fl, ag)
-    FX_Throw x -> (Enc oFX_THROW (i32 x) 0 0 0 0, fx, fl, ag)
-    FX_Try a tag k -> (Enc oFX_TRY (i32 a) (i32 tag) (i32 k) 0 0, fx, fl, ag)
-    FX_ObjectLit gi -> (Enc oFX_OBJLIT (i32 gi) 0 0 0 0, fx, fl, ag)
-    FX_DeleteProp o k -> (Enc oFX_DELETEPROP (i32 o) (i32 k) 0 0 0, fx, fl, ag)
-    FX_ArrayLit ns ->
-      let
-        ai = V.length ag
-       in
-        (Enc oFX_ARRAYLIT (i32 ai) 0 0 0 0, fx, fl, ag `V.snoc` V.fromList ns)
-
-  bigOpTag :: BigBinOp -> Int32
-  bigOpTag =
-    fromIntegral . \case
-      BPlus -> (0 :: Int)
-      BMinus -> 1
-      BTimes -> 2
-      BQuot -> 3
-      BRem -> 4
-      BBitAnd -> 5
-      BBitOr -> 6
-      BBitXor -> 7
-      BShl -> 8
-      BShr -> 9
 
 toProgram :: FlatSoA -> FlatProgram
 toProgram soa =

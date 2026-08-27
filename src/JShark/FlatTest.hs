@@ -9,11 +9,20 @@ module JShark.FlatTest
   ( flatSoaColumnsRoundTrip
   , flatProgramRoundTrip
   , flatSoaPureNodeCount
+  , flatDirectPackMatchesFromProgram
+  , flatDirectPackMatchesIrEffect
+  , flatDirectPackForRangeOk
+  , flatDirectPackOptimizeEqual
+  , freezeEncColumnsOrderOk
   , optIrEffectForRangeImpure
   , batchJobSlotTimingOk
   )
 where
 
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+import Data.Word (Word8)
+import JShark (ClosedEffect, irEffectFromClosed)
 import JShark.CompileProgress
   ( newProgressBoard
   , recordJobFlatPrepare
@@ -21,19 +30,44 @@ import JShark.CompileProgress
   , snapshotJobStatsFromSlot
   , withActiveJob
   )
-import JShark.CompileTiming (FlatPrepareTiming (..), cjsLowerSec, cjsLintSec)
-
-import Data.Vector (Vector)
-import qualified Data.Vector as V
-import Data.Word (Word8)
-import JShark (ClosedEffect, irEffectFromClosed)
+import JShark.CompileTiming (FlatPrepareTiming (..), cjsLintSec, cjsLowerSec)
 import qualified JShark.Flat as Flat
+import qualified JShark.FlatEnc as FlatEnc
 import qualified JShark.FlatSoA as FlatSoA
 import qualified JShark.Ir as Ir
 import JShark.Types (Universe (Unit), Value (..))
 
 packFlat :: ClosedEffect u -> Flat.FlatProgram
-packFlat e = Flat.packEffectProgram (irEffectFromClosed e)
+packFlat e = FlatSoA.packEffectProgram (irEffectFromClosed e)
+
+freezeEncColumnsOrderOk :: Bool
+freezeEncColumnsOrderOk = FlatEnc.freezeEncColumnsOrderOk
+
+flatDirectPackMatchesFromProgram :: ClosedEffect u -> Bool
+flatDirectPackMatchesFromProgram e =
+  flatDirectPackMatchesIrEffect (irEffectFromClosed e)
+
+flatDirectPackMatchesIrEffect :: Ir.IrEffect u -> Bool
+flatDirectPackMatchesIrEffect ir =
+  let
+    soaDirect = FlatSoA.packEffectProgramDirect ir
+    soaFromProg = FlatSoA.fromProgram (FlatSoA.packEffectProgram ir)
+   in
+    FlatSoA.soaColumnsEqual soaDirect soaFromProg
+
+flatDirectPackForRangeOk :: Bool
+flatDirectPackForRangeOk = flatDirectPackMatchesIrEffect forRangeU8SetLoop
+
+flatDirectPackOptimizeEqual :: ClosedEffect u -> Bool
+flatDirectPackOptimizeEqual e =
+  let
+    ir = irEffectFromClosed e
+    soaDirect = FlatSoA.packEffectProgramDirect ir
+    soaRef = FlatSoA.fromProgram (FlatSoA.packEffectProgram ir)
+    soaOptRef = FlatSoA.optimizeFlatPack soaRef
+    soaOptDirect = FlatSoA.optimizeFlatPack soaDirect
+   in
+    FlatSoA.soaColumnsEqual soaOptRef soaOptDirect
 
 flatSoaColumnsRoundTrip :: ClosedEffect u -> Bool
 flatSoaColumnsRoundTrip e =
@@ -58,10 +92,12 @@ flatProgramRoundTrip e =
 flatSoaPureNodeCount :: ClosedEffect u -> Int
 flatSoaPureNodeCount e =
   let
-    p = FlatSoA.optimizeFlatProgram (packFlat e)
-    n = V.length (Flat.fpNodes p)
+    soa =
+      FlatSoA.optimizeFlatPack
+        (FlatSoA.packEffectProgramDirect (irEffectFromClosed e))
+    n = FlatSoA.flatSoaNodeCount soa
    in
-    countPure (Flat.fpPure p) n
+    countPure (FlatSoA.soaPureVector soa) n
 
 countPure :: Vector Word8 -> Int -> Int
 countPure v n =
