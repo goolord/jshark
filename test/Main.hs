@@ -841,11 +841,30 @@ stdlibTests =
         T.isInfixOf ", n" effJs @?= True
         T.isInfixOf "($groupBy)(n0)(n1)" pureJs @?= False
         T.isInfixOf "(($arrayIndex)(n0)(n1)" effJs @?= False
-    , testCase "Array.zipWith is Array.from, not a helper" $ do
+    , testCase "Array.zipWith hoists $zipWith helper" $ do
         let
           js = renderJS (pureAST (Array.zipWith (+) numArray numArray))
-        T.isInfixOf "$zipWith" js @?= False
-        T.isInfixOf "Array.from" js @?= True
+        T.isInfixOf "const $zipWith =" js @?= True
+        T.isInfixOf "function (n0, n1)" js @?= True
+        T.isInfixOf "($zipWith)(n0)(n1)" js @?= False
+    , testCase "Array.toSorted hoists $toSorted helper" $ do
+        let
+          js =
+            renderJS
+              ( pureAST
+                  (Array.toSorted numArray (\a b -> if_ (a .> b) (number 1) (number (-1))))
+              )
+        T.isInfixOf "const $toSorted =" js @?= True
+        T.isInfixOf "function (n0, n1)" js @?= True
+        T.isInfixOf ".toSorted" js @?= True
+    , testCase "Array.reduce hoists $reduce helper" $ do
+        let
+          js =
+            renderJS
+              (pureAST (Array.reduce numArray (number 0) (\acc x -> acc + x)))
+        T.isInfixOf "const $reduce =" js @?= True
+        T.isInfixOf "function (n0, n1)" js @?= True
+        T.isInfixOf ".reduce" js @?= True
     , testCase "Classes.fmap Array" $
         case evaluate
           ( Eq
@@ -1590,9 +1609,13 @@ goodPartsTests =
     , testCase "sort emits a binary compare callback" $
         renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
           @?= "[1.0, 2.0].sort(function (n0, n1) {return n0 - n1})"
-    , testCase "toSorted emits a binary compare callback" $
-        renderJS (pureAST (Array.toSorted numArray (\a b -> a - b)))
-          @?= "[1.0, 2.0].toSorted(function (n0, n1) {return n0 - n1})"
+    , testCase "toSorted emits a binary compare callback" $ do
+        let
+          js = renderJS (pureAST (Array.toSorted numArray (\a b -> a - b)))
+        T.isInfixOf "const $toSorted =" js @?= True
+        T.isInfixOf "function (n0, n1)" js @?= True
+        T.isInfixOf ".toSorted" js @?= True
+        T.isInfixOf "($toSorted)([1.0, 2.0])" js @?= False
     , testCase "toSorted evaluates" $
         evaluateNumber
           (Array.index (Array.toSorted numArray (\a b -> a - b)) (number 1))

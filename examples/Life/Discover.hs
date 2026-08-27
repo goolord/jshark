@@ -206,8 +206,7 @@ discoverLife
       (ix0, iy0, ixStop, iyStop) =
         clampLiveBounds w0 h0 x0 y0 x1 y1 (number 1)
     whenS (ixStop .> ix0 .&& iyStop .> iy0) $
-      forRange_ iy0 iyStop $ \y ->
-        forRange_ ix0 ixStop $ \x -> do
+      forRange2_ iy0 iyStop ix0 ixStop $ \y x -> do
           let
             i = cellIdx w0 x y
           vis <- u8Get visited i

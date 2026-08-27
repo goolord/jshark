@@ -98,13 +98,12 @@ finishStep
           let
             copyY0 = Math.max (number 0) (yStart - number 1)
             copyYStop = Math.min h (yStop + number 1)
-          forRange_ copyY0 copyYStop $ \y ->
-            forRange_ (number 0) w $ \x -> do
-              let
-                i = cellIdx w x y
-              a <- u8Get alive i
-              setU8 engineGridA i (bitAnd a (number 1))
-              done
+          forRange2_ copyY0 copyYStop (number 0) w $ \y x -> do
+            let
+              i = cellIdx w x y
+            a <- u8Get alive i
+            setU8 engineGridA i (bitAnd a (number 1))
+            done
           Lut.stepRegionLUT lut engineGridA engineGridB w h yStart yStop
       )
     let
@@ -118,8 +117,7 @@ finishStep
     Array.clear_ nextChangedList
     counts <- bindExpr (newByteArray (number 256))
     touched <- bindExpr (newByteArray (number 8))
-    forRange_ yStart yStop $ \y ->
-      forRange_ xStart xStop $ \x -> do
+    forRange2_ yStart yStop xStart xStop $ \y x -> do
         let
           i = cellIdx w x y
         was <- u8Get alive i

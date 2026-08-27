@@ -295,8 +295,7 @@ collectLiveLocal ::
   -> EffectSyntax f (Expr f ('Array ('Array 'Number)))
 collectLiveLocal grid gw gh = do
   live <- bindExpr $ Array.fromEffects []
-  forRange_ (number 0) gh $ \y ->
-    forRange_ (number 0) gw $ \x -> do
+  forRange2_ (number 0) gh (number 0) gw $ \y x -> do
       let
         idx = y * gw + x
       whenS (u8Index grid idx .== 1) $ do
@@ -335,8 +334,7 @@ sandboxStepGrid ::
   -> EffectSyntax f (Expr f 'Uint8Array)
 sandboxStepGrid grid gw gh = do
   out <- bindExpr $ newByteArray (gw * gh)
-  forRange_ (number 0) gh $ \y ->
-    forRange_ (number 0) gw $ \x -> do
+  forRange2_ (number 0) gh (number 0) gw $ \y x -> do
       let
         n =
           sandboxNbr grid gw gh x y (-1) (-1)
@@ -352,7 +350,6 @@ sandboxStepGrid grid gw gh = do
         next =
           if_ (n .== 3) (number 1) (if_ (alive .&& n .== 2) (number 1) (number 0))
       setU8 out idx next
-      done
   pure out
 
 collectPhaseKey ::

@@ -121,11 +121,10 @@ rebuildPackedCounts grid w h = do
   forRange_ (number 0) totalCells $ \i -> do
     a <- u8Get grid i
     setU8 grid i (bitAnd a (number 1))
-  forRange_ (number 0) h $ \y ->
-    forRange_ (number 0) w $ \x -> do
-      a <- u8Get grid (cellIdx w x y)
-      whenS (bitAnd a (number 1) .== 1) $
-        bumpPackedNeighbors grid w h x y (number 2)
+  forRange2_ (number 0) h (number 0) w $ \y x -> do
+    a <- u8Get grid (cellIdx w x y)
+    whenS (bitAnd a (number 1) .== 1) $
+      bumpPackedNeighbors grid w h x y (number 2)
   done
 
 bumpPackedNeighbors ::
@@ -312,9 +311,8 @@ refreshPackedRegion grid w h x0 y0 x1 y1 = do
     fy1 = Math.floor y1
     (xStart, yStart, xStop, yStop) =
       clampLiveBounds w h fx0 fy0 fx1 fy1 (number 1)
-  forRange_ yStart yStop $ \y ->
-    forRange_ xStart xStop $ \x ->
-      refreshPackedAt grid w h x y
+  forRange2_ yStart yStop xStart xStop $ \y x ->
+    refreshPackedAt grid w h x y
   done
 
 -- | Expand RGB palette to RGBA for WebGL texture uploads.
@@ -379,12 +377,11 @@ rebuildLiveList alive w h x0 y0 x1 y1 liveList = do
   let
     (xStart, yStart, xStop, yStop) =
       clampLiveBounds w h x0 y0 x1 y1 (number 0)
-  forRange_ yStart yStop $ \y ->
-    forRange_ xStart xStop $ \x -> do
-      let
-        i = cellIdx w x y
-      a <- u8Get alive i
-      whenS (bitAnd a (number 1) .== 1) (Array.push_ liveList i)
+  forRange2_ yStart yStop xStart xStop $ \y x -> do
+    let
+      i = cellIdx w x y
+    a <- u8Get alive i
+    whenS (bitAnd a (number 1) .== 1) (Array.push_ liveList i)
   done
 
 -- | Half-open scan range @\[xStart, xStop) × \[yStart, yStop)@ clamped to the grid.
@@ -525,9 +522,8 @@ stepGrid
             i = Array.index prevLiveList k
           runIndexWithNeighbors i
       )
-      ( forRange_ yStart yStop $ \y ->
-          forRange_ xStart xStop $ \x ->
-            runCell x y
+      ( forRange2_ yStart yStop xStart xStop $ \y x ->
+          runCell x y
       )
     stepCtx.pop
 
@@ -763,11 +759,10 @@ expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
           y = Math.floor (i / w)
         whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
     )
-    ( forRange_ ya (yb + number 1) $ \y ->
-        forRange_ xa (xb + number 1) $ \x -> do
-          let
-            i = cellIdx w x y
-          whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
+    ( forRange2_ ya (yb + number 1) xa (xb + number 1) $ \y x -> do
+        let
+          i = cellIdx w x y
+        whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
     )
   done
 

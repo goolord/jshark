@@ -93,6 +93,8 @@ module JShark.Api
   , forEach_
   , forRange
   , forRange_
+  , forRange2
+  , forRange2_
   , arrayCallback
   , try_
   , catch_
@@ -657,6 +659,29 @@ u8FillRegion buf gridW x0 y0 x1 y1 val =
   forRange y0 y1 $ \y ->
     forRange x0 x1 $ \x ->
       u8Set buf (y * gridW + x) val
+
+-- | Nested half-open @\[y0,y1) x \[x0,x1)@ loop.
+forRange2 ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> (Expr f 'Number -> Expr f 'Number -> Effect f 'Unit)
+  -> Effect f 'Unit
+forRange2 y0 y1 x0 x1 body =
+  forRange y0 y1 $ \y ->
+    forRange x0 x1 $ \x ->
+      body y x
+
+-- | 'forRange2' in 'EffectSyntax'.
+forRange2_ ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> (Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit))
+  -> EffectSyntax f (f 'Unit)
+forRange2_ y0 y1 x0 x1 f = toSyntax $ forRange2 y0 y1 x0 x1 (\y x -> stmts (f y x))
 
 u8Len :: Expr f 'Uint8Array -> Expr f 'Number
 u8Len = expr1 FixU8Len

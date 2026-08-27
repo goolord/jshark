@@ -168,10 +168,37 @@ pushMany_ arr xs = toSyntax $ pushMany arr xs
 fromEffects :: [Effect f u] -> Effect f ('Array u)
 fromEffects = ArrayLit
 
--- | @arr.reduce(function(acc,x){…}, z)@
+-- | @arr.reduce(function(acc,x){…}, z)@. One hoisted @$reduce@ helper.
 reduce ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
-reduce arr z f = Std (Method (MethReduce arr z (\a x -> f (var a) (var x))))
+reduce arr z f = applyNamed2 reduceChecked (reduceSeed arr z) (toLambda f)
+
+reduceSeed ::
+  Expr f ('Array u) -> Expr f v -> Expr f ('Object (ReduceWith v u))
+reduceSeed arr z = FrozenLit [FieldLit @"arr" arr, FieldLit @"z" z]
+
+-- | Hoisted @$reduce@ helper; one uncurried JS @function(seed, f)@.
+reduceChecked ::
+  forall f acc u.
+  Expr
+    f
+    ( 'Function
+        ('Object (ReduceWith acc u))
+        ('Function ('Function acc ('Function u acc)) acc)
+    )
+reduceChecked =
+  namedLambdaRow
+    @('[Param "seed" ('Object (ReduceWith acc u)), Param "f" ('Function acc ('Function u acc))])
+    "reduce"
+    $ \p ->
+      Std
+        ( Method
+            ( MethReduce
+                (GetField @"arr" p.seed)
+                (GetField @"z" p.seed)
+                (\acc x -> apply (Apply p.f (var acc)) (var x))
+            )
+        )
 
 -- | @arr.reduceRight(function(acc,x){…}, z)@. JS callback is still @(acc, x)@.
 reduceRight ::
@@ -204,24 +231,28 @@ groupByChecked =
     @('[Param "arr" ('Array u), Param "keyFn" ('Function u 'String)])
     "groupBy"
     $ \p ->
-      reduce p.arr (Literal (ValueArray [])) $ \groups x ->
-        let
-          k = Apply p.keyFn x
-         in
-          let_
-            ( reduce groups (Literal (ValueBool False)) $ \found g ->
-                Or found (GetField @"key" g .== k)
-            )
-            $ \found ->
-              if_
-                found
-                ( map groups $ \g ->
-                    if_
-                      (GetField @"key" g .== k)
-                      (groupEntry k (concat (GetField @"items" g) (singleton x)))
-                      g
+      applyNamed2
+        reduceChecked
+        (reduceSeed p.arr (Literal (ValueArray [])))
+        ( toLambda $ \acc x ->
+            let
+              k = Apply p.keyFn x
+             in
+              let_
+                ( reduce acc (Literal (ValueBool False)) $ \found g ->
+                    Or found (GetField @"key" g .== k)
                 )
-                (concat groups (singleton (groupEntry k (singleton x))))
+                $ \found ->
+                  if_
+                    found
+                    ( map acc $ \g ->
+                        if_
+                          (GetField @"key" g .== k)
+                          (groupEntry k (concat (GetField @"items" g) (singleton x)))
+                          g
+                    )
+                    (concat acc (singleton (groupEntry k (singleton x))))
+        )
 
 -- | @{key, items}@ object used by 'groupBy'.
 groupEntry ::
@@ -229,15 +260,42 @@ groupEntry ::
 groupEntry k items =
   FrozenLit [FieldLit @"key" k, FieldLit @"items" items]
 
--- | @zipWith@; result length is 'Math.min'. @Array.from@ over the indices.
+-- | @zipWith@; result length is 'Math.min'. One hoisted @$zipWith@ helper.
 zipWith ::
   (Expr f a -> Expr f b -> Expr f c)
   -> Expr f ('Array a)
   -> Expr f ('Array b)
   -> Expr f ('Array c)
 zipWith f xs ys =
-  let_ (Math.min (length xs) (length ys)) $ \n ->
-    Std (Method (MethFrom n $ \i -> f (index xs (var i)) (index ys (var i))))
+  applyNamed2 zipWithChecked (zipPair xs ys) (toLambda f)
+
+zipPair ::
+  Expr f ('Array a) -> Expr f ('Array b) -> Expr f ('Object (ZipPair a b))
+zipPair xs ys = FrozenLit [FieldLit @"xs" xs, FieldLit @"ys" ys]
+
+-- | Hoisted @$zipWith@ helper; one uncurried JS @function(pair, zipFn)@.
+zipWithChecked ::
+  forall f a b c.
+  Expr
+    f
+    ( 'Function
+        ('Object (ZipPair a b))
+        ('Function ('Function a ('Function b c)) ('Array c))
+    )
+zipWithChecked =
+  namedLambdaRow
+    @('[Param "pair" ('Object (ZipPair a b)), Param "zipFn" ('Function a ('Function b c))])
+    "zipWith"
+    $ \p ->
+      let_ (Math.min (length (GetField @"xs" p.pair)) (length (GetField @"ys" p.pair))) $ \n ->
+        Std
+          ( Method
+              ( MethFrom n $ \i ->
+                  apply
+                    (Apply p.zipFn (index (GetField @"xs" p.pair) (var i)))
+                    (index (GetField @"ys" p.pair) (var i))
+              )
+          )
 
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::
@@ -252,9 +310,25 @@ sort ::
 sort arr cmp =
   callMethod (expr arr) "sort" (arg (toFn cmp) <: RecNil)
 
--- | @arr.toSorted(function(a,b){…})@. Copy; does not mutate.
+-- | @arr.toSorted(function(a,b){…})@. One hoisted @$toSorted@ helper.
 toSorted ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f u -> Expr f 'Number)
   -> Expr f ('Array u)
-toSorted arr cmp = Std (Method (MethToSorted arr (\a b -> cmp (var a) (var b))))
+toSorted arr cmp = applyNamed2 toSortedChecked arr (toLambda cmp)
+
+-- | Hoisted @$toSorted@ helper; one uncurried JS @function(arr, cmp)@.
+toSortedChecked ::
+  forall f u.
+  Expr
+    f
+    ( 'Function
+        ('Array u)
+        ('Function ('Function u ('Function u 'Number)) ('Array u))
+    )
+toSortedChecked =
+  namedLambdaRow
+    @('[Param "arr" ('Array u), Param "cmp" ('Function u ('Function u 'Number))])
+    "toSorted"
+    $ \p ->
+      Std (Method (MethToSorted p.arr (\a b -> apply (Apply p.cmp (var a)) (var b))))

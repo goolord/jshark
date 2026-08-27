@@ -86,6 +86,8 @@ module JShark.Api.Types
   , expr2
   , expr3
   , GroupBy
+  , ZipPair
+  , ReduceWith
   , ClosedExpr
   , ClosedEffect
   , Hvm2KernelEntry (..)
@@ -328,6 +330,20 @@ data GroupBy (u :: Universe)
 type instance Field (GroupBy u) "key" = 'String
 
 type instance Field (GroupBy u) "items" = 'Array u
+
+-- | @zipWith@ pair argument: @\{xs, ys\}@.
+data ZipPair (a :: Universe) (b :: Universe)
+
+type instance Field (ZipPair a b) "xs" = 'Array a
+
+type instance Field (ZipPair a b) "ys" = 'Array b
+
+-- | @reduce@ seed argument: @\{arr, z\}@.
+data ReduceWith (acc :: Universe) (u :: Universe)
+
+type instance Field (ReduceWith acc u) "arr" = 'Array u
+
+type instance Field (ReduceWith acc u) "z" = acc
 
 -- | One field of an object literal. @k@ is the JS name ('fieldKey').
 -- Typed constructors require the value's universe to be 'Field' @r@ @k@.
