@@ -55,8 +55,8 @@ data Example = Example
   , examplePage :: T.Text -> T.Text -> Html ()
   , exampleJs :: T.Text
   , exampleSourceJs :: Maybe T.Text
-  -- ^ Pretty-printed JS for the collapsible source pane. 'Nothing' when the
-  --   page has no source viewer (Life).
+  -- ^ Display JS for the collapsible source pane ('prettyJS' of compiled
+  --   output when set). 'Nothing' when the page has no source viewer (Life).
   }
 
 -- | URL prefixes so the same HTML works on Scotty (@/@) and GitHub Pages (@/jshark/@).

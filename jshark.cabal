@@ -149,6 +149,8 @@ library
     , directory >= 1.2.7 && < 2
     , filepath >= 1.4 && < 2
     , process >= 1.2 && < 2
+    , typed-process >= 0.2.11 && < 0.3
+    , streaming-bytestring >= 0.3.0 && < 0.4
     , unix >= 2.7 && < 2.9
   hs-source-dirs:
     src

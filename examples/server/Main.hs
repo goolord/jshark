@@ -4,6 +4,7 @@ module Main (main) where
 
 import qualified Breakout
 import Data.List (partition)
+import qualified Data.List as List
 import qualified Data.Text as T
 import DevServer (Example (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
@@ -12,7 +13,7 @@ import JShark.Compiler
   , compileJobsLabeled
   , defaultCompilerConfig
   , isCompilerFlag
-  , readableConfig
+  , prettyJS
   )
 import JShark.Hvm2 (bendModule)
 import JShark.Types (fromSyntax)
@@ -29,31 +30,37 @@ main = do
   args <- getArgs
   let
     (flags, cmd) = partition isCompilerFlag args
-    baseCfg =
+    cfg =
       applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
+    labels =
+      [ "breakout"
+      , "todo-mvc"
+      , "synth"
+      , "life"
+      , "hvm2-demo"
+      ]
   (compiled, _stats) <-
     compileJobsLabeled
-      baseCfg
-      [ ("breakout (source)", readableConfig, fromSyntax Breakout.mainJS)
-      , ("todo-mvc (source)", readableConfig, fromSyntax TodoMvc.mainJS)
-      , ("synth (source)", readableConfig, fromSyntax Synth.mainJS)
-      , ("hvm2-demo (source)", readableConfig, fromSyntax Hvm2Demo.mainJS)
-      , ("breakout", defaultCompilerConfig, fromSyntax Breakout.mainJS)
-      , ("todo-mvc", defaultCompilerConfig, fromSyntax TodoMvc.mainJS)
-      , ("synth", defaultCompilerConfig, fromSyntax Synth.mainJS)
-      , ("life", defaultCompilerConfig, fromSyntax Life.mainJS)
-      , ("hvm2-demo", defaultCompilerConfig, fromSyntax Hvm2Demo.mainJS)
+      cfg
+      [ ("breakout", cfg, fromSyntax Breakout.mainJS)
+      , ("todo-mvc", cfg, fromSyntax TodoMvc.mainJS)
+      , ("synth", cfg, fromSyntax Synth.mainJS)
+      , ("life", cfg, fromSyntax Life.mainJS)
+      , ("hvm2-demo", cfg, fromSyntax Hvm2Demo.mainJS)
       ]
   let
-    breakoutSrc = compiled !! 0
-    todoSrc = compiled !! 1
-    synthSrc = compiled !! 2
-    hvm2Src = compiled !! 3
-    breakoutJs = compiled !! 4
-    todoJs = compiled !! 5
-    synthJs = compiled !! 6
-    lifeJs = compiled !! 7
-    hvm2Js = compiled !! 8
+    jsByLabel = zip labels compiled
+    lookupJs label =
+      case List.lookup label jsByLabel of
+        Just js -> js
+        Nothing ->
+          error (T.unpack ("examples: missing compile output for " <> label))
+    breakoutJs = lookupJs "breakout"
+    todoJs = lookupJs "todo-mvc"
+    synthJs = lookupJs "synth"
+    lifeJs = lookupJs "life"
+    hvm2Js = lookupJs "hvm2-demo"
+    sourceJs = prettyJS
   hvm2Bend <-
     case bendModule hvm2Entries of
       Left err -> die ("hvm2-demo bend: " <> show err)
@@ -68,11 +75,11 @@ main = do
               Breakout.page
                 static
                 (sourceHead static)
-                (sourcePane static breakoutSrc)
+                (sourcePane static (sourceJs breakoutJs))
                 script
           )
           breakoutJs
-          (Just breakoutSrc)
+          (Just (sourceJs breakoutJs))
       , Example
           "todo-mvc"
           "TodoMVC"
@@ -80,11 +87,11 @@ main = do
               TodoMvc.page
                 static
                 (sourceHead static)
-                (sourcePane static todoSrc)
+                (sourcePane static (sourceJs todoJs))
                 script
           )
           todoJs
-          (Just todoSrc)
+          (Just (sourceJs todoJs))
       , Example
           "synth"
           "Synthesizer"
@@ -92,11 +99,11 @@ main = do
               Synth.page
                 static
                 (sourceHead static)
-                (sourcePane static synthSrc)
+                (sourcePane static (sourceJs synthJs))
                 script
           )
           synthJs
-          (Just synthSrc)
+          (Just (sourceJs synthJs))
       , Example
           "life"
           "Game of Life"
@@ -117,11 +124,11 @@ main = do
                   static
                   demoBase
                   (sourceHead static)
-                  (hvm2SourcePanes static hvm2Src hvm2Bend hvm2MandelJs)
+                  (hvm2SourcePanes static (sourceJs hvm2Js) hvm2Bend hvm2MandelJs)
                   script
           )
           hvm2Js
-          (Just hvm2Src)
+          (Just (sourceJs hvm2Js))
       ]
   case cmd of
     [] ->

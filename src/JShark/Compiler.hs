@@ -8,23 +8,19 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Post-process generated JavaScript: pretty-print or minify, and cache.
+-- | Post-process generated JavaScript and optional external minification.
 --
--- Google Closure Compiler is no longer the best default. Its Advanced
--- mode is still unique for whole-program property renaming, but it is a
--- Java tool, slow to start, and unsafe on JShark FFI without externs.
--- In 2026 the practical choice is [esbuild](https://esbuild.github.io)
--- (fast, ubiquitous, what this module uses for 'Auto'). Terser remains
--- as the more aggressive size-oriented option; Closure is still available
--- when you actually want Advanced.
+-- JShark codegen already emits compact JS ('renderJSCompact'). The default
+-- config ('defaultCompilerConfig') wraps an IIFE and skips external tools.
+-- Opt into esbuild / Terser / Closure via 'CompilerBackend' when you want
+-- another shrink pass.
 --
--- Use 'readableConfig' for a human-readable snippet (single-use bindings
--- inlined, no IIFE, no minifier). 'defaultCompilerConfig' wraps an IIFE
--- and minifies.
+-- Use 'readableConfig' for a debug snippet (no IIFE, assignment inlining,
+-- then 'prettyJS' — not a full JS pretty-printer).
 --
 -- == @*Pure@ / @*IO@ entry points
 --
--- Minify helpers ('compileWith', 'compileJS', 'compileClosure', …):
+-- Post-process helpers ('compileWith', 'compileJS', 'compileClosure', …):
 --
 -- * @*Pure@ — 'quietCfg' (suppresses minifier fallback on stderr)
 -- * default and @*IO@ — identical; no progress bars (minify only)
@@ -103,7 +99,7 @@ module JShark.Compiler
   )
 where
 
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently, wait, withAsync)
 import Control.Exception
   ( IOException
   , SomeException
@@ -117,6 +113,7 @@ import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy as BL
 import Data.Char (isAlphaNum, isSpace)
 import Data.List (sortOn)
 import Data.Maybe (isJust)
@@ -146,6 +143,10 @@ import JShark.CompileTiming
 import JShark.Emit (JS, renderJS)
 import JShark.Hvm2Lint (warnHvm2CandidatesEffect, warnHvm2CandidatesExpr)
 import Numeric (showHex)
+import qualified Streaming.ByteString as Q
+  ( hGetContents
+  , toStrict_
+  )
 import System.CPUTime (getCPUTime)
 import System.Directory
   ( createDirectoryIfMissing
@@ -158,10 +159,22 @@ import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.IO
-  ( hClose
+  ( Handle
+  , hClose
   , openBinaryTempFile
   )
-import System.Process (readProcessWithExitCode)
+import System.Process.Typed
+  ( byteStringInput
+  , createPipe
+  , getStderr
+  , getStdout
+  , proc
+  , setStderr
+  , setStdin
+  , setStdout
+  , waitExitCode
+  , withProcessWait
+  )
 import Text.Read (readMaybe)
 import qualified TextBuilder as TB
 
@@ -314,11 +327,11 @@ data CompilerConfig = CompilerConfig
   }
   deriving (Show, Eq, Ord)
 
--- | Auto backend, minified output, no in-process cache, fall back to the
--- unminified source if no minifier is installed (or if it crashes).
+-- | Passthrough backend: compact IIFE from codegen, no external minifier.
+-- Set 'configBackend' to 'Esbuild', 'Terser', or 'Closure' for a second pass.
 defaultCompilerConfig :: CompilerConfig
 defaultCompilerConfig =
-  CompilerConfig Auto NoCache True Minified False False False Nothing
+  CompilerConfig Passthrough NoCache True Minified False False False Nothing
 
 -- | Skip minification entirely. Useful in tests of the IIFE wrapper.
 passthroughConfig :: CompilerConfig
@@ -358,7 +371,9 @@ cacheKey cfg source =
     <> ":"
     <> source
 
--- | Minify raw JavaScript using 'defaultCompilerConfig'.
+-- | Post-process raw JavaScript using 'defaultCompilerConfig' (passthrough
+-- by default — no external minifier). Set 'configBackend' to 'Esbuild',
+-- 'Terser', or 'Auto' for an extra shrink pass.
 --
 -- Does __not__ wrap the input in an IIFE: a bare expression with no side
 -- effects may be DCE'd to empty by esbuild/Terser. Prefer 'compilePure' /
@@ -661,18 +676,23 @@ compileTreeEff cfg doc = do
   liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
   -- Batch slot ticks bypass 'CompileReport'; see 'JShark.CompileReport'.
   liftIO CP.finishEmitPhase
-  case configProgressSlot cfg of
-    Nothing -> pure ()
-    Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 0 1
-  tMin0 <- liftIO getMonotonicTime
-  out <- compileWithEff (styleConfig cfg) js
-  tMin1 <- liftIO getMonotonicTime
-  liftIO $ do
-    CP.recordJobMinifySec (seconds tMin0 tMin1)
-    CP.recordJobJsBytes (T.length out)
-  case configProgressSlot cfg of
-    Nothing -> pure ()
-    Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 1 1
+  let
+    postCfg = styleConfig cfg
+  out <- case configBackend postCfg of
+    Passthrough -> pure js
+    _ -> do
+      case configProgressSlot cfg of
+        Nothing -> pure ()
+        Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 0 1
+      tMin0 <- liftIO getMonotonicTime
+      minified <- compileWithEff postCfg js
+      tMin1 <- liftIO getMonotonicTime
+      liftIO $ CP.recordJobMinifySec (seconds tMin0 tMin1)
+      case configProgressSlot cfg of
+        Nothing -> pure ()
+        Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 1 1
+      pure minified
+  liftIO $ CP.recordJobJsBytes (T.length out)
   liftIO $ forceCompiled (finishStyle style out)
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
@@ -1194,17 +1214,36 @@ executeProcess cmd args source = do
 executeProcessRaw :: FilePath -> [String] -> Text -> IO (Either String Text)
 executeProcessRaw cmd args source =
   ( do
-      (code, stdoutStr, stderrStr) <-
-        readProcessWithExitCode cmd args (T.unpack source)
-      case code of
-        ExitSuccess -> pure (Right (T.strip (T.pack stdoutStr)))
-        ExitFailure c ->
-          pure
-            ( Left
-                (if null stderrStr then "Process exited with code " ++ show c else stderrStr)
-            )
+      let
+        pConfig =
+          setStdin (byteStringInput (BL.fromStrict (TE.encodeUtf8 source)))
+            $ setStdout createPipe
+            $ setStderr createPipe
+            $ proc cmd args
+      withProcessWait pConfig $ \p -> do
+        (code, outBs, errBs) <-
+          withAsync (drainHandle (getStdout p)) $ \outA ->
+            withAsync (drainHandle (getStderr p)) $ \errA -> do
+              exitCode <- waitExitCode p
+              outBs' <- wait outA
+              errBs' <- wait errA
+              pure (exitCode, outBs', errBs')
+        case code of
+          ExitSuccess -> pure (Right (T.strip (TE.decodeUtf8 outBs)))
+          ExitFailure c ->
+            pure
+              ( Left
+                  ( if BS.null errBs
+                      then "Process exited with code " ++ show c
+                      else BC.unpack errBs
+                  )
+              )
   )
     `catch` (\(e :: SomeException) -> pure (Left (show e)))
+
+-- | Drain a process pipe; minifier stdout/stderr are small enough to hold.
+drainHandle :: Handle -> IO BS.ByteString
+drainHandle h = Q.toStrict_ (Q.hGetContents h)
 
 compileForm :: CompilerConfig -> CompileForm
 compileForm cfg = case configStyle cfg of
