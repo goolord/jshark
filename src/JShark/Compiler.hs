@@ -972,12 +972,10 @@ batchProgressCore total jobs = do
             tJob0 <- getMonotonicTime
             CP.initJob board slot label
             CP.withProgressIO refresh
-            (out, jobStats) <-
-              CP.withActiveJob slot board $ do
-                result <- compile slot
-                tJob1 <- getMonotonicTime
-                stats <- CP.snapshotJobStats label (seconds tJob0 tJob1)
-                pure (result, stats)
+            out <- CP.withActiveJob slot board $ compile slot
+            tJob1 <- getMonotonicTime
+            jobStats <-
+              CP.snapshotJobStatsFromSlot board slot label (seconds tJob0 tJob1)
             CP.markJobDone board slot
             CP.withProgressIO refresh
             pure (slot, out, jobStats)

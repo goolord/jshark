@@ -45,6 +45,7 @@ module JShark.CompileProgress
   , recordJobPhoasPrepare
   , recordJobForm
   , snapshotJobStats
+  , snapshotJobStatsFromSlot
   , setProgressBoardHandle
   , clearProgressBoardHandle
   , emitProgressBoard
@@ -130,6 +131,7 @@ data JobSlot = JobSlot
   , jsIndex :: !AtomicCounter
   , jsTotal :: !AtomicCounter
   , jsDone :: !AtomicCounter
+  , jsTiming :: !JobTiming
   }
 
 data ProgressBoardHandle = ProgressBoardHandle
@@ -209,6 +211,96 @@ newJobTiming = do
 lookupJobTiming :: IO (Maybe JobTiming)
 lookupJobTiming = fmap ajsTiming <$> lookupActiveJob
 
+resetJobTiming :: JobTiming -> IO ()
+resetJobTiming JobTiming {jtForm, jtLintSec, jtCodegenSec, jtMinifySec, jtJsBytes, jtFlatPrepare, jtPhoasPrepare} = do
+  writeIORef jtForm FormMinified
+  writeIORef jtLintSec 0
+  writeIORef jtCodegenSec 0
+  writeIORef jtMinifySec 0
+  writeIORef jtJsBytes 0
+  writeIORef jtFlatPrepare Nothing
+  writeIORef jtPhoasPrepare Nothing
+
+snapshotJobStatsFromTiming ::
+  JobTiming -> Text -> Double -> IO CompileJobStats
+snapshotJobStatsFromTiming
+  JobTiming
+    { jtForm
+    , jtLintSec
+    , jtCodegenSec
+    , jtMinifySec
+    , jtJsBytes
+    , jtFlatPrepare
+    , jtPhoasPrepare
+    }
+  label
+  totalSec = do
+  form <- readIORef jtForm
+  lint <- readIORef jtLintSec
+  codegen <- readIORef jtCodegenSec
+  minify <- readIORef jtMinifySec
+  bytes <- readIORef jtJsBytes
+  flat <- readIORef jtFlatPrepare
+  phoas <- readIORef jtPhoasPrepare
+  let
+    lower = maybe 0 fptLowerSec flat
+    irOpt = maybe 0 fptIrOptSec flat
+    pack = maybe 0 fptPackSec flat
+    flatOpt = maybe 0 fptFlatOptSec flat
+    phoasOpt = maybe 0 pptOptimizeSec phoas
+    hasPrepare = isJust flat || isJust phoas
+    prepareTotal =
+      maybe 0 fptTotalSec flat + maybe 0 pptTotalSec phoas
+    emit =
+      if hasPrepare
+        then max 0 (codegen - prepareTotal)
+        else codegen
+   in
+    pure
+      CompileJobStats
+        { cjsLabel = label
+        , cjsForm = form
+        , cjsLintSec = lint
+        , cjsLowerSec = lower
+        , cjsIrOptSec = irOpt
+        , cjsPackSec = pack
+        , cjsFlatOptSec = flatOpt
+        , cjsPhoasOptSec = phoasOpt
+        , cjsEmitSec = emit
+        , cjsMinifySec = minify
+        , cjsTotalSec = totalSec
+        , cjsJsBytes = bytes
+        }
+
+snapshotJobStats :: Text -> Double -> IO CompileJobStats
+snapshotJobStats label totalSec = do
+  m <- lookupJobTiming
+  case m of
+    Nothing ->
+      pure
+        CompileJobStats
+          { cjsLabel = label
+          , cjsForm = FormMinified
+          , cjsLintSec = 0
+          , cjsLowerSec = 0
+          , cjsIrOptSec = 0
+          , cjsPackSec = 0
+          , cjsFlatOptSec = 0
+          , cjsPhoasOptSec = 0
+          , cjsEmitSec = 0
+          , cjsMinifySec = 0
+          , cjsTotalSec = totalSec
+          , cjsJsBytes = 0
+          }
+    Just timing -> snapshotJobStatsFromTiming timing label totalSec
+
+snapshotJobStatsFromSlot ::
+  ProgressBoardHandle -> Int -> Text -> Double -> IO CompileJobStats
+snapshotJobStatsFromSlot board slot label totalSec =
+  case pbhJobs board V.!? slot of
+    Nothing -> snapshotJobStats label totalSec
+    Just JobSlot {jsTiming} -> snapshotJobStatsFromTiming jsTiming label totalSec
+
 recordJobLintSec :: Double -> IO ()
 recordJobLintSec sec = do
   m <- lookupJobTiming
@@ -257,73 +349,6 @@ recordJobForm form = do
   case m of
     Nothing -> pure ()
     Just JobTiming {jtForm} -> writeIORef jtForm form
-
-snapshotJobStats :: Text -> Double -> IO CompileJobStats
-snapshotJobStats label totalSec = do
-  m <- lookupJobTiming
-  case m of
-    Nothing ->
-      pure
-        CompileJobStats
-          { cjsLabel = label
-          , cjsForm = FormMinified
-          , cjsLintSec = 0
-          , cjsLowerSec = 0
-          , cjsIrOptSec = 0
-          , cjsPackSec = 0
-          , cjsFlatOptSec = 0
-          , cjsPhoasOptSec = 0
-          , cjsEmitSec = 0
-          , cjsMinifySec = 0
-          , cjsTotalSec = totalSec
-          , cjsJsBytes = 0
-          }
-    Just
-      JobTiming
-        { jtForm
-        , jtLintSec
-        , jtCodegenSec
-        , jtMinifySec
-        , jtJsBytes
-        , jtFlatPrepare
-        , jtPhoasPrepare
-        } -> do
-        form <- readIORef jtForm
-        lint <- readIORef jtLintSec
-        codegen <- readIORef jtCodegenSec
-        minify <- readIORef jtMinifySec
-        bytes <- readIORef jtJsBytes
-        flat <- readIORef jtFlatPrepare
-        phoas <- readIORef jtPhoasPrepare
-        let
-          lower = maybe 0 fptLowerSec flat
-          irOpt = maybe 0 fptIrOptSec flat
-          pack = maybe 0 fptPackSec flat
-          flatOpt = maybe 0 fptFlatOptSec flat
-          phoasOpt = maybe 0 pptOptimizeSec phoas
-          hasPrepare = isJust flat || isJust phoas
-          prepareTotal =
-            maybe 0 fptTotalSec flat + maybe 0 pptTotalSec phoas
-          emit =
-            if hasPrepare
-              then max 0 (codegen - prepareTotal)
-              else codegen
-         in
-          pure
-            CompileJobStats
-              { cjsLabel = label
-              , cjsForm = form
-              , cjsLintSec = lint
-              , cjsLowerSec = lower
-              , cjsIrOptSec = irOpt
-              , cjsPackSec = pack
-              , cjsFlatOptSec = flatOpt
-              , cjsPhoasOptSec = phoasOpt
-              , cjsEmitSec = emit
-              , cjsMinifySec = minify
-              , cjsTotalSec = totalSec
-              , cjsJsBytes = bytes
-              }
 
 captureEmitCtx :: IO (Maybe EmitCtx)
 captureEmitCtx =
@@ -583,6 +608,7 @@ newJobSlot = do
   idx <- newCounter 0
   tot <- newCounter 1
   done <- newCounter 0
+  timing <- newJobTiming
   pure
     JobSlot
       { jsLabel = lbl
@@ -590,6 +616,7 @@ newJobSlot = do
       , jsIndex = idx
       , jsTotal = tot
       , jsDone = done
+      , jsTiming = timing
       }
 
 newProgressBoard :: Int -> IO ProgressBoardHandle
@@ -673,13 +700,18 @@ markJobDone ProgressBoardHandle {pbhDone, pbhJobs} slot =
       maybeRedraw
 
 withActiveJob :: Int -> ProgressBoardHandle -> IO a -> IO a
-withActiveJob slot board io = do
+withActiveJob slot board@ProgressBoardHandle {pbhJobs} io = do
   tid <- myThreadId
   emitTotal <- newIORef 0
   emitIndex <- newIORef 0
   emitStep <- newIORef 32
   lastEmit <- newIORef (0 :: Integer)
-  timing <- newJobTiming
+  timing <-
+    case pbhJobs V.!? slot of
+      Nothing -> newJobTiming
+      Just JobSlot {jsTiming} -> do
+        resetJobTiming jsTiming
+        pure jsTiming
   let
     !ctx =
       ActiveJobState

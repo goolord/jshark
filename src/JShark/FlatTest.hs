@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -9,8 +10,18 @@ module JShark.FlatTest
   , flatProgramRoundTrip
   , flatSoaPureNodeCount
   , optIrEffectForRangeImpure
+  , batchJobSlotTimingOk
   )
 where
+
+import JShark.CompileProgress
+  ( newProgressBoard
+  , recordJobFlatPrepare
+  , recordJobLintSec
+  , snapshotJobStatsFromSlot
+  , withActiveJob
+  )
+import JShark.CompileTiming (FlatPrepareTiming (..), cjsLowerSec, cjsLintSec)
 
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -76,3 +87,22 @@ optIrEffectForRangeImpure =
     (_, _, md) = Ir.optIrEffect 0 forRangeU8SetLoop
    in
     not (Ir.irMetaPure md)
+
+-- | Slot-backed timing refs survive snapshot after 'withActiveJob' returns.
+batchJobSlotTimingOk :: IO Bool
+batchJobSlotTimingOk = do
+  board <- newProgressBoard 1
+  _ <-
+    withActiveJob 0 board $ do
+      recordJobLintSec 0.001
+      recordJobFlatPrepare
+        FlatPrepareTiming
+          { fptLowerSec = 0.01
+          , fptIrOptSec = 0
+          , fptPackSec = 0
+          , fptFlatOptSec = 0
+          , fptTotalSec = 0.01
+          }
+      pure ()
+  stats <- snapshotJobStatsFromSlot board 0 "test" 0.05
+  pure (cjsLintSec stats == 0.001 && cjsLowerSec stats == 0.01)

@@ -2309,6 +2309,8 @@ compilerTests =
             ]
           enc = encodeProgressMessage nodes
         decodeProgressMessage enc @?= Just nodes
+    , testCase "batch job slot timing survives post-job snapshot" $
+        batchJobSlotTimingOk >>= (@?= True)
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
         clearCompilerCache
         out <-

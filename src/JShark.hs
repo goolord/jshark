@@ -4696,13 +4696,11 @@ flatParEmitBudgetThreshold :: Int
 flatParEmitBudgetThreshold = 16384
 
 shouldParFlatSiblings :: Flat.FlatProgram -> [Flat.NodeId] -> Bool
-shouldParFlatSiblings _ _ = False
+shouldParFlatSiblings prog nids =
+  length nids >= flatParEmitMinSiblings
+    && sum (map (Flat.flatIdentBudget prog) nids)
+      >= flatParEmitBudgetThreshold
 {-# NOINLINE shouldParFlatSiblings #-}
-
--- shouldParFlatSiblings prog nids =
---   length nids >= flatParEmitMinSiblings
---     && sum (map (Flat.flatIdentBudget prog) nids)
---       >= flatParEmitBudgetThreshold
 
 mergeEmitCG :: CG -> CG -> CG
 mergeEmitCG a b =
@@ -4729,97 +4727,142 @@ parEmitChunked maxW f xs =
       <$> mapConcurrently f chunk
       <*> parEmitChunked maxW f rest
 
-parEmitSiblings ::
+emitFlatSiblingsSeq ::
   (Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code))
   -> Env
   -> CG
   -> Flat.FlatProgram
   -> [Flat.NodeId]
   -> (CG, [Code])
-parEmitSiblings emit env s0 prog nids
-  | not (shouldParFlatSiblings prog nids) =
-      mapAccumL
-        ( \st nid ->
-            let
-              (st', code) = emit env st prog nid
-             in
-              (st', code)
-        )
-        s0
-        nids
-  | otherwise =
-      unsafePerformIO $ do
+emitFlatSiblingsSeq emit env s0 prog nids =
+  mapAccumL
+    ( \st nid ->
         let
-          budgets = map (Flat.flatIdentBudget prog) nids
-          starts = scanl (+) (cgIdent s0) (0 : init budgets)
-          jobs = zip starts nids
-        results <-
-          parEmitChunked
-            flatParEmitMaxWorkers
-            ( \(start, nid) ->
-                pure $
-                  emit env (s0 {cgIdent = start}) prog nid
-            )
-            jobs
-        let
-          (cgs, codes) = unzip results
-          !sMerged = mergeEmitCGs s0 cgs
-        pure (sMerged, codes)
-{-# NOINLINE parEmitSiblings #-}
+          (st', code) = emit env st prog nid
+         in
+          (st', code)
+    )
+    s0
+    nids
 
-flatRenderArgList ::
-  FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Int -> (CG, JS, JS)
-flatRenderArgList mode env s0 prog ai =
+parEmitSiblingsDirect ::
+  (Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code))
+  -> Env
+  -> CG
+  -> Flat.FlatProgram
+  -> [Flat.NodeId]
+  -> (CG, [Code])
+parEmitSiblingsDirect emit env s0 prog nids =
+  unsafePerformIO $ do
+    let
+      budgets = map (Flat.flatIdentBudget prog) nids
+      starts = scanl (+) (cgIdent s0) (0 : init budgets)
+      jobs = zip starts nids
+    results <-
+      parEmitChunked
+        flatParEmitMaxWorkers
+        ( \(start, nid) ->
+            pure $
+              emit env (s0 {cgIdent = start}) prog nid
+        )
+        jobs
+    let
+      (cgs, codes) = unzip results
+      !sMerged = mergeEmitCGs s0 cgs
+    pure (sMerged, codes)
+{-# NOINLINE parEmitSiblingsDirect #-}
+
+emitFlatSiblings ::
+  FlatEmitMode
+  -> (Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code))
+  -> Env
+  -> CG
+  -> Flat.FlatProgram
+  -> [Flat.NodeId]
+  -> (CG, [Code])
+emitFlatSiblings mode emit env s0 prog nids =
+  case mode of
+    LayeredEmit{} -> emitFlatSiblingsSeq emit env s0 prog nids
+    DirectEmit
+      | shouldParFlatSiblings prog nids ->
+          parEmitSiblingsDirect emit env s0 prog nids
+      | otherwise ->
+          emitFlatSiblingsSeq emit env s0 prog nids
+{-# NOINLINE emitFlatSiblings #-}
+
+flatRenderArgListSeq ::
+  FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> [Flat.FlatArg] -> (CG, JS, JS)
+flatRenderArgListSeq mode env s0 prog args =
   let
-    args = Flat.flatArgGroup prog ai
+    go s = \case
+      [] -> (s, [])
+      Flat.FlatArgExpr eid : rest ->
+        let
+          (s', c) = flatPureChild mode env s prog eid
+          (s'', cs') = go s' rest
+         in
+          (s'', c : cs')
+      Flat.FlatArgEffect eid : rest ->
+        let
+          (s', c) = flatEffectChild mode env s prog eid
+          (s'', cs') = go s' rest
+         in
+          (s'', c : cs')
+    (s1, cs) = go s0 args
+   in
+    (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+
+flatRenderArgListPar ::
+  Env -> CG -> Flat.FlatProgram -> [Flat.FlatArg] -> (CG, JS, JS)
+flatRenderArgListPar env s0 prog args =
+  let
+    emitArg s = \case
+      Flat.FlatArgExpr eid -> flatPureChild DirectEmit env s prog eid
+      Flat.FlatArgEffect eid -> flatEffectChild DirectEmit env s prog eid
     nids =
       [ case arg of
           Flat.FlatArgExpr eid -> eid
           Flat.FlatArgEffect eid -> eid
       | arg <- args
       ]
-    usePar = shouldParFlatSiblings prog nids
+    starts = scanl (+) (cgIdent s0) (0 : init (map (Flat.flatIdentBudget prog) nids))
+    jobs = zip starts args
+    (s1, cs) =
+      unsafePerformIO $
+        do
+          let
+            emitJob (start, arg) =
+              pure $ emitArg (s0 {cgIdent = start}) arg
+          results <- parEmitChunked flatParEmitMaxWorkers emitJob jobs
+          let
+            (cgs, codes) = unzip results
+            !sMerged = mergeEmitCGs s0 cgs
+          pure (sMerged, codes)
    in
-    if usePar
-      then
+    (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+{-# NOINLINE flatRenderArgListPar #-}
+
+flatRenderArgList ::
+  FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Int -> (CG, JS, JS)
+flatRenderArgList mode env s0 prog ai =
+  let
+    args = Flat.flatArgGroup prog ai
+   in
+    case mode of
+      LayeredEmit{} ->
+        flatRenderArgListSeq mode env s0 prog args
+      DirectEmit ->
         let
-          emitArg s = \case
-            Flat.FlatArgExpr eid -> flatPureChild mode env s prog eid
-            Flat.FlatArgEffect eid -> flatEffectChild mode env s prog eid
-          starts = scanl (+) (cgIdent s0) (0 : init (map (Flat.flatIdentBudget prog) nids))
-          jobs = zip starts args
-          (s1, cs) =
-            unsafePerformIO $
-              do
-                let
-                  emitJob (start, arg) =
-                    pure $ emitArg (s0 {cgIdent = start}) arg
-                results <- parEmitChunked flatParEmitMaxWorkers emitJob jobs
-                let
-                  (cgs, codes) = unzip results
-                  !sMerged = mergeEmitCGs s0 cgs
-                pure (sMerged, codes)
+          nids =
+            [ case arg of
+                Flat.FlatArgExpr eid -> eid
+                Flat.FlatArgEffect eid -> eid
+            | arg <- args
+            ]
          in
-          (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
-      else
-        let
-          go s = \case
-            [] -> (s, [])
-            Flat.FlatArgExpr eid : rest ->
-              let
-                (s', c) = flatPureChild mode env s prog eid
-                (s'', cs') = go s' rest
-               in
-                (s'', c : cs')
-            Flat.FlatArgEffect eid : rest ->
-              let
-                (s', c) = flatEffectChild mode env s prog eid
-                (s'', cs') = go s' rest
-               in
-                (s'', c : cs')
-          (s1, cs) = go s0 args
-         in
-          (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+          if shouldParFlatSiblings prog nids
+            then flatRenderArgListPar env s0 prog args
+            else flatRenderArgListSeq DirectEmit env s0 prog args
 
 flatRenderField ::
   FlatEmitMode
@@ -4874,7 +4917,7 @@ flatRenderArrayLit ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> [Flat.NodeId] -> (CG, Code)
 flatRenderArrayLit mode env s0 prog es =
   let
-    (s1, cs) = parEmitSiblings (flatEffectChild mode) env s0 prog es
+    (s1, cs) = emitFlatSiblings mode (flatEffectChild mode) env s0 prog es
    in
     ( s1
     , Code
@@ -5030,12 +5073,12 @@ flatRenderCallbackMethod mode env name s0 prog arrId tag bodyId =
     (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arrId
     (nParam, s2, exDecl, exRef) =
       case mode of
-        Just _ ->
+        LayeredEmit{} ->
           let
             (s', Code d r) = flatPureChild mode env s1 prog bodyId
            in
             (flatEnvTag env tag, s', d, r)
-        Nothing ->
+        DirectEmit ->
           let
             (n, s') = allocIdent s1
             env' = IM.insert tag n env
@@ -5068,7 +5111,7 @@ flatRenderFold mode env method s0 prog arrId zId tagA tagB bodyId =
     (s2, Code zDecl zRef) = flatPureChild mode env s1 prog zId
     (nAcc, nElem, s3, exDecl, exRef) =
       case mode of
-        Just _ ->
+        LayeredEmit{} ->
           let
             (s', Code d r) = flatPureChild mode env s2 prog bodyId
            in
@@ -5078,7 +5121,7 @@ flatRenderFold mode env method s0 prog arrId zId tagA tagB bodyId =
             , d
             , r
             )
-        Nothing ->
+        DirectEmit ->
           let
             (nA, sA) = allocIdent s2
             (nE, sE) = allocIdent sA
@@ -5107,7 +5150,7 @@ flatRenderMethod mode env s0 prog = \case
     flatRenderFold mode env ".reduceRight" s0 prog arr z tagA tagB body
   Flat.FE_MethToSorted arr tagA tagB body ->
     case mode of
-      Just _ ->
+      LayeredEmit{} ->
         let
           (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arr
           nA = flatEnvTag env tagA
@@ -5118,7 +5161,7 @@ flatRenderMethod mode env s0 prog = \case
           ( s2
           , Code rDecl (flatWrapOperand prog arr rRef <> ".toSorted" <> parens cb)
           )
-      Nothing ->
+      DirectEmit ->
         let
           (s1, Code rDecl rRef) = flatPureChild mode env s0 prog arr
           (nA, s2) = allocIdent s1
@@ -5132,7 +5175,7 @@ flatRenderMethod mode env s0 prog = \case
           )
   Flat.FE_MethFrom n tag body ->
     case mode of
-      Just _ ->
+      LayeredEmit{} ->
         let
           (s1, Code nDecl nRef) = flatPureChild mode env s0 prog n
           nI = flatEnvTag env tag
@@ -5140,7 +5183,7 @@ flatRenderMethod mode env s0 prog = \case
           cb = jsCallback ["_", nJS nI] exDecl exRef
          in
           (s2, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
-      Nothing ->
+      DirectEmit ->
         let
           (s1, Code nDecl nRef) = flatPureChild mode env s0 prog n
           (nHole, s2) = allocIdent s1
@@ -5162,13 +5205,13 @@ flatRenderFnLit ::
   -> (CG, Code)
 flatRenderFnLit mode env s0 prog tags bodyId =
   case mode of
-    Just _ ->
+    LayeredEmit{} ->
       let
         ids = map (flatEnvTag env) tags
         (s1, Code d r) = flatPureChild mode env s0 prog bodyId
        in
         (s1, Code mempty (jsCallback (map nJS ids) d r))
-    Nothing ->
+    DirectEmit ->
       let
         (ids, s1) = allocNIdents s0 (length tags)
         env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
@@ -5179,8 +5222,8 @@ flatRenderFnLit mode env s0 prog tags bodyId =
 flatResultUnwrapIdent :: FlatEmitMode -> Env -> CG -> Int -> (Int, CG)
 flatResultUnwrapIdent mode env s tag =
   case mode of
-    Just _ -> (flatEnvTag env tag, s)
-    Nothing ->
+    LayeredEmit{} -> (flatEnvTag env tag, s)
+    DirectEmit ->
       let
         (n, s') = allocIdent s
        in
@@ -5405,16 +5448,20 @@ data FlatEmitPlan = FlatEmitPlan
   , fepLayers :: !(V.Vector (V.Vector Flat.NodeId))
   }
 
-type FlatEmitMode = Maybe (FlatTableRead, FlatEmitPlan)
+-- | Layered emit fills a shared node table bottom-up; direct emit recurses
+-- without caching. Parallel sibling emit is only defined for 'DirectEmit'.
+data FlatEmitMode where
+  LayeredEmit :: FlatTableRead -> FlatEmitPlan -> FlatEmitMode
+  DirectEmit :: FlatEmitMode
 
 flatPlanIdent :: FlatEmitMode -> CG -> Flat.NodeId -> (Int, CG)
 flatPlanIdent mode s nid =
   case mode of
-    Just (_, plan) ->
+    LayeredEmit _ plan ->
       case fepBind plan V.!? nid of
         Just (Just i) -> (i, s)
         _ -> allocIdent s
-    Nothing -> allocIdent s
+    DirectEmit -> allocIdent s
 
 flatPlanEnv :: FlatEmitPlan -> Flat.NodeId -> Env
 flatPlanEnv plan nid =
@@ -5426,15 +5473,15 @@ flatPureChild ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
 flatPureChild mode env s prog cId =
   case mode of
-    Just (table, _) -> (s, flatTableLookup table cId)
-    Nothing -> flatPureASTGo Nothing env s prog cId
+    LayeredEmit table _ -> (s, flatTableLookup table cId)
+    DirectEmit -> flatPureASTGo DirectEmit env s prog cId
 
 flatEffectChild ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
 flatEffectChild mode env s prog cId =
   case mode of
-    Just (table, _) -> (s, flatTableLookup table cId)
-    Nothing -> flatEffectfulASTGo Nothing env s prog cId
+    LayeredEmit table _ -> (s, flatTableLookup table cId)
+    DirectEmit -> flatEffectfulASTGo DirectEmit env s prog cId
 
 flatNodeKindEffect :: Flat.FlatProgram -> Flat.NodeId -> Bool
 flatNodeKindEffect prog nid =
@@ -5660,7 +5707,7 @@ flatEmitLayered prog root plan s0 =
     forM_ emitOrder $ \nid -> do
       s <- readIORef sRef
       let
-        mode = Just (tableRead, plan)
+        mode = LayeredEmit tableRead plan
         env = flatPlanEnv plan nid
         (s', code) =
           if flatNodeKindEffect prog nid
@@ -5674,7 +5721,7 @@ flatEmitLayered prog root plan s0 =
 {-# NOINLINE flatEmitLayered #-}
 
 flatPureAST' :: Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
-flatPureAST' env s prog nid = flatPureASTGo Nothing env s prog nid
+flatPureAST' env s prog nid = flatPureASTGo DirectEmit env s prog nid
 
 flatPureASTGo ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
@@ -5831,7 +5878,7 @@ flatPureASTGo !mode !env !sIn prog nid =
           _ -> error "JShark.flatPureAST': unexpected node"
 
 flatEffectfulAST' :: Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
-flatEffectfulAST' env s prog nid = flatEffectfulASTGo Nothing env s prog nid
+flatEffectfulAST' env s prog nid = flatEffectfulASTGo DirectEmit env s prog nid
 
 flatEffectfulASTGo ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
