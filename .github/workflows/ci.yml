@@ -54,7 +54,10 @@ jobs:
       # - name: Verify WASM checksums
       #   run: sha256sum -c wasm/checksums.sha256
 
-      - uses: haskell-actions/run-fourmolu@v12
+      - name: Fourmolu (advisory)
+        id: fourmolu
+        continue-on-error: true
+        uses: haskell-actions/run-fourmolu@v12
         with:
           version: "0.20.1.0"
           pattern: |
@@ -62,6 +65,11 @@ jobs:
             examples
             test
             jshark-lucid
+
+      - name: Fourmolu advisory notice
+        if: steps.fourmolu.outcome != 'success'
+        run: |
+          echo "::warning title=Fourmolu::Some files are not formatted. Run scripts/format.sh locally."
 
       - name: Test
         run: |
