@@ -2,11 +2,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
--- | JShark LUT stepping (replaces LUTGenerator.js).
---
--- Main-thread runtime; semantics must match 'LutCore.stepRegionLUTPure'.
+-- | LUT stepping via native JS FFI (semantics: 'LutCore.stepRegionLUTPure').
 module Lut
-  ( createLifeLUT
+  ( bootLifeLut
+  , createLifeLUT
   , stepRegionLUT
   , stepCell
   , countNeighbors
@@ -17,85 +16,29 @@ import qualified Data.Text as T
 import Grid (cellIdx, inBounds, setU8, u8Get)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
-import qualified JShark.Math as Math
-import LutBoot (lifeLutCreateJs)
+import LutBoot (lifeLutEnsureJs, lifeLutGlobalJs, lifeLutInstallJs)
+
+bootLifeLut :: EffectSyntax f (f 'Unit)
+bootLifeLut = do
+  toSyntax_ $
+    ffi
+      (T.unpack lifeLutInstallJs)
+      RecNil
+  done
 
 createLifeLUT :: EffectSyntax f (Expr f 'Uint8Array)
 createLifeLUT =
   bindExpr $
     ffi
-      ("(()=>{" <> T.unpack lifeLutCreateJs <> "})")
+      ( "(function(){"
+          <> T.unpack lifeLutEnsureJs
+          <> "var api="
+          <> T.unpack lifeLutGlobalJs
+          <> ";"
+          <> "return api&&api.createLifeLUT();"
+          <> "})"
+      )
       RecNil
-
-computeNextByte ::
-  Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-computeNextByte top cur bot lt lc lb rt rc rb =
-  go (number 0) (number 0)
- where
-  go bit acc =
-    if_
-      (bit .>= 8)
-      acc
-      ( let
-          sh = bit
-          alive = bitAnd (shr cur sh) (number 1)
-          left =
-            if_ (bit .> 0) (bitAnd (shr cur (bit - 1)) (number 1)) lc
-          right =
-            if_ (bit .< 7) (bitAnd (shr cur (bit + 1)) (number 1)) rc
-          topL =
-            if_ (bit .> 0) (bitAnd (shr top (bit - 1)) (number 1)) lt
-          topC = bitAnd (shr top sh) (number 1)
-          topR =
-            if_ (bit .< 7) (bitAnd (shr top (bit + 1)) (number 1)) rt
-          botL =
-            if_ (bit .> 0) (bitAnd (shr bot (bit - 1)) (number 1)) lb
-          botC = bitAnd (shr bot sh) (number 1)
-          botR =
-            if_ (bit .< 7) (bitAnd (shr bot (bit + 1)) (number 1)) rb
-          n = topL + topC + topR + left + right + botL + botC + botR
-          born =
-            if_ (alive .== 1) (n .== 2 .|| n .== 3) (n .== 3)
-          acc' =
-            if_ born (bitOr acc (shl (number 1) sh)) acc
-         in
-          go (bit + 1) acc'
-      )
-
-stepChunk ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-stepChunk lut top cur bot lt lc lb rt rc rb =
-  let
-    edge = bitOr (bitOr (bitOr lt lc) lb) (bitOr (bitOr rt rc) rb)
-    combined = bitOr (bitOr top cur) (bitOr bot edge)
-   in
-    if_
-      (combined .== 0)
-      (number 0)
-      ( if_
-          ((bot .== 0) .&& (edge .== 0))
-          (u8Index lut (shl top (number 8) + cur))
-          (computeNextByte top cur bot lt lc lb rt rc rb)
-      )
 
 countNeighbors ::
   Expr f 'Uint8Array
@@ -145,87 +88,6 @@ stepCell gridA gridB w h x y = do
   setU8 gridB i next
   done
 
-packRowByte ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (Expr f 'Number)
-packRowByte grid rowOff w x0 = do
-  st <- hold newObject
-  _ <- setProp st "byte" (number 0)
-  forRange_ (number 0) (number 8) $ \b -> do
-    let
-      x = x0 + b
-    whenS (x .< w) $ do
-      let
-        sh = shl (number 1) b
-      cur <- getProp st "byte"
-      whenS (bitAnd (u8Index grid (rowOff + x)) (number 1) .== 1) $
-        setProp st "byte" (bitOr cur sh)
-    done
-  getProp st "byte"
-
-edgeBit ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-edgeBit grid rowOff w col =
-  if_
-    (col .< 0 .|| col .>= w)
-    (number 0)
-    ( if_
-        (bitAnd (u8Index grid (rowOff + col)) (number 1) .== 1)
-        (number 1)
-        (number 0)
-    )
-
-unpackRowByte ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-unpackRowByte grid rowOff w x0 byte =
-  forRange_ (number 0) (number 8) $ \b -> do
-    let
-      x = x0 + b
-    whenS (x .< w) $ do
-      let
-        sh = shl (number 1) b
-        v = if_ (bitAnd byte sh .== 0) (number 0) (number 1)
-      setU8 grid (rowOff + x) v
-    done
-
-clearRow ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-clearRow grid off len = do
-  toSyntax_ $
-    ffi
-      "(function(g,o,l){g.fill(0,o,o+l);})"
-      (arg grid <: arg off <: arg len <: RecNil)
-  done
-
-copyRow ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-copyRow src srcOff dst dstOff len = do
-  toSyntax_ $
-    ffi
-      "(function(a,so,d,do_,l){d.set(a.subarray(so,so+l),do_);})"
-      (arg src <: arg srcOff <: arg dst <: arg dstOff <: arg len <: RecNil)
-  done
-
 stepRegionLUT ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
@@ -236,46 +98,23 @@ stepRegionLUT ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 stepRegionLUT lut gridA gridB w h y0 y1 = do
-  let
-    yStart = Math.max (number 1) y0
-    yStop = Math.min (h - number 1) y1
-    bytes = Math.floor ((w + number 7) / number 8)
-  forRange_ yStart yStop $ \y -> do
-    let
-      topOff = (y - number 1) * w
-      curOff = y * w
-      botOff = (y + number 1) * w
-    clearRow gridB curOff w
-    forRange_ (number 0) bytes $ \xb -> do
-      let
-        x0 = xb * number 8
-      whenS (x0 .< w) $ do
-        let
-          leftCol = x0 - number 1
-          rightCol = x0 + number 8
-          lt = edgeBit gridA topOff w leftCol
-          lc = edgeBit gridA curOff w leftCol
-          lb = edgeBit gridA botOff w leftCol
-          rt = edgeBit gridA topOff w rightCol
-          rc = edgeBit gridA curOff w rightCol
-          rb = edgeBit gridA botOff w rightCol
-        top <- packRowByte gridA topOff w x0
-        cur <- packRowByte gridA curOff w x0
-        bot <- packRowByte gridA botOff w x0
-        let
-          combined =
-            bitOr
-              (bitOr (bitOr top cur) bot)
-              (bitOr (bitOr (bitOr lt lc) lb) (bitOr (bitOr rt rc) rb))
-        whenS (combined .!= 0) $ do
-          let
-            nextByte = stepChunk lut top cur bot lt lc lb rt rc rb
-          unpackRowByte gridB curOff w x0 nextByte
-      done
-    done
-  whenS (y0 .== 0) (copyRow gridA (number 0) gridB (number 0) w)
-  whenS (y1 .>= h) $ do
-    let
-      botOff = (h - number 1) * w
-    copyRow gridA botOff gridB botOff w
+  toSyntax_ $
+    ffi
+      ( "(function(L,a,b,w,h,y0,y1){"
+          <> T.unpack lifeLutEnsureJs
+          <> "var api="
+          <> T.unpack lifeLutGlobalJs
+          <> ";"
+          <> "if(api&&api.stepRegionLUT)api.stepRegionLUT(L,a,b,w,h,y0,y1);"
+          <> "})"
+      )
+      ( arg lut
+          <: arg gridA
+          <: arg gridB
+          <: arg w
+          <: arg h
+          <: arg y0
+          <: arg y1
+          <: RecNil
+      )
   done

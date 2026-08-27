@@ -20,6 +20,7 @@ engineWorkerJs =
     <> lifeLutWorkerBootJs
     <> "\n\n"
     <> workerHandlerJs
+    <> "\n"
 
 workerHandlerJs :: Text
 workerHandlerJs =

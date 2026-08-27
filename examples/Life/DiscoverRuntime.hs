@@ -297,12 +297,12 @@ collectLiveLocal ::
 collectLiveLocal grid gw gh = do
   live <- bindExpr $ Array.fromEffects []
   forRange2_ (number 0) gh (number 0) gw $ \y x -> do
-      let
-        idx = y * gw + x
-      whenS (u8Index grid idx .== 1) $ do
-        row <- bindExpr $ coordPair x y
-        _ <- Array.push_ live row
-        done
+    let
+      idx = y * gw + x
+    whenS (u8Index grid idx .== 1) $ do
+      row <- bindExpr $ coordPair x y
+      _ <- Array.push_ live row
+      done
   pure live
 
 sandboxNbr ::
@@ -336,21 +336,21 @@ sandboxStepGrid ::
 sandboxStepGrid grid gw gh = do
   out <- bindExpr $ newByteArray (gw * gh)
   forRange2_ (number 0) gh (number 0) gw $ \y x -> do
-      let
-        n =
-          sandboxNbr grid gw gh x y (-1) (-1)
-            + sandboxNbr grid gw gh x y 0 (-1)
-            + sandboxNbr grid gw gh x y 1 (-1)
-            + sandboxNbr grid gw gh x y (-1) 0
-            + sandboxNbr grid gw gh x y 1 0
-            + sandboxNbr grid gw gh x y (-1) 1
-            + sandboxNbr grid gw gh x y 0 1
-            + sandboxNbr grid gw gh x y 1 1
-        idx = y * gw + x
-        alive = u8Index grid idx .== 1
-        next =
-          if_ (n .== 3) (number 1) (if_ (alive .&& n .== 2) (number 1) (number 0))
-      setU8 out idx next
+    let
+      n =
+        sandboxNbr grid gw gh x y (-1) (-1)
+          + sandboxNbr grid gw gh x y 0 (-1)
+          + sandboxNbr grid gw gh x y 1 (-1)
+          + sandboxNbr grid gw gh x y (-1) 0
+          + sandboxNbr grid gw gh x y 1 0
+          + sandboxNbr grid gw gh x y (-1) 1
+          + sandboxNbr grid gw gh x y 0 1
+          + sandboxNbr grid gw gh x y 1 1
+      idx = y * gw + x
+      alive = u8Index grid idx .== 1
+      next =
+        if_ (n .== 3) (number 1) (if_ (alive .&& n .== 2) (number 1) (number 0))
+    setU8 out idx next
   pure out
 
 collectPhaseKey ::

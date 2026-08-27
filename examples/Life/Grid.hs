@@ -41,6 +41,7 @@ module Grid
   )
 where
 
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
@@ -49,6 +50,7 @@ import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import qualified JShark.Dom as Dom
 import qualified JShark.Math as Math
+import LutBoot (lifeLutEnsureJs, lifeLutGlobalJs)
 import qualified Pixi
 
 data StepScratch = StepScratch
@@ -304,15 +306,26 @@ refreshPackedRegion ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 refreshPackedRegion grid w h x0 y0 x1 y1 = do
-  let
-    fx0 = Math.floor x0
-    fy0 = Math.floor y0
-    fx1 = Math.floor x1
-    fy1 = Math.floor y1
-    (xStart, yStart, xStop, yStop) =
-      clampLiveBounds w h fx0 fy0 fx1 fy1 (number 1)
-  forRange2_ yStart yStop xStart xStop $ \y x ->
-    refreshPackedAt grid w h x y
+  toSyntax_ $
+    ffi
+      ( "(function(grid,w,h,x0,y0,x1,y1){"
+          <> T.unpack lifeLutEnsureJs
+          <> "var api="
+          <> T.unpack lifeLutGlobalJs
+          <> ";"
+          <> "if(api&&api.refreshPackedRegion)"
+          <> "api.refreshPackedRegion(grid,w,h,x0,y0,x1,y1);"
+          <> "})"
+      )
+      ( arg grid
+          <: arg w
+          <: arg h
+          <: arg x0
+          <: arg y0
+          <: arg x1
+          <: arg y1
+          <: RecNil
+      )
   done
 
 -- | Expand RGB palette to RGBA for WebGL texture uploads.

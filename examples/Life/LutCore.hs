@@ -3,7 +3,7 @@
 -- | Pure reference for Conway LUT chunk stepping.
 --
 -- Canonical byte/chunk semantics: 'stepChunk' and 'computeNextByte' here.
--- Full-grid stepping: 'Lut.stepRegionLUT' (main JShark) and
+-- Full-grid stepping: native JS via 'Lut.stepRegionLUT' / 'EngineFinish.finishStep';
 -- 'LutBoot.lifeLutWorkerBootJs' (worker emit) — parity in
 -- @test/LifeWorkerTests.hs@ and @test/LifeTests.hs@.
 module LutCore

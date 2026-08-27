@@ -207,12 +207,12 @@ discoverLife
         clampLiveBounds w0 h0 x0 y0 x1 y1 (number 1)
     whenS (ixStop .> ix0 .&& iyStop .> iy0) $
       forRange2_ iy0 iyStop ix0 ixStop $ \y x -> do
-          let
-            i = cellIdx w0 x y
-          vis <- u8Get visited i
-          sp <- u8Get species i
-          whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
-            floodComponent scratch i x y
+        let
+          i = cellIdx w0 x y
+        vis <- u8Get visited i
+        sp <- u8Get species i
+        whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
+          floodComponent scratch i x y
     nid <- scratch.nextId
     pure (nid, minted)
 

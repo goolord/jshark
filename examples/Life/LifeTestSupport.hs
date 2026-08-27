@@ -31,7 +31,6 @@ module LifeTestSupport
 where
 
 import DiscoverRuntime (collectPhaseKey)
-
 import Grid
   ( StepCtx (..)
   , StepScratch (..)

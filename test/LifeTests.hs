@@ -91,6 +91,7 @@ lifeTests =
               testLutGliderSeam
           , lifeCase "finishStep keeps block stable" testFinishStepBlock
           , lifeCase "finishStep rebuilds packed counts" testFinishStepPacked
+          , lifeCase "finishStep picks majority birth species" testFinishStepBirthSpecies
           , lifeCase "engineStepGeneration keeps block stable" testEngineStepGeneration
           , lifeCase "initEngineGrids allocates LUT and grids" testEngineInit
           , lifeCase "stepRegionLUT row slices match full LUT step" testLutStepTile
@@ -293,6 +294,52 @@ testFinishStepPacked = fromSyntax $ do
   whenS (shr (u8Index nextAlive (number 9)) (number 1) .== 0) $ do
     toSyntax_ $ ffi "(()=>{throw new Error('packed count');})" RecNil
     done
+  done
+
+testFinishStepBirthSpecies :: forall f. Effect f 'Unit
+testFinishStepBirthSpecies = fromSyntax $ do
+  let
+    w = number 8
+    h = number 8
+  alive <- bindExpr (newByteArray (w * h))
+  species <- bindExpr (newByteArray (w * h))
+  nextAlive <- bindExpr (newByteArray (w * h))
+  nextSpecies <- bindExpr (newByteArray (w * h))
+  (lut, gridA, gridB) <- initEngineGrids (w * h)
+  -- Three live neighbors above (4,4): species 1 twice, species 2 once.
+  _ <- setU8 alive (number 27) (number 1)
+  _ <- setU8 alive (number 28) (number 1)
+  _ <- setU8 alive (number 29) (number 1)
+  _ <- setU8 species (number 27) (number 1)
+  _ <- setU8 species (number 28) (number 1)
+  _ <- setU8 species (number 29) (number 2)
+  rebuildPackedCounts alive w h
+  nextLiveList <- bindExpr $ Array.fromEffects []
+  nextChangedList <- bindExpr $ Array.fromEffects []
+  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
+  engineOk <-
+    finishStep
+      alive
+      species
+      nextAlive
+      nextSpecies
+      gridA
+      gridB
+      lut
+      w
+      h
+      (number 0)
+      (number 0)
+      (number 7)
+      (number 7)
+      nextLiveList
+      nextChangedList
+      stepCtx
+  LifeAssert.assertEqual (number 1) (if_ engineOk (number 1) (number 0))
+  LifeAssert.assertEqual
+    (number 1)
+    (bitAnd (u8Index nextAlive (number 36)) (number 1))
+  LifeAssert.assertEqual (number 1) (u8Index nextSpecies (number 36))
   done
 
 testEngineInit :: forall f. Effect f 'Unit

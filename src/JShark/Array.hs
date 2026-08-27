@@ -188,7 +188,10 @@ reduceChecked ::
     )
 reduceChecked =
   namedLambdaRow
-    @('[Param "seed" ('Object (ReduceWith acc u)), Param "f" ('Function acc ('Function u acc))])
+    @( '[ Param "seed" ('Object (ReduceWith acc u))
+        , Param "f" ('Function acc ('Function u acc))
+        ]
+     )
     "reduce"
     $ \p ->
       Std
@@ -284,10 +287,14 @@ zipWithChecked ::
     )
 zipWithChecked =
   namedLambdaRow
-    @('[Param "pair" ('Object (ZipPair a b)), Param "zipFn" ('Function a ('Function b c))])
+    @( '[ Param "pair" ('Object (ZipPair a b))
+        , Param "zipFn" ('Function a ('Function b c))
+        ]
+     )
     "zipWith"
     $ \p ->
-      let_ (Math.min (length (GetField @"xs" p.pair)) (length (GetField @"ys" p.pair))) $ \n ->
+      let_
+        (Math.min (length (GetField @"xs" p.pair)) (length (GetField @"ys" p.pair))) $ \n ->
         Std
           ( Method
               ( MethFrom n $ \i ->
