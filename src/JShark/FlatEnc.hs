@@ -6,8 +6,13 @@ module JShark.FlatEnc
   )
 where
 
+import Control.Monad (forM_)
+import Control.Monad.ST (runST)
 import Data.Int (Int32)
+import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as MVU
 import Data.Word (Word16)
 
 type Op = Word16
@@ -241,6 +246,44 @@ oFX_DELETEPROP = 122
 
 oFX_ARRAYLIT :: Op
 oFX_ARRAYLIT = 123
+
+-- | Freeze enc rows in pack order (row @i@ is the @i@th append).
+freezeEncSeq ::
+  Seq Enc
+  -> ( VU.Vector Op
+     , VU.Vector Int32
+     , VU.Vector Int32
+     , VU.Vector Int32
+     , VU.Vector Int32
+     , VU.Vector Int32
+     )
+freezeEncSeq encs =
+  let
+    n = Seq.length encs
+   in
+    runST $ do
+      opM <- MVU.new n
+      aM <- MVU.new n
+      bM <- MVU.new n
+      cM <- MVU.new n
+      dM <- MVU.new n
+      eM <- MVU.new n
+      forM_ [0 .. n - 1] $ \i ->
+        case Seq.index encs i of
+          Enc o a b c d e -> do
+            MVU.write opM i o
+            MVU.write aM i a
+            MVU.write bM i b
+            MVU.write cM i c
+            MVU.write dM i d
+            MVU.write eM i e
+      opF <- VU.unsafeFreeze opM
+      aF <- VU.unsafeFreeze aM
+      bF <- VU.unsafeFreeze bM
+      cF <- VU.unsafeFreeze cM
+      dF <- VU.unsafeFreeze dM
+      eF <- VU.unsafeFreeze eM
+      pure (opF, aF, bF, cF, dF, eF)
 
 -- | Freeze @[(Enc)]@ to column vectors in list order: row @i@ is @encs !! i@.
 freezeEncColumns ::

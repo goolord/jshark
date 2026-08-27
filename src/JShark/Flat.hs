@@ -25,6 +25,7 @@ module JShark.Flat
   , encodeFlatNode
   , emptySoaSideAcc
   , packStateEncs
+  , packStateNodeCount
   , packStateSoaSide
   , packStateSideTables
   , PackState
@@ -34,8 +35,11 @@ module JShark.Flat
 where
 
 import Control.Monad.State.Strict (State, get, put, runState)
+import Data.Foldable (toList)
 import Data.Int (Int32)
 import Data.Proxy (Proxy (..))
+import Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -150,13 +154,24 @@ data FlatNode
   | FX_ArrayLit [NodeId]
 
 data SoaSideAcc = SoaSideAcc
-  { saFixed :: ![FlatFixed]
-  , saFnLit :: ![([Int], NodeId)]
-  , saArrays :: ![[NodeId]]
+  { saFixed :: !(Seq FlatFixed)
+  , saFixedCount :: !Int
+  , saFnLit :: !(Seq ([Int], NodeId))
+  , saFnLitCount :: !Int
+  , saArrays :: !(Seq [NodeId])
+  , saArrayCount :: !Int
   }
 
 emptySoaSideAcc :: SoaSideAcc
-emptySoaSideAcc = SoaSideAcc [] [] []
+emptySoaSideAcc =
+  SoaSideAcc
+    { saFixed = Seq.empty
+    , saFixedCount = 0
+    , saFnLit = Seq.empty
+    , saFnLitCount = 0
+    , saArrays = Seq.empty
+    , saArrayCount = 0
+    }
 
 sideAccToVectors ::
   SoaSideAcc
@@ -165,9 +180,9 @@ sideAccToVectors ::
      , Vector (Vector NodeId)
      )
 sideAccToVectors side =
-  ( V.fromList (saFixed side)
-  , V.fromList (saFnLit side)
-  , V.fromList (map V.fromList (saArrays side))
+  ( V.fromList (toList (saFixed side))
+  , V.fromList (toList (saFnLit side))
+  , V.fromList (map V.fromList (toList (saArrays side)))
   )
 
 encI32 :: Int -> Int32
@@ -216,15 +231,23 @@ encodeFlatNode node side = case node of
   FE_Error m -> (Enc FE.oFE_ERROR (encI32 m) 0 0 0 0, side)
   FE_Fixed fix ->
     let
-      fi = length (saFixed side)
+      fi = saFixedCount side
      in
-      (Enc FE.oFE_FIXED (encI32 fi) 0 0 0 0, side {saFixed = saFixed side ++ [fix]})
+      ( Enc FE.oFE_FIXED (encI32 fi) 0 0 0 0
+      , side
+          { saFixed = saFixed side Seq.|> fix
+          , saFixedCount = fi + 1
+          }
+      )
   FE_FnLit tags b ->
     let
-      fi = length (saFnLit side)
+      fi = saFnLitCount side
      in
       ( Enc FE.oFE_FNLIT (encI32 fi) (encI32 b) 0 0 0
-      , side {saFnLit = saFnLit side ++ [(tags, b)]}
+      , side
+          { saFnLit = saFnLit side Seq.|> (tags, b)
+          , saFnLitCount = fi + 1
+          }
       )
   FE_UnsafeNullable x -> (Enc FE.oFE_UNSAFENULL (encI32 x) 0 0 0 0, side)
   FE_FrozenLit gi -> (Enc FE.oFE_FROZEN (encI32 gi) 0 0 0 0, side)
@@ -305,38 +328,58 @@ encodeFlatNode node side = case node of
   FX_DeleteProp o k -> (Enc FE.oFX_DELETEPROP (encI32 o) (encI32 k) 0 0 0, side)
   FX_ArrayLit ns ->
     let
-      ai = length (saArrays side)
+      ai = saArrayCount side
      in
       ( Enc FE.oFX_ARRAYLIT (encI32 ai) 0 0 0 0
-      , side {saArrays = saArrays side ++ [ns]}
+      , side
+          { saArrays = saArrays side Seq.|> ns
+          , saArrayCount = ai + 1
+          }
       )
 
 emptyPackState :: PackState
 emptyPackState =
   PackState
-    { psEncs = []
+    { psEncs = Seq.empty
+    , psNodeCount = 0
     , psSoaSide = emptySoaSideAcc
-    , psLits = []
-    , psTexts = []
-    , psFFIs = []
-    , psStrCases = []
-    , psFieldGroups = []
-    , psArgGroups = []
+    , psLits = Seq.empty
+    , psLitCount = 0
+    , psTexts = Seq.empty
+    , psTextCount = 0
+    , psFFIs = Seq.empty
+    , psFFICount = 0
+    , psStrCases = Seq.empty
+    , psStrCaseCount = 0
+    , psFieldGroups = Seq.empty
+    , psFieldGroupCount = 0
+    , psArgGroups = Seq.empty
+    , psArgGroupCount = 0
     }
 
 data PackState = PackState
-  { psEncs :: ![Enc]
+  { psEncs :: !(Seq Enc)
+  , psNodeCount :: !Int
   , psSoaSide :: !SoaSideAcc
-  , psLits :: ![FlatLit]
-  , psTexts :: ![Text]
-  , psFFIs :: ![FFIForm]
-  , psStrCases :: ![[(Text, NodeId)]]
-  , psFieldGroups :: ![[FlatField]]
-  , psArgGroups :: ![[FlatArg]]
+  , psLits :: !(Seq FlatLit)
+  , psLitCount :: !Int
+  , psTexts :: !(Seq Text)
+  , psTextCount :: !Int
+  , psFFIs :: !(Seq FFIForm)
+  , psFFICount :: !Int
+  , psStrCases :: !(Seq [(Text, NodeId)])
+  , psStrCaseCount :: !Int
+  , psFieldGroups :: !(Seq [FlatField])
+  , psFieldGroupCount :: !Int
+  , psArgGroups :: !(Seq [FlatArg])
+  , psArgGroupCount :: !Int
   }
 
-packStateEncs :: PackState -> [Enc]
+packStateEncs :: PackState -> Seq Enc
 packStateEncs = psEncs
+
+packStateNodeCount :: PackState -> Int
+packStateNodeCount = psNodeCount
 
 packStateSoaSide :: PackState -> SoaSideAcc
 packStateSoaSide = psSoaSide
@@ -351,12 +394,12 @@ packStateSideTables ::
      , Vector [FlatArg]
      )
 packStateSideTables st =
-  ( V.fromList (reverse (psLits st))
-  , V.fromList (reverse (psTexts st))
-  , V.fromList (reverse (psFFIs st))
-  , V.fromList (reverse (psStrCases st))
-  , V.fromList (reverse (psFieldGroups st))
-  , V.fromList (reverse (psArgGroups st))
+  ( V.fromList (toList (psLits st))
+  , V.fromList (toList (psTexts st))
+  , V.fromList (toList (psFFIs st))
+  , V.fromList (toList (psStrCases st))
+  , V.fromList (toList (psFieldGroups st))
+  , V.fromList (toList (psArgGroups st))
   )
 
 fieldKeyText :: forall k. KnownSymbol k => Text
@@ -366,11 +409,12 @@ addNode :: FlatNode -> State PackState NodeId
 addNode node = do
   st <- get
   let
-    n = length (psEncs st)
+    n = psNodeCount st
     (enc, side') = encodeFlatNode node (psSoaSide st)
   put
     st
-      { psEncs = enc : psEncs st
+      { psEncs = psEncs st Seq.|> enc
+      , psNodeCount = n + 1
       , psSoaSide = side'
       }
   pure n
@@ -379,48 +423,48 @@ addLit :: FlatLit -> State PackState Int
 addLit lit = do
   st <- get
   let
-    i = length (psLits st)
-  put st {psLits = lit : psLits st}
+    i = psLitCount st
+  put st {psLits = psLits st Seq.|> lit, psLitCount = i + 1}
   pure i
 
 addText :: Text -> State PackState Int
 addText txt = do
   st <- get
   let
-    i = length (psTexts st)
-  put st {psTexts = txt : psTexts st}
+    i = psTextCount st
+  put st {psTexts = psTexts st Seq.|> txt, psTextCount = i + 1}
   pure i
 
 addFFI :: FFIForm -> State PackState Int
 addFFI form = do
   st <- get
   let
-    i = length (psFFIs st)
-  put st {psFFIs = form : psFFIs st}
+    i = psFFICount st
+  put st {psFFIs = psFFIs st Seq.|> form, psFFICount = i + 1}
   pure i
 
 addStrCases :: [(Text, NodeId)] -> State PackState Int
 addStrCases cases = do
   st <- get
   let
-    i = length (psStrCases st)
-  put st {psStrCases = cases : psStrCases st}
+    i = psStrCaseCount st
+  put st {psStrCases = psStrCases st Seq.|> cases, psStrCaseCount = i + 1}
   pure i
 
 addFieldGroup :: [FlatField] -> State PackState Int
 addFieldGroup fs = do
   st <- get
   let
-    i = length (psFieldGroups st)
-  put st {psFieldGroups = fs : psFieldGroups st}
+    i = psFieldGroupCount st
+  put st {psFieldGroups = psFieldGroups st Seq.|> fs, psFieldGroupCount = i + 1}
   pure i
 
 addArgGroup :: [FlatArg] -> State PackState Int
 addArgGroup args = do
   st <- get
   let
-    i = length (psArgGroups st)
-  put st {psArgGroups = args : psArgGroups st}
+    i = psArgGroupCount st
+  put st {psArgGroups = psArgGroups st Seq.|> args, psArgGroupCount = i + 1}
   pure i
 
 packEffectProgramState :: IrEffect u -> (NodeId, PackState)

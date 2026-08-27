@@ -63,11 +63,12 @@ import JShark.Flat
   , flatNodeChildRefs
   , packEffectProgramState
   , packStateEncs
+  , packStateNodeCount
   , packStateSideTables
   , packStateSoaSide
   , sideAccToVectors
   )
-import JShark.FlatEnc (freezeEncColumns)
+import JShark.FlatEnc (freezeEncSeq)
 import JShark.Ir (IrEffect)
 import JShark.Types (BigBinOp (..), FFIForm (..), Value (..))
 import Unsafe.Coerce (unsafeCoerce)
@@ -322,6 +323,7 @@ data FlatSoA = FlatSoA
   , fsaFieldGroups :: !(V.Vector [FlatField])
   , fsaArgGroups :: !(V.Vector [FlatArg])
   , fsaRoot :: !NodeId
+  , fsaSubtreeSizes :: !(V.Vector Int)
   }
 
 packEffectProgramSoA :: IrEffect u -> FlatSoA
@@ -333,33 +335,35 @@ flatSoaNodeCount soa = VU.length (fsaOpcodes soa)
 freezeSoaFromPackState :: NodeId -> PackState -> FlatSoA
 freezeSoaFromPackState root st =
   let
-    encs = reverse (packStateEncs st)
     side = packStateSoaSide st
-    (opF, aF, bF, cF, dF, eF) = freezeEncColumns encs
-    n = length encs
+    n = packStateNodeCount st
+    (opF, aF, bF, cF, dF, eF) = freezeEncSeq (packStateEncs st)
     (fx, fl, ag) = sideAccToVectors side
     (lits, texts, ffis, strCases, fieldGroups, argGroups) =
       packStateSideTables st
+    soa0 =
+      FlatSoA
+        { fsaOpcodes = opF
+        , fsaA = aF
+        , fsaB = bF
+        , fsaC = cF
+        , fsaD = dF
+        , fsaE = eF
+        , fsaPure = VU.replicate n 0
+        , fsaFixed = fx
+        , fsaFnLit = fl
+        , fsaArrayGroups = ag
+        , fsaLits = lits
+        , fsaTexts = texts
+        , fsaFFIs = ffis
+        , fsaStrCases = strCases
+        , fsaFieldGroups = fieldGroups
+        , fsaArgGroups = argGroups
+        , fsaRoot = root
+        , fsaSubtreeSizes = V.empty
+        }
    in
-    FlatSoA
-      { fsaOpcodes = opF
-      , fsaA = aF
-      , fsaB = bF
-      , fsaC = cF
-      , fsaD = dF
-      , fsaE = eF
-      , fsaPure = VU.replicate n 0
-      , fsaFixed = fx
-      , fsaFnLit = fl
-      , fsaArrayGroups = ag
-      , fsaLits = lits
-      , fsaTexts = texts
-      , fsaFFIs = ffis
-      , fsaStrCases = strCases
-      , fsaFieldGroups = fieldGroups
-      , fsaArgGroups = argGroups
-      , fsaRoot = root
-      }
+    attachFlatSoaSubtreeSizes soa0
 
 -- | Pack IR directly to SoA columns (no intermediate node vector).
 packEffectProgramDirect :: IrEffect u -> FlatSoA
@@ -374,8 +378,9 @@ optimizeFlatPack :: FlatSoA -> FlatSoA
 optimizeFlatPack soa0 =
   let
     !(soa1, _folded) = optConstantFoldNumWithChangedPar soa0
+    !soa2 = propagatePureFlagsPar soa1
    in
-    propagatePureFlagsPar soa1
+    attachFlatSoaSubtreeSizes soa2
 
 i32 :: Int -> Int32
 i32 = fromIntegral
@@ -539,26 +544,43 @@ flatSoaNodePackRefs soa node =
 
 flatSoaSubtreeSizes :: FlatSoA -> V.Vector Int
 flatSoaSubtreeSizes soa =
+  if V.null (fsaSubtreeSizes soa)
+    then computeFlatSoaSubtreeSizes soa
+    else fsaSubtreeSizes soa
+
+attachFlatSoaSubtreeSizes :: FlatSoA -> FlatSoA
+attachFlatSoaSubtreeSizes soa =
+  soa {fsaSubtreeSizes = computeFlatSoaSubtreeSizes soa}
+
+-- | Pack order: child refs are below @i@; one backward pass, no vector copies.
+computeFlatSoaSubtreeSizes :: FlatSoA -> V.Vector Int
+computeFlatSoaSubtreeSizes soa =
   let
     n = flatSoaNodeCount soa
    in
-    snd $
-      foldl'
-        ( \(_, acc) i ->
-            let
-              node = flatSoaNode soa i
-              sz =
-                1
-                  + sum
-                    [ acc V.! r
-                    | r <- flatSoaNodePackRefs soa node
-                    ]
-              acc' = acc V.// [(i, sz)]
-             in
-              ((), acc')
-        )
-        ((), V.replicate n 0)
-        [0 .. n - 1]
+    if n <= 0
+      then V.empty
+      else runST $ do
+        ms <- MV.new n
+        let
+          writeSz i sz = MV.write ms i sz
+          go i
+            | i < 0 = pure ()
+            | otherwise = do
+                let
+                  refs = flatSoaNodePackRefs soa (flatSoaNode soa i)
+                acc <-
+                  foldM
+                    ( \acc r -> do
+                        s <- MV.read ms r
+                        pure (acc + s)
+                    )
+                    (0 :: Int)
+                    refs
+                writeSz i (1 + acc)
+                go (i - 1)
+        go (n - 1)
+        V.unsafeFreeze ms
 
 flatSoaIdentBudget :: FlatSoA -> NodeId -> Int
 flatSoaIdentBudget soa i =
