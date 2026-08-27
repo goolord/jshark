@@ -4,6 +4,7 @@
 
 module Main (main) where
 
+import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark
@@ -11,32 +12,32 @@ import JShark
   , flatPrepareCore
   , flatProgramNodeCount
   , nodeCountEff
-  , optimizeEffect
   , optIrLargeThreshold
+  , optimizeEffectFromIr
   , renderJSCompact
   )
 import JShark.Api (stmts)
 import JShark.CompileTiming (FlatPrepareTiming (..), seconds)
+import qualified JShark.Ir as Ir
 import JShark.Types (ClosedEffect, Universe (Unit))
 import Life (mainJS)
-import qualified Data.Text as T
 
 life :: ClosedEffect Unit
 life = stmts mainJS
 
-runOptimize :: ClosedEffect Unit -> Int
-runOptimize e = nodeCountEff (optimizeEffect e)
-{-# NOINLINE runOptimize #-}
+runOptimizeFromIr :: Ir.IrEffect Unit -> Int
+runOptimizeFromIr ir = nodeCountEff (optimizeEffectFromIr ir)
+{-# NOINLINE runOptimizeFromIr #-}
 
 main :: IO ()
 main = do
   putStrLn $ "irThreshold," ++ show optIrLargeThreshold
-  (prog, FlatPrepareTiming {..}, irNodes) <- flatPrepareCore life
+  (prog, FlatPrepareTiming {..}, irNodes, irOpt) <- flatPrepareCore life
   evaluate prog
   putStrLn $ "rawNodes," ++ show irNodes
   t0 <- getMonotonicTime
   let
-    optNodes = runOptimize life
+    optNodes = runOptimizeFromIr irOpt
   t1 <- getMonotonicTime
   evaluate optNodes
   putStrLn $ "phoasOptimize," ++ show (seconds t0 t1)

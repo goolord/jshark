@@ -25,6 +25,12 @@ import JShark.Api
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Classes as C
+import JShark.CompileProgressProtocol
+  ( ProgressNode (..)
+  , ProgressParent (..)
+  , decodeProgressMessage
+  , encodeProgressMessage
+  )
 import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
@@ -1927,7 +1933,7 @@ optimizeTests =
                   (ffi "baz" RecNil)
               )
           )
-          @?= "let n1;\nswitch (\"a\") {case \"a\": {n1 = foo(); break;}\ncase \"b\": {n1 = bar(); break;}\ndefault: {n1 = baz();}}\nn1"
+          @?= "let n0;\nswitch (\"a\") {case \"a\": {n0 = foo(); break;}\ncase \"b\": {n0 = bar(); break;}\ndefault: {n0 = baz();}}\nn0"
     , testCase "stringCaseE of a literal miss takes default" $
         renderJS
           ( effectfulAST
@@ -1937,7 +1943,7 @@ optimizeTests =
                   (ffi "baz" RecNil)
               )
           )
-          @?= "let n1;\nswitch (\"z\") {case \"a\": {n1 = foo(); break;}\ndefault: {n1 = baz();}}\nn1"
+          @?= "let n0;\nswitch (\"z\") {case \"a\": {n0 = foo(); break;}\ndefault: {n0 = baz();}}\nn0"
     , testCase "forRange array index uses the loop variable" $ do
         let
           eff =
@@ -2273,6 +2279,22 @@ compilerTests =
         c <- compilePureIO withProgress prog
         a @?= b
         b @?= c
+    , testCase "progress protocol encode/decode roundtrip" $ do
+        let
+          nodes =
+            [ ProgressNode
+                2
+                5
+                "compile"
+                ProgressRoot
+            , ProgressNode
+                50
+                100
+                "life [min] emit"
+                (ProgressChild 0)
+            ]
+          enc = encodeProgressMessage nodes
+        decodeProgressMessage enc @?= Just nodes
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
         clearCompilerCache
         out <-

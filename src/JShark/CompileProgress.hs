@@ -33,7 +33,22 @@ module JShark.CompileProgress
   , captureEmitCtx
   , initEmitCtxTotal
   , reportPackPhase
+  , reportFlatOptPhase
+  , reportLowerPhase
+  , reportIrOptPhase
   , tickEmitCtx
+  , recordJobLintSec
+  , recordJobCodegenSec
+  , recordJobMinifySec
+  , recordJobJsBytes
+  , recordJobFlatPrepare
+  , recordJobPhoasPrepare
+  , recordJobForm
+  , snapshotJobStats
+  , setProgressBoardHandle
+  , clearProgressBoardHandle
+  , emitProgressBoard
+  , progressFdActive
   )
 where
 
@@ -48,19 +63,37 @@ import Data.Atomics.Counter
   , readCounter
   , writeCounter
   )
+import qualified Data.ByteString.Char8 as BC
 import Data.Char (chr)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
+import Data.Word (Word32)
 import GHC.IO.Unsafe (unsafePerformIO)
+import JShark.CompileProgressProtocol
+  ( ProgressNode (..)
+  , ProgressParent (..)
+  , maxProgressNodes
+  , progressFdFromEnv
+  , writeProgressMessage
+  )
+import JShark.CompileTiming
+  ( CompileForm (..)
+  , CompileJobStats (..)
+  , FlatPrepareTiming (..)
+  , PhoasPrepareTiming (..)
+  )
 import System.CPUTime (getCPUTime)
 
 data CompilePhase
   = PhaseLint
+  | PhaseLower
+  | PhaseIrOpt
   | PhasePack
+  | PhaseFlatOpt
   | PhaseEmit
   | PhaseMinify
   | PhaseDone
@@ -99,6 +132,16 @@ data ProgressBoardHandle = ProgressBoardHandle
   , pbhJobs :: !(V.Vector JobSlot)
   }
 
+data JobTiming = JobTiming
+  { jtForm :: !(IORef CompileForm)
+  , jtLintSec :: !(IORef Double)
+  , jtCodegenSec :: !(IORef Double)
+  , jtMinifySec :: !(IORef Double)
+  , jtJsBytes :: !(IORef Int)
+  , jtFlatPrepare :: !(IORef (Maybe FlatPrepareTiming))
+  , jtPhoasPrepare :: !(IORef (Maybe PhoasPrepareTiming))
+  }
+
 data ActiveJobState = ActiveJobState
   { ajsSlot :: !Int
   , ajsBoard :: !ProgressBoardHandle
@@ -106,6 +149,7 @@ data ActiveJobState = ActiveJobState
   , ajsEmitIndex :: !(IORef Int)
   , ajsEmitStep :: !(IORef Int)
   , ajsLastEmit :: !(IORef Integer)
+  , ajsTiming :: !JobTiming
   }
 
 data EmitCtx = EmitCtx
@@ -118,22 +162,162 @@ data EmitCtx = EmitCtx
   }
 
 emitCtxFromJob :: ActiveJobState -> EmitCtx
-emitCtxFromJob ActiveJobState
-                 { ajsSlot
-                 , ajsBoard
-                 , ajsEmitTotal
-                 , ajsEmitIndex
-                 , ajsEmitStep
-                 , ajsLastEmit
-                 } =
-  EmitCtx
-    { ecSlot = ajsSlot
-    , ecBoard = ajsBoard
-    , ecIndex = ajsEmitIndex
-    , ecTotal = ajsEmitTotal
-    , ecStep = ajsEmitStep
-    , ecLast = ajsLastEmit
-    }
+emitCtxFromJob
+  ActiveJobState
+    { ajsSlot
+    , ajsBoard
+    , ajsEmitTotal
+    , ajsEmitIndex
+    , ajsEmitStep
+    , ajsLastEmit
+    } =
+    EmitCtx
+      { ecSlot = ajsSlot
+      , ecBoard = ajsBoard
+      , ecIndex = ajsEmitIndex
+      , ecTotal = ajsEmitTotal
+      , ecStep = ajsEmitStep
+      , ecLast = ajsLastEmit
+      }
+
+newJobTiming :: IO JobTiming
+newJobTiming = do
+  form <- newIORef FormMinified
+  lint <- newIORef 0
+  codegen <- newIORef 0
+  minify <- newIORef 0
+  bytes <- newIORef 0
+  flat <- newIORef Nothing
+  phoas <- newIORef Nothing
+  pure
+    JobTiming
+      { jtForm = form
+      , jtLintSec = lint
+      , jtCodegenSec = codegen
+      , jtMinifySec = minify
+      , jtJsBytes = bytes
+      , jtFlatPrepare = flat
+      , jtPhoasPrepare = phoas
+      }
+
+lookupJobTiming :: IO (Maybe JobTiming)
+lookupJobTiming = fmap ajsTiming <$> lookupActiveJob
+
+recordJobLintSec :: Double -> IO ()
+recordJobLintSec sec = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtLintSec} -> writeIORef jtLintSec sec
+
+recordJobCodegenSec :: Double -> IO ()
+recordJobCodegenSec sec = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtCodegenSec} -> writeIORef jtCodegenSec sec
+
+recordJobMinifySec :: Double -> IO ()
+recordJobMinifySec sec = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtMinifySec} -> writeIORef jtMinifySec sec
+
+recordJobJsBytes :: Int -> IO ()
+recordJobJsBytes n = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtJsBytes} -> writeIORef jtJsBytes n
+
+recordJobFlatPrepare :: FlatPrepareTiming -> IO ()
+recordJobFlatPrepare t = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtFlatPrepare} -> writeIORef jtFlatPrepare (Just t)
+
+recordJobPhoasPrepare :: PhoasPrepareTiming -> IO ()
+recordJobPhoasPrepare t = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtPhoasPrepare} -> writeIORef jtPhoasPrepare (Just t)
+
+recordJobForm :: CompileForm -> IO ()
+recordJobForm form = do
+  m <- lookupJobTiming
+  case m of
+    Nothing -> pure ()
+    Just JobTiming {jtForm} -> writeIORef jtForm form
+
+snapshotJobStats :: Text -> Double -> IO CompileJobStats
+snapshotJobStats label totalSec = do
+  m <- lookupJobTiming
+  case m of
+    Nothing ->
+      pure
+        CompileJobStats
+          { cjsLabel = label
+          , cjsForm = FormMinified
+          , cjsLintSec = 0
+          , cjsLowerSec = 0
+          , cjsIrOptSec = 0
+          , cjsPackSec = 0
+          , cjsFlatOptSec = 0
+          , cjsPhoasOptSec = 0
+          , cjsEmitSec = 0
+          , cjsMinifySec = 0
+          , cjsTotalSec = totalSec
+          , cjsJsBytes = 0
+          }
+    Just
+      JobTiming
+        { jtForm
+        , jtLintSec
+        , jtCodegenSec
+        , jtMinifySec
+        , jtJsBytes
+        , jtFlatPrepare
+        , jtPhoasPrepare
+        } -> do
+        form <- readIORef jtForm
+        lint <- readIORef jtLintSec
+        codegen <- readIORef jtCodegenSec
+        minify <- readIORef jtMinifySec
+        bytes <- readIORef jtJsBytes
+        flat <- readIORef jtFlatPrepare
+        phoas <- readIORef jtPhoasPrepare
+        let
+          lower = maybe 0 fptLowerSec flat
+          irOpt = maybe 0 fptIrOptSec flat
+          pack = maybe 0 fptPackSec flat
+          flatOpt = maybe 0 fptFlatOptSec flat
+          phoasOpt = maybe 0 pptOptimizeSec phoas
+          hasPrepare = isJust flat || isJust phoas
+          prepareTotal =
+            maybe 0 fptTotalSec flat + maybe 0 pptTotalSec phoas
+          emit =
+            if hasPrepare
+              then max 0 (codegen - prepareTotal)
+              else codegen
+         in
+          pure
+            CompileJobStats
+              { cjsLabel = label
+              , cjsForm = form
+              , cjsLintSec = lint
+              , cjsLowerSec = lower
+              , cjsIrOptSec = irOpt
+              , cjsPackSec = pack
+              , cjsFlatOptSec = flatOpt
+              , cjsPhoasOptSec = phoasOpt
+              , cjsEmitSec = emit
+              , cjsMinifySec = minify
+              , cjsTotalSec = totalSec
+              , cjsJsBytes = bytes
+              }
 
 captureEmitCtx :: IO (Maybe EmitCtx)
 captureEmitCtx =
@@ -148,6 +332,18 @@ initEmitCtxTotal EmitCtx {ecSlot, ecBoard, ecTotal, ecIndex, ecStep} n = do
   writeIORef ecIndex 0
   writeIORef ecStep step
   reportJobPhaseDirect ecBoard ecSlot PhaseEmit 0 total
+
+reportFlatOptPhase :: EmitCtx -> Int -> Int -> IO ()
+reportFlatOptPhase EmitCtx {ecBoard, ecSlot} idx tot =
+  reportJobPhaseDirect ecBoard ecSlot PhaseFlatOpt idx tot
+
+reportLowerPhase :: EmitCtx -> Int -> Int -> IO ()
+reportLowerPhase EmitCtx {ecBoard, ecSlot} idx tot =
+  reportJobPhaseDirect ecBoard ecSlot PhaseLower idx tot
+
+reportIrOptPhase :: EmitCtx -> Int -> Int -> IO ()
+reportIrOptPhase EmitCtx {ecBoard, ecSlot} idx tot =
+  reportJobPhaseDirect ecBoard ecSlot PhaseIrOpt idx tot
 
 reportPackPhase :: EmitCtx -> Int -> Int -> IO ()
 reportPackPhase EmitCtx {ecBoard, ecSlot} idx tot =
@@ -173,7 +369,7 @@ tickEmitCtx EmitCtx {ecSlot, ecBoard, ecIndex, ecTotal, ecStep, ecLast} = do
         reportJobPhaseDirect ecBoard ecSlot PhaseEmit idx total
 
 {-# NOINLINE progressActive #-}
-progressActive :: IORef (Map ThreadId ActiveJobState)
+progressActive :: IORef (Map.Map ThreadId ActiveJobState)
 progressActive = unsafePerformIO (newIORef Map.empty)
 
 {-# NOINLINE progressGate #-}
@@ -187,6 +383,10 @@ progressRedraw = unsafePerformIO (newIORef Nothing)
 {-# NOINLINE pendingRedraw #-}
 pendingRedraw :: IORef Bool
 pendingRedraw = unsafePerformIO (newIORef False)
+
+{-# NOINLINE progressBoardRef #-}
+progressBoardRef :: IORef (Maybe ProgressBoardHandle)
+progressBoardRef = unsafePerformIO (newIORef Nothing)
 
 gateSpinMicros :: Int
 gateSpinMicros = 1000
@@ -240,15 +440,42 @@ setProgressRedraw io = writeIORef progressRedraw (Just io)
 clearProgressRedraw :: IO ()
 clearProgressRedraw = writeIORef progressRedraw Nothing
 
+setProgressBoardHandle :: ProgressBoardHandle -> IO ()
+setProgressBoardHandle h = writeIORef progressBoardRef (Just h)
+
+clearProgressBoardHandle :: IO ()
+clearProgressBoardHandle = writeIORef progressBoardRef Nothing
+
+emitProgressBoard :: ProgressBoard -> IO ()
+emitProgressBoard board =
+  writeProgressMessage (progressBoardToNodes board)
+
+progressUsesFd :: IO Bool
+progressUsesFd =
+  isJust <$> progressFdFromEnv
+
+progressFdActive :: IO Bool
+progressFdActive = progressUsesFd
+
 maybeRedraw :: IO ()
 maybeRedraw = do
-  m <- readIORef progressRedraw
-  case m of
-    Nothing -> pure ()
-    Just io ->
-      tryProgressIO io >>= \case
-        Nothing -> writeIORef pendingRedraw True
-        Just {} -> pure ()
+  fdMode <- progressFdActive
+  if fdMode
+    then do
+      mBoard <- readIORef progressBoardRef
+      case mBoard of
+        Nothing -> pure ()
+        Just handle -> do
+          board <- readProgressBoard handle
+          emitProgressBoard board
+    else do
+      m <- readIORef progressRedraw
+      case m of
+        Nothing -> pure ()
+        Just io ->
+          tryProgressIO io >>= \case
+            Nothing -> writeIORef pendingRedraw True
+            Just {} -> pure ()
 
 lookupActiveJob :: IO (Maybe ActiveJobState)
 lookupActiveJob = do
@@ -258,40 +485,55 @@ lookupActiveJob = do
 phaseToInt :: CompilePhase -> Int
 phaseToInt = \case
   PhaseLint -> 0
-  PhasePack -> 1
-  PhaseEmit -> 2
-  PhaseMinify -> 3
-  PhaseDone -> 4
+  PhaseLower -> 1
+  PhaseIrOpt -> 2
+  PhasePack -> 3
+  PhaseFlatOpt -> 4
+  PhaseEmit -> 5
+  PhaseMinify -> 6
+  PhaseDone -> 7
 
 phaseFromInt :: Int -> CompilePhase
 phaseFromInt = \case
   0 -> PhaseLint
-  1 -> PhasePack
-  2 -> PhaseEmit
-  3 -> PhaseMinify
-  4 -> PhaseDone
+  1 -> PhaseLower
+  2 -> PhaseIrOpt
+  3 -> PhasePack
+  4 -> PhaseFlatOpt
+  5 -> PhaseEmit
+  6 -> PhaseMinify
+  7 -> PhaseDone
   _ -> PhaseLint
 
 phaseWeight :: CompilePhase -> Double
 phaseWeight = \case
-  PhaseLint -> 0.05
-  PhasePack -> 0.15
-  PhaseEmit -> 0.70
+  PhaseLint -> 0.03
+  PhaseLower -> 0.05
+  PhaseIrOpt -> 0.05
+  PhasePack -> 0.05
+  PhaseFlatOpt -> 0.05
+  PhaseEmit -> 0.62
   PhaseMinify -> 0.10
   PhaseDone -> 1.0
 
 phaseOrder :: CompilePhase -> Int
 phaseOrder = \case
   PhaseLint -> 0
-  PhasePack -> 1
-  PhaseEmit -> 2
-  PhaseMinify -> 3
-  PhaseDone -> 4
+  PhaseLower -> 1
+  PhaseIrOpt -> 2
+  PhasePack -> 3
+  PhaseFlatOpt -> 4
+  PhaseEmit -> 5
+  PhaseMinify -> 6
+  PhaseDone -> 7
 
 phaseLabel :: CompilePhase -> String
 phaseLabel = \case
   PhaseLint -> "lint"
+  PhaseLower -> "lowr"
+  PhaseIrOpt -> "iopt"
   PhasePack -> "pack"
+  PhaseFlatOpt -> "fopt"
   PhaseEmit -> "emit"
   PhaseMinify -> "min"
   PhaseDone -> "done"
@@ -300,7 +542,16 @@ completedPhaseWeight :: CompilePhase -> Double
 completedPhaseWeight phase =
   sum
     [ phaseWeight p
-    | p <- [PhaseLint, PhasePack, PhaseEmit, PhaseMinify, PhaseDone]
+    | p <-
+        [ PhaseLint
+        , PhaseLower
+        , PhaseIrOpt
+        , PhasePack
+        , PhaseFlatOpt
+        , PhaseEmit
+        , PhaseMinify
+        , PhaseDone
+        ]
     , phaseOrder p < phaseOrder phase
     ]
 
@@ -422,6 +673,7 @@ withActiveJob slot board io = do
   emitIndex <- newIORef 0
   emitStep <- newIORef 32
   lastEmit <- newIORef (0 :: Integer)
+  timing <- newJobTiming
   let
     !ctx =
       ActiveJobState
@@ -431,6 +683,7 @@ withActiveJob slot board io = do
         , ajsEmitIndex = emitIndex
         , ajsEmitStep = emitStep
         , ajsLastEmit = lastEmit
+        , ajsTiming = timing
         }
   atomicModifyIORef' progressActive $ \m -> (Map.insert tid ctx m, ())
   io
@@ -509,7 +762,7 @@ renderSubLine style j =
     name = truncateLabel 18 (T.unpack lbl)
     phase = padRight 4 (phaseLabel ph)
     idxShow =
-      if tot > 1 && (ph == PhaseEmit || ph == PhasePack)
+      if tot > 1 && phaseUsesIndex ph
         then " " ++ show (min idx tot) ++ "/" ++ show tot
         else ""
    in
@@ -558,6 +811,75 @@ truncateLabel n s
   | length s <= n = s
   | n <= 1 = take n s
   | otherwise = take (n - 1) s ++ "."
+
+phaseUsesIndex :: CompilePhase -> Bool
+phaseUsesIndex = \case
+  PhaseLower -> True
+  PhaseIrOpt -> True
+  PhasePack -> True
+  PhaseFlatOpt -> True
+  PhaseEmit -> True
+  _ -> False
+
+progressBoardToNodes :: ProgressBoard -> [ProgressNode]
+progressBoardToNodes board =
+  let
+    done = pbDone board
+    total = max 1 (pbTotal board)
+    root =
+      ProgressNode
+        { pnCompleted = fromIntegral done
+        , pnEstimatedTotal = fromIntegral total
+        , pnName = BC.pack "compile"
+        , pnParent = ProgressRoot
+        }
+    active =
+      take (maxProgressNodes - 1) $
+        filter
+          (\j -> not (jpDone j) && not (T.null (jpLabel j)))
+          (V.toList (pbJobs board))
+    jobNodes =
+      map
+        ( \j ->
+            let
+              pct = jobProgressPct j
+              (completed, estimated) = jobCounts j pct
+              name = progressJobName j
+             in
+              ProgressNode
+                { pnCompleted = completed
+                , pnEstimatedTotal = estimated
+                , pnName = BC.take 40 name
+                , pnParent = ProgressChild 0
+                }
+        )
+        active
+   in
+    root : jobNodes
+
+jobCounts :: JobProgress -> Double -> (Word32, Word32)
+jobCounts JobProgress {jpPhase, jpIndex, jpTotal} pct =
+  if jpTotal > 0 && phaseUsesIndex jpPhase
+    then
+      ( fromIntegral (min jpIndex jpTotal)
+      , fromIntegral jpTotal
+      )
+    else
+      ( fromIntegral (floor (pct * 100 :: Double) :: Int)
+      , 100
+      )
+
+progressJobName :: JobProgress -> BC.ByteString
+progressJobName JobProgress {jpLabel, jpPhase} =
+  let
+    lbl = T.unpack jpLabel
+    ph = phaseLabel jpPhase
+    combined =
+      if null lbl
+        then ph
+        else ph ++ " " ++ truncateLabel 28 lbl
+   in
+    BC.pack combined
 
 padLeft :: Int -> String -> String
 padLeft w s =

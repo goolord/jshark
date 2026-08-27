@@ -25,6 +25,7 @@ module JShark.CompileReport
   , runCompileReportFromConfig
   , drawSingleDone
   , drawBatchDone
+  , drawBatchStats
   , logFallback
   , progressStyleIO
   , toCompileProgressStyle
@@ -37,6 +38,7 @@ import Data.Char (chr)
 import Effectful (Dispatch (..), DispatchOf, Eff, Effect, IOE, liftIO, (:>))
 import Effectful.Dispatch.Dynamic (interpret_, send)
 import JShark.CompileProgress as CP
+import JShark.CompileTiming (CompileJobStats (..), renderCompileStatsTable)
 import Numeric (showFFloat)
 import System.IO (hFlush, hIsTerminalDevice, hPutStr, hPutStrLn, stderr)
 
@@ -44,6 +46,7 @@ import System.IO (hFlush, hIsTerminalDevice, hPutStr, hPutStrLn, stderr)
 data CompileReport :: Effect where
   DrawSingleDone :: Double -> CompileReport m ()
   DrawBatchDone :: Int -> Double -> CompileReport m ()
+  DrawBatchStats :: Double -> [CompileJobStats] -> CompileReport m ()
   LogFallback :: String -> CompileReport m ()
 
 type instance DispatchOf CompileReport = Dynamic
@@ -53,6 +56,7 @@ runCompileReportSilent ::
 runCompileReportSilent = interpret_ $ \case
   DrawSingleDone _ -> pure ()
   DrawBatchDone _ _ -> pure ()
+  DrawBatchStats _ _ -> pure ()
   LogFallback msg -> liftIO (logFallbackIO msg)
 
 runCompileReportIO ::
@@ -60,6 +64,7 @@ runCompileReportIO ::
 runCompileReportIO = interpret_ $ \case
   DrawSingleDone secs -> liftIO (drawSingleDoneIO secs)
   DrawBatchDone total secs -> liftIO (drawBatchDoneIO total secs)
+  DrawBatchStats batchWall stats -> liftIO (drawBatchStatsIO batchWall stats)
   LogFallback msg -> liftIO (logFallbackIO msg)
 
 runCompileReportFromConfig ::
@@ -77,6 +82,9 @@ drawSingleDone = send . DrawSingleDone
 
 drawBatchDone :: CompileReport :> es => Int -> Double -> Eff es ()
 drawBatchDone total secs = send (DrawBatchDone total secs)
+
+drawBatchStats :: CompileReport :> es => Double -> [CompileJobStats] -> Eff es ()
+drawBatchStats batchWall stats = send (DrawBatchStats batchWall stats)
 
 logFallback :: CompileReport :> es => String -> Eff es ()
 logFallback = send . LogFallback
@@ -98,6 +106,15 @@ drawBatchDoneIO total secs = do
   CP.withProgressIO $ do
     hPutStrLn stderr ""
     hPutStrLn stderr (renderBatchDone style total secs)
+
+drawBatchStatsIO :: Double -> [CompileJobStats] -> IO ()
+drawBatchStatsIO batchWall stats
+  | null stats = pure ()
+  | otherwise = do
+      CP.withProgressIO $ do
+        hPutStrLn stderr ""
+        hPutStrLn stderr "compile stats (seconds):"
+        hPutStrLn stderr (renderCompileStatsTable (Just batchWall) stats)
 
 data TerminalStyle = TerminalPlain | TerminalTTY
 

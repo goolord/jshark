@@ -9,7 +9,7 @@ import DevServer (Example (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
 import JShark.Compiler
   ( applyCompilerArgs
-  , compileEffectsLabeled
+  , compileJobsLabeled
   , defaultCompilerConfig
   , isCompilerFlag
   , readableConfig
@@ -29,31 +29,37 @@ main = do
   args <- getArgs
   let
     (flags, cmd) = partition isCompilerFlag args
-    progressFlags = "--progress" : flags
-  [breakoutSrc, todoSrc, synthSrc, hvm2Src] <-
-    compileEffectsLabeled
-      (applyCompilerArgs progressFlags readableConfig)
-      [ ("breakout (source)", fromSyntax Breakout.mainJS)
-      , ("todo-mvc (source)", fromSyntax TodoMvc.mainJS)
-      , ("synth (source)", fromSyntax Synth.mainJS)
-      , ("hvm2-demo (source)", fromSyntax Hvm2Demo.mainJS)
+    baseCfg =
+      applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
+  (compiled, _stats) <-
+    compileJobsLabeled
+      baseCfg
+      [ ("breakout (source)", readableConfig, fromSyntax Breakout.mainJS)
+      , ("todo-mvc (source)", readableConfig, fromSyntax TodoMvc.mainJS)
+      , ("synth (source)", readableConfig, fromSyntax Synth.mainJS)
+      , ("hvm2-demo (source)", readableConfig, fromSyntax Hvm2Demo.mainJS)
+      , ("breakout", defaultCompilerConfig, fromSyntax Breakout.mainJS)
+      , ("todo-mvc", defaultCompilerConfig, fromSyntax TodoMvc.mainJS)
+      , ("synth", defaultCompilerConfig, fromSyntax Synth.mainJS)
+      , ("life", defaultCompilerConfig, fromSyntax Life.mainJS)
+      , ("hvm2-demo", defaultCompilerConfig, fromSyntax Hvm2Demo.mainJS)
       ]
+  let
+    breakoutSrc = compiled !! 0
+    todoSrc = compiled !! 1
+    synthSrc = compiled !! 2
+    hvm2Src = compiled !! 3
+    breakoutJs = compiled !! 4
+    todoJs = compiled !! 5
+    synthJs = compiled !! 6
+    lifeJs = compiled !! 7
+    hvm2Js = compiled !! 8
   hvm2Bend <-
     case bendModule hvm2Entries of
       Left err -> die ("hvm2-demo bend: " <> show err)
       Right bend -> pure bend
   let
     hvm2MandelJs = T.pack mandelJsSource
-  [breakoutJs, todoJs, synthJs, lifeJs, hvm2Js] <-
-    compileEffectsLabeled
-      (applyCompilerArgs progressFlags defaultCompilerConfig)
-      [ ("breakout", fromSyntax Breakout.mainJS)
-      , ("todo-mvc", fromSyntax TodoMvc.mainJS)
-      , ("synth", fromSyntax Synth.mainJS)
-      , ("life", fromSyntax Life.mainJS)
-      , ("hvm2-demo", fromSyntax Hvm2Demo.mainJS)
-      ]
-  let
     examples =
       [ Example
           "breakout"

@@ -79,6 +79,9 @@ module JShark.Compiler
   , compileEffectsLabeled
   , compileEffectsLabeledPure
   , compileEffectsLabeledIO
+  , compileJobsLabeled
+  , compileJobsLabeledPure
+  , compileJobsLabeledIO
   , compilePure
   , compilePurePure
   , compilePureIO
@@ -96,6 +99,7 @@ module JShark.Compiler
     -- * HVM2 lint
   , applyCompilerArgs
   , isCompilerFlag
+  , CompileJobStats (..)
   )
 where
 
@@ -122,6 +126,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
 import Data.Word (Word64)
 import Effectful (Eff, IOE, liftIO, runEff, (:>))
+import GHC.Clock (getMonotonicTime)
 import JShark
   ( ClosedEffect
   , ClosedExpr
@@ -133,6 +138,11 @@ import JShark
   )
 import qualified JShark.CompileProgress as CP
 import qualified JShark.CompileReport as CR
+import JShark.CompileTiming
+  ( CompileForm (..)
+  , CompileJobStats (..)
+  , seconds
+  )
 import JShark.Emit (JS, renderJS)
 import JShark.Hvm2Lint (warnHvm2CandidatesEffect, warnHvm2CandidatesExpr)
 import Numeric (showHex)
@@ -644,13 +654,22 @@ compileTreeEff ::
 compileTreeEff cfg doc = do
   let
     !style = configStyle cfg
+  tCodegen0 <- liftIO getMonotonicTime
+  let
     !js = renderJSCompact (doc style)
+  tCodegen1 <- liftIO getMonotonicTime
+  liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
   -- Batch slot ticks bypass 'CompileReport'; see 'JShark.CompileReport'.
   liftIO CP.finishEmitPhase
   case configProgressSlot cfg of
     Nothing -> pure ()
     Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 0 1
+  tMin0 <- liftIO getMonotonicTime
   out <- compileWithEff (styleConfig cfg) js
+  tMin1 <- liftIO getMonotonicTime
+  liftIO $ do
+    CP.recordJobMinifySec (seconds tMin0 tMin1)
+    CP.recordJobJsBytes (T.length out)
   case configProgressSlot cfg of
     Nothing -> pure ()
     Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 1 1
@@ -677,6 +696,8 @@ compileEffectEff ::
   -> Eff es Text
 compileEffectEff cfg eff = do
   start <- liftIO getCPUTime
+  liftIO $ CP.recordJobForm (compileForm cfg)
+  tLint0 <- liftIO getMonotonicTime
   -- Batch slot ticks bypass 'CompileReport'; see 'JShark.CompileReport'.
   case configProgressSlot cfg of
     Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 0 1
@@ -686,6 +707,8 @@ compileEffectEff cfg eff = do
   case configProgressSlot cfg of
     Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 1 1
     Nothing -> pure ()
+  tLint1 <- liftIO getMonotonicTime
+  liftIO $ CP.recordJobLintSec (seconds tLint0 tLint1)
   out <- compileTreeEff cfg (`effectDoc` eff)
   end <- liftIO getCPUTime
   CR.drawSingleDone (CR.picosecondsToSecs (end - start))
@@ -757,6 +780,35 @@ compileEffectsLabeledIO cfg jobs =
     CR.runCompileReportIO
       (compileBatchEff (cfg {configProgress = True}) compileEffectEff jobs)
 
+-- | Mixed-config batch compile. When 'configProgress' is enabled, draws a
+-- progress bar, prints per-job compile stats, and returns those stats.
+compileJobsLabeled ::
+  CompilerConfig
+  -> [(Text, CompilerConfig, ClosedEffect u)]
+  -> IO ([Text], [CompileJobStats])
+compileJobsLabeled cfg jobs =
+  runEff $
+    CR.runCompileReportFromConfig
+      (configProgress cfg)
+      (compileMixedBatchEff cfg jobs)
+
+compileJobsLabeledPure ::
+  CompilerConfig
+  -> [(Text, CompilerConfig, ClosedEffect u)]
+  -> IO ([Text], [CompileJobStats])
+compileJobsLabeledPure cfg jobs =
+  runEff $
+    CR.runCompileReportSilent (compileMixedBatchEff (quietCfg cfg) jobs)
+
+compileJobsLabeledIO ::
+  CompilerConfig
+  -> [(Text, CompilerConfig, ClosedEffect u)]
+  -> IO ([Text], [CompileJobStats])
+compileJobsLabeledIO cfg jobs =
+  runEff $
+    CR.runCompileReportIO
+      (compileMixedBatchEff (cfg {configProgress = True}) jobs)
+
 -- | Compile many pure programs concurrently. Never draws progress bars.
 compilePures :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
 compilePures cfg exprs =
@@ -815,61 +867,131 @@ compileBatchProgressEff ::
 compileBatchProgressEff cfg compileOneIO jobs = do
   let
     total = length jobs
-  (results, secs) <- liftIO $ batchProgressIO cfg total compileOneIO jobs
+  (results, stats, secs) <-
+    liftIO $
+      batchProgressLabeledIO
+        cfg
+        total
+        ( \slot _label item ->
+            compileOneIO (quietCfg cfg {configProgressSlot = Just slot}) item
+        )
+        jobs
   CR.drawBatchDone total secs
+  CR.drawBatchStats secs stats
   pure results
 
-batchProgressIO ::
+compileMixedBatchEff ::
+  CompilerConfig
+  -> [(Text, CompilerConfig, ClosedEffect u)]
+  -> Eff CompileEff ([Text], [CompileJobStats])
+compileMixedBatchEff baseCfg jobs
+  | configProgress baseCfg = do
+      let
+        total = length jobs
+      (results, stats, secs) <-
+        liftIO $ batchProgressMixedIO baseCfg jobs
+      CR.drawBatchDone total secs
+      CR.drawBatchStats secs stats
+      pure (results, stats)
+  | otherwise = do
+      results <-
+        liftIO $
+          mapConcurrently
+            ( \(_label, jobCfg, eff) ->
+                compileEffectPure (mergeJobConfig baseCfg jobCfg) eff
+            )
+            jobs
+      pure (results, [])
+
+batchProgressMixedIO ::
+  CompilerConfig
+  -> [(Text, CompilerConfig, ClosedEffect u)]
+  -> IO ([Text], [CompileJobStats], Double)
+batchProgressMixedIO baseCfg jobs =
+  batchProgressCore
+    (length jobs)
+    ( map
+        ( \(label, jobCfg, eff) ->
+            ( label
+            , \slot ->
+                compileEffectPure
+                  (mergeJobConfig baseCfg jobCfg {configProgressSlot = Just slot})
+                  eff
+            )
+        )
+        jobs
+    )
+
+batchProgressLabeledIO ::
   CompilerConfig
   -> Int
-  -> (CompilerConfig -> item -> IO Text)
-  -> [(Text, item)]
-  -> IO ([Text], Double)
-batchProgressIO cfg total compileOneIO jobs = do
-  let
-    quietCfg' = quietCfg cfg
+  -> (Int -> Text -> job -> IO Text)
+  -> [(Text, job)]
+  -> IO ([Text], [CompileJobStats], Double)
+batchProgressLabeledIO _cfg total compileOne labeledJobs =
+  batchProgressCore
+    total
+    [ (label, \slot -> compileOne slot label job)
+    | (label, job) <- labeledJobs
+    ]
+
+batchProgressCore ::
+  Int
+  -> [(Text, Int -> IO Text)]
+  -> IO ([Text], [CompileJobStats], Double)
+batchProgressCore total jobs = do
   start <- getCPUTime
-  -- Live batch bars use 'CompileProgress' directly; final line via 'CompileReport'.
   board <- CP.newProgressBoard total
+  CP.setProgressBoardHandle board
   styleIO <- CR.progressStyleIO
   let
     cpStyle = CR.toCompileProgressStyle styleIO
   lineCount <- newCounter 0
   let
     refresh = do
+      fdMode <- CP.progressFdActive
       b <- CP.readProgressBoard board
-      prev <- readCounter lineCount
-      let
-        block = CP.renderBatchProgress cpStyle b prev
-        lineCount' =
-          1
-            + length
-              [ ()
-              | j <- V.toList (CP.pbJobs b)
-              , not (CP.jpDone j)
-              , not (T.null (CP.jpLabel j))
-              ]
-      writeCounter lineCount lineCount'
-      CR.writeProgressLine block
+      if fdMode
+        then CP.emitProgressBoard b
+        else do
+          prev <- readCounter lineCount
+          let
+            block = CP.renderBatchProgress cpStyle b prev
+            lineCount' =
+              1
+                + length
+                  [ ()
+                  | j <- V.toList (CP.pbJobs b)
+                  , not (CP.jpDone j)
+                  , not (T.null (CP.jpLabel j))
+                  ]
+          writeCounter lineCount lineCount'
+          CR.writeProgressLine block
   CP.setProgressRedraw refresh
   indexed <-
     ( mapConcurrently
-        ( \(slot, (label, item)) -> do
+        ( \(slot, (label, compile)) -> do
+            tJob0 <- getMonotonicTime
             CP.initJob board slot label
             CP.withProgressIO refresh
-            out <-
-              CP.withActiveJob slot board $
-                compileOneIO (quietCfg' {configProgressSlot = Just slot}) item
+            out <- CP.withActiveJob slot board $ compile slot
+            tJob1 <- getMonotonicTime
+            jobStats <- CP.snapshotJobStats label (seconds tJob0 tJob1)
             CP.markJobDone board slot
             CP.withProgressIO refresh
-            pure (slot, out)
+            pure (slot, out, jobStats)
         )
         (zip ([0 ..] :: [Int]) jobs)
     )
-      `finally` CP.clearProgressRedraw
+      `finally` do
+        CP.clearProgressRedraw
+        CP.clearProgressBoardHandle
   end <- getCPUTime
+  let
+    sorted = sortOn (\(s, _, _) -> s) indexed
   pure
-    ( map snd (sortOn fst indexed)
+    ( map (\(_, out, _) -> out) sorted
+    , map (\(_, _, st) -> st) sorted
     , CR.picosecondsToSecs (end - start)
     )
 
@@ -1084,6 +1206,20 @@ executeProcessRaw cmd args source =
             )
   )
     `catch` (\(e :: SomeException) -> pure (Left (show e)))
+
+compileForm :: CompilerConfig -> CompileForm
+compileForm cfg = case configStyle cfg of
+  Readable -> FormReadable
+  Minified -> FormMinified
+
+mergeJobConfig :: CompilerConfig -> CompilerConfig -> CompilerConfig
+mergeJobConfig base job =
+  job
+    { configProgress = configProgress base
+    , configWarnHvm2Candidates =
+        configWarnHvm2Candidates base || configWarnHvm2Candidates job
+    , configQuiet = True
+    }
 
 -- | Recognized compiler CLI flags (for example servers and build tools).
 isCompilerFlag :: String -> Bool

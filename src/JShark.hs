@@ -107,6 +107,7 @@ module JShark
   -- Optimization
   , optimize
   , optimizeEffect
+  , optimizeEffectFromIr
   , optimizeEffectIr
   , nodeCountExpr
   , nodeCountEff
@@ -152,26 +153,26 @@ where
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Monad (foldM, forM_)
 import Control.Monad.ST (runST)
-import Data.STRef (newSTRef, readSTRef, writeSTRef)
-import Data.IORef (newIORef, readIORef, writeIORef)
-import GHC.Clock (getMonotonicTime)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import qualified Data.Map.Strict as M
-import Data.Maybe (fromJust, fromMaybe, isJust, isNothing, mapMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Monoid (All (..), Any (..), Sum (..))
 import Data.Proxy (Proxy (..))
+import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Typeable (Typeable, eqT, type (:~:) (..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
+import GHC.Clock (getMonotonicTime)
 import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
 import GHC.IO.Unsafe (unsafePerformIO)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
@@ -180,6 +181,11 @@ import JShark.CompileProgress
   ( EmitCtx
   , captureEmitCtx
   , initEmitCtxTotal
+  , recordJobFlatPrepare
+  , recordJobPhoasPrepare
+  , reportFlatOptPhase
+  , reportIrOptPhase
+  , reportLowerPhase
   , reportPackPhase
   , tickEmitCtx
   )
@@ -1166,6 +1172,7 @@ preparePureProgram e = do
             , pptTotalSec = seconds t0 t1
             }
       reportPhoasPrepareTiming timing
+      recordJobPhoasPrepare timing
       pure (startCG, expr)
     Just ctx -> do
       reportPackPhase ctx 0 1
@@ -1173,11 +1180,14 @@ preparePureProgram e = do
       let
         !expr = optimize e
       t1 <- getMonotonicTime
-      reportPhoasPrepareTiming
-        PhoasPrepareTiming
-          { pptOptimizeSec = seconds t0 t1
-          , pptTotalSec = seconds t0 t1
-          }
+      let
+        timing =
+          PhoasPrepareTiming
+            { pptOptimizeSec = seconds t0 t1
+            , pptTotalSec = seconds t0 t1
+            }
+      reportPhoasPrepareTiming timing
+      recordJobPhoasPrepare timing
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountExpr expr)
       pure (startCG {cgEmitCtx = Just ctx}, expr)
@@ -1205,11 +1215,14 @@ prepareEffectProgram e = do
       let
         !eff = optimizeEffectTree e
       t1 <- getMonotonicTime
-      reportPhoasPrepareTiming
-        PhoasPrepareTiming
-          { pptOptimizeSec = seconds t0 t1
-          , pptTotalSec = seconds t0 t1
-          }
+      let
+        timing =
+          PhoasPrepareTiming
+            { pptOptimizeSec = seconds t0 t1
+            , pptTotalSec = seconds t0 t1
+            }
+      reportPhoasPrepareTiming timing
+      recordJobPhoasPrepare timing
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountEff eff)
       pure (startCG {cgEmitCtx = Just ctx}, eff)
@@ -1219,7 +1232,7 @@ prepareEffectProgram e = do
 prepareFlatEffectProgram :: ClosedEffect u -> IO (Flat.FlatProgram, CG)
 prepareFlatEffectProgram e = do
   mCtx <- captureEmitCtx
-  (prog, _timing, _irNodes) <- flatPrepareCore e
+  (prog, _timing, _irNodes, _ir) <- flatPrepareCore e
   case mCtx of
     Nothing -> pure (prog, startCG)
     Just ctx -> do
@@ -1232,47 +1245,65 @@ flatPrepareFromIr irOpt = do
   mCtx <- captureEmitCtx
   t0 <- getMonotonicTime
   case mCtx of
-    Just ctx -> reportPackPhase ctx 0 3
+    Just ctx -> reportPackPhase ctx 0 1
     Nothing -> pure ()
   let
     !(soa0, prog0) = FlatSoA.packEffectProgramDirect irOpt
     !packNodes = flatProgramNodeCount prog0
   t1 <- getMonotonicTime
   case mCtx of
-    Just ctx -> reportPackPhase ctx 1 3
+    Just ctx -> reportPackPhase ctx 1 1
+    Nothing -> pure ()
+  let
+    packSec = seconds t0 t1
+  t2 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportFlatOptPhase ctx 0 1
     Nothing -> pure ()
   let
     !(prog, _soa) = FlatSoA.optimizeFlatPack soa0 prog0
     !_ = packNodes
-  t2 <- getMonotonicTime
+  t3 <- getMonotonicTime
   case mCtx of
-    Just ctx -> do
-      reportPackPhase ctx 2 3
-      reportPackPhase ctx 3 3
+    Just ctx -> reportFlatOptPhase ctx 1 1
     Nothing -> pure ()
   let
     timing =
       FlatPrepareTiming
         { fptLowerSec = 0
         , fptIrOptSec = 0
-        , fptPackSec = seconds t0 t1
-        , fptFlatOptSec = seconds t1 t2
-        , fptTotalSec = seconds t0 t2
+        , fptPackSec = packSec
+        , fptFlatOptSec = seconds t2 t3
+        , fptTotalSec = seconds t0 t3
         }
   pure (prog, timing)
 {-# NOINLINE flatPrepareFromIr #-}
 
-flatPrepareCore :: ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming, Int)
+flatPrepareCore ::
+  ClosedEffect u -> IO (Flat.FlatProgram, FlatPrepareTiming, Int, Ir.IrEffect u)
 flatPrepareCore (e :: ClosedEffect u) = do
+  mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportLowerPhase ctx 0 1
+    Nothing -> pure ()
   t0 <- getMonotonicTime
   let
     !irRaw = lowerEffectClosed e
   t1 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportLowerPhase ctx 1 1
+    Nothing -> pure ()
+  case mCtx of
+    Just ctx -> reportIrOptPhase ctx 0 1
+    Nothing -> pure ()
   let
     !irOpt = optEffectClosed irRaw
     !irNodes = Ir.irMetaSize (Ir.metaIrEffect irOpt)
   t2 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportIrOptPhase ctx 1 1
+    Nothing -> pure ()
   (prog, packTiming) <- flatPrepareFromIr irOpt
   tAll1 <- getMonotonicTime
   let
@@ -1285,7 +1316,8 @@ flatPrepareCore (e :: ClosedEffect u) = do
         , fptTotalSec = seconds tAll0 tAll1
         }
   reportFlatPrepareTiming timing
-  pure (prog, timing, irNodes)
+  recordJobFlatPrepare timing
+  pure (prog, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareCore #-}
 
 {-# NOINLINE tickEmitCtxUnit #-}
@@ -3127,8 +3159,12 @@ optimizeEffectTree e =
   flattenEff (reifyEffect (fst (lowerOptEffectIr e)))
 {-# NOINLINE optimizeEffectTree #-}
 
+optimizeEffectFromIr :: Ir.IrEffect u -> Effect Stamp u
+optimizeEffectFromIr ir = flattenEff (reifyEffect ir)
+{-# NOINLINE optimizeEffectFromIr #-}
+
 optimizeEffect :: ClosedEffect u -> Effect Stamp u
-optimizeEffect e = optimizeEffectTree e
+optimizeEffect e = optimizeEffectFromIr (fst (lowerOptEffectIr e))
 {-# NOINLINE optimizeEffect #-}
 
 irEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
@@ -3154,12 +3190,7 @@ irOptimizedExprFromClosed (e :: ClosedExpr u) =
 {-# NOINLINE irOptimizedExprFromClosed #-}
 
 irOptimizedEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
-irOptimizedEffectFromClosed (e :: ClosedEffect u) =
-  let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff (optimizeEffect e))
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
-   in
-    irOpt
+irOptimizedEffectFromClosed e = fst (lowerOptEffectIr e)
 {-# NOINLINE irOptimizedEffectFromClosed #-}
 
 collectHvm2Kernels :: Expr f u -> [Hvm2KernelEntry]
@@ -4662,6 +4693,7 @@ flatParEmitBudgetThreshold = 16384
 shouldParFlatSiblings :: Flat.FlatProgram -> [Flat.NodeId] -> Bool
 shouldParFlatSiblings _ _ = False
 {-# NOINLINE shouldParFlatSiblings #-}
+
 -- shouldParFlatSiblings prog nids =
 --   length nids >= flatParEmitMinSiblings
 --     && sum (map (Flat.flatIdentBudget prog) nids)
@@ -4785,7 +4817,12 @@ flatRenderArgList mode env s0 prog ai =
           (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
 
 flatRenderField ::
-  FlatEmitMode -> Env -> Flat.FlatProgram -> CG -> Flat.FlatField -> (CG, (JS, JS))
+  FlatEmitMode
+  -> Env
+  -> Flat.FlatProgram
+  -> CG
+  -> Flat.FlatField
+  -> (CG, (JS, JS))
 flatRenderField mode env prog s = \case
   Flat.FlatField k eid ->
     let
@@ -5111,7 +5148,13 @@ flatRenderMethod mode env s0 prog = \case
   _ -> error "JShark.flatRenderMethod: unexpected node"
 
 flatRenderFnLit ::
-  FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> [Int] -> Flat.NodeId -> (CG, Code)
+  FlatEmitMode
+  -> Env
+  -> CG
+  -> Flat.FlatProgram
+  -> [Int]
+  -> Flat.NodeId
+  -> (CG, Code)
 flatRenderFnLit mode env s0 prog tags bodyId =
   case mode of
     Just _ ->
@@ -5128,6 +5171,16 @@ flatRenderFnLit mode env s0 prog tags bodyId =
        in
         (s2, Code mempty (jsCallback (map nJS ids) d r))
 
+flatResultUnwrapIdent :: FlatEmitMode -> Env -> CG -> Int -> (Int, CG)
+flatResultUnwrapIdent mode env s tag =
+  case mode of
+    Just _ -> (flatEnvTag env tag, s)
+    Nothing ->
+      let
+        (n, s') = allocIdent s
+       in
+        (n, s')
+
 flatRenderResultCase ::
   FlatEmitMode
   -> Env
@@ -5143,7 +5196,7 @@ flatRenderResultCase mode env s0 prog resId tagE errId tagO okId =
   let
     (s1, MkCode rDecl rRef _) = flatPureChild mode env s0 prog resId
     (nObj, s2) = allocIdent s1
-    (nUnw, s3) = allocIdent s2
+    (nUnw, s3) = flatResultUnwrapIdent mode env s2 tagE
     obj = nName nObj
     prelude =
       fromMaybe mempty rDecl
@@ -5222,18 +5275,19 @@ flatRenderResultCaseE ::
   -> CG
   -> Flat.FlatProgram
   -> Flat.NodeId
+  -> Flat.NodeId
   -> Int
   -> Flat.NodeId
   -> Int
   -> Flat.NodeId
   -> (CG, Code)
-flatRenderResultCaseE mode env s0 prog resId tagE errId tagO okId =
+flatRenderResultCaseE mode env s0 prog nid resId tagE errId tagO okId =
   if flatIsUnitEffect prog errId && flatIsUnitEffect prog okId
     then
       let
         (s1, MkCode rDecl rRef _) = flatPureChild mode env s0 prog resId
         (nObj, s2) = allocIdent s1
-        (nUnw, s3) = allocIdent s2
+        (nUnw, s3) = flatResultUnwrapIdent mode env s2 tagE
         obj = nName nObj
         prelude =
           fromMaybe mempty rDecl
@@ -5253,13 +5307,13 @@ flatRenderResultCaseE mode env s0 prog resId tagE errId tagO okId =
       let
         (s1, MkCode rDecl rRef _) = flatPureChild mode env s0 prog resId
         (nObj, s2) = allocIdent s1
-        (nUnw, s3) = allocIdent s2
+        (nUnw, s3) = flatResultUnwrapIdent mode env s2 tagE
         obj = nName nObj
         prelude =
           fromMaybe mempty rDecl
             $$ constBind nObj (fromMaybe mempty rRef)
             $$ constBind nUnw (jsText obj <> ".value")
-        (resultN, s4) = allocIdent s3
+        (resultN, s4) = flatPlanIdent mode s3 nid
         resultVar = nName resultN
         envE = IM.insert tagE nUnw env
         envO = IM.insert tagO nUnw envE
@@ -5283,10 +5337,11 @@ flatRenderStringCaseE ::
   -> CG
   -> Flat.FlatProgram
   -> Flat.NodeId
+  -> Flat.NodeId
   -> Int
   -> Flat.NodeId
   -> (CG, Code)
-flatRenderStringCaseE mode env s0 prog scrutId ai defId =
+flatRenderStringCaseE mode env s0 prog nid scrutId ai defId =
   let
     arms = Flat.flatStrCases prog ai
     unit =
@@ -5294,7 +5349,7 @@ flatRenderStringCaseE mode env s0 prog scrutId ai defId =
         && flatIsUnitEffect prog defId
     (s1, Code oDecl oRef) = flatPureChild mode env s0 prog scrutId
     (resultN, s2) =
-      if unit then (0, s1) else allocIdent s1
+      if unit then (0, s1) else flatPlanIdent mode s1 nid
     resultVar = nName resultN
     renderArm s e =
       let
@@ -5333,20 +5388,10 @@ type FlatCodeTable = V.Vector Code
 newtype FlatTableRead = FlatTableRead (MV.IOVector Code)
 
 flatTableLookup :: FlatTableRead -> Flat.NodeId -> Code
+-- Layer emit writes each node before any cached read (bottom-up 'fepLayers').
 flatTableLookup (FlatTableRead mv) i =
   unsafePerformIO (MV.read mv i)
 {-# NOINLINE flatTableLookup #-}
-
-data FlatEmitCtx = FlatEmitCtx
-  { fecTable :: !(Maybe FlatCodeTable)
-  , fecPlan :: !(Maybe FlatEmitPlan)
-  }
-
-noFlatEmitCtx :: FlatEmitCtx
-noFlatEmitCtx = FlatEmitCtx Nothing Nothing
-
-layerFlatEmitCtx :: FlatCodeTable -> FlatEmitPlan -> FlatEmitCtx
-layerFlatEmitCtx table plan = FlatEmitCtx (Just table) (Just plan)
 
 data FlatEmitPlan = FlatEmitPlan
   { fepEnv :: !(V.Vector (Maybe Env))
@@ -5365,6 +5410,12 @@ flatPlanIdent mode s nid =
         Just (Just i) -> (i, s)
         _ -> allocIdent s
     Nothing -> allocIdent s
+
+flatPlanEnv :: FlatEmitPlan -> Flat.NodeId -> Env
+flatPlanEnv plan nid =
+  case fepEnv plan V.!? nid of
+    Just (Just env) -> env
+    _ -> error ("JShark.flatPlanEnv: missing env for node " ++ show nid)
 
 flatPureChild ::
   FlatEmitMode -> Env -> CG -> Flat.FlatProgram -> Flat.NodeId -> (CG, Code)
@@ -5440,6 +5491,7 @@ buildFlatEmitPlan prog root s0 =
                   let
                     envE = IM.insert tagE identUnw env
                     envO = IM.insert tagO identUnw envE
+                  writeEnv nid envO
                   planGo envE errId
                   planGo envO okId
                 Flat.FE_FnLit tags bodyId -> do
@@ -5555,6 +5607,7 @@ buildFlatEmitPlan prog root s0 =
                   let
                     envE = IM.insert tagE identUnw env
                     envO = IM.insert tagO identUnw envE
+                  writeEnv nid envO
                   planGo envE errId
                   planGo envO okId
                 Flat.FX_Try aId tag kId -> do
@@ -5593,17 +5646,17 @@ flatEmitLayered prog root plan s0 =
   unsafePerformIO $ do
     let
       n = V.length (Flat.fpNodes prog)
-      reachable = filter (fepReach plan V.!) [0 .. n - 1]
+      emitOrder = concatMap V.toList (V.toList (fepLayers plan))
     tableMV <- MV.new n
     MV.set tableMV (Code mempty mempty)
     let
       tableRead = FlatTableRead tableMV
     sRef <- newIORef s0
-    forM_ reachable $ \nid -> do
+    forM_ emitOrder $ \nid -> do
       s <- readIORef sRef
       let
         mode = Just (tableRead, plan)
-        env = fromJust (fepEnv plan V.! nid)
+        env = flatPlanEnv plan nid
         (s', code) =
           if flatNodeKindEffect prog nid
             then flatEffectfulASTGo mode env s prog nid
@@ -5945,9 +5998,9 @@ flatEffectfulASTGo !mode !env !sIn prog nid =
                 (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
           )
       Flat.FX_ResultCaseE resId tagE errId tagO okId ->
-        flatRenderResultCaseE mode env s0 prog resId tagE errId tagO okId
+        flatRenderResultCaseE mode env s0 prog nid resId tagE errId tagO okId
       Flat.FX_StringCaseE scrutId ai defId ->
-        flatRenderStringCaseE mode env s0 prog scrutId ai defId
+        flatRenderStringCaseE mode env s0 prog nid scrutId ai defId
       Flat.FX_Throw xId ->
         let
           (s1, Code xDecl xRef) = flatPureChild mode env s0 prog xId
