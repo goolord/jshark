@@ -20,6 +20,7 @@ import qualified JShark.Math as Math
 import LifeTestSupport
   ( beehiveCoords
   , blinkerHorizontalCoords
+  , blinkerLutStepJson
   , blinkerVerticalCoords
   , blockCoords
   , coordsMatch
@@ -95,6 +96,8 @@ lifeTests =
           , lifeCase "stepRegionLUT row slices match full LUT step" testLutStepTile
           , testCase "LutCore computeNextByte matches table entry" $
               lifeLutEntry 0x0101 @?= computeNextByte 1 1 0 0 0 0 0 0 0
+          , testCase "blinker LUT step keeps three live cells" $
+              testLutCoreBlinker
           ]
       ]
 
@@ -321,9 +324,10 @@ testLutStepTile = fromSyntax $ do
       let
         i = y0 * w + x
       whenS
-        (bitAnd (u8Index full i) (number 1) .!= bitAnd (u8Index tile i) (number 1)) $ do
-        toSyntax_ $ ffi "(()=>{throw new Error('stepTile mismatch');})" RecNil
-        done
+        (bitAnd (u8Index full i) (number 1) .!= bitAnd (u8Index tile i) (number 1))
+        $ do
+          toSyntax_ $ ffi "(()=>{throw new Error('stepTile mismatch');})" RecNil
+          done
     done
   done
 
@@ -580,3 +584,18 @@ testEngineStepGeneration = fromSyntax $ do
   cells <- blockCoords
   coordsMatch nextAlive w cells
   done
+
+testLutCoreBlinker :: IO ()
+testLutCoreBlinker = do
+  got <- evaluateEffectJSON blinkerLutStepJson
+  let
+    s = T.unpack (T.strip got)
+    body = case s of
+      ('"' : rest)
+        | not (null rest)
+        , last rest == '"' ->
+            take (length rest - 1) rest
+      _ -> s
+    parsed = read body :: [Int]
+    live = filter (/= 0) parsed
+  assertEqual "blinker LUT step pop" 3 (length live)

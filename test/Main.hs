@@ -58,6 +58,7 @@ import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import Life (mainJS)
 import LifeTests (lifeTests)
+import LifeWorkerTests (lifeWorkerTests)
 import LucidTests (lucidDomTests)
 import PerfTests (perfTests)
 import Support
@@ -100,6 +101,7 @@ tests =
     , perfTests
     , hvm2Tests
     , catalogTests
+    , lifeWorkerTests
     ]
 
 bigIntTests :: TestTree

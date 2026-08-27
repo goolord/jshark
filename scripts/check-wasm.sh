@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild vendored WASM artifacts. With no flags, rebuild then refresh checksums.
+# Rebuild vendored WASM artifacts and compile-check optional Life zig kernels.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -11,17 +11,18 @@ if [[ "${1:-}" == "--build-only" ]]; then
 fi
 
 cabal run build-hvm2-demo-wasm -v0
-(
-  cd examples/Life/wasm
-  zig build -Doptimize=ReleaseFast
-)
-cp examples/Life/wasm/zig-out/bin/life-simd.wasm examples/Life/js/life-simd.wasm
+
+if command -v zig >/dev/null 2>&1; then
+  (
+    cd examples/Life/wasm
+    zig build -Doptimize=ReleaseFast
+  )
+else
+  echo "warning: zig not on PATH; skipping Life wasm compile-check" >&2
+fi
 
 # not deterministic
 # if [[ "$build_only" == false ]]; then
-#   sha256sum \
-#     examples/static/hvm2-demo.wasm \
-#     examples/Life/js/life-simd.wasm \
-#     > wasm/checksums.sha256
+#   sha256sum examples/static/hvm2-demo.wasm > wasm/checksums.sha256
 #   echo "WASM checksums written to wasm/checksums.sha256"
 # fi

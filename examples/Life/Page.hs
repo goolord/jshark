@@ -183,7 +183,6 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
           div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
     lifeSourceSection
     script_ [src_ "js/pixi.min.js"] ("" :: Html ())
-    script_ [src_ "js/LifeSimd.js"] ("" :: Html ())
     script_ [src_ scriptSrc] ("" :: Html ())
     script_ [src_ (staticRoot <> "/highlight.min.js")] ("" :: Html ())
     sourceLoadScript scriptSrc

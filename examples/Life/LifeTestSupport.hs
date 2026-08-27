@@ -24,6 +24,7 @@ module LifeTestSupport
   , coordsMatch
   , blinkerHorizontalCoords
   , blinkerVerticalCoords
+  , blinkerLutStepJson
   )
 where
 
@@ -34,6 +35,7 @@ import Grid
   , processCell
   , rebuildPackedCounts
   , setPackedAlive
+  , setU8
   , stepGrid
   , u8Get
   )
@@ -41,6 +43,7 @@ import JShark.Api
 import JShark.Api.Generic (toObject)
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
+import qualified Lut
 
 assertEqual :: Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 assertEqual expected actual = do
@@ -289,3 +292,23 @@ runStepGridOnce alive species nextAlive nextSpecies w h x0 y0 x1 y1 = do
     stepCtx
     counts
     touchedBuf
+
+blinkerLutStepJson :: forall f. Effect f 'String
+blinkerLutStepJson = fromSyntax $ do
+  let
+    w = number 8
+    h = number 8
+    cellsN = w * h
+  lut <- Lut.createLifeLUT
+  a <- bindExpr (newByteArray cellsN)
+  b <- bindExpr (newByteArray cellsN)
+  _ <- setU8 a (number 18) (number 1)
+  _ <- setU8 a (number 19) (number 1)
+  _ <- setU8 a (number 20) (number 1)
+  _ <- Lut.stepRegionLUT lut a b w h (number 0) h
+  json <-
+    bindExpr $
+      ffi
+        "(function(b){return JSON.stringify(Array.from(b));})"
+        (arg b <: RecNil)
+  yield json

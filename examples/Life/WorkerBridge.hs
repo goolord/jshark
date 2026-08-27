@@ -6,9 +6,9 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Haskell LUT engine (replaces Main.js LifeEngineSync bridge).
+-- Worker pool stepping uses @js/EngineWorker.js@ when enabled.
 module WorkerBridge
-  ( initWorkerEngine
-  , engineCanStep
+  ( engineCanStep
   , engineStepGeneration
   , engineTickMs
   , engineModeLabel
@@ -20,18 +20,6 @@ import EngineFinish (finishStep)
 import Grid (StepCtx)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
-import JShark.Api.Rec (Rec (..), (<:))
-
-initWorkerEngine :: Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
-initWorkerEngine w h = do
-  toSyntax_ $
-    ffi
-      ( "((w,h)=>{const s=globalThis.LifeSimd;if(!s||!s.load)return;"
-          <> "void s.load('js/life-simd.wasm',w,h);"
-          <> "})"
-      )
-      (arg w <: arg h <: RecNil)
-  done
 
 engineCanStep :: EffectSyntax f (Expr f 'Bool)
 engineCanStep = pure true_

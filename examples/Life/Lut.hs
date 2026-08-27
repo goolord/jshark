@@ -3,6 +3,8 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | JShark LUT stepping (replaces LUTGenerator.js).
+--
+-- Main-thread runtime; semantics must match 'LutCore.stepRegionLUTPure'.
 module Lut
   ( createLifeLUT
   , stepRegionLUT
@@ -11,36 +13,18 @@ module Lut
   )
 where
 
+import qualified Data.Text as T
 import Grid (cellIdx, inBounds, setU8, u8Get)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Math as Math
+import LutBoot (lifeLutCreateJs)
 
 createLifeLUT :: EffectSyntax f (Expr f 'Uint8Array)
 createLifeLUT =
   bindExpr $
     ffi
-      ( "(()=>{"
-          <> "const LUT=new Uint8Array(65536);"
-          <> "for(let key=0;key<65536;key++){"
-          <> "const top=(key>>8)&255,cur=key&255;"
-          <> "let out=0;"
-          <> "for(let bit=0;bit<8;bit++){"
-          <> "const alive=(cur>>bit)&1;"
-          <> "const left=bit>0?(cur>>(bit-1))&1:0;"
-          <> "const right=bit<7?(cur>>(bit+1))&1:0;"
-          <> "const topL=bit>0?(top>>(bit-1))&1:0;"
-          <> "const topC=(top>>bit)&1;"
-          <> "const topR=bit<7?(top>>(bit+1))&1:0;"
-          <> "const n=topL+topC+topR+left+right;"
-          <> "const next=alive?n===2||n===3:n===3;"
-          <> "if(next)out|=1<<bit;"
-          <> "}"
-          <> "LUT[key]=out;"
-          <> "}"
-          <> "return LUT;"
-          <> "})"
-      )
+      ("(()=>{" <> T.unpack lifeLutCreateJs <> "})")
       RecNil
 
 computeNextByte ::
@@ -216,62 +200,31 @@ unpackRowByte grid rowOff w x0 byte =
       setU8 grid (rowOff + x) v
     done
 
-clearRowSimd ::
+clearRow ::
   Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-clearRowSimd grid off len = do
+clearRow grid off len = do
   toSyntax_ $
     ffi
-      "(function(g,o,l){const s=globalThis.LifeSimd;if(s&&s.clearRow){s.clearRow(g,o,l);return;}g.fill(0,o,o+l);})"
+      "(function(g,o,l){g.fill(0,o,o+l);})"
       (arg grid <: arg off <: arg len <: RecNil)
   done
 
-copyRowSimd ::
+copyRow ::
   Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-copyRowSimd src srcOff dst dstOff len = do
+copyRow src srcOff dst dstOff len = do
   toSyntax_ $
     ffi
-      ( "(function(a,so,d,do_,l){const s=globalThis.LifeSimd;"
-          <> "if(s&&s.copyRow){s.copyRow(a,so,d,do_,l);return;}"
-          <> "d.set(a.subarray(so,so+l),do_);"
-          <> "})"
-      )
+      "(function(a,so,d,do_,l){d.set(a.subarray(so,so+l),do_);})"
       (arg src <: arg srcOff <: arg dst <: arg dstOff <: arg len <: RecNil)
   done
-
-trySimdStepRegionLUT ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (Expr f 'Bool)
-trySimdStepRegionLUT lut gridA gridB w h y0 y1 =
-  bindExpr $
-    ffi
-      ( "(function(lut,a,b,w,h,y0,y1){"
-          <> "const s=globalThis.LifeSimd;"
-          <> "return!!(s&&s.stepRegionLUT&&s.stepRegionLUT(lut,a,b,w,h,y0,y1));"
-          <> "})"
-      )
-      ( arg lut
-          <: arg gridA
-          <: arg gridB
-          <: arg w
-          <: arg h
-          <: arg y0
-          <: arg y1
-          <: RecNil
-      )
 
 stepRegionLUT ::
   Expr f 'Uint8Array
@@ -283,20 +236,6 @@ stepRegionLUT ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 stepRegionLUT lut gridA gridB w h y0 y1 = do
-  handled <- trySimdStepRegionLUT lut gridA gridB w h y0 y1
-  whenS (not_ handled) $ stepRegionLUTScalar lut gridA gridB w h y0 y1
-  done
-
-stepRegionLUTScalar ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-stepRegionLUTScalar lut gridA gridB w h y0 y1 = do
   let
     yStart = Math.max (number 1) y0
     yStop = Math.min (h - number 1) y1
@@ -306,7 +245,7 @@ stepRegionLUTScalar lut gridA gridB w h y0 y1 = do
       topOff = (y - number 1) * w
       curOff = y * w
       botOff = (y + number 1) * w
-    clearRowSimd gridB curOff w
+    clearRow gridB curOff w
     forRange_ (number 0) bytes $ \xb -> do
       let
         x0 = xb * number 8
@@ -334,9 +273,9 @@ stepRegionLUTScalar lut gridA gridB w h y0 y1 = do
           unpackRowByte gridB curOff w x0 nextByte
       done
     done
-  whenS (y0 .== 0) (copyRowSimd gridA (number 0) gridB (number 0) w)
+  whenS (y0 .== 0) (copyRow gridA (number 0) gridB (number 0) w)
   whenS (y1 .>= h) $ do
     let
       botOff = (h - number 1) * w
-    copyRowSimd gridA botOff gridB botOff w
+    copyRow gridA botOff gridB botOff w
   done

@@ -43,10 +43,8 @@ data-files:
   examples/static/*.css
   examples/static/hvm2-demo.wasm
   examples/Life/js/catalog.js
-  examples/Life/js/LifeSimd.js
   examples/Life/js/pixi.min.js
   examples/Life/js/EngineWorker.js
-  examples/Life/js/life-simd.wasm
   examples/Life/shaders/cell.frag.glsl
 
 common warnings
@@ -239,11 +237,13 @@ library life
     LutCore
     Lut
     EngineFinish
+    EngineWorker
   other-modules:
     Catalog
     Client
     Discover
     DiscoverRuntime
+    LutBoot
     Names
     Page
     Pixi
@@ -323,6 +323,7 @@ test-suite jshark-test
     LucidTests
     ExampleTests
     LifeTests
+    LifeWorkerTests
     PerfTests
     Hvm2Tests
   hs-source-dirs:
@@ -494,6 +495,15 @@ executable gen-life-catalog
   import: bench
   main-is:
     GenCatalog.hs
+  hs-source-dirs:
+    bench
+  build-depends:
+    , life
+
+executable gen-life-worker
+  import: bench
+  main-is:
+    GenLifeWorker.hs
   hs-source-dirs:
     bench
   build-depends:

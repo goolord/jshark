@@ -24,7 +24,7 @@ where
 
 import Catalog (catalogInitialCells, stampCatalogCells)
 import Discover (Registry, discoverLife)
-import EngineFinish (initEngineGrids)
+import EngineFinish (initEngineGrids, reuseEngineGrids)
 import Grid
   ( BoundScratch
   , RenderDirty (..)
@@ -84,7 +84,6 @@ import Types
 import WorkerBridge
   ( engineCanStep
   , engineStepGeneration
-  , initWorkerEngine
   )
 
 initLife ::
@@ -177,7 +176,6 @@ initLife app viewport = do
       (number (fromIntegral initialBoundX1))
       (number (fromIntegral initialBoundY1))
       liveList
-  _ <- initWorkerEngine w h
   (engineLut, engineGridA, engineGridB) <-
     initEngineGrids (number (fromIntegral gridN))
   set @"engineLut" state engineLut
@@ -601,8 +599,8 @@ resizeWorld state viewport w h = do
   appH <- hold (expr appE)
   sprite <- getProp viewport "sprite"
   _ <- Pixi.installLifeShader appH viewport sprite tex w h
-  _ <- initWorkerEngine w h
-  (engineLut, engineGridA, engineGridB) <- initEngineGrids (w * h)
+  lut <- state.engineLut
+  (engineLut, engineGridA, engineGridB) <- reuseEngineGrids (w * h) lut
   set @"engineLut" state engineLut
   set @"engineGridA" state engineGridA
   set @"engineGridB" state engineGridB

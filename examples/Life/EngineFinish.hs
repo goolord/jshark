@@ -8,6 +8,7 @@
 module EngineFinish
   ( finishStep
   , initEngineGrids
+  , reuseEngineGrids
   )
 where
 
@@ -31,6 +32,13 @@ initEngineGrids ::
   -> EffectSyntax f (Expr f 'Uint8Array, Expr f 'Uint8Array, Expr f 'Uint8Array)
 initEngineGrids gridLen = do
   lut <- Lut.createLifeLUT
+  reuseEngineGrids gridLen lut
+
+reuseEngineGrids ::
+  Expr f 'Number
+  -> Expr f 'Uint8Array
+  -> EffectSyntax f (Expr f 'Uint8Array, Expr f 'Uint8Array, Expr f 'Uint8Array)
+reuseEngineGrids gridLen lut = do
   gridA <- bindExpr (newByteArray gridLen)
   gridB <- bindExpr (newByteArray gridLen)
   pure (lut, gridA, gridB)

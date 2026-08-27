@@ -65,12 +65,12 @@ console.log("max", 2.0, 9.0);
 cabal build
 cabal test          # bun on PATH for the JS-vs-interpreter checks
 cabal run examples  # http://localhost:3000
-./scripts/check-wasm.sh  # rebuild vendored WASM binaries
+./scripts/check-wasm.sh  # rebuild vendored HVM2 wasm; compile-check Life zig
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests and
-`master` pushes: rebuild vendored WASM, Fourmolu, `cabal test`, then GitHub Pages
-deploy on `master` only. Optional Nix shell: `nix develop` pins GHC, Zig,
+`master` pushes: rebuild vendored HVM2 wasm, compile-check Life zig kernels,
+Fourmolu, `cabal test`, then GitHub Pages deploy on `master` only. Optional Nix shell: `nix develop` pins GHC, Zig,
 Bun, LLVM 20, and Fourmolu (`flake.nix`).
 
 `jshark-lucid` writes the DOM in Lucid and compiles it to
