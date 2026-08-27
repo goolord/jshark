@@ -35,6 +35,10 @@ module JShark.Flat
   , flatArgGroup
   , flatSubtreeSizes
   , flatIdentBudget
+  , flatReachableDepths
+  , flatLayerBuckets
+  , flatNodeIsEffect
+  , flatNodePackRefs
   )
 where
 
@@ -42,8 +46,10 @@ import Control.Monad.State.Strict (State, get, put, runState)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import Control.Monad.ST (runST)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV
 import Data.Word (Word8)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import JShark.Ir
@@ -466,6 +472,77 @@ flatIdentBudget p i =
     sizes = flatSubtreeSizes p
    in
     if i >= 0 && i < V.length sizes then sizes V.! i else 1
+
+-- | Longest path to a leaf for nodes reachable from @root@; unreachable @(-1)@.
+flatReachableDepths :: FlatProgram -> NodeId -> Vector Int
+flatReachableDepths p root =
+  let
+    nodes = fpNodes p
+    n = V.length nodes
+   in
+    runST $ do
+      md <- MV.replicate n (-1)
+      let
+        go i =
+          MV.read md i >>= \case
+            d | d >= 0 -> pure d
+            _ -> do
+              let
+                refs = flatNodePackRefs p (nodes V.! i)
+                childDepths = mapM go refs
+              d <-
+                if null refs
+                  then pure 0
+                  else (1 +) . maximum <$> childDepths
+              MV.write md i d
+              pure d
+      _ <- go root
+      V.unsafeFreeze md
+
+-- | Reachable nodes grouped by 'flatReachableDepths' (leaves at layer 0).
+flatLayerBuckets :: FlatProgram -> NodeId -> Vector (Vector NodeId)
+flatLayerBuckets p root =
+  let
+    depths = flatReachableDepths p root
+    n = V.length depths
+    maxD = V.foldl' max 0 depths
+    bucket d =
+      V.fromList
+        [ i
+        | i <- [0 .. n - 1]
+        , depths V.! i == d
+        , depths V.! i >= 0
+        ]
+   in
+    V.fromList [bucket d | d <- [0 .. maxD]]
+
+flatNodeIsEffect :: FlatNode -> Bool
+flatNodeIsEffect = \case
+  FX_Lift{} -> True
+  FX_FFI{} -> True
+  FX_UnsafeObject{} -> True
+  FX_UnsafeObjectGet{} -> True
+  FX_UnsafeObjectAssign{} -> True
+  FX_CallMethod{} -> True
+  FX_Bind{} -> True
+  FX_ThenE{} -> True
+  FX_BindRec{} -> True
+  FX_LambdaE{} -> True
+  FX_ApplyE{} -> True
+  FX_IfE{} -> True
+  FX_While{} -> True
+  FX_ForRange{} -> True
+  FX_U8Set{} -> True
+  FX_U8Fill{} -> True
+  FX_OptionCaseE{} -> True
+  FX_ResultCaseE{} -> True
+  FX_StringCaseE{} -> True
+  FX_Throw{} -> True
+  FX_Try{} -> True
+  FX_ObjectLit{} -> True
+  FX_DeleteProp{} -> True
+  FX_ArrayLit{} -> True
+  _ -> False
 
 validateFlatProgram :: FlatProgram -> ()
 validateFlatProgram p =
