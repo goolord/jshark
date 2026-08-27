@@ -14,11 +14,12 @@
 
 -- | Type-level parameter rows for n-ary callbacks.
 --
--- Row symbols must be unique ('UniqueRow'). Use 'LookupParam' for field
--- lookup errors instead of opaque 'HasField' failures.
+-- A row is a type-level list of 'Param' slots (@'Param "x" 'Number@, …).
+-- Symbols must be unique ('UniqueRow'); duplicate names are a type error.
 --
--- * 'fnLit' / 'ToFn' — positional @function(a,b,…)@ ('Fn').
+-- * 'fnLit' / 'ToFn' — one JS @function(a, b, …)@ ('Fn' universe).
 -- * 'lambdaRow' / 'ToLambda' — curried @'Function@ nest.
+-- * 'NamedLambdaRow' — binary rows only; used by 'JShark.Api.namedLambdaRow'.
 module JShark.Params
   ( Param
   , ParamRec (..)
@@ -87,6 +88,10 @@ type family UniqueRow (row :: [Type]) :: Constraint where
   UniqueRow '[] = ()
   UniqueRow (Param sym u ': rs) = (RequireUnique sym rs, UniqueRow rs)
 
+-- | Runtime record matching parameter row @row@.
+--
+-- Built left-to-right: @'ParamRecCons' (Var x) ('ParamRecNil')@ for a
+-- one-slot row. Field access uses @p.sym@ ('HasField').
 data ParamRec f row where
   ParamRecNil :: ParamRec f '[]
   ParamRecCons :: Expr f u -> ParamRec f rs -> ParamRec f (Param sym u ': rs)
@@ -102,17 +107,20 @@ instance
   where
   getField (ParamRecCons _ rec) = getField @sym rec
 
+-- | Compile-time guard for 'JShark.Api.namedLambdaRow': binary rows only.
+--
+-- Unary, empty, and 3+-slot rows fail with a custom 'TypeError'.
 class NamedLambdaRow row r fn where
+  -- | Curried 'Expr' tagged with @name@ for hoisted JS helpers.
   namedLambdaFromRow ::
     forall f.
-    Text ->
-    (ParamRec f row -> Expr f r) ->
-    Expr f fn
+    Text
+    -> (ParamRec f row -> Expr f r)
+    -> Expr f fn
 
 instance
   TypeError
-    ( 'Text "namedLambdaRow: unary row — use namedLambda instead"
-    ) =>
+    ('Text "namedLambdaRow: unary row — use namedLambda instead") =>
   NamedLambdaRow (Param sym u ': '[]) r fn
   where
   namedLambdaFromRow _ _ =
@@ -126,8 +134,7 @@ instance
 
 instance
   TypeError
-    ( 'Text "namedLambdaRow: only binary rows supported"
-    ) =>
+    ('Text "namedLambdaRow: only binary rows supported") =>
   NamedLambdaRow (p1 ': p2 ': p3 ': rest) r fn
   where
   namedLambdaFromRow _ _ =
@@ -141,6 +148,7 @@ instance LambdaFromRow row r fn => NamedLambdaRow row r fn where
         error
           "JShark.namedLambdaRow: parameter row must produce a lambda spine"
 
+-- | Build @function(a, b, …)@ parameter spines ('FnBody').
 class FnFromRow row us | row -> us where
   fnFromRow :: forall f r. (ParamRec f row -> Expr f r) -> FnBody f us r
 
@@ -155,6 +163,7 @@ instance
     JfCons $ \x ->
       fnFromRow @row (\rec -> k (ParamRecCons (Var x) rec))
 
+-- | Build curried @'Function@ spines from a parameter row.
 class LambdaFromRow row r fn | row r -> fn where
   lambdaFromRow :: forall f. (ParamRec f row -> Expr f r) -> Expr f fn
 
@@ -226,6 +235,7 @@ instance forall f a b c d. ToLambda (Expr f a -> Expr f b -> Expr f c -> Expr f 
   toLambda g =
     lambdaFromRow @('[Param "a" a, Param "b" b, Param "c" c]) (\p -> g p.a p.b p.c)
 
+-- | Curried @'Function@ nest from an explicit parameter row.
 lambdaRow ::
   forall row r fn f.
   LambdaFromRow row r fn =>

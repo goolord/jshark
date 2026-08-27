@@ -2,8 +2,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | JS @Math@ names that are not Haskell 'Num'/'Fractional'/'Floating'.
--- Import qualified; remaining names still clash with 'Prelude' (@floor@, @round@, …).
+-- | JS @Math@ constants and functions beyond Haskell 'Num'/'Floating'.
+--
+-- Import qualified; @floor@, @round@, and friends still clash with 'Prelude'.
 module JShark.Math
   ( inc
   , dec
@@ -40,6 +41,7 @@ inc = lambda (+ 1)
 dec :: Expr f ('Function 'Number 'Number)
 dec = lambda (\x -> x - 1)
 
+-- | @Math.E@
 e :: Expr f 'Number
 e = 2.718281828459045
 

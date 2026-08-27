@@ -65,8 +65,8 @@ import JShark.Flat
   , flatNodeChildRefs
   , packEffectProgramState
   , packStateEncs
-  , packStateNodeCount
   , packStateHoistTags
+  , packStateNodeCount
   , packStateSideTables
   , packStateSoaSide
   , sideAccToVectors

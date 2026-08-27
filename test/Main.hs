@@ -819,8 +819,8 @@ stdlibTests =
             renderJS
               ( pureAST
                   ( let_ (Array.groupBy numArray (\_ -> string "a")) $ \g1 ->
-                        let_ (Array.groupBy numArray (\_ -> string "b")) $ \g2 ->
-                          Array.length g1 + Array.length g2
+                      let_ (Array.groupBy numArray (\_ -> string "b")) $ \g2 ->
+                        Array.length g1 + Array.length g2
                   )
               )
         T.count "const $groupBy =" js @?= 1

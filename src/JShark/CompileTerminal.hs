@@ -119,8 +119,8 @@ renderPlainStatsTable mBatchWall stats =
   footerRows =
     renderPlainFooter cols sorted
       ++ case mBatchWall of
-          Nothing -> []
-          Just w -> [renderPlainWallRow cols w]
+        Nothing -> []
+        Just w -> [renderPlainWallRow cols w]
 
 renderTTYStatsTable :: Maybe Double -> [CompileJobStats] -> String
 renderTTYStatsTable mBatchWall stats =
@@ -140,7 +140,7 @@ renderTTYStatsTable mBatchWall stats =
             ]
         ++ case mBatchWall of
           Nothing ->
-            [ styled TerminalTTY dimSGR (boxLine cols "╰" "┴" "╯" '─') ]
+            [styled TerminalTTY dimSGR (boxLine cols "╰" "┴" "╯" '─')]
           Just _ -> []
     )
  where

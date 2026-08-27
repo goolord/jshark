@@ -7,6 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
+-- | @XMLHttpRequest@ and @fetch@ wrappers for browser I/O.
 module JShark.Ajax
   ( XHR
   , new

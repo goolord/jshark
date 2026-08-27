@@ -20,6 +20,12 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -fno-warn-unused-top-binds #-}
 
+-- | Core compiler: PHOAS evaluation, optimization, lowering, and JS codegen.
+--
+-- User-facing syntax lives in 'JShark.Types' and 'JShark.Api'; this module
+-- wires closed terms to JavaScript ('pureAST', 'effectfulAST', 'pureProgram').
+-- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ helpers in
+-- 'helperDecls'.
 module JShark
   ( Expr
       ( Literal
@@ -1490,40 +1496,41 @@ hoistTagName tag = "$" <> tag
 canonicalHoistSrc :: Text -> Text
 canonicalHoistSrc src =
   foldl' (\t (from, to) -> T.replace from to t) src renames
-  where
-    renames =
-      sortBy (\(a, _) (b, _) -> compare (T.length b) (T.length a)) $
-        zip ids (map (\(i :: Int) -> "p" <> T.pack (show i)) [0 .. length ids - 1])
-    ids = nub (hoistNIdents src)
+ where
+  renames =
+    sortBy (\(a, _) (b, _) -> compare (T.length b) (T.length a)) $
+      zip ids (map (\(i :: Int) -> "p" <> T.pack (show i)) [0 .. length ids - 1])
+  ids = nub (hoistNIdents src)
 
 hoistNIdents :: Text -> [Text]
 hoistNIdents src = go 0 []
-  where
-    len = T.length src
-    go i acc
-      | i >= len = acc
-      | otherwise =
-          case T.uncons (T.drop i src) of
-            Nothing -> acc
-            Just ('n', rest) ->
-              case span isDigit (T.unpack rest) of
-                ([], _) -> go (i + 1) acc
-                (ds, _) ->
-                  let
-                    ident = "n" <> T.pack ds
-                    prev = if i > 0 then Just (T.index src (i - 1)) else Nothing
-                   in
-                    if isIdentCont prev
-                      then go (i + 1) acc
-                      else
-                        go (i + 1 + length ds) $
-                          if ident `elem` acc
-                            then acc
-                            else acc ++ [ident]
-            Just _ -> go (i + 1) acc
-    isIdentCont (Just c) = Char.isAlphaNum c || c == '_'
-    isIdentCont Nothing = False
+ where
+  len = T.length src
+  go i acc
+    | i >= len = acc
+    | otherwise =
+        case T.uncons (T.drop i src) of
+          Nothing -> acc
+          Just ('n', rest) ->
+            case span isDigit (T.unpack rest) of
+              ([], _) -> go (i + 1) acc
+              (ds, _) ->
+                let
+                  ident = "n" <> T.pack ds
+                  prev = if i > 0 then Just (T.index src (i - 1)) else Nothing
+                 in
+                  if isIdentCont prev
+                    then go (i + 1) acc
+                    else
+                      go (i + 1 + length ds) $
+                        if ident `elem` acc
+                          then acc
+                          else acc ++ [ident]
+          Just _ -> go (i + 1) acc
+  isIdentCont (Just c) = Char.isAlphaNum c || c == '_'
+  isIdentCont Nothing = False
 
+-- | Record @$tag@ helper source once; return the stable JS name (@$arrayIndex@).
 registerHoistedTag :: CG -> Text -> Text -> (CG, Text)
 registerHoistedTag s tag src =
   let
@@ -1556,6 +1563,7 @@ emitHoistedFnValue s view nid fnJs =
        in
         (s', jsText name)
 
+-- | True when @f@ is exactly a two-parameter lambda spine (not 3+ curried).
 shouldFlattenBinaryHoist :: (Stamp u -> Expr Stamp v) -> Bool
 shouldFlattenBinaryHoist f =
   case f nestedDummy of
@@ -1565,6 +1573,7 @@ shouldFlattenBinaryHoist f =
         _ -> True
     _ -> False
 
+-- | Render a hoisted helper as one JS @function(a, b)@ (PHOAS path).
 emitBinaryHoistedLambda ::
   Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code)
 emitBinaryHoistedLambda env s0 f =
@@ -1579,6 +1588,7 @@ emitBinaryHoistedLambda env s0 f =
    in
     (s1, Code mempty fnJs)
 
+-- | Emit JS for a named lambda body (flat or curried by arity).
 emitHoistedLambdaValue ::
   Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, JS)
 emitHoistedLambdaValue env s0 f =
@@ -1598,6 +1608,7 @@ jsBinaryCallback :: [Int] -> JS -> JS -> JS
 jsBinaryCallback ids decl ref =
   jsCallback (map nJS ids) decl ref
 
+-- | @function (n0, n1) { … return ref }@ for flat IR hoists.
 flatRenderBinaryHoistedLambda ::
   FlatEmitMode
   -> Env

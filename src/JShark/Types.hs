@@ -514,6 +514,7 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixSlice :: FixedOp 'String 'Number 'Number 'String
   FixArrSlice :: FixedOp ('Array u) 'Number 'Number ('Array u)
   FixReplace :: FixedOp 'String 'String 'String 'String
+  -- | Uncurried call @(f)(x, y)@ for hoisted two-arg helpers ('applyNamed2').
   FixCall2 ::
     FixedOp ('Function a ('Function b r)) a b r
 

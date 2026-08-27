@@ -7,8 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | A minimal heterogeneous list (record) type, indexed by a type-level
--- list of kinds. Vendored subset of @Topaz.Rec@ for GHC compatibility.
+-- | Heterogeneous argument lists for 'CallMethod' and FFI ('arg' / '(<:)').
 module JShark.Rec
   ( Rec (..)
   , (<:)

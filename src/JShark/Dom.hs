@@ -7,6 +7,10 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
+-- | DOM element helpers on 'Effect' ('lookupId', attributes, classes, …).
+--
+-- Elements are opaque 'DomElement' values; use 'JShark.Api.unsafeObject' at
+-- integration boundaries when the host already has a node reference.
 module JShark.Dom
   ( DomElement
   , lookupId

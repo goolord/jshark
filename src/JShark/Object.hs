@@ -11,6 +11,10 @@
 -- Orphans: HasField is GHC.Records; Effect/Expr live in Types (cannot import us).
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+-- | Typed object field access and runtime object helpers.
+--
+-- Field names are type-level 'Symbol's ('Field'). Mutable objects live on
+-- 'Effect'; frozen object literals on 'Expr'. See 'get', 'set', 'frozen'.
 module JShark.Object
   ( Field
   , get

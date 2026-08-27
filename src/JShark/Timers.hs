@@ -1,7 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Wrappers over the JS timer functions.
+-- | @setTimeout@, @requestAnimationFrame@, and animation loops.
+--
+-- Callbacks are JShark 'Effect' thunks; use 'foreverFrame' for a steady
+-- @requestAnimationFrame@ driver.
 module JShark.Timers
   ( setTimeout
   , setInterval

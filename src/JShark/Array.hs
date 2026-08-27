@@ -5,10 +5,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | JS @Array.prototype@ wrappers. Read wrappers are 'Std' / kernel
--- 'Index'; 'zipWith' and 'groupBy' are Haskell functions over that
--- tree. 'push' is a 'CallMethod' on 'Effect'. Import qualified; names
--- clash with 'Prelude'.
+-- | JS @Array.prototype@ and small array algorithms.
+--
+-- Most reads compile to 'Std' / kernel 'Index'. Mutations ('push', 'clear',
+-- 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers (@$arrayIndex@,
+-- @$groupBy@) come from 'namedLambdaRow' and are called with 'applyNamed2'.
+--
+-- Import qualified; names clash with 'Prelude'.
 module JShark.Array
   ( index
   , length
@@ -39,12 +42,12 @@ module JShark.Array
   )
 where
 
-import JShark.Params (Param)
+import qualified Data.List as List
 import JShark.Api
 import qualified JShark.Math as Math
+import JShark.Params (Param)
 import JShark.Rec (Rec (..), (<:))
 import JShark.Types
-import qualified Data.List as List
 import Prelude hiding (concat, filter, length, map, zipWith)
 
 -- | @arr[i]@ after 'Math.trunc'. Out of range is 'Error'.
@@ -59,7 +62,8 @@ foldArrayIndex ::
 foldArrayIndex arr i = case (arr, i) of
   (Literal (ValueArray vs), Literal (ValueNumber d))
     | finiteDouble d
-    , let idx = truncate d :: Int
+    , let
+        idx = truncate d :: Int
     , idx >= 0
     , idx < List.length vs ->
         Just (Literal (vs !! idx))
@@ -68,6 +72,7 @@ foldArrayIndex arr i = case (arr, i) of
 finiteDouble :: Double -> Bool
 finiteDouble d = not (isNaN d) && not (isInfinite d)
 
+-- | Hoisted @$arrayIndex@ helper (bounds-checked 'Index').
 indexChecked ::
   forall f u.
   Expr f ('Function ('Array u) ('Function 'Number u))
@@ -185,9 +190,15 @@ groupBy ::
   -> Expr f ('Array ('Object (GroupBy u)))
 groupBy arr keyFn = applyNamed2 groupByChecked arr (toLambda keyFn)
 
+-- | Hoisted @$groupBy@ helper; one uncurried JS @function(arr, keyFn)@.
 groupByChecked ::
   forall f u.
-  Expr f ('Function ('Array u) ('Function ('Function u 'String) ('Array ('Object (GroupBy u)))))
+  Expr
+    f
+    ( 'Function
+        ('Array u)
+        ('Function ('Function u 'String) ('Array ('Object (GroupBy u))))
+    )
 groupByChecked =
   namedLambdaRow
     @('[Param "arr" ('Array u), Param "keyFn" ('Function u 'String)])
@@ -197,33 +208,26 @@ groupByChecked =
         let
           k = Apply p.keyFn x
          in
-        let_
-          ( reduce groups (Literal (ValueBool False)) $ \found g ->
-              Or found (GetField @"key" g .== k)
-          )
-          $ \found ->
-            if_
-              found
-              ( map groups $ \g ->
-                  if_
-                    (GetField @"key" g .== k)
-                    ( FrozenLit
-                        [ FieldLit @"key" k
-                        , FieldLit @"items" (concat (GetField @"items" g) (singleton x))
-                        ]
-                    )
-                    g
-              )
-              ( concat
-                  groups
-                  ( singleton
-                      ( FrozenLit
-                          [ FieldLit @"key" k
-                          , FieldLit @"items" (singleton x)
-                          ]
-                      )
-                  )
-              )
+          let_
+            ( reduce groups (Literal (ValueBool False)) $ \found g ->
+                Or found (GetField @"key" g .== k)
+            )
+            $ \found ->
+              if_
+                found
+                ( map groups $ \g ->
+                    if_
+                      (GetField @"key" g .== k)
+                      (groupEntry k (concat (GetField @"items" g) (singleton x)))
+                      g
+                )
+                (concat groups (singleton (groupEntry k (singleton x))))
+
+-- | @{key, items}@ object used by 'groupBy'.
+groupEntry ::
+  Expr f 'String -> Expr f ('Array u) -> Expr f ('Object (GroupBy u))
+groupEntry k items =
+  FrozenLit [FieldLit @"key" k, FieldLit @"items" items]
 
 -- | @zipWith@; result length is 'Math.min'. @Array.from@ over the indices.
 zipWith ::

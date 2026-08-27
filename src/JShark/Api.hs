@@ -261,7 +261,8 @@ yield = toSyntax . Lift
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
 apply = Apply
 
--- | Nested unary application, not a binary JS call.
+-- | Curried application (@f(x)(y)@ in JS). Prefer 'applyNamed2' for hoisted
+-- two-arg helpers.
 apply2 ::
   Expr f ('Function a ('Function b c)) -> Expr f a -> Expr f b -> Expr f c
 apply2 f x y = apply (apply f x) y
@@ -287,19 +288,23 @@ applyNamed2 f x y = expr3 FixCall2 f x y
 var :: f u -> Expr f u
 var = Var
 
+-- | Anonymous curried lambda (@function(x){…}@).
 lambda :: (Expr f u -> Expr f v) -> Expr f ('Function u v)
 lambda f = Lambda Nothing (\x -> f (var x))
 
--- | Lambda with a stable JS helper name (@$name@ in 'helperDecls').
+-- | Named unary lambda; codegen hoists a shared @$name@ helper.
 namedLambda :: Text -> (Expr f u -> Expr f v) -> Expr f ('Function u v)
 namedLambda name f = Lambda (Just name) (\x -> f (var x))
 
--- | Binary 'namedLambda' over a parameter row (one uncurried JS function).
+-- | Named binary lambda over a 'ParamRec' row.
+--
+-- Emits one uncurried JS @function(a, b)@. Call sites must use
+-- 'applyNamed2', not 'apply2'. Rows are binary-only ('NamedLambdaRow').
 namedLambdaRow ::
   NamedLambdaRow row r fn =>
-  Text ->
-  (ParamRec f row -> Expr f r) ->
-  Expr f fn
+  Text
+  -> (ParamRec f row -> Expr f r)
+  -> Expr f fn
 namedLambdaRow = namedLambdaFromRow
 
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
