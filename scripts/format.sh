@@ -1,1 +1,1 @@
-fourmolu -i ./src ./examples ./test ./jshark-lucid
+fourmolu -i ./src ./examples ./test ./jshark-lucid ./bench
