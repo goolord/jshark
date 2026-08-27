@@ -1,10 +1,9 @@
-.page {
+.page.examples-index {
   max-width: 40rem;
   padding-top: 1.5rem;
 }
 
 .example-grid {
-  list-style: none;
   margin: 1rem 0 0;
   padding: 0;
   display: grid;

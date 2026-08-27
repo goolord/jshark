@@ -2,13 +2,13 @@
 
 module StaticCssTests (staticCssTests) where
 
-import Data.List (intercalate)
+import Data.List (intercalate, isInfixOf)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Keys (black, blackLeft, keyChar, keys, noteId, primaryKey)
+import Keys (black, blackLeft, blackWidth, keyChar, keys, noteId, primaryKey)
 import Numeric (showFFloat)
 import Patterns (disturbPatterns, gliderSpeciesSid, patId, speciesColor)
-import System.Directory (doesFileExist, getCurrentDirectory)
+import System.Directory (doesFileExist, getCurrentDirectory, getFileSize)
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -19,8 +19,9 @@ staticCssTests =
   testGroup
     "static css"
     [ testCase "required static assets exist" assertStaticAssets
+    , testCase "pico version matches pin" assertPicoVersion
     , testCase "synth key labels match keyBindings" assertSynthKeyLabels
-    , testCase "synth-keys.css matches Keys.blackLeft" $
+    , testCase "synth-keys.css matches Keys layout" $
         assertCssFile "examples/static/synth-keys.css" genSynthKeysCss
     , testCase "life-tool-preview.css matches species colors" $
         assertCssFile
@@ -34,7 +35,10 @@ assertStaticAssets = do
   mapM_ (assertAsset root) requiredStaticAssets
  where
   requiredStaticAssets =
-    [ "examples/static/base.css"
+    [ "examples/static/tokens.css"
+    , "examples/static/base.css"
+    , "examples/static/pico/pico.min.css"
+    , "examples/static/pico/VERSION"
     , "examples/static/source-pane.js"
     , "examples/static/synth-keys.css"
     , "examples/static/life-tool-preview.css"
@@ -45,9 +49,50 @@ assertStaticAssets = do
     let
       path = root </> rel
     exists <- doesFileExist path
-    assertBool
-      (rel ++ " missing — run scripts/vendor-speed-highlight.sh or gen-*-css.sh")
-      exists
+    assertBool (rel ++ " missing — run " ++ vendorHint rel) exists
+
+vendorHint :: FilePath -> String
+vendorHint rel
+  | "pico" `isInfixOf` rel =
+      "commit examples/static/pico/ (or scripts/vendor-pico.sh to refresh)"
+  | "speed-highlight" `isInfixOf` rel = "scripts/vendor-speed-highlight.sh"
+  | otherwise = "scripts/gen-*-css.sh"
+
+assertPicoVersion :: IO ()
+assertPicoVersion = do
+  root <- getCurrentDirectory
+  let
+    pinPath = root </> "scripts/pico-version"
+    vendoredPath = root </> "examples/static/pico/VERSION"
+    cssPath = root </> "examples/static/pico/pico.min.css"
+  pinExists <- doesFileExist pinPath
+  assertBool "scripts/pico-version missing" pinExists
+  cssExists <- doesFileExist cssPath
+  assertBool
+    ( "examples/static/pico/pico.min.css missing — commit examples/static/pico/"
+        ++ " (or scripts/vendor-pico.sh to refresh)"
+    )
+    cssExists
+  size <- getFileSize cssPath
+  assertBool
+    ( "examples/static/pico/pico.min.css looks empty — commit examples/static/pico/"
+        ++ " (or scripts/vendor-pico.sh to refresh)"
+    )
+    (size > 50000)
+  vendoredExists <- doesFileExist vendoredPath
+  assertBool
+    ( "examples/static/pico/VERSION missing — commit examples/static/pico/"
+        ++ " (or scripts/vendor-pico.sh to refresh)"
+    )
+    vendoredExists
+  pin <- TIO.readFile pinPath
+  ver <- TIO.readFile vendoredPath
+  assertEqual
+    ( "pico version drift — commit examples/static/pico/"
+        ++ " (or scripts/vendor-pico.sh to refresh)"
+    )
+    (T.strip pin)
+    (T.strip ver)
 
 assertSynthKeyLabels :: IO ()
 assertSynthKeyLabels =
@@ -75,6 +120,11 @@ genSynthKeysCss :: T.Text
 genSynthKeysCss =
   T.unlines $
     [ "/* Generated — run scripts/gen-synth-keys-css.sh */"
+    , ""
+    , T.pack $
+        ".synth .key.black { width: "
+          ++ showFFloat (Just 1) blackWidth ""
+          ++ "%; }"
     , ""
     ]
       ++ map rule (filter black keys)

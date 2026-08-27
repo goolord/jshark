@@ -145,6 +145,11 @@ main {
   cursor: pointer;
 }
 
+.life-panel button,
+.life-tools button {
+  margin-bottom: 0;
+}
+
 .life-panel-toggle:hover,
 .life-tools-collapse:hover {
   color: var(--text);

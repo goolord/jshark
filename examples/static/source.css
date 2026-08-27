@@ -1,14 +1,4 @@
-:root {
-  --bg: #111;
-  --surface: #181818;
-  --border: #333;
-  --text: #e8e8e8;
-  --muted: #888;
-  --faint: #555;
-  --accent: #fff;
-  --max-w: 48rem;
-  --pad-x: 1rem;
-}
+/* tokens.css must load before this file (see ThemeHead.sourceLinksLite). */
 
 .source-stack {
   max-width: var(--max-w);
@@ -25,39 +15,22 @@
 }
 
 .source-stack .js-source + .js-source {
-  margin-top: 0.65rem;
+  margin-top: -1px;
 }
 
 .js-source-summary,
 .life-source-summary {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
   cursor: pointer;
   padding: 0.6rem 0.85rem;
+  margin-bottom: 0;
   user-select: none;
 }
 
-.js-source-summary::before,
-.life-source-summary::before {
-  content: "▸";
-  flex: 0 0 0.9rem;
-  width: 0.9rem;
-  color: var(--text);
-  font-size: 0.9rem;
-  line-height: 1;
-  text-align: center;
-  transform-origin: center;
-}
-
-.js-source[open] > .js-source-summary::before,
-.life-source[open] > .life-source-summary::before {
-  transform: rotate(90deg);
-}
-
-.js-source-summary:hover::before,
-.life-source-summary:hover::before {
-  color: var(--accent);
+.js-source-summary-row,
+.life-source-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .js-source[open] > .js-source-summary,
@@ -101,7 +74,8 @@
 .life-source-copy {
   appearance: none;
   flex: 0 0 auto;
-  margin-left: auto;
+  align-self: center;
+  margin: 0 0 0 auto;
   cursor: pointer;
   padding: 0.2rem 0.55rem;
   border: 1px solid var(--border);
@@ -110,6 +84,7 @@
   color: var(--muted);
   font: inherit;
   font-size: 0.75rem;
+  line-height: 1.2;
 }
 
 .js-source-copy:hover:not(:disabled),

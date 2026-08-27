@@ -13,6 +13,7 @@ where
 import qualified Data.Text as T
 import Lucid
 import Lucid.Base (makeAttribute)
+import ThemeHead (sourceLinks, sourceLinksLite)
 
 data SourcePaneSpec = SourcePaneSpec
   { paneLabel :: T.Text
@@ -20,19 +21,13 @@ data SourcePaneSpec = SourcePaneSpec
   , paneBody :: T.Text
   }
 
--- | Highlight + source pane CSS. Pages link @base.css@ themselves.
+-- | Highlight + source pane CSS. Themed pages link 'ThemeHead.themeLinks' first.
 sourceHead :: T.Text -> Html ()
-sourceHead staticRoot = do
-  link_
-    [ rel_ "stylesheet"
-    , href_ (staticRoot <> "/speed-highlight/themes/github-dark.css")
-    ]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/source.css")]
+sourceHead = sourceLinks
 
--- | Like 'sourceHead'. TodoMVC skips @base.css@; @source.css@ carries pane
--- tokens (including @--accent@) so the highlight chrome still works.
+-- | TodoMVC skips Pico; includes 'tokens.css' for pane chrome.
 sourceHeadLite :: T.Text -> Html ()
-sourceHeadLite = sourceHead
+sourceHeadLite = sourceLinksLite
 
 -- | Collapsed pane of compiled client JS. Scripts follow the markup.
 sourcePane :: T.Text -> T.Text -> Html ()
@@ -61,10 +56,11 @@ sourcePanes staticRoot specs = do
 pane :: T.Text -> SourcePaneSpec -> Html ()
 pane _ (SourcePaneSpec label lang body) = do
   details_ [class_ "js-source"] $ do
-    summary_ [class_ "js-source-summary"] $ do
-      span_ [class_ "js-source-summary-inner"] $ do
-        span_ [class_ "js-source-label"] (toHtml label)
-        span_ [class_ "js-source-expand-hint"] "click to expand"
+    summary_ [class_ "js-source-summary"] $
+      span_ [class_ "js-source-summary-row"] $ do
+        span_ [class_ "js-source-summary-inner"] $ do
+          span_ [class_ "js-source-label"] (toHtml label)
+          span_ [class_ "js-source-expand-hint"] "click to expand"
         button_
           [ type_ "button"
           , class_ "js-source-copy"

@@ -11,6 +11,7 @@ import Patterns
   , disturbPatterns
   , glider
   )
+import ThemeHead (sourceLinks, themeLinks)
 import Types
   ( boardId
   , canvasH
@@ -68,22 +69,23 @@ import Types
 --   WebGL renderer there: the sim ticks but the board stays black.
 --   If WebGL is unavailable in the frame the game falls back to a 2D canvas.
 page :: T.Text -> T.Text -> T.Text -> Html ()
-page staticRoot _scriptSrc frameSrc = doctypehtml_ $ do
-  head_ $ do
-    meta_ [charset_ "utf-8"]
-    meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "Life"
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/base.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-shell.css")]
-  body_ [class_ "life-shell"] $ do
-    iframe_
-      [ id_ "life-frame"
-      , class_ "life-frame"
-      , title_ "Game of Life"
-      , src_ frameSrc
-      ]
-      mempty
-    script_ focusFrameScript
+page staticRoot _scriptSrc frameSrc = doctypehtml_ $
+  html_ [makeAttribute "data-theme" "dark"] $ do
+    head_ $ do
+      meta_ [charset_ "utf-8"]
+      meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
+      title_ "Life"
+      themeLinks staticRoot
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-shell.css")]
+    body_ [class_ "life-shell"] $ do
+      iframe_
+        [ id_ "life-frame"
+        , class_ "life-frame"
+        , title_ "Game of Life"
+        , src_ frameSrc
+        ]
+        mempty
+      script_ focusFrameScript
 
 -- | Inner document served at @/<example>/frame/@.
 framePage :: T.Text -> T.Text -> T.Text -> Html ()
@@ -108,93 +110,91 @@ focusFrameScript =
   "document.getElementById('life-frame').addEventListener('load',function(){this.focus();},{once:true});"
 
 gameDocument :: T.Text -> T.Text -> T.Text -> Html ()
-gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
-  head_ $ do
-    meta_ [charset_ "utf-8"]
-    meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "Life"
-    base_ [href_ assetBase]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/base.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-tool-preview.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/source.css")]
-    link_
-      [ rel_ "stylesheet"
-      , href_ (staticRoot <> "/speed-highlight/themes/github-dark.css")
-      ]
-  body_ $ do
-    main_ $ do
-      header_ [class_ "life-header"] $ do
-        h1_ "Life"
-        p_ [class_ "life-meta"] $ do
-          toHtml (T.pack (show gridW))
-          "×"
-          toHtml (T.pack (show gridH))
-          " · catalog soup in center"
-      div_ [class_ "life-stage"] $ do
-        canvas_
-          [ id_ boardId
-          , width_ (T.pack (show (round canvasW :: Int)))
-          , height_ (T.pack (show (round canvasH :: Int)))
-          , tabindex_ "0"
-          , autofocus_
-          ]
-          mempty
-        canvas_
-          [ id_ lifeBoard2dId
-          , class_ "life-board-2d"
-          , width_ (T.pack (show (round canvasW :: Int)))
-          , height_ (T.pack (show (round canvasH :: Int)))
-          , makeAttribute "aria-hidden" "true"
-          ]
-          mempty
-        -- Hidden unless the 2D fallback needs it: a visible canvas stacked
-        -- over the WebGL board occlusion-culls the board's quad in
-        -- software-composited browsers, blanking the whole game.
-        canvas_
-          [ id_ lifeEraserGhostId
-          , class_ "life-eraser-ghost"
-          , width_ (T.pack (show (round canvasW :: Int)))
-          , height_ (T.pack (show (round canvasH :: Int)))
-          , makeAttribute "aria-hidden" "true"
-          ]
-          mempty
-        div_
-          [ id_ lifePauseOverlayId
-          , class_ "life-pause-overlay"
-          , makeAttribute "aria-hidden" "true"
-          ]
-          $ span_
-            [ id_ lifePauseLabelId
-            , class_ "life-pause-label"
+gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
+  html_ [makeAttribute "data-theme" "dark"] $ do
+    head_ $ do
+      meta_ [charset_ "utf-8"]
+      meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
+      title_ "Life"
+      base_ [href_ assetBase]
+      themeLinks staticRoot
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-tool-preview.css")]
+      sourceLinks staticRoot
+    body_ $ do
+      main_ $ do
+        header_ [class_ "life-header"] $ do
+          h1_ "Life"
+          p_ [class_ "life-meta"] $ do
+            toHtml (T.pack (show gridW))
+            "×"
+            toHtml (T.pack (show gridH))
+            " · catalog soup in center"
+        div_ [class_ "life-stage"] $ do
+          canvas_
+            [ id_ boardId
+            , width_ (T.pack (show (round canvasW :: Int)))
+            , height_ (T.pack (show (round canvasH :: Int)))
+            , tabindex_ "0"
+            , autofocus_
             ]
-            "paused"
-        debugMenu
-        settingsMenu
-        toolsHud
-      ul_ [class_ "life-hints"] $ do
-        li_ "Esc pause · Shift-drag pan · +/− zoom · empty click pauses"
-        li_ "Eraser or stamp tool · hover cell for name"
-      div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
-        span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
-        span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
-      section_ [class_ "life-index"] $ do
-        h2_ "Biomass Index"
-        div_ [id_ lifeIndexHostId] $
-          div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
-    lifeSourceSection
-    script_ [src_ "js/pixi.min.js"] ("" :: Html ())
-    script_ [src_ scriptSrc] ("" :: Html ())
-    script_ [type_ "module", src_ (staticRoot <> "/source-pane.js")] ("" :: Html ())
-    sourceLoadScript scriptSrc
+            mempty
+          canvas_
+            [ id_ lifeBoard2dId
+            , class_ "life-board-2d"
+            , width_ (T.pack (show (round canvasW :: Int)))
+            , height_ (T.pack (show (round canvasH :: Int)))
+            , makeAttribute "aria-hidden" "true"
+            ]
+            mempty
+          -- Hidden unless the 2D fallback needs it: a visible canvas stacked
+          -- over the WebGL board occlusion-culls the board's quad in
+          -- software-composited browsers, blanking the whole game.
+          canvas_
+            [ id_ lifeEraserGhostId
+            , class_ "life-eraser-ghost"
+            , width_ (T.pack (show (round canvasW :: Int)))
+            , height_ (T.pack (show (round canvasH :: Int)))
+            , makeAttribute "aria-hidden" "true"
+            ]
+            mempty
+          div_
+            [ id_ lifePauseOverlayId
+            , class_ "life-pause-overlay"
+            , makeAttribute "aria-hidden" "true"
+            ]
+            $ span_
+              [ id_ lifePauseLabelId
+              , class_ "life-pause-label"
+              ]
+              "paused"
+          debugMenu
+          settingsMenu
+          toolsHud
+        ul_ [class_ "life-hints"] $ do
+          li_ "Esc pause · Shift-drag pan · +/− zoom · empty click pauses"
+          li_ "Eraser or stamp tool · hover cell for name"
+        div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
+          span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
+          span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
+        section_ [class_ "life-index"] $ do
+          h2_ "Biomass Index"
+          div_ [id_ lifeIndexHostId] $
+            div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
+      lifeSourceSection
+      script_ [src_ "js/pixi.min.js"] ("" :: Html ())
+      script_ [src_ scriptSrc] ("" :: Html ())
+      script_ [type_ "module", src_ (staticRoot <> "/source-pane.js")] ("" :: Html ())
+      sourceLoadScript scriptSrc
 
 lifeSourceSection :: Html ()
 lifeSourceSection =
   details_ [class_ "life-source"] $ do
-    summary_ [class_ "life-source-summary"] $ do
-      span_ [class_ "life-source-summary-inner"] $ do
-        span_ [class_ "life-source-title"] "Source"
-        span_ [class_ "life-source-expand-hint"] "click to expand"
+    summary_ [class_ "life-source-summary"] $
+      span_ [class_ "life-source-summary-row"] $ do
+        span_ [class_ "life-source-summary-inner"] $ do
+          span_ [class_ "life-source-title"] "Source"
+          span_ [class_ "life-source-expand-hint"] "click to expand"
         button_
           [ type_ "button"
           , class_ "js-source-copy life-source-copy"

@@ -7,43 +7,66 @@ import qualified Data.Text as T
 import Keys
 import Lucid
 import Lucid.Base (makeAttribute)
+import ThemeHead (themeLinks)
+
+idWaveLabel, idFilterLabel, idEnvelopeLabel :: T.Text
+idWaveLabel = "synth-wave-label"
+idFilterLabel = "synth-filter-label"
+idEnvelopeLabel = "synth-envelope-label"
 
 -- | @staticRoot@ is the shared assets prefix; @headExtra@ / @source@ are the
 -- highlighter and the JS pane.
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
-page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
-  head_ $ do
-    meta_ [charset_ "utf-8"]
-    meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "Synth"
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/base.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth-keys.css")]
-    headExtra
-  body_ $ do
-    main_ [class_ "page synth"] $ do
-      header_ [class_ "page-header"] $ do
-        h1_ "Synth"
-        p_ [class_ "page-hint"] $
-          "z–/ then q–] on keyboard · click keys · held until release"
-      div_ [class_ "controls"] $ do
-        fieldset_ $ do
-          legend_ "wave"
-          div_ [class_ "waves"] (mapM_ waveButton waves)
-        fieldset_ $ do
-          legend_ "filter"
-          slider idCutoff "Cutoff" "200" "8000" "2200"
-          slider idResonance "Res" "0" "20" "6"
-        fieldset_ $ do
-          legend_ "envelope"
-          slider idRelease "Release" "0.05" "1.5" "0.35"
-      div_ [class_ "meter"] $ div_ [id_ idMeterBar, class_ "meter-bar"] mempty
-      div_ [id_ idKeyboard, class_ "keyboard"] (mapM_ keyButton keys)
-      p_ [id_ idStatus, class_ "status"] "Click a key to start audio"
-      footer_ [class_ "page-footer"] $
-        p_ "Web Audio via JShark FFI · envelopes on the audio thread"
-    source
-    script_ [src_ scriptSrc] ("" :: Html ())
+page staticRoot headExtra source scriptSrc = doctypehtml_ $
+  html_ [makeAttribute "data-theme" "dark"] $ do
+    head_ $ do
+      meta_ [charset_ "utf-8"]
+      meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
+      title_ "Synth"
+      themeLinks staticRoot
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth-keys.css")]
+      headExtra
+    body_ $ do
+      main_ [class_ "page synth"] $ do
+        header_ [class_ "page-header"] $ do
+          h1_ "Synth"
+          p_ [class_ "page-hint"] $
+            "z–/ then q–] on keyboard · click keys · held until release"
+        div_ [class_ "controls"] $ do
+          div_ [class_ "control-group"] $ do
+            p_ [class_ "control-label", id_ idWaveLabel] "Wave"
+            div_
+              [ class_ "waves"
+              , role_ "group"
+              , makeAttribute "aria-labelledby" idWaveLabel
+              ]
+              (mapM_ waveButton waves)
+          div_ [class_ "control-group"] $ do
+            p_ [class_ "control-label", id_ idFilterLabel] "Filter"
+            div_
+              [ class_ "sliders"
+              , role_ "group"
+              , makeAttribute "aria-labelledby" idFilterLabel
+              ]
+              $ do
+                slider idCutoff "Cutoff" "200" "8000" "2200"
+                slider idResonance "Res" "0" "20" "6"
+          div_ [class_ "control-group"] $ do
+            p_ [class_ "control-label", id_ idEnvelopeLabel] "Envelope"
+            div_
+              [ class_ "sliders"
+              , role_ "group"
+              , makeAttribute "aria-labelledby" idEnvelopeLabel
+              ]
+              $ slider idRelease "Release" "0.05" "1.5" "0.35"
+        div_ [class_ "meter"] $ div_ [id_ idMeterBar, class_ "meter-bar"] mempty
+        div_ [id_ idKeyboard, class_ "keyboard"] (mapM_ keyButton keys)
+        p_ [id_ idStatus, class_ "status"] "Click a key to start audio"
+        footer_ [class_ "page-footer"] $
+          p_ "Web Audio via JShark FFI · envelopes on the audio thread"
+      source
+      script_ [src_ scriptSrc] ("" :: Html ())
 
 -- | Black key offsets live in @synth-keys.css@ (must match 'blackLeft').
 keyButton :: Key -> Html ()

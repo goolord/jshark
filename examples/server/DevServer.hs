@@ -22,6 +22,7 @@ import qualified Data.Text.Lazy.IO as TL
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import qualified Life
 import Lucid
+import Lucid.Base (makeAttribute)
 import Network.Wai.Handler.Warp (setHost, setPort)
 import Paths_jshark (getDataFileName)
 import System.Directory
@@ -36,6 +37,7 @@ import System.Directory
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import System.IO.Error (isAlreadyInUseError)
+import ThemeHead (themeLinks)
 import Web.Scotty
 
 resolveDataFile :: FilePath -> IO FilePath
@@ -410,23 +412,24 @@ staticType name
   | otherwise = "application/octet-stream"
 
 indexPage :: SitePaths -> [(Example, Maybe FilePath)] -> Html ()
-indexPage paths shots = doctypehtml_ $ do
-  head_ $ do
-    meta_ [charset_ "utf-8"]
-    meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
-    title_ "Examples"
-    link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/base.css")]
-    link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/index.css")]
-  body_ $
-    main_ [class_ "page"] $ do
-      header_ [class_ "page-header"] $ do
-        h1_ "Examples"
-        p_ [class_ "page-meta"] "JShark → JavaScript"
-      ul_ [class_ "example-grid"] $ mapM_ (exampleCard paths) shots
+indexPage paths shots = doctypehtml_ $
+  html_ [makeAttribute "data-theme" "dark"] $ do
+    head_ $ do
+      meta_ [charset_ "utf-8"]
+      meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
+      title_ "Examples"
+      themeLinks (indexStatic paths)
+      link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/index.css")]
+    body_ $
+      main_ [class_ "page examples-index"] $ do
+        header_ [class_ "page-header"] $ do
+          h1_ "Examples"
+          p_ [class_ "page-meta"] "JShark → JavaScript"
+        div_ [class_ "example-grid"] $ mapM_ (exampleCard paths) shots
 
 exampleCard :: SitePaths -> (Example, Maybe FilePath) -> Html ()
 exampleCard paths (ex, shot) =
-  li_ $
+  div_ $
     a_ [href_ (hrefExample paths (exampleName ex))] $ do
       case shot of
         Nothing -> mempty
@@ -440,7 +443,9 @@ exampleCard paths (ex, shot) =
 staticFiles :: [FilePath]
 staticFiles =
   [ "source-pane.js"
+  , "tokens.css"
   , "base.css"
+  , "pico/pico.min.css"
   , "source.css"
   , "index.css"
   , "breakout.css"

@@ -146,7 +146,7 @@ whiteKeys = filter (not . black) keys
 
 -- | Width of a black key, as a percentage of the keyboard.
 blackWidth :: Double
-blackWidth = 5.4
+blackWidth = 4.6
 
 -- | Left edge of a black key, percent of the keyboard width.
 --

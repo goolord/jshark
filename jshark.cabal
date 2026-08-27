@@ -37,20 +37,22 @@ extra-source-files:
   wasm/hvm2/build.zig
   wasm/hvm2/src/root.zig
   wasm/hvm2/README.md
-data-files:
-  examples/static/*.png
-  examples/static/*.js
-  examples/static/*.css
-  examples/static/hvm2-demo.wasm
-  examples/static/speed-highlight/**/*.js
-  examples/static/speed-highlight/**/*.css
-  examples/static/speed-highlight/**/*.ts
-  examples/static/speed-highlight/**/*.map
-  examples/static/speed-highlight/**/*.json
-  examples/Life/js/catalog.js
-  examples/Life/js/pixi.min.js
-  examples/Life/js/EngineWorker.js
-  examples/Life/shaders/cell.frag.glsl
+  data-files:
+    examples/static/*.png
+    examples/static/*.js
+    examples/static/*.css
+    examples/static/pico/*.css
+    examples/static/pico/VERSION
+    examples/static/hvm2-demo.wasm
+    examples/static/speed-highlight/**/*.js
+    examples/static/speed-highlight/**/*.css
+    examples/static/speed-highlight/**/*.ts
+    examples/static/speed-highlight/**/*.map
+    examples/static/speed-highlight/**/*.json
+    examples/Life/js/catalog.js
+    examples/Life/js/pixi.min.js
+    examples/Life/js/EngineWorker.js
+    examples/Life/shaders/cell.frag.glsl
 
 common warnings
   ghc-options:
@@ -186,8 +188,22 @@ common example-lib
   build-depends:
     , base
     , containers >= 0.5 && < 1
+    , example-theme
     , jshark
     , text
+
+library example-theme
+  import: warnings, lucid-dep
+  -- Shared head helpers for example Page.hs shells (lives at examples/ThemeHead.hs).
+  exposed-modules:
+    ThemeHead
+  hs-source-dirs:
+    examples
+  build-depends:
+    , base
+    , text
+  default-language:
+    Haskell2010
 
 library breakout
   import: example-lib
@@ -299,6 +315,7 @@ executable examples
     , base
     , breakout
     , directory >= 1.3 && < 2
+    , example-theme
     , filepath
     , hvm2-demo
     , jshark
