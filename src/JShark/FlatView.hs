@@ -1,8 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | Unified flat IR view for emit: 'FlatProgram' nodes or on-demand SoA decode.
+-- | Emit-time view over packed flat SoA (on-demand node decode).
 module JShark.FlatView
-  ( FlatIRView (..)
+  ( FlatIRView
   , firRoot
   , firNodeCount
   , firNode
@@ -25,20 +25,8 @@ import JShark.Flat
   ( FlatArg
   , FlatField
   , FlatNode (..)
-  , FlatProgram (..)
   , NodeId
-  , flatArgGroup
-  , flatFFI
-  , flatFieldGroup
-  , flatIdentBudget
-  , flatLayerBuckets
-  , flatLitValue
-  , flatNode
   , flatNodeIsEffect
-  , flatNodePackRefs
-  , flatStrCases
-  , flatText
-  , fpRootEffect
   )
 import JShark.FlatSoA
   ( FlatSoA
@@ -57,69 +45,43 @@ import JShark.FlatSoA
   )
 import JShark.Types (FFIForm, Value)
 
-data FlatIRView
-  = FIRProgram !FlatProgram
-  | FIRSoa !FlatSoA
+type FlatIRView = FlatSoA
 
 firRoot :: FlatIRView -> NodeId
-firRoot = \case
-  FIRProgram p -> fpRootEffect p
-  FIRSoa soa -> fsaRoot soa
+firRoot = fsaRoot
 
 firNodeCount :: FlatIRView -> Int
-firNodeCount = \case
-  FIRProgram p -> V.length (fpNodes p)
-  FIRSoa soa -> flatSoaNodeCount soa
+firNodeCount = flatSoaNodeCount
 
 firNode :: FlatIRView -> NodeId -> FlatNode
-firNode v i = case v of
-  FIRProgram p -> flatNode p i
-  FIRSoa soa -> flatSoaNode soa i
+firNode = flatSoaNode
 
 firLitValue :: FlatIRView -> Int -> Value u
-firLitValue v i = case v of
-  FIRProgram p -> flatLitValue p i
-  FIRSoa soa -> flatSoaLitValue soa i
+firLitValue = flatSoaLitValue
 
 firText :: FlatIRView -> Int -> Text
-firText v i = case v of
-  FIRProgram p -> flatText p i
-  FIRSoa soa -> flatSoaText soa i
+firText = flatSoaText
 
 firFFI :: FlatIRView -> Int -> FFIForm
-firFFI v i = case v of
-  FIRProgram p -> flatFFI p i
-  FIRSoa soa -> flatSoaFFI soa i
+firFFI = flatSoaFFI
 
 firStrCases :: FlatIRView -> Int -> [(Text, NodeId)]
-firStrCases v i = case v of
-  FIRProgram p -> flatStrCases p i
-  FIRSoa soa -> flatSoaStrCases soa i
+firStrCases = flatSoaStrCases
 
 firFieldGroup :: FlatIRView -> Int -> [FlatField]
-firFieldGroup v i = case v of
-  FIRProgram p -> flatFieldGroup p i
-  FIRSoa soa -> flatSoaFieldGroup soa i
+firFieldGroup = flatSoaFieldGroup
 
 firArgGroup :: FlatIRView -> Int -> [FlatArg]
-firArgGroup v i = case v of
-  FIRProgram p -> flatArgGroup p i
-  FIRSoa soa -> flatSoaArgGroup soa i
+firArgGroup = flatSoaArgGroup
 
 firNodePackRefs :: FlatIRView -> FlatNode -> [NodeId]
-firNodePackRefs v node = case v of
-  FIRProgram p -> flatNodePackRefs p node
-  FIRSoa soa -> flatSoaNodePackRefs soa node
+firNodePackRefs = flatSoaNodePackRefs
 
 firIdentBudget :: FlatIRView -> NodeId -> Int
-firIdentBudget v i = case v of
-  FIRProgram p -> flatIdentBudget p i
-  FIRSoa soa -> flatSoaIdentBudget soa i
+firIdentBudget = flatSoaIdentBudget
 
 firLayerBuckets :: FlatIRView -> NodeId -> V.Vector (V.Vector NodeId)
-firLayerBuckets v root = case v of
-  FIRProgram p -> flatLayerBuckets p root
-  FIRSoa soa -> flatSoaLayerBuckets soa root
+firLayerBuckets = flatSoaLayerBuckets
 
 firNodeIsEffect :: FlatNode -> Bool
 firNodeIsEffect = flatNodeIsEffect

@@ -12,31 +12,13 @@
 -- | Untyped flat IR: optimized 'Ir' trees packed into vectors for codegen.
 module JShark.Flat
   ( NodeId
-  , FlatProgram (..)
   , FlatNode (..)
   , FlatArg (..)
   , FlatField (..)
   , FlatFixed (..)
   , FlatLit (FLit)
-  , packExpr
-  , packEffect
   , packEffectProgramState
-  , fpRootEffect
-  , flatNode
-  , flatLit
-  , flatLitValue
-  , flatPure
-  , flatText
-  , flatFFI
-  , flatStrCases
-  , flatFieldGroup
-  , flatArgGroup
-  , flatSubtreeSizes
-  , flatIdentBudget
-  , flatReachableDepths
-  , flatLayerBuckets
   , flatNodeIsEffect
-  , flatNodePackRefs
   , flatNodeChildRefs
   , flatArgRef
   , flatFieldRef
@@ -48,11 +30,9 @@ module JShark.Flat
   , PackState
   , SoaSideAcc (..)
   , sideAccToVectors
-  , validateFlatProgram
   )
 where
 
-import Control.Monad.ST (runST)
 import Control.Monad.State.Strict (State, get, put, runState)
 import Data.Int (Int32)
 import Data.Proxy (Proxy (..))
@@ -60,15 +40,12 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
-import Data.Word (Word8)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import JShark.FlatEnc (Enc (..))
 import qualified JShark.FlatEnc as FE
 import JShark.Ir
 import JShark.Rec (Rec (..))
 import JShark.Types (BigBinOp (..), FFIForm (..), FixedOp, Value (..))
-import Unsafe.Coerce (unsafeCoerce)
 
 type NodeId = Int
 
@@ -171,21 +148,6 @@ data FlatNode
   | FX_ObjectLit Int
   | FX_DeleteProp NodeId NodeId
   | FX_ArrayLit [NodeId]
-
-data FlatProgram = FlatProgram
-  { fpNodes :: !(Vector FlatNode)
-  , fpLits :: !(Vector FlatLit)
-  , fpTexts :: !(Vector Text)
-  , fpFFIs :: !(Vector FFIForm)
-  , fpStrCases :: !(Vector [(Text, NodeId)])
-  , fpFieldGroups :: !(Vector [FlatField])
-  , fpArgGroups :: !(Vector [FlatArg])
-  , fpPure :: !(Vector Word8)
-  , fpRoot :: {-# UNPACK #-} !NodeId
-  }
-
-fpRootEffect :: FlatProgram -> NodeId
-fpRootEffect = fpRoot
 
 data SoaSideAcc = SoaSideAcc
   { saFixed :: ![FlatFixed]
@@ -361,38 +323,6 @@ emptyPackState =
     , psFieldGroups = []
     , psArgGroups = []
     }
-
-flatNode :: FlatProgram -> NodeId -> FlatNode
-flatNode p i = fpNodes p V.! i
-
-flatLit :: FlatProgram -> Int -> FlatLit
-flatLit p i = fpLits p V.! i
-
--- | Recover a typed literal after PHOAS typechecking erased 'u'.
--- INVARIANT: only call on literals produced by 'packEffectProgram'.
-flatLitValue :: FlatProgram -> Int -> Value u
-flatLitValue p i = case flatLit p i of
-  FLit v -> unsafeCoerce v
-
-flatPure :: FlatProgram -> NodeId -> Word8
-flatPure p i
-  | i >= 0 && i < V.length (fpPure p) = fpPure p V.! i
-  | otherwise = 0
-
-flatText :: FlatProgram -> Int -> Text
-flatText p i = fpTexts p V.! i
-
-flatFFI :: FlatProgram -> Int -> FFIForm
-flatFFI p i = fpFFIs p V.! i
-
-flatStrCases :: FlatProgram -> Int -> [(Text, NodeId)]
-flatStrCases p i = fpStrCases p V.! i
-
-flatFieldGroup :: FlatProgram -> Int -> [FlatField]
-flatFieldGroup p i = fpFieldGroups p V.! i
-
-flatArgGroup :: FlatProgram -> Int -> [FlatArg]
-flatArgGroup p i = fpArgGroups p V.! i
 
 data PackState = PackState
   { psEncs :: ![Enc]
@@ -581,35 +511,6 @@ flatNodeChildRefs = \case
   FX_DeleteProp o k -> [o, k]
   FX_ArrayLit ns -> ns
 
-flatNodeSideRefs :: FlatProgram -> FlatNode -> [NodeId]
-flatNodeSideRefs p = \case
-  FX_FFI _ ai -> sideArgRefs p ai
-  FX_CallMethod _ _ ai -> sideArgRefs p ai
-  FX_StringCaseE _ ai _ -> sideStrCaseRefs p ai
-  FE_FrozenLit gi -> sideFieldRefs p gi
-  FX_ObjectLit gi -> sideFieldRefs p gi
-  _ -> []
- where
-  sideArgRefs prog ai
-    | ai >= 0 && ai < V.length (fpArgGroups prog) =
-        map flatArgRef (fpArgGroups prog V.! ai)
-    | otherwise =
-        error "JShark.Flat.flatNodeSideRefs: arg group index out of range"
-  sideStrCaseRefs prog ai
-    | ai >= 0 && ai < V.length (fpStrCases prog) =
-        map snd (fpStrCases prog V.! ai)
-    | otherwise =
-        error "JShark.Flat.flatNodeSideRefs: str case group index out of range"
-  sideFieldRefs prog gi
-    | gi >= 0 && gi < V.length (fpFieldGroups prog) =
-        map flatFieldRef (fpFieldGroups prog V.! gi)
-    | otherwise =
-        error "JShark.Flat.flatNodeSideRefs: field group index out of range"
-
-flatNodePackRefs :: FlatProgram -> FlatNode -> [NodeId]
-flatNodePackRefs p node =
-  flatNodeChildRefs node ++ flatNodeSideRefs p node
-
 flatArgRef :: FlatArg -> NodeId
 flatArgRef = \case
   FlatArgExpr j -> j
@@ -621,81 +522,6 @@ flatFieldRef = \case
   FlatFieldEff _ j -> j
   FlatFieldExtra _ j -> j
   FlatFieldExtraEff _ j -> j
-
--- | Subtree node counts; pack order ensures child refs are below @i@.
-flatSubtreeSizes :: FlatProgram -> V.Vector Int
-flatSubtreeSizes p =
-  let
-    nodes = fpNodes p
-    n = V.length nodes
-   in
-    snd $
-      foldl'
-        ( \(_, acc) i ->
-            let
-              sz =
-                1
-                  + sum
-                    [ acc V.! r
-                    | r <- flatNodePackRefs p (nodes V.! i)
-                    ]
-              acc' = acc V.// [(i, sz)]
-             in
-              ((), acc')
-        )
-        ((), V.replicate n 0)
-        [0 .. n - 1]
-
--- | Conservative @n*@ ident budget for parallel sibling emit (one per node).
-flatIdentBudget :: FlatProgram -> NodeId -> Int
-flatIdentBudget p i =
-  let
-    sizes = flatSubtreeSizes p
-   in
-    if i >= 0 && i < V.length sizes then sizes V.! i else 1
-
--- | Longest path to a leaf for nodes reachable from @root@; unreachable @(-1)@.
-flatReachableDepths :: FlatProgram -> NodeId -> Vector Int
-flatReachableDepths p root =
-  let
-    nodes = fpNodes p
-    n = V.length nodes
-   in
-    runST $ do
-      md <- MV.replicate n (-1)
-      let
-        go i =
-          MV.read md i >>= \case
-            d | d >= 0 -> pure d
-            _ -> do
-              let
-                refs = flatNodePackRefs p (nodes V.! i)
-                childDepths = mapM go refs
-              d <-
-                if null refs
-                  then pure 0
-                  else (1 +) . maximum <$> childDepths
-              MV.write md i d
-              pure d
-      _ <- go root
-      V.unsafeFreeze md
-
--- | Reachable nodes grouped by 'flatReachableDepths' (leaves at layer 0).
-flatLayerBuckets :: FlatProgram -> NodeId -> Vector (Vector NodeId)
-flatLayerBuckets p root =
-  let
-    depths = flatReachableDepths p root
-    n = V.length depths
-    maxD = V.foldl' max 0 depths
-    bucket d =
-      V.fromList
-        [ i
-        | i <- [0 .. n - 1]
-        , depths V.! i == d
-        , depths V.! i >= 0
-        ]
-   in
-    V.fromList [bucket d | d <- [0 .. maxD]]
 
 flatNodeIsEffect :: FlatNode -> Bool
 flatNodeIsEffect = \case
@@ -724,52 +550,6 @@ flatNodeIsEffect = \case
   FX_DeleteProp {} -> True
   FX_ArrayLit {} -> True
   _ -> False
-
-validateFlatProgram :: FlatProgram -> ()
-validateFlatProgram p =
-  let
-    nodes = fpNodes p
-    n = V.length nodes
-    inRange ref
-      | ref >= 0 && ref < n = ()
-      | otherwise =
-          error $
-            "JShark.Flat.validateFlatProgram: node ref "
-              <> show ref
-              <> " out of range [0,"
-              <> show n
-              <> ")"
-    packOrder i ref
-      | ref < i = ()
-      | otherwise =
-          error $
-            "JShark.Flat.validateFlatProgram: node "
-              <> show i
-              <> " refs "
-              <> show ref
-              <> " (pack order violated)"
-   in
-    foldr
-      ( \i acc ->
-          foldr
-            (\ref a -> packOrder i ref `seq` a)
-            acc
-            (flatNodePackRefs p (nodes V.! i))
-      )
-      ()
-      [0 .. n - 1]
-      `seq` foldr
-        (\r () -> inRange r)
-        ()
-        (map flatArgRef (concat (V.toList (fpArgGroups p))))
-      `seq` foldr
-        (\r () -> inRange r)
-        ()
-        (map flatFieldRef (concat (V.toList (fpFieldGroups p))))
-      `seq` foldr (\r () -> inRange r) () (map snd (concat (V.toList (fpStrCases p))))
-      `seq` if fpRoot p >= 0 && fpRoot p < n
-        then ()
-        else error "JShark.Flat.validateFlatProgram: invalid root"
 
 packRecArgs :: Rec IrArg us -> State PackState Int
 packRecArgs rec = addArgGroup =<< packRecArgsGo rec

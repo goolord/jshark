@@ -122,14 +122,12 @@ module JShark
   , pureAST
   , effectfulAST
   , effectfulASTFromFlat
-  , effectfulASTFromPrepared
   , effectfulASTFromSoA
   , effectfulASTIr
   , irEffectFromClosed
   , flatPrepareCore
   , flatPrepareFromIr
   , profileFlatOptFromIr
-  , flatProgramNodeCount
   , flatSoaNodeCount
   , flatSoaParallelThreshold
   , irExprFromClosed
@@ -1314,19 +1312,12 @@ profileFlatOptFromIr irOpt = do
   let
     !_ = FlatSoA.soaPureVector soa2
   tAttach1 <- getMonotonicTime
-  tTo0 <- getMonotonicTime
-  let
-    !progRepack = FlatSoA.toFlatProgram soa2
-  tTo1 <- getMonotonicTime
-  let
-    !_ = progRepack
   let
     foldSec = seconds tFold0 tFold1
     foldSeqSec = seconds tFoldSeq0 tFoldSeq1
     pureSec = seconds tPure0 tPure1
     attachSec = seconds tAttach0 tAttach1
-    toProgSec = seconds tTo0 tTo1
-    total = foldSec + pureSec + attachSec + toProgSec
+    total = foldSec + pureSec + attachSec
   pure
     FlatOptProfile
       { fopNodeCount = nodeCount
@@ -1338,7 +1329,6 @@ profileFlatOptFromIr irOpt = do
       , fopPurePasses = purePasses
       , fopPureCount = pureCount
       , fopAttachSec = attachSec
-      , fopToProgramSec = toProgSec
       , fopTotalSec = total
       }
 {-# NOINLINE profileFlatOptFromIr #-}
@@ -6152,9 +6142,6 @@ flatEffectfulASTGo !mode !env !sIn view nid =
       Flat.FX_ArrayLit es -> flatRenderArrayLit mode env s0 view es
       _ -> error "JShark.flatEffectfulAST': unexpected node"
 
-flatProgramNodeCount :: Flat.FlatProgram -> Int
-flatProgramNodeCount p = V.length (Flat.fpNodes p)
-
 flatSoaNodeCount :: FlatSoA.FlatSoA -> Int
 flatSoaNodeCount = FlatSoA.flatSoaNodeCount
 
@@ -6162,28 +6149,22 @@ flatSoaParallelThreshold :: Int
 flatSoaParallelThreshold = FlatSoA.flatSoaParallelThreshold
 
 flatEffectfulCodegenFromView :: FlatView.FlatIRView -> (CG, Code)
-flatEffectfulCodegenFromView view =
+flatEffectfulCodegenFromView soa =
   let
-    root = FlatView.firRoot view
-    total = FlatView.firNodeCount view
+    root = FlatView.firRoot soa
+    total = FlatView.firNodeCount soa
    in
     if root < 0 || root >= total
       then error "JShark.flatEffectfulCodegen: invalid root node"
       else
         let
-          (plan, s1) = buildFlatEmitPlan view root startCG
+          (plan, s1) = buildFlatEmitPlan soa root startCG
          in
-          flatEmitLayered view root plan s1
+          flatEmitLayered soa root plan s1
 {-# NOINLINE flatEffectfulCodegenFromView #-}
 
-flatEffectfulCodegenFromProg :: Flat.FlatProgram -> (CG, Code)
-flatEffectfulCodegenFromProg prog =
-  flatEffectfulCodegenFromView (FlatView.FIRProgram prog)
-{-# NOINLINE flatEffectfulCodegenFromProg #-}
-
 flatEffectfulCodegenFromSoA :: FlatSoA.FlatSoA -> (CG, Code)
-flatEffectfulCodegenFromSoA soa =
-  flatEffectfulCodegenFromView (FlatView.FIRSoa soa)
+flatEffectfulCodegenFromSoA = flatEffectfulCodegenFromView
 {-# NOINLINE flatEffectfulCodegenFromSoA #-}
 
 flatEffectfulCodegen ::
@@ -6197,10 +6178,6 @@ flatEffectfulCodegen (e :: ClosedEffect u) =
 
 effectfulASTFromFlat :: ClosedEffect u -> JS
 effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
-
-effectfulASTFromPrepared :: Flat.FlatProgram -> JS
-effectfulASTFromPrepared =
-  uncurry renderWithHelpers . flatEffectfulCodegenFromProg
 
 effectfulASTFromSoA :: FlatSoA.FlatSoA -> JS
 effectfulASTFromSoA soa =

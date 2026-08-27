@@ -4,25 +4,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Struct-of-arrays flat IR and bulk-friendly optimizer passes.
---
--- Column arrays ('fsaOpcodes', 'fsaA'…'fsaE') are laid out for contiguous
--- scans; 'fromProgram' writes them in one pass without an intermediate
--- @[(Enc)]@. Optimizer passes that walk node indices sequentially
--- ('optConstantFoldNumOnce', 'propagatePureFlagsPass') remain
--- data-dependent and are poor SIMD targets; equality checks on columns
--- already delegate to unboxed vector primitives.
 module JShark.FlatSoA
   ( FlatSoA (..)
-  , fromProgram
-  , toProgram
-  , optimizeFlatProgram
   , flatSoaParallelThreshold
   , propagatePureFlags
   , optConstantFoldNum
-  , optimizeSoA
   , packEffectProgramSoA
   , packEffectProgramDirect
-  , packEffectProgram
   , optimizeFlatPack
   , flatSoaNodeCount
   , flatSoaNode
@@ -35,7 +23,6 @@ module JShark.FlatSoA
   , flatSoaNodePackRefs
   , flatSoaIdentBudget
   , flatSoaLayerBuckets
-  , toFlatProgram
   , soaPureCount
   , soaPureVector
   , constantFoldWithStats
@@ -69,11 +56,8 @@ import JShark.Flat
   , FlatFixed (..)
   , FlatLit (..)
   , FlatNode (..)
-  , FlatProgram (..)
   , NodeId
   , PackState
-  , emptySoaSideAcc
-  , encodeFlatNode
   , flatArgRef
   , flatFieldRef
   , flatNodeChildRefs
@@ -82,9 +66,8 @@ import JShark.Flat
   , packStateSideTables
   , packStateSoaSide
   , sideAccToVectors
-  , validateFlatProgram
   )
-import JShark.FlatEnc (Enc (..), freezeEncColumns)
+import JShark.FlatEnc (freezeEncColumns)
 import JShark.Ir (IrEffect)
 import JShark.Types (BigBinOp (..), FFIForm (..), Value (..))
 import Unsafe.Coerce (unsafeCoerce)
@@ -347,10 +330,6 @@ packEffectProgramSoA = packEffectProgramDirect
 flatSoaNodeCount :: FlatSoA -> Int
 flatSoaNodeCount soa = VU.length (fsaOpcodes soa)
 
--- | Materialize 'FlatProgram' for emit (single O(n) decode at pipeline boundary).
-toFlatProgram :: FlatSoA -> FlatProgram
-toFlatProgram = toProgram
-
 freezeSoaFromPackState :: NodeId -> PackState -> FlatSoA
 freezeSoaFromPackState root st =
   let
@@ -382,21 +361,13 @@ freezeSoaFromPackState root st =
       , fsaRoot = root
       }
 
--- | Pack IR directly to SoA (no 'FlatProgram' during pack).
+-- | Pack IR directly to SoA columns (no intermediate node vector).
 packEffectProgramDirect :: IrEffect u -> FlatSoA
 packEffectProgramDirect e =
   let
     (root, st) = packEffectProgramState e
    in
     freezeSoaFromPackState root st
-
--- | Validated 'FlatProgram' for tests and legacy callers.
-packEffectProgram :: IrEffect u -> FlatProgram
-packEffectProgram e =
-  let
-    prog = toProgram (packEffectProgramDirect e)
-   in
-    validateFlatProgram prog `seq` prog
 
 -- | SoA optimizer passes; returns optimized SoA (emit decodes nodes on demand).
 optimizeFlatPack :: FlatSoA -> FlatSoA
@@ -412,94 +383,6 @@ i32 = fromIntegral
 unboxedToBoxedPure :: VU.Vector Word8 -> V.Vector Word8
 unboxedToBoxedPure = GV.convert
 {-# INLINE unboxedToBoxedPure #-}
-
-fromProgram :: FlatProgram -> FlatSoA
-fromProgram p =
-  let
-    nodes = fpNodes p
-    n = V.length nodes
-    pureV = pureColumn (fpPure p) n
-   in
-    runST $ do
-      opM <- MVU.new n
-      aM <- MVU.new n
-      bM <- MVU.new n
-      cM <- MVU.new n
-      dM <- MVU.new n
-      eM <- MVU.new n
-      let
-        writeEnc !i (Enc op a b c d e) = do
-          MVU.write opM i op
-          MVU.write aM i a
-          MVU.write bM i b
-          MVU.write cM i c
-          MVU.write dM i d
-          MVU.write eM i e
-        go !i !side
-          | i >= n = pure side
-          | otherwise = do
-              let
-                (enc, side') = encodeFlatNode (nodes V.! i) side
-              writeEnc i enc
-              go (i + 1) side'
-      sideFinal <- go 0 emptySoaSideAcc
-      opF <- VU.unsafeFreeze opM
-      aF <- VU.unsafeFreeze aM
-      bF <- VU.unsafeFreeze bM
-      cF <- VU.unsafeFreeze cM
-      dF <- VU.unsafeFreeze dM
-      eF <- VU.unsafeFreeze eM
-      let
-        (fx, fl, ag) = sideAccToVectors sideFinal
-      pure
-        FlatSoA
-          { fsaOpcodes = opF
-          , fsaA = aF
-          , fsaB = bF
-          , fsaC = cF
-          , fsaD = dF
-          , fsaE = eF
-          , fsaPure = pureV
-          , fsaFixed = fx
-          , fsaFnLit = fl
-          , fsaArrayGroups = ag
-          , fsaLits = fpLits p
-          , fsaTexts = fpTexts p
-          , fsaFFIs = fpFFIs p
-          , fsaStrCases = fpStrCases p
-          , fsaFieldGroups = fpFieldGroups p
-          , fsaArgGroups = fpArgGroups p
-          , fsaRoot = fpRoot p
-          }
- where
-  pureColumn fp n
-    | V.length fp == n = GV.convert fp
-    | otherwise = VU.replicate n 0
-
-toProgram :: FlatSoA -> FlatProgram
-toProgram soa =
-  FlatProgram
-    { fpNodes = V.generate (VU.length (fsaOpcodes soa)) decodeNode
-    , fpLits = fsaLits soa
-    , fpTexts = fsaTexts soa
-    , fpFFIs = fsaFFIs soa
-    , fpStrCases = fsaStrCases soa
-    , fpFieldGroups = fsaFieldGroups soa
-    , fpArgGroups = fsaArgGroups soa
-    , fpPure = unboxedToBoxedPure (fsaPure soa)
-    , fpRoot = fsaRoot soa
-    }
- where
-  decodeNode idx =
-    let
-      op = fsaOpcodes soa VU.! idx
-      ix = fromIntegral (fsaA soa VU.! idx) :: Int
-      iy = fromIntegral (fsaB soa VU.! idx) :: Int
-      iz = fromIntegral (fsaC soa VU.! idx) :: Int
-      iw = fromIntegral (fsaD soa VU.! idx) :: Int
-      iv = fromIntegral (fsaE soa VU.! idx) :: Int
-     in
-      decodeOp soa op ix iy iz iw iv
 
 decodeOp :: FlatSoA -> Op -> Int -> Int -> Int -> Int -> Int -> FlatNode
 decodeOp soa op ix iy iz iw iv
@@ -971,8 +854,6 @@ soaColumnsEqual a b =
     && fsaArrayGroups a == fsaArrayGroups b
     && fsaArgGroups a == fsaArgGroups b
     && fsaFieldGroups a == fsaFieldGroups b
-    && soaUnboxedEqual a (fromProgram (toProgram a))
-    && soaUnboxedEqual b (fromProgram (toProgram b))
 
 soaUnboxedEqual :: FlatSoA -> FlatSoA -> Bool
 soaUnboxedEqual a b =
@@ -1207,20 +1088,3 @@ propagatePureWithStats soa0 =
    in
     go soa0 0
 {-# NOINLINE propagatePureWithStats #-}
-
--- | Run SoA opts and attach 'fpPure' (staging metadata; emit ignores for now).
-optimizeFlatProgram :: FlatProgram -> FlatProgram
-optimizeFlatProgram p =
-  let
-    soa0 = fromProgram p
-    (soa1, folded) = optConstantFoldNumWithChangedPar soa0
-    soa2 = propagatePureFlagsPar soa1
-    pureV = unboxedToBoxedPure (fsaPure soa2)
-   in
-    if folded
-      then toProgram soa2
-      else p {fpPure = pureV}
-
-optimizeSoA :: FlatSoA -> FlatSoA
-optimizeSoA soa =
-  propagatePureFlags (optConstantFoldNum soa)

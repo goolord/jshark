@@ -49,7 +49,6 @@ data FlatOptProfile = FlatOptProfile
   , fopPurePasses :: !Int
   , fopPureCount :: !Int
   , fopAttachSec :: !Double
-  , fopToProgramSec :: !Double
   , fopTotalSec :: !Double
   }
   deriving (Eq, Show)

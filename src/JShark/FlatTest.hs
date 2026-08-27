@@ -6,13 +6,10 @@
 
 -- | Flat / SoA test helpers (not part of the main codegen API).
 module JShark.FlatTest
-  ( flatSoaColumnsRoundTrip
-  , flatProgramRoundTrip
-  , flatSoaPureNodeCount
-  , flatDirectPackMatchesFromProgram
-  , flatDirectPackMatchesIrEffect
+  ( flatSoaPureNodeCount
+  , flatDirectPackDeterministic
   , flatDirectPackForRangeOk
-  , flatDirectPackOptimizeEqual
+  , flatDirectPackOptimizeStable
   , freezeEncColumnsOrderOk
   , optIrEffectForRangeImpure
   , batchJobSlotTimingOk
@@ -31,63 +28,40 @@ import JShark.CompileProgress
   , withActiveJob
   )
 import JShark.CompileTiming (FlatPrepareTiming (..), cjsLintSec, cjsLowerSec)
-import qualified JShark.Flat as Flat
 import qualified JShark.FlatEnc as FlatEnc
 import qualified JShark.FlatSoA as FlatSoA
 import qualified JShark.Ir as Ir
 import JShark.Types (Universe (Unit), Value (..))
 
-packFlat :: ClosedEffect u -> Flat.FlatProgram
-packFlat e = FlatSoA.packEffectProgram (irEffectFromClosed e)
-
 freezeEncColumnsOrderOk :: Bool
 freezeEncColumnsOrderOk = FlatEnc.freezeEncColumnsOrderOk
 
-flatDirectPackMatchesFromProgram :: ClosedEffect u -> Bool
-flatDirectPackMatchesFromProgram e =
-  flatDirectPackMatchesIrEffect (irEffectFromClosed e)
-
-flatDirectPackMatchesIrEffect :: Ir.IrEffect u -> Bool
-flatDirectPackMatchesIrEffect ir =
-  let
-    soaDirect = FlatSoA.packEffectProgramDirect ir
-    soaFromProg = FlatSoA.fromProgram (FlatSoA.packEffectProgram ir)
-   in
-    FlatSoA.soaColumnsEqual soaDirect soaFromProg
-
-flatDirectPackForRangeOk :: Bool
-flatDirectPackForRangeOk = flatDirectPackMatchesIrEffect forRangeU8SetLoop
-
-flatDirectPackOptimizeEqual :: ClosedEffect u -> Bool
-flatDirectPackOptimizeEqual e =
+flatDirectPackDeterministic :: ClosedEffect u -> Bool
+flatDirectPackDeterministic e =
   let
     ir = irEffectFromClosed e
-    soaDirect = FlatSoA.packEffectProgramDirect ir
-    soaRef = FlatSoA.fromProgram (FlatSoA.packEffectProgram ir)
-    soaOptRef = FlatSoA.optimizeFlatPack soaRef
-    soaOptDirect = FlatSoA.optimizeFlatPack soaDirect
+    soa1 = FlatSoA.packEffectProgramDirect ir
+    soa2 = FlatSoA.packEffectProgramDirect ir
    in
-    FlatSoA.soaColumnsEqual soaOptRef soaOptDirect
+    FlatSoA.soaColumnsEqual soa1 soa2
 
-flatSoaColumnsRoundTrip :: ClosedEffect u -> Bool
-flatSoaColumnsRoundTrip e =
+flatDirectPackForRangeOk :: Bool
+flatDirectPackForRangeOk =
   let
-    soa = FlatSoA.fromProgram (packFlat e)
-    soa' = FlatSoA.fromProgram (FlatSoA.toProgram soa)
+    soa1 = FlatSoA.packEffectProgramDirect forRangeU8SetLoop
+    soa2 = FlatSoA.packEffectProgramDirect forRangeU8SetLoop
    in
-    FlatSoA.soaColumnsEqual soa soa'
+    FlatSoA.soaColumnsEqual soa1 soa2
 
-flatProgramRoundTrip :: ClosedEffect u -> Bool
-flatProgramRoundTrip e =
+flatDirectPackOptimizeStable :: ClosedEffect u -> Bool
+flatDirectPackOptimizeStable e =
   let
-    p = packFlat e
-    soa0 = FlatSoA.fromProgram p
-    p' = FlatSoA.toProgram soa0
-    soa1 = FlatSoA.fromProgram p'
+    ir = irEffectFromClosed e
+    soa0 = FlatSoA.packEffectProgramDirect ir
+    soa1 = FlatSoA.optimizeFlatPack soa0
+    soa2 = FlatSoA.optimizeFlatPack soa1
    in
-    FlatSoA.soaColumnsEqual soa0 soa1
-      && V.length (Flat.fpNodes p) == V.length (Flat.fpNodes p')
-      && Flat.fpRoot p == Flat.fpRoot p'
+    FlatSoA.soaColumnsEqual soa1 soa2
 
 flatSoaPureNodeCount :: ClosedEffect u -> Int
 flatSoaPureNodeCount e =

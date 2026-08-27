@@ -32,10 +32,6 @@ printProfile FlatOptProfile {..} = do
       ++ " pure="
       ++ show fopPureCount
   putStrLn $ "attachPure," ++ show fopAttachSec ++ ",nodes=" ++ show fopNodeCount
-  putStrLn $
-    "toProgram,"
-      ++ show fopToProgramSec
-      ++ ",emit boundary"
   putStrLn $ "flatOptTotal," ++ show fopTotalSec ++ ",nodes=" ++ show fopNodeCount
 
 main :: IO ()

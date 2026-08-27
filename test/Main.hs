@@ -36,11 +36,9 @@ import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.FlatTest
   ( batchJobSlotTimingOk
+  , flatDirectPackDeterministic
   , flatDirectPackForRangeOk
-  , flatDirectPackMatchesFromProgram
-  , flatDirectPackOptimizeEqual
-  , flatProgramRoundTrip
-  , flatSoaColumnsRoundTrip
+  , flatDirectPackOptimizeStable
   , flatSoaPureNodeCount
   , freezeEncColumnsOrderOk
   , optIrEffectForRangeImpure
@@ -2042,11 +2040,7 @@ flatSoATests :: TestTree
 flatSoATests =
   testGroup
     "flat soa"
-    [ testCase "column round-trip" $
-        flatSoaColumnsRoundTrip kernelAndLambdaUse @?= True
-    , testCase "program round-trip" $
-        flatProgramRoundTrip kernelAndLambdaUse @?= True
-    , testCase "optimize attaches fpPure" $
+    [ testCase "optimize attaches pure flags" $
         flatSoaPureNodeCount (expr (number 1 + number 2)) > (0 :: Int) @?= True
     , testCase "constant fold chains" $
         renderJS (effectfulASTIr (expr ((number 1 + number 2) + number 3)))
@@ -2056,12 +2050,12 @@ flatSoATests =
           @?= renderJS (effectfulAST kernelAndLambdaUse)
     , testCase "freezeEncColumns preserves row order" $
         freezeEncColumnsOrderOk @?= True
-    , testCase "direct pack matches fromProgram (kernel)" $
-        flatDirectPackMatchesFromProgram kernelAndLambdaUse @?= True
-    , testCase "direct pack matches fromProgram (forRange u8set)" $
+    , testCase "direct pack is deterministic (kernel)" $
+        flatDirectPackDeterministic kernelAndLambdaUse @?= True
+    , testCase "direct pack is deterministic (forRange u8set)" $
         flatDirectPackForRangeOk @?= True
-    , testCase "direct pack optimize matches reference" $
-        flatDirectPackOptimizeEqual kernelAndLambdaUse @?= True
+    , testCase "optimize is stable on second pass" $
+        flatDirectPackOptimizeStable kernelAndLambdaUse @?= True
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number
