@@ -24,7 +24,7 @@ where
 
 import Catalog (catalogInitialCells, stampCatalogCells)
 import Discover (Registry, discoverLife)
-import EngineFinish (initEngineGrids, reuseEngineGrids)
+import EngineFinish (finishStep, initEngineGrids, reuseEngineGrids)
 import Grid
   ( BoundScratch
   , RenderDirty (..)
@@ -81,11 +81,6 @@ import Types
   , texW
   , tickDefaultMs
   )
-import WorkerBridge
-  ( engineCanStep
-  , engineStepGeneration
-  )
-
 initLife ::
   Effect f ('MutableObject Pixi.Application)
   -> Effect f ('MutableObject ())
@@ -304,81 +299,51 @@ stepGeneration state stepCtx = do
     ( do
         birthCounts <- state.birthCounts
         birthTouched <- state.birthTouched
-        canEngine <- engineCanStep
         engineLut <- state.engineLut
         engineGridA <- state.engineGridA
         engineGridB <- state.engineGridB
-        useEngine <- pure canEngine
-        ifS
-          useEngine
-          ( do
-              engineOk <-
-                engineStepGeneration
-                  alive
-                  species
-                  nextAlive
-                  nextSpecies
-                  engineGridA
-                  engineGridB
-                  engineLut
-                  w
-                  h
-                  x0e
-                  y0e
-                  x1e
-                  y1e
-                  nextLiveList
-                  nextChangedList
-                  stepCtx
-              whenS (not_ engineOk) $
-                do
-                  v <-
-                    stepGrid
-                      alive
-                      species
-                      nextAlive
-                      nextSpecies
-                      w
-                      h
-                      x0e
-                      y0e
-                      x1e
-                      y1e
-                      prevLiveList
-                      nextLiveList
-                      nextChangedList
-                      stepStamp
-                      stepTagVal
-                      prevPop
-                      stepCtx
-                      birthCounts
-                      birthTouched
-                  set @"pop" stepCtx v
-          )
-          ( do
-              v <-
-                stepGrid
-                  alive
-                  species
-                  nextAlive
-                  nextSpecies
-                  w
-                  h
-                  x0e
-                  y0e
-                  x1e
-                  y1e
-                  prevLiveList
-                  nextLiveList
-                  nextChangedList
-                  stepStamp
-                  stepTagVal
-                  prevPop
-                  stepCtx
-                  birthCounts
-                  birthTouched
-              set @"pop" stepCtx v
-          )
+        engineOk <-
+          finishStep
+            alive
+            species
+            nextAlive
+            nextSpecies
+            engineGridA
+            engineGridB
+            engineLut
+            w
+            h
+            x0e
+            y0e
+            x1e
+            y1e
+            nextLiveList
+            nextChangedList
+            stepCtx
+        whenS (not_ engineOk) $
+          do
+            v <-
+              stepGrid
+                alive
+                species
+                nextAlive
+                nextSpecies
+                w
+                h
+                x0e
+                y0e
+                x1e
+                y1e
+                prevLiveList
+                nextLiveList
+                nextChangedList
+                stepStamp
+                stepTagVal
+                prevPop
+                stepCtx
+                birthCounts
+                birthTouched
+            set @"pop" stepCtx v
         p <- stepCtx.pop
         bx0n <- stepCtx.bx0
         by0n <- stepCtx.by0

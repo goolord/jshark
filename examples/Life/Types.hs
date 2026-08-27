@@ -77,8 +77,7 @@ module Types
   , lifeStatFpsId
   , lifeStatStatusId
   , lifeStatZoomId
-  , lifeStatTickId
-  , lifeStatEngineId
+  , lifeStatRenderId
   , eraserToolSid
   , mouseToolSid
   , gliderToolSid
@@ -319,11 +318,8 @@ lifeStatStatusId = "life-stat-status"
 lifeStatZoomId :: Text
 lifeStatZoomId = "life-stat-zoom"
 
-lifeStatTickId :: Text
-lifeStatTickId = "life-stat-tick"
-
-lifeStatEngineId :: Text
-lifeStatEngineId = "life-stat-engine"
+lifeStatRenderId :: Text
+lifeStatRenderId = "life-stat-render"
 
 -- | Left-click clears live cells only (never births).
 eraserToolSid :: Int

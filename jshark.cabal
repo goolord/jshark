@@ -232,7 +232,6 @@ library life
     Engine
     Patterns
     Types
-    WorkerBridge
     DiscoverCore
     LutCore
     Lut

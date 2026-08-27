@@ -16,7 +16,7 @@ import qualified Data.Text as T
 import Grid (cellIdx, inBounds, setU8, u8Get)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
-import LutBoot (lifeLutEnsureJs, lifeLutGlobalJs, lifeLutInstallJs)
+import LutBoot (lifeLutGlobalJs, lifeLutInstallJs)
 
 bootLifeLut :: EffectSyntax f (f 'Unit)
 bootLifeLut = do
@@ -27,16 +27,13 @@ bootLifeLut = do
   done
 
 createLifeLUT :: EffectSyntax f (Expr f 'Uint8Array)
-createLifeLUT =
+createLifeLUT = do
+  bootLifeLut
   bindExpr $
     ffi
-      ( "(function(){"
-          <> T.unpack lifeLutEnsureJs
-          <> "var api="
+      ( "(function(){return "
           <> T.unpack lifeLutGlobalJs
-          <> ";"
-          <> "return api&&api.createLifeLUT();"
-          <> "})"
+          <> ".createLifeLUT();})"
       )
       RecNil
 
@@ -101,12 +98,8 @@ stepRegionLUT lut gridA gridB w h y0 y1 = do
   toSyntax_ $
     ffi
       ( "(function(L,a,b,w,h,y0,y1){"
-          <> T.unpack lifeLutEnsureJs
-          <> "var api="
           <> T.unpack lifeLutGlobalJs
-          <> ";"
-          <> "if(api&&api.stepRegionLUT)api.stepRegionLUT(L,a,b,w,h,y0,y1);"
-          <> "})"
+          <> ".stepRegionLUT(L,a,b,w,h,y0,y1);})"
       )
       ( arg lut
           <: arg gridA

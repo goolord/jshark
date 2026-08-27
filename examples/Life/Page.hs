@@ -46,10 +46,9 @@ import Types
   , lifeSettingsZoomInId
   , lifeSettingsZoomOutId
   , lifeStatCellsId
-  , lifeStatEngineId
   , lifeStatFpsId
   , lifeStatGenId
-  , lifeStatTickId
+  , lifeStatRenderId
   , lifeStatZoomId
   , lifeToolsCollapseId
   , lifeToolsId
@@ -178,7 +177,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $ do
         toHtml (T.pack (show gridH))
         " grid. Catalog patterns and soup in the center."
       section_ [class_ "life-index"] $ do
-        h2_ "Species"
+        h2_ "Biomass Index"
         div_ [id_ lifeIndexHostId] $
           div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
     lifeSourceSection
@@ -334,8 +333,7 @@ debugMenu =
           debugRow lifeStatCellsId "Cells" False
           debugRow lifeStatFpsId "FPS" False
           debugRow lifeStatZoomId "Zoom" False
-          debugRow lifeStatTickId "Tick" False
-          debugRow lifeStatEngineId "Engine" True
+          debugRow lifeStatRenderId "Render" True
 
 settingsMenu :: Html ()
 settingsMenu =

@@ -39,7 +39,6 @@ import System.Directory (findExecutable)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Types (canvasH, canvasW, cellPx, zoomLevelLabels, zoomLevels)
-import WorkerBridge (engineStepGeneration)
 
 lifeTests :: TestTree
 lifeTests =
@@ -92,7 +91,6 @@ lifeTests =
           , lifeCase "finishStep keeps block stable" testFinishStepBlock
           , lifeCase "finishStep rebuilds packed counts" testFinishStepPacked
           , lifeCase "finishStep picks majority birth species" testFinishStepBirthSpecies
-          , lifeCase "engineStepGeneration keeps block stable" testEngineStepGeneration
           , lifeCase "initEngineGrids allocates LUT and grids" testEngineInit
           , lifeCase "stepRegionLUT row slices match full LUT step" testLutStepTile
           , testCase "LutCore computeNextByte matches table entry" $
@@ -335,11 +333,14 @@ testFinishStepBirthSpecies = fromSyntax $ do
       nextLiveList
       nextChangedList
       stepCtx
-  LifeAssert.assertEqual (number 1) (if_ engineOk (number 1) (number 0))
+  LifeAssert.assertEqual (number 1) (u8Index nextSpecies (number 36))
   LifeAssert.assertEqual
     (number 1)
     (bitAnd (u8Index nextAlive (number 36)) (number 1))
-  LifeAssert.assertEqual (number 1) (u8Index nextSpecies (number 36))
+  whenS (not_ engineOk) $
+    do
+      toSyntax_ $ ffi "(()=>{throw new Error('finishStep failed');})" RecNil
+      done
   done
 
 testEngineInit :: forall f. Effect f 'Unit
@@ -590,46 +591,6 @@ testViewportGridCoord = fromSyntax $ do
     gy = Math.floor ((localY * bufScale - panY) / zoom / px)
   LifeAssert.assertEqual cx gx
   LifeAssert.assertEqual cy gy
-  done
-
-testEngineStepGeneration :: forall f. Effect f 'Unit
-testEngineStepGeneration = fromSyntax $ do
-  let
-    w = number 8
-    h = number 8
-  alive <- bindExpr (newByteArray (w * h))
-  species <- bindExpr (newByteArray (w * h))
-  nextAlive <- bindExpr (newByteArray (w * h))
-  nextSpecies <- bindExpr (newByteArray (w * h))
-  (lut, gridA, gridB) <- initEngineGrids (w * h)
-  seedBlock alive w h
-  rebuildPackedCounts alive w h
-  nextLiveList <- bindExpr $ Array.fromEffects []
-  nextChangedList <- bindExpr $ Array.fromEffects []
-  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
-  engineOk <-
-    engineStepGeneration
-      alive
-      species
-      nextAlive
-      nextSpecies
-      gridA
-      gridB
-      lut
-      w
-      h
-      (number 1)
-      (number 1)
-      (number 2)
-      (number 2)
-      nextLiveList
-      nextChangedList
-      stepCtx
-  LifeAssert.assertEqual (number 1) (if_ engineOk (number 1) (number 0))
-  popN <- stepCtx.pop
-  LifeAssert.assertEqual (number 4) popN
-  cells <- blockCoords
-  coordsMatch nextAlive w cells
   done
 
 testLutCoreBlinker :: IO ()

@@ -3,12 +3,10 @@
 -- | JS emit fragments for LUT create/step (main thread + worker bundle).
 --
 -- 'lifeLutWorkerBootJs' must match 'LutCore.stepRegionLUTPure'; see
--- @test/LifeWorkerTests.hs@. Main thread auto-installs via 'lifeLutEnsureJs'.
+-- @test/LifeWorkerTests.hs@. Main thread installs via 'Lut.bootLifeLut'.
 module LutBoot
   ( lifeLutGlobalJs
-  , lifeLutEnsureJs
   , lifeLutInstallJs
-  , lifeLutRefreshPackedJs
   , lifeLutWorkerBootJs
   )
 where
@@ -110,6 +108,15 @@ lifeLutStepRegionFnJs =
     <> "if(y0===0)gridB.set(gridA.subarray(0,w));"
     <> "if(y1>=h){const botOff=(h-1)*w;gridB.set(gridA.subarray(botOff,h*w),botOff);}"
     <> "}"
+
+lifeLutStepCoreJs :: Text
+lifeLutStepCoreJs =
+  lifeLutComputeNextByteJs
+    <> lifeLutStepChunkJs
+    <> "function createLifeLUT(){"
+    <> lifeLutCreateBodyJs
+    <> "}"
+    <> lifeLutStepRegionFnJs
 
 lifeLutRefreshPackedJs :: Text
 lifeLutRefreshPackedJs =
@@ -229,23 +236,17 @@ lifeLutFinishStepJs =
 
 lifeLutRuntimeFnsJs :: Text
 lifeLutRuntimeFnsJs =
-  lifeLutComputeNextByteJs
-    <> lifeLutStepChunkJs
-    <> "function createLifeLUT(){"
-    <> lifeLutCreateBodyJs
-    <> "}"
-    <> lifeLutStepRegionFnJs
+  lifeLutStepCoreJs
     <> lifeLutRefreshPackedJs
     <> lifeLutPickBirthJs
     <> lifeLutFinishStepJs
 
--- | Idempotent main-thread install; re-runs when API incomplete.
 lifeLutEnsureJs :: Text
 lifeLutEnsureJs =
-  "var g=typeof globalThis!=='undefined'?globalThis:self;"
-    <> "if(!g.__jsharkLifeLut||typeof g.__jsharkLifeLut.finishStep!=='function'){"
+  "var _g=typeof globalThis!=='undefined'?globalThis:self;"
+    <> "if(!_g.__jsharkLifeLut||typeof _g.__jsharkLifeLut.finishStep!=='function'){"
     <> lifeLutRuntimeFnsJs
-    <> "g.__jsharkLifeLut={createLifeLUT,stepRegionLUT,finishStep,refreshPackedRegion};"
+    <> "_g.__jsharkLifeLut={createLifeLUT,stepRegionLUT,finishStep,refreshPackedRegion};"
     <> "}"
 
 -- IIFE must not end with (); JShark 'ffi' appends () at codegen.
@@ -256,11 +257,6 @@ lifeLutInstallJs =
 lifeLutWorkerBootJs :: Text
 lifeLutWorkerBootJs =
   "(function(global){"
-    <> lifeLutComputeNextByteJs
-    <> lifeLutStepChunkJs
-    <> "function createLifeLUT(){"
-    <> lifeLutCreateBodyJs
-    <> "}"
-    <> lifeLutStepRegionFnJs
+    <> lifeLutStepCoreJs
     <> "global.LifeLUT={createLifeLUT,stepRegionLUT};"
     <> "})(typeof self!=='undefined'?self:globalThis);"

@@ -4,7 +4,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
--- | Binary Conway step + species merge (native JS via FFI).
 module EngineFinish
   ( finishStep
   , initEngineGrids
@@ -18,7 +17,7 @@ import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified Lut
-import LutBoot (lifeLutEnsureJs, lifeLutGlobalJs)
+import LutBoot (lifeLutGlobalJs)
 
 initEngineGrids ::
   Expr f 'Number
@@ -75,7 +74,6 @@ finishStep
       bindExpr $
         ffi
           ( "(function(a,sp,na,ns,ga,gb,L,w,h,x0,y0,x1,y1,live,changed,sc){"
-              <> T.unpack lifeLutEnsureJs
               <> "var api="
               <> T.unpack lifeLutGlobalJs
               <> ";"

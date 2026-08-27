@@ -2,8 +2,8 @@
 
 -- | Self-contained worker bundle (replaces hand-written EngineWorker.js).
 --
--- Served at @js/EngineWorker.js@ for a future SAB worker pool (see
--- 'WorkerBridge'); not loaded by the main app while @workerCount@ is 0.
+-- Served at @js/EngineWorker.js@ for a future SAB worker pool;
+-- not loaded by the main app while @workerCount@ is 0.
 -- The handler blocks in @Atomics.wait@ until the parent terminates the worker.
 module EngineWorker (engineWorkerJs) where
 

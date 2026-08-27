@@ -83,10 +83,9 @@ import Types
   , lifeSettingsZoomInId
   , lifeSettingsZoomOutId
   , lifeStatCellsId
-  , lifeStatEngineId
   , lifeStatFpsId
   , lifeStatGenId
-  , lifeStatTickId
+  , lifeStatRenderId
   , lifeStatZoomId
   , lifeToolsCollapseId
   , lifeToolsId
@@ -104,8 +103,6 @@ import Types
   , zoomLevelLabels
   , zoomLevels
   )
-import WorkerBridge (engineModeLabel, engineTickMs, setEngineRenderMs)
-
 data Fps = Fps
   { lastMs :: Double
   , fps :: Double
@@ -172,8 +169,7 @@ bootLoaded canvas app appH viewport renderDirty = do
   statCells <- Dom.lookupId (string lifeStatCellsId)
   statFps <- Dom.lookupId (string lifeStatFpsId)
   statZoom <- Dom.lookupId (string lifeStatZoomId)
-  statTick <- Dom.lookupId (string lifeStatTickId)
-  statEngine <- Dom.lookupId (string lifeStatEngineId)
+  statRender <- Dom.lookupId (string lifeStatRenderId)
   settingsZoom <- Dom.lookupId (string lifeSettingsZoomId)
   meter <- hold (G.toObject (Fps (-1) 0))
   tipSym <- toSyntax emptyObject
@@ -243,7 +239,6 @@ bootLoaded canvas app appH viewport renderDirty = do
     renderStart <- performanceNow
     renderLife viewport renderDirty state fallback2d
     renderEnd <- performanceNow
-    setEngineRenderMs (renderEnd - renderStart)
     syncPauseOverlay state pauseOverlay
     lastHud <- getProp viewport "lastHudMs"
     whenS (now - lastHud .>= number (fromIntegral hudRefreshMs)) $ do
@@ -255,8 +250,8 @@ bootLoaded canvas app appH viewport renderDirty = do
         statCells
         statFps
         statZoom
-        statTick
-        statEngine
+        statRender
+        (renderEnd - renderStart)
         settingsZoom
       _ <- setProp viewport "lastHudMs" now
       done
@@ -1585,7 +1580,7 @@ updateHud ::
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
   -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
+  -> Expr f 'Number
   -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
 updateHud
@@ -1596,14 +1591,12 @@ updateHud
   statCells
   statFps
   statZoom
-  statTick
-  statEngine
+  statRender
+  renderMs
   settingsZoom = do
     gen <- state.gen
     pop <- state.pop
     fpsN <- meter.fps
-    tickMs <- engineTickMs
-    mode <- engineModeLabel
     levels <- getProp viewport "zoomLevels"
     labels <- getProp viewport "zoomLabels"
     indices <- getProp viewport "zoomIndices"
@@ -1620,9 +1613,8 @@ updateHud
     _ <- Dom.setTextContent statZoom (zoomLabel <> string "%")
     _ <-
       Dom.setTextContent
-        statTick
-        (toString (Math.round tickMs) <> string "ms")
-    _ <- Dom.setTextContent statEngine mode
+        statRender
+        (toString (Math.round renderMs) <> string "ms")
     _ <- Dom.setTextContent settingsZoom (zoomLabel <> string "%")
     done
 

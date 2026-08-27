@@ -33,7 +33,6 @@ module Grid
   , writeCellState
   , stampPatternCells
   , eraseCircleCells
-  , refreshPackedAt
   , refreshPackedRegion
   , cellIdx
   , inBounds
@@ -50,7 +49,7 @@ import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import qualified JShark.Dom as Dom
 import qualified JShark.Math as Math
-import LutBoot (lifeLutEnsureJs, lifeLutGlobalJs)
+import LutBoot (lifeLutGlobalJs)
 import qualified Pixi
 
 data StepScratch = StepScratch
@@ -269,32 +268,6 @@ eraseCircleCells alive species gx gy radius w h scratch = do
       )
   done
 
--- | Recompute packed neighbor count for one cell from live bits.
-refreshPackedAt ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-refreshPackedAt grid w h x y = do
-  toSyntax_ $
-    ffi
-      ( "((g,w,h,x,y)=>{"
-          <> "let n=0;"
-          <> "for(let dy=-1;dy<=1;dy++){for(let dx=-1;dx<=1;dx++){"
-          <> "if(!dx&&!dy)continue;"
-          <> "const nx=x+dx,ny=y+dy;"
-          <> "if(nx<0||ny<0||nx>=w||ny>=h)continue;"
-          <> "if(g[ny*w+nx]&1)n++;"
-          <> "}}"
-          <> "const i=y*w+x;"
-          <> "g[i]=(g[i]&1)+n*2;"
-          <> "})"
-      )
-      (arg grid <: arg w <: arg h <: arg x <: arg y <: RecNil)
-  done
-
 -- | Refresh packed counts in a bbox plus one-cell margin.
 refreshPackedRegion ::
   Expr f 'Uint8Array
@@ -309,13 +282,8 @@ refreshPackedRegion grid w h x0 y0 x1 y1 = do
   toSyntax_ $
     ffi
       ( "(function(grid,w,h,x0,y0,x1,y1){"
-          <> T.unpack lifeLutEnsureJs
-          <> "var api="
           <> T.unpack lifeLutGlobalJs
-          <> ";"
-          <> "if(api&&api.refreshPackedRegion)"
-          <> "api.refreshPackedRegion(grid,w,h,x0,y0,x1,y1);"
-          <> "})"
+          <> ".refreshPackedRegion(grid,w,h,x0,y0,x1,y1);})"
       )
       ( arg grid
           <: arg w
