@@ -110,6 +110,7 @@ library
     JShark.CompileTiming
     JShark.CompileProgressProtocol
   other-modules:
+    JShark.Binder
     JShark.Emit
     JShark.CompileProgress
     JShark.CompileReport
@@ -121,6 +122,16 @@ library
     JShark.Ir
     JShark.JsNum
     JShark.EmitBend
+    JShark.Evaluate
+    JShark.Metadata
+    JShark.Flatten
+    JShark.Lower
+    JShark.Optimize
+    JShark.Hoist
+    JShark.Hoist.Canonical
+    JShark.Codegen.Core
+    JShark.Codegen.Flat
+    JShark.Codegen.Phoas
   build-depends:
     , ansi-terminal >= 1.0 && < 1.2
     , async >= 2.2 && < 2.4

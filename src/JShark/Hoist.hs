@@ -1,0 +1,59 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Named-lambda hoisting: register shared @$tag@ helpers in 'CG'.
+--
+-- 'registerHoistedTag' deduplicates by source text (see
+-- 'JShark.Hoist.Canonical.canonicalHoistSrc'). Flat IR uses
+-- 'emitHoistedFnValue'; PHOAS codegen calls 'registerHoistedTag' after
+-- rendering the lambda body.
+module JShark.Hoist
+  ( canonicalHoistSrc
+  , emitHoistedFnValue
+  , hoistTagName
+  , registerHoistedTag
+  )
+where
+
+import qualified Data.Map.Strict as M
+import Data.Text (Text)
+import qualified Data.Text as T
+import JShark.Codegen.Core (CG (..))
+import JShark.Emit (JS, jsText, renderJS)
+import qualified JShark.Flat as Flat
+import qualified JShark.FlatView as FlatView
+import JShark.Hoist.Canonical
+  ( canonicalHoistSrc
+  , hoistTagName
+  )
+
+registerHoistedTag :: CG -> Text -> Text -> (CG, Text)
+registerHoistedTag s tag src =
+  let
+    name = hoistTagName tag
+    canon = canonicalHoistSrc src
+   in
+    case M.lookup name (cgHelpers s) of
+      Just existing
+        | existing == src || canonicalHoistSrc existing == canon -> (s, name)
+        | otherwise ->
+            error
+              ( "JShark.registerHoistedTag: hoist tag "
+                  <> T.unpack tag
+                  <> " already registered with different body"
+              )
+      Nothing ->
+        ( s {cgHelpers = M.insert name src (cgHelpers s)}
+        , name
+        )
+
+emitHoistedFnValue ::
+  CG -> FlatView.FlatIRView -> Flat.NodeId -> JS -> (CG, JS)
+emitHoistedFnValue s view nid fnJs =
+  case FlatView.firHoistTag view nid of
+    Nothing -> (s, fnJs)
+    Just tag ->
+      let
+        src = renderJS fnJs
+        (s', name) = registerHoistedTag s tag src
+       in
+        (s', jsText name)
