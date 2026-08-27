@@ -1528,6 +1528,20 @@ goodPartsTests =
               (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
           )
           @?= "{\"x\": 1.0}"
+    , testCase "effectful frozen literal emits field values" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( Array.push_
+                      (mempty :: Expr f ('Array ('Object LitRow)))
+                      ( Object.frozen
+                          [Object.field @"x" (number 3), Object.field @"y" (number 7)]
+                          :: Expr f ('Object LitRow)
+                      )
+                  )
+              )
+          )
+          @?= "[].push({\"x\": 3.0, \"y\": 7.0})"
     , testCase "typeof of FrozenLit parenthesizes the literal" $
         renderJS
           ( pureAST

@@ -406,6 +406,7 @@ flatNodeSideRefs p = \case
   FX_FFI _ ai -> sideArgRefs p ai
   FX_CallMethod _ _ ai -> sideArgRefs p ai
   FX_StringCaseE _ ai _ -> sideStrCaseRefs p ai
+  FE_FrozenLit gi -> sideFieldRefs p gi
   FX_ObjectLit gi -> sideFieldRefs p gi
   _ -> []
  where
