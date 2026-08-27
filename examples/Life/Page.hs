@@ -22,7 +22,6 @@ import Types
   , eraserMinRadius
   , eraserToolSid
   , gliderToolSid
-  , mouseToolSid
   , gridH
   , gridSizePresets
   , gridW
@@ -58,6 +57,7 @@ import Types
   , lifeTooltipNameId
   , lifeTooltipSwatchId
   , lifeTypesListId
+  , mouseToolSid
   , tickDefaultMs
   , tickMaxMs
   , tickMinMs

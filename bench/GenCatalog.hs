@@ -5,8 +5,8 @@
 --   cabal run gen-life-catalog
 module Main (main) where
 
-import Life (catalogJs)
 import qualified Data.Text.IO as T
+import Life (catalogJs)
 import System.Environment (getArgs)
 
 main :: IO ()

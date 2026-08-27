@@ -59,7 +59,6 @@ import Types
   , eraserMaxRadius
   , eraserMinRadius
   , eraserToolSid
-  , mouseToolSid
   , gliderToolSid
   , gridH
   , gridW
@@ -94,6 +93,7 @@ import Types
   , lifeTooltipId
   , lifeTooltipNameId
   , lifeTooltipSwatchId
+  , mouseToolSid
   , seedH
   , seedOx
   , seedOy
@@ -1085,12 +1085,12 @@ applyClick ::
 applyClick state editScratch toolRef toolsMap gx gy = do
   sid <- getProp toolRef "sid"
   whenS (not_ (isNonPaintToolSid sid)) $ do
-      hit <- Map.lookup toolsMap sid
-      toSyntax $
-        optionCaseE
-          hit
-          noOp
-          (\cells -> fromSyntax $ placePattern state editScratch cells gx gy sid)
+    hit <- Map.lookup toolsMap sid
+    toSyntax $
+      optionCaseE
+        hit
+        noOp
+        (\cells -> fromSyntax $ placePattern state editScratch cells gx gy sid)
 
 applyErase ::
   Effect f (MutableObjectOf LifeState)
@@ -1343,8 +1343,10 @@ tickGliderGhost toolRef viewport = do
   aiming <- getProp viewport "gliderAiming"
   app <- getProp viewport "app"
   ifS
-    ( sid .== number (fromIntegral gliderToolSid)
-        .&& aiming .== 1
+    ( sid
+        .== number (fromIntegral gliderToolSid)
+        .&& aiming
+        .== 1
     )
     ( do
         gx <- getProp viewport "gliderGx"

@@ -58,6 +58,10 @@ main = do
     Just (_, nPhoa) ->
       case ir of
         Just (_, nIr) ->
-          printf "parity:        %s (%d vs %d chars)\n" (if nPhoa == nIr then "ok" else "MISMATCH") nPhoa nIr
+          printf
+            "parity:        %s (%d vs %d chars)\n"
+            (if nPhoa == nIr then "ok" else "MISMATCH")
+            nPhoa
+            nIr
         Nothing -> pure ()
     Nothing -> pure ()

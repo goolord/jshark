@@ -9,9 +9,9 @@ import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark.Api
 import JShark.Types (ClosedEffect)
+import qualified JShark.Types as T
 import LifeTestSupport (runStepGridOnce, seedBlock)
 import Stages (emitLen)
-import qualified JShark.Types as T
 
 lifeStep :: ClosedEffect T.Unit
 lifeStep = fromSyntax $ do
@@ -40,7 +40,8 @@ lifeStep = fromSyntax $ do
 main :: IO ()
 main = do
   start <- getMonotonicTime
-  let bytes = emitLen lifeStep
+  let
+    bytes = emitLen lifeStep
   end <- getMonotonicTime
   evaluate bytes
   putStrLn $ show bytes ++ "," ++ show (end - start)

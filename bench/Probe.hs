@@ -7,6 +7,7 @@
 module Main (main) where
 
 import Control.Monad (forM_)
+import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark (ClosedEffect, effectfulAST, renderJSCompact)
@@ -14,7 +15,6 @@ import JShark.Api
 import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Types as T
 import System.Environment (getArgs)
-import qualified Data.Text as T
 
 -- | Nested binds + while nests scaled by depth.
 progN :: Int -> ClosedEffect T.Unit
@@ -35,7 +35,8 @@ build d = do
 runOne :: Int -> IO ()
 runOne n = do
   start <- getMonotonicTime
-  let bytes = T.length (renderJSCompact (effectfulAST (progN n)))
+  let
+    bytes = T.length (renderJSCompact (effectfulAST (progN n)))
   bytes `seq` pure ()
   end <- getMonotonicTime
   evaluate bytes

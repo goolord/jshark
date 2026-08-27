@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Main (main) where
 
@@ -50,14 +50,15 @@ main =
   defaultMain
     [ bgroup
         "longChain/optimize"
-        [ bench (show n) $ nf (\k -> optimizedEffectSize (longChain k)) n | n <- scaleNs]
+        [ bench (show n) $ nf (\k -> optimizedEffectSize (longChain k)) n | n <- scaleNs
+        ]
     , bgroup
         "bindChain"
-        [ codepathStages (show n) (bindChain n) | n <- scaleNs]
+        [codepathStages (show n) (bindChain n) | n <- scaleNs]
     , bgroup
         "letChain"
-        [ codepathStagesPure (show n) (letChain n) | n <- scaleNs]
+        [codepathStagesPure (show n) (letChain n) | n <- scaleNs]
     , bgroup
         "deepUseChain"
-        [ codepathStages (show n) (deepUseChain n) | n <- scaleNs]
+        [codepathStages (show n) (deepUseChain n) | n <- scaleNs]
     ]

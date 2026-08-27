@@ -27,9 +27,9 @@ import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Word (Word32, Word8)
+import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import GHC.IO.Unsafe (unsafePerformIO)
 import System.Environment (lookupEnv)
-import GHC.IO.Exception (IOErrorType (..), ioe_type)
 import System.IO.Error (isResourceVanishedError)
 import qualified System.Posix.IO.ByteString as PB
 import System.Posix.Types (Fd (..))
@@ -119,7 +119,7 @@ nodeStorage n =
       , pnEstimatedTotal = estimated
       , pnName = name
       } =
-      n
+        n
    in
     word32le completed
       <> word32le estimated
@@ -281,21 +281,19 @@ lastMessage bs = go 0 Nothing
      in
       if BS.null rest
         then best
-        else
-          case BS.uncons rest of
-            Nothing -> best
-            Just (lenB, tailBs) ->
-              let
-                len = fromIntegral lenB
-                msgLen = 1 + len * 49
-                end = off + msgLen
-               in
-                if len > maxProgressNodes || BS.length tailBs < len * 49
-                  then best
-                  else
-                    case decodeProgressMessage (BS.take msgLen (BS.drop off bs)) of
-                      Nothing -> best
-                      Just nodes -> go end (Just nodes)
+        else case BS.uncons rest of
+          Nothing -> best
+          Just (lenB, tailBs) ->
+            let
+              len = fromIntegral lenB
+              msgLen = 1 + len * 49
+              end = off + msgLen
+             in
+              if len > maxProgressNodes || BS.length tailBs < len * 49
+                then best
+                else case decodeProgressMessage (BS.take msgLen (BS.drop off bs)) of
+                  Nothing -> best
+                  Just nodes -> go end (Just nodes)
 
 readChunk :: ProgressFd -> IO BS.ByteString
 readChunk fd = PB.fdRead fd 4096

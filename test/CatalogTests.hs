@@ -4,13 +4,13 @@ module CatalogTests (catalogTests) where
 
 import Data.List (find, sort)
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Life (canonicalShapeHash, catalogJs, shapeHash)
 import Patterns (PatternSpec (..), allPatterns, glider)
 import System.Directory (getCurrentDirectory)
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
-import qualified Data.Text.IO as T
 
 catalogTests :: TestTree
 catalogTests =
@@ -24,7 +24,8 @@ catalogTests =
         canonicalShapeHash glider
           @?= canonicalShapeHash (patCells gliderUpPat)
     , testCase "toad phases share empirical phase key" $ do
-        let toadCells = patCells toadPat
+        let
+          toadCells = patCells toadPat
         phaseKey toadCells @?= phaseKey (stepPattern toadCells)
     , testCase "block stays single-phase" $
         length (phaseHashes block) @?= 1
@@ -119,11 +120,13 @@ catalogTests =
       coords
 
   setCell g gw x y =
-    let i = y * gw + x
-     in take i g ++ [True] ++ drop (i + 1) g
+    let
+      i = y * gw + x
+     in
+      take i g ++ [True] ++ drop (i + 1) g
 
   stepGrid grid gw gh =
-    [ alive x y | y <- [0 .. gh - 1], x <- [0 .. gw - 1] ]
+    [alive x y | y <- [0 .. gh - 1], x <- [0 .. gw - 1]]
    where
     alive x y =
       let
@@ -132,8 +135,9 @@ catalogTests =
             [ if dx == 0 && dy == 0 then 0 else count nx ny
             | dy <- [-1 .. 1]
             , dx <- [-1 .. 1]
-            , let nx = x + dx
-                  ny = y + dy
+            , let
+                nx = x + dx
+                ny = y + dy
             , nx >= 0
             , ny >= 0
             , nx < gw

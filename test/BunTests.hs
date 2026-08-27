@@ -452,12 +452,13 @@ wrapReadableExpr src =
   wrapReturn x = "(() => { return " ++ T.unpack x ++ "; })()"
   isStmtSnippet many =
     case many of
-      (first : _) | length many >= 2 ->
-        not ((";" `T.isSuffixOf`) (T.strip (last many)))
-          && case T.strip first of
-               stmt | "const " `T.isPrefixOf` stmt -> True
-               stmt | "let " `T.isPrefixOf` stmt -> True
-               _ -> False
+      (first : _)
+        | length many >= 2 ->
+            not ((";" `T.isSuffixOf`) (T.strip (last many)))
+              && case T.strip first of
+                stmt | "const " `T.isPrefixOf` stmt -> True
+                stmt | "let " `T.isPrefixOf` stmt -> True
+                _ -> False
       _ -> False
 
 assertBunAgrees :: (forall f. Expr f u) -> IO ()

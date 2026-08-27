@@ -1543,8 +1543,8 @@ goodPartsTests =
                   ( Array.push_
                       (mempty :: Expr f ('Array ('Object LitRow)))
                       ( Object.frozen
-                          [Object.field @"x" (number 3), Object.field @"y" (number 7)]
-                          :: Expr f ('Object LitRow)
+                          [Object.field @"x" (number 3), Object.field @"y" (number 7)] ::
+                          Expr f ('Object LitRow)
                       )
                   )
               )

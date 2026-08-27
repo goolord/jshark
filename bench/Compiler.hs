@@ -18,7 +18,13 @@
 module Main (main) where
 
 import Data.Array.Byte (ByteArray (..))
-import GHC.Exts (Int (..), newByteArray#, unsafeFreezeByteArray#, writeWord8Array#, (+#))
+import GHC.Exts
+  ( Int (..)
+  , newByteArray#
+  , unsafeFreezeByteArray#
+  , writeWord8Array#
+  , (+#)
+  )
 import GHC.Generics (Generic)
 import GHC.ST (ST (..), runST)
 import GHC.Word (Word8 (..))
@@ -35,7 +41,12 @@ import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import JShark.Types (ClosedEffect, ClosedExpr)
 import LifeTestSupport (runStepGridOnce, seedBlock)
-import Stages (codepathStages, codepathStagesPure, stageBenches, stageBenchesPure)
+import Stages
+  ( codepathStages
+  , codepathStagesPure
+  , stageBenches
+  , stageBenchesPure
+  )
 import Test.Tasty.Bench
 
 data Cell = Cell
@@ -118,7 +129,10 @@ effectCodepaths =
 scaleBenches :: [Benchmark]
 scaleBenches =
   [ scaleStages "binds" bindChain [16, 64, 256, 1024]
-  , scaleStages "lets" (\n -> fromSyntax (toSyntax_ (discard (expr (letChain n))) *> done)) [16, 64, 256, 1024]
+  , scaleStages
+      "lets"
+      (\n -> fromSyntax (toSyntax_ (discard (expr (letChain n))) *> done))
+      [16, 64, 256, 1024]
   , scaleStages "forNest" forNest [2, 4, 6, 8]
   , scaleStages "frameBinds" frameBinds [16, 64, 256, 1024]
   ]
@@ -163,8 +177,12 @@ bigIntExpr = bigInt 42 + bigInt 9 * bigInt 3
 frozenEq :: ClosedExpr 'Bool
 frozenEq =
   structuralEq
-    (Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 2)] :: ClosedExpr ('Object LitRow))
-    (Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 3)] :: ClosedExpr ('Object LitRow))
+    ( Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 2)] ::
+        ClosedExpr ('Object LitRow)
+    )
+    ( Object.frozen [Object.field @"x" (number 1), Object.field @"y" (number 3)] ::
+        ClosedExpr ('Object LitRow)
+    )
 
 optionCasePure :: ClosedExpr 'Number
 optionCasePure =
@@ -180,7 +198,9 @@ uint8Lit = uint8Array (packBytes [1, 2, 3, 4, 5])
 arrayMap :: ClosedExpr ('Array 'Number)
 arrayMap =
   Array.map
-    (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3, ValueNumber 4]))
+    ( Literal
+        (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3, ValueNumber 4])
+    )
     (\x -> x * number 2 + number 1)
 
 arrayReduce :: ClosedExpr 'Number
@@ -193,7 +213,9 @@ arrayReduce =
 arrayFilter :: ClosedExpr ('Array 'Number)
 arrayFilter =
   Array.filter
-    (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3, ValueNumber 4]))
+    ( Literal
+        (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3, ValueNumber 4])
+    )
     (\x -> x .> number 1)
 
 arrayToSorted :: ClosedExpr ('Array 'Number)
@@ -305,7 +327,8 @@ records = fromSyntax $ do
 
 arrayLitProg :: ClosedEffect 'Unit
 arrayLitProg = fromSyntax $ do
-  arr <- bindExpr $ Array.fromEffects [expr (number 1), expr (number 2), expr (number 3)]
+  arr <-
+    bindExpr $ Array.fromEffects [expr (number 1), expr (number 2), expr (number 3)]
   toSyntax_ (ffi "sink" (arg (Array.length arr) <: RecNil))
   done
 
@@ -381,7 +404,8 @@ frameSmall = fromSyntax $
 
 frameBinds :: Int -> ClosedEffect 'Unit
 frameBinds n = fromSyntax $
-  Timers.foreverFrame $ \_now -> go n
+  Timers.foreverFrame $
+    \_now -> go n
  where
   go :: Int -> EffectSyntax f (f 'Unit)
   go 0 = done

@@ -50,7 +50,9 @@ normalizeCells cells =
 
 shapeHash :: [(Int, Int)] -> Text
 shapeHash cells =
-  T.intercalate ";" [T.pack (show x ++ "," ++ show y) | (x, y) <- normalizeCells cells]
+  T.intercalate
+    ";"
+    [T.pack (show x ++ "," ++ show y) | (x, y) <- normalizeCells cells]
 
 -- | Lexicographically smallest hash among the eight dihedral symmetries.
 --   Rotations/reflections of the same still life or spaceship orientation
@@ -61,7 +63,7 @@ canonicalShapeHash cells =
 
 d4Normalized :: [(Int, Int)] -> [[(Int, Int)]]
 d4Normalized cells =
-  [ normalizeCells [f (x, y) | (x, y) <- cells] | f <- d4Transforms ]
+  [normalizeCells [f (x, y) | (x, y) <- cells] | f <- d4Transforms]
  where
   d4Transforms :: [((Int, Int) -> (Int, Int))]
   d4Transforms =

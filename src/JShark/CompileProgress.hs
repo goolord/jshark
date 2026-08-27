@@ -212,7 +212,15 @@ lookupJobTiming :: IO (Maybe JobTiming)
 lookupJobTiming = fmap ajsTiming <$> lookupActiveJob
 
 resetJobTiming :: JobTiming -> IO ()
-resetJobTiming JobTiming {jtForm, jtLintSec, jtCodegenSec, jtMinifySec, jtJsBytes, jtFlatPrepare, jtPhoasPrepare} = do
+resetJobTiming JobTiming
+                 { jtForm
+                 , jtLintSec
+                 , jtCodegenSec
+                 , jtMinifySec
+                 , jtJsBytes
+                 , jtFlatPrepare
+                 , jtPhoasPrepare
+                 } = do
   writeIORef jtForm FormMinified
   writeIORef jtLintSec 0
   writeIORef jtCodegenSec 0
@@ -235,42 +243,42 @@ snapshotJobStatsFromTiming
     }
   label
   totalSec = do
-  form <- readIORef jtForm
-  lint <- readIORef jtLintSec
-  codegen <- readIORef jtCodegenSec
-  minify <- readIORef jtMinifySec
-  bytes <- readIORef jtJsBytes
-  flat <- readIORef jtFlatPrepare
-  phoas <- readIORef jtPhoasPrepare
-  let
-    lower = maybe 0 fptLowerSec flat
-    irOpt = maybe 0 fptIrOptSec flat
-    pack = maybe 0 fptPackSec flat
-    flatOpt = maybe 0 fptFlatOptSec flat
-    phoasOpt = maybe 0 pptOptimizeSec phoas
-    hasPrepare = isJust flat || isJust phoas
-    prepareTotal =
-      maybe 0 fptTotalSec flat + maybe 0 pptTotalSec phoas
-    emit =
-      if hasPrepare
-        then max 0 (codegen - prepareTotal)
-        else codegen
-   in
-    pure
-      CompileJobStats
-        { cjsLabel = label
-        , cjsForm = form
-        , cjsLintSec = lint
-        , cjsLowerSec = lower
-        , cjsIrOptSec = irOpt
-        , cjsPackSec = pack
-        , cjsFlatOptSec = flatOpt
-        , cjsPhoasOptSec = phoasOpt
-        , cjsEmitSec = emit
-        , cjsMinifySec = minify
-        , cjsTotalSec = totalSec
-        , cjsJsBytes = bytes
-        }
+    form <- readIORef jtForm
+    lint <- readIORef jtLintSec
+    codegen <- readIORef jtCodegenSec
+    minify <- readIORef jtMinifySec
+    bytes <- readIORef jtJsBytes
+    flat <- readIORef jtFlatPrepare
+    phoas <- readIORef jtPhoasPrepare
+    let
+      lower = maybe 0 fptLowerSec flat
+      irOpt = maybe 0 fptIrOptSec flat
+      pack = maybe 0 fptPackSec flat
+      flatOpt = maybe 0 fptFlatOptSec flat
+      phoasOpt = maybe 0 pptOptimizeSec phoas
+      hasPrepare = isJust flat || isJust phoas
+      prepareTotal =
+        maybe 0 fptTotalSec flat + maybe 0 pptTotalSec phoas
+      emit =
+        if hasPrepare
+          then max 0 (codegen - prepareTotal)
+          else codegen
+     in
+      pure
+        CompileJobStats
+          { cjsLabel = label
+          , cjsForm = form
+          , cjsLintSec = lint
+          , cjsLowerSec = lower
+          , cjsIrOptSec = irOpt
+          , cjsPackSec = pack
+          , cjsFlatOptSec = flatOpt
+          , cjsPhoasOptSec = phoasOpt
+          , cjsEmitSec = emit
+          , cjsMinifySec = minify
+          , cjsTotalSec = totalSec
+          , cjsJsBytes = bytes
+          }
 
 snapshotJobStats :: Text -> Double -> IO CompileJobStats
 snapshotJobStats label totalSec = do
