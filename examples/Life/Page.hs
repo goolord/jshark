@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Page (page, framePage, frameSrcFor, assetBaseFor) where
+module Page (page, framePage, frameSrcFor, assetBaseFor, sourceSrcFor) where
 
 import qualified Data.Text as T
 import Lucid
@@ -107,6 +107,12 @@ assetBaseFor script =
     then "../"
     else T.take (T.length script - 6) script
 
+-- | @/life/app.js@ → @/life/source.js@; export @app.js@ → @source.js@
+--   (resolved via the frame @<base href>@).
+sourceSrcFor :: T.Text -> T.Text
+sourceSrcFor script =
+  T.take (T.length script - 6) script <> "source.js"
+
 focusFrameScript :: T.Text
 focusFrameScript =
   "(()=>{const f=document.getElementById('life-frame');"
@@ -136,7 +142,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
             toHtml (T.pack (show gridW))
             "×"
             toHtml (T.pack (show gridH))
-            " · catalog soup in center"
+            " · Conway's game of life sandbox"
         div_ [class_ "life-stage"] $ do
           canvas_
             [ id_ boardId
@@ -194,7 +200,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
       script_ [src_ "js/pixi.min.js"] ("" :: Html ())
       script_ [src_ scriptSrc] ("" :: Html ())
       script_ [type_ "module", src_ (staticRoot <> "/source-pane.js")] ("" :: Html ())
-      sourceLoadScript scriptSrc
+      sourceLoadScript (sourceSrcFor scriptSrc)
 
 lifeSourceSection :: Html ()
 lifeSourceSection =
@@ -214,7 +220,7 @@ lifeSourceSection =
       code_ [class_ "shj-lang-js life-source-code"] "Expand to load source…"
 
 sourceLoadScript :: T.Text -> Html ()
-sourceLoadScript scriptSrc =
+sourceLoadScript sourceSrc =
   script_ $
     "(function(){"
       <> "var pane=document.querySelector('.life-source');"
@@ -227,7 +233,7 @@ sourceLoadScript scriptSrc =
       <> "loaded=true;"
       <> "code.textContent='Loading source…';"
       <> "fetch("
-      <> jsString scriptSrc
+      <> jsString sourceSrc
       <> ")"
       <> ".then(function(r){if(!r.ok)throw new Error('fetch');return r.text();})"
       <> ".then(function(t){"

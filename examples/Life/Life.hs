@@ -3,6 +3,7 @@ module Life
   , framePage
   , frameSrcFor
   , assetBaseFor
+  , sourceSrcFor
   , mainJS
   , initialPop
   , initialCatalogCells
@@ -19,5 +20,5 @@ import Catalog (canonicalShapeHash, catalogJs, shapeHash)
 import Client (mainJS)
 import EngineWorker (engineWorkerJs)
 import LutBoot (lifeLutWorkerBootJs)
-import Page (assetBaseFor, framePage, frameSrcFor, page)
+import Page (assetBaseFor, framePage, frameSrcFor, page, sourceSrcFor)
 import Patterns (initialCatalogCells, initialPop, soupSeedPop)

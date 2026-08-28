@@ -82,6 +82,7 @@ main = do
     breakoutSrc = lookupPane "breakout"
     todoSrc = lookupPane "todo-mvc"
     synthSrc = lookupPane "synth"
+    lifeSrc = lookupPane "life"
     hvm2Src = lookupPane "hvm2-demo"
   hvm2Bend <-
     case bendModule hvm2Entries of
@@ -133,7 +134,7 @@ main = do
               Life.page static (Life.frameSrcFor script)
           )
           lifeJs
-          Nothing
+          (Just lifeSrc)
       , Example
           "hvm2-demo"
           "HVM2 Lab"

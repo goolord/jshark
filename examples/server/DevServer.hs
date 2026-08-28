@@ -63,7 +63,8 @@ data Example = Example
   , exampleJs :: T.Text
   , exampleSourceJs :: Maybe T.Text
   -- ^ Display JS for the collapsible source pane ('prettyJS' of compiled
-  --   output when set). 'Nothing' when the page has no source viewer (Life).
+  --   output when set). Life serves this at @source.js@; other examples
+  --   embed it in the page.
   }
 
 -- | URL prefixes so the same HTML works on Scotty (@/@) and GitHub Pages (@/jshark/@).
@@ -225,6 +226,12 @@ exampleRoutes shots assets lifeJs hvm2Js examples = do
       when isLife lifeAssetHeaders
       when isHvm2 hvm2ThreadHeaders
       text (TL.fromStrict (exampleJs ex))
+    forM_ (exampleSourceJs ex) $ \src ->
+      get (fromString (base <> "/source.js")) $ do
+        setHeader "Content-Type" "application/javascript; charset=utf-8"
+        setHeader "Cache-Control" "no-store"
+        when isLife lifeAssetHeaders
+        text (TL.fromStrict src)
     when isLife $ do
       let
         static = srcStatic serverPaths
@@ -304,6 +311,8 @@ exportExamples dest examples = do
       TL.writeFile
         (dir </> "frame" </> "index.html")
         (renderText (Life.framePage static script (Life.assetBaseFor script)))
+      forM_ (exampleSourceJs ex) $ \src ->
+        T.writeFile (dir </> "source.js") src
       createDirectoryIfMissing True (dir </> "js")
       createDirectoryIfMissing True (dir </> "js/shaders")
       forM_ lifeEngineJs $ \(route, rel) -> do
