@@ -8,50 +8,50 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
-{- | A polyphonic synthesizer.
-
-The graph is built once; every voice feeds a shared filter, which feeds a
-master gain and an analyser.
-
-@
-osc --> vca --\\
-               filter --> master --> analyser --> speakers
-osc --> vca --/
-@
-
-Handlers only start and release voices. Nothing about the sound is timed
-from JavaScript: pitch and the amplitude envelope are @AudioParam@
-automation, so they run on the audio thread whatever the main thread is
-doing. The only per-frame work is repainting the meter, where a dropped
-frame costs a frame of animation rather than a click in the audio.
--}
+-- | A polyphonic synthesizer.
+--
+-- The graph is built once; every voice feeds a shared filter, which feeds a
+-- master gain and an analyser.
+--
+-- @
+-- osc --> vca --\\
+--                filter --> master --> analyser --> speakers
+-- osc --> vca --/
+-- @
+--
+-- Handlers only start and release voices. Nothing about the sound is timed
+-- from JavaScript: pitch and the amplitude envelope are @AudioParam@
+-- automation, so they run on the audio thread whatever the main thread is
+-- doing. The only per-frame work is repainting the meter, where a dropped
+-- frame costs a frame of animation rather than a click in the audio.
 module Client (mainJS, Settings) where
 
 import qualified Audio
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
+import JShark.Api.Generic (newRecord)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Dom as Dom
-import JShark.Generic (newRecord)
 import JShark.Object (field, obj)
 import qualified JShark.Object as Object
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Timers as Timers
 import Keys
 
-{- | What the controls hold. Cutoff and resonance are absent on purpose:
-they go straight into the filter when a slider moves, so the graph is
-their state.
--}
+-- | What the controls hold. Cutoff and resonance are absent on purpose:
+-- they go straight into the filter when a slider moves, so the graph is
+-- their state.
 data Settings = Settings
   { wave :: Text
+  , attack :: Double
+  , decay :: Double
+  , sustainLevel :: Double
   , release :: Double
   }
   deriving Generic
 
-{- | A DOM event. Its fields are read with 'getProp'', which needs the
-universe pinned, so handlers name this rather than leaving it open.
--}
+-- | A DOM event. Its fields are read with 'getProp'', which needs the
+-- universe pinned, so handlers name this rather than leaving it open.
 type Event f = Expr f ('MutableObject ())
 
 -- | Absence of a note, as the key table reports it.
@@ -69,19 +69,32 @@ byId = Dom.lookupId . string
 numberOf :: Expr f 'String -> EffectSyntax f (Expr f 'Number)
 numberOf s = fmap var (toSyntax (ffi "Number" (arg s <: RecNil)))
 
+-- | Paint the filled portion of a range input via @--range-fill@.
+syncRangeFill ::
+  Effect f ('MutableObject Dom.DomElement) -> EffectSyntax f (f 'Unit)
+syncRangeFill el = do
+  v <- Dom.getValue el >>= numberOf
+  lo <- getProp el "min" >>= numberOf
+  hi <- getProp el "max" >>= numberOf
+  whenS (hi .== lo) (setProp el "style.--range-fill" (string "0%"))
+  whenS (hi .!= lo) $
+    setProp
+      el
+      "style.--range-fill"
+      (toString (((v - lo) / (hi - lo)) * number 100) <> string "%")
+
 -- | Run the block only when the option is empty.
 whenNoneS ::
   Expr f ('Option u) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenNoneS opt body = toSyntax (optionCaseE opt (discard (stmts body)) (\_ -> noOp))
 
-{- | Which note a computer key plays, or @""@. A switch over the table the
-Haskell side already has, so the mapping cannot drift from 'Keys.keys'.
--}
+-- | Which note a computer key plays, or @""@. A switch over the table the
+-- Haskell side already has, so the mapping cannot drift from 'Keys.keys'.
 noteForKey :: Expr f 'String -> Effect f 'String
 noteForKey k =
   stringCaseE
     k
-    [(keyChar key, expr (string (noteId key))) | key <- keys]
+    [(char, expr (string note)) | (char, note) <- keyBindings]
     (expr noNote)
 
 -- | Equal temperament, worked out in Haskell and emitted as a switch.
@@ -91,8 +104,8 @@ freqForNote n =
     n
     [(noteId key, expr (number (hz key))) | key <- keys]
     (expr (number 0))
-  where
-    hz key = 440 * (2 ** ((fromIntegral (midi key) - 69) / 12))
+ where
+  hz key = 440 * (2 ** ((fromIntegral (midi key) - 69) / 12))
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
@@ -101,12 +114,18 @@ mainJS = do
   status <- byId idStatus
   cutoffEl <- byId idCutoff
   resonanceEl <- byId idResonance
+  attackEl <- byId idAttack
+  decayEl <- byId idDecay
+  sustainEl <- byId idSustain
   releaseEl <- byId idRelease
   waveEls <- traverse (\w -> (,) w <$> byId ("wave-" <> waveName w)) waves
 
   st <- hold (newRecord @Settings)
   set @"wave" st (string (waveName defaultWave))
-  set @"release" st (number 0.35)
+  set @"attack" st (number defaultAttack)
+  set @"decay" st (number defaultDecay)
+  set @"sustainLevel" st (number defaultSustain)
+  set @"release" st (number defaultRelease)
 
   -- One voice table for the session, keyed by note. Pointers are tracked
   -- separately, by pointerId, so two fingers hold two notes.
@@ -124,7 +143,9 @@ mainJS = do
   Audio.connect filt master
   Audio.connect master comp
   Audio.connect comp ana
-  Audio.connect ana (Audio.destination ctx :: Effect f ('MutableObject Audio.Node))
+  Audio.connect
+    ana
+    (Audio.destination ctx :: Effect f ('MutableObject Audio.Node))
   Audio.setValue (Audio.param master "gain") (number 0.8)
   -- Sized to the buffer, so the meter sees the whole spectrum rather than
   -- the bottom of it.
@@ -134,6 +155,12 @@ mainJS = do
   Audio.setValue (Audio.param filt "frequency") cutoff0
   resonance0 <- Dom.getValue resonanceEl >>= numberOf
   Audio.setValue (Audio.param filt "Q") resonance0
+  -- Browsers restore range values; Settings must match the sliders, not
+  -- the HTML defaults, or the envelope ignores the restored thumbs.
+  Dom.getValue attackEl >>= numberOf >>= set @"attack" st
+  Dom.getValue decayEl >>= numberOf >>= set @"decay" st
+  Dom.getValue sustainEl >>= numberOf >>= set @"sustainLevel" st
+  Dom.getValue releaseEl >>= numberOf >>= set @"release" st
 
   let
     voiceOf :: Expr f 'String -> Effect f ('Option ('MutableObject Audio.Voice))
@@ -164,8 +191,17 @@ mainJS = do
         vca <- Audio.gain ctx
         let
           amp = Audio.param vca "gain"
-        Audio.setValueAt amp (number 0) t0
-        Audio.rampTo amp (number sustain) (t0 + number attack)
+        atk <- get @"attack" st
+        dec <- get @"decay" st
+        sus <- get @"sustainLevel" st
+        Audio.scheduleAdsr
+          amp
+          t0
+          atk
+          dec
+          sus
+          (number peakAmp)
+          (number ampFloor)
 
         Audio.connect osc vca
         Audio.connect vca filt
@@ -176,7 +212,14 @@ mainJS = do
 
         voice <-
           toSyntax
-            ( obj [field @"osc" osc, field @"vca" vca] ::
+            ( obj
+                [ field @"osc" osc
+                , field @"vca" vca
+                , field @"t0" t0
+                , field @"atk" atk
+                , field @"dec" dec
+                , field @"sus" sus
+                ] ::
                 Effect f ('MutableObject Audio.Voice)
             )
         Audio.dictSet voices note (var voice)
@@ -192,15 +235,23 @@ mainJS = do
         rel <- st.release
         osc <- Object.get @"osc" (expr voice)
         vca <- Object.get @"vca" (expr voice)
+        t0 <- get @"t0" (expr voice)
+        atk <- get @"atk" (expr voice)
+        dec <- get @"dec" (expr voice)
+        sus <- get @"sus" (expr voice)
         let
           amp = Audio.param vca "gain"
-        -- Drop the queued attack and restart from wherever the ramp got
-        -- to; without the hold the level would jump before falling.
-        current <- Audio.paramValue amp
-        Audio.cancelFrom amp now
-        Audio.setValueAt amp current now
-        Audio.rampTo amp (number 0) (now + rel)
-        Audio.stopAt osc (now + rel + number 0.05)
+        Audio.releaseVoice
+          amp
+          osc
+          now
+          rel
+          (number ampFloor)
+          t0
+          atk
+          dec
+          sus
+          (number peakAmp)
         toSyntax_ (Object.delete voices note)
         el <- Dom.lookupId note
         Dom.classRemove el (string classHeld)
@@ -228,7 +279,8 @@ mainJS = do
     releasePointer :: Event f -> Effect f 'Unit
     releasePointer ev = stmts $ do
       pid <- getProp' ev "pointerId"
-      found <- toSyntax (Audio.dictGet pointers (toString pid) :: Effect f ('Option 'String))
+      found <-
+        toSyntax (Audio.dictGet pointers (toString pid) :: Effect f ('Option 'String))
       whenSomeS (var found) $ \note -> do
         toSyntax_ (Object.delete pointers (toString pid))
         noteOff note
@@ -257,16 +309,38 @@ mainJS = do
 
   -- Live edits land on the shared filter, so held notes follow them.
   addEventListener_ "input" cutoffEl $ do
+    syncRangeFill cutoffEl
     v <- Dom.getValue cutoffEl >>= numberOf
     Audio.setValue (Audio.param filt "frequency") v
 
   addEventListener_ "input" resonanceEl $ do
+    syncRangeFill resonanceEl
     v <- Dom.getValue resonanceEl >>= numberOf
     Audio.setValue (Audio.param filt "Q") v
 
+  addEventListener_ "input" attackEl $ do
+    syncRangeFill attackEl
+    v <- Dom.getValue attackEl >>= numberOf
+    set @"attack" st v
+
+  addEventListener_ "input" decayEl $ do
+    syncRangeFill decayEl
+    v <- Dom.getValue decayEl >>= numberOf
+    set @"decay" st v
+
+  addEventListener_ "input" sustainEl $ do
+    syncRangeFill sustainEl
+    v <- Dom.getValue sustainEl >>= numberOf
+    set @"sustainLevel" st v
+
   addEventListener_ "input" releaseEl $ do
+    syncRangeFill releaseEl
     v <- Dom.getValue releaseEl >>= numberOf
     set @"release" st v
+
+  mapM_
+    syncRangeFill
+    [cutoffEl, resonanceEl, attackEl, decayEl, sustainEl, releaseEl]
 
   mapM_
     ( \(w, el) -> addEventListener_ "click" el $ do
@@ -282,9 +356,8 @@ mainJS = do
     level <- Audio.meanByte spectrum
     setProp meterBar "style.width" (toString (level * number 100) <> string "%")
 
-{- | @el.classList.toggle("on", isChosen)@ — one call per button, no
-branch, so the emitted JS stays flat.
--}
+-- | @el.classList.toggle("on", isChosen)@ — one call per button, no
+-- branch, so the emitted JS stays flat.
 markWave ::
   Text
   -> (Wave, Effect f ('MutableObject Dom.DomElement))

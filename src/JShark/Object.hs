@@ -11,6 +11,10 @@
 -- Orphans: HasField is GHC.Records; Effect/Expr live in Types (cannot import us).
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+-- | Typed object field access and runtime object helpers.
+--
+-- Field names are type-level 'Symbol's ('Field'). Mutable objects live on
+-- 'Effect'; frozen object literals on 'Expr'. See 'get', 'set', 'frozen'.
 module JShark.Object
   ( Field
   , get
@@ -32,10 +36,11 @@ where
 
 import Data.Proxy
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Records (HasField (..))
 import GHC.TypeLits
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 
 -- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is
 -- 'getField' on 'Effect' or 'Expr' @'MutableObject@ (both yield
@@ -46,7 +51,7 @@ get ::
   forall k r f.
   KnownSymbol k =>
   Effect f ('MutableObject r) -> EffectSyntax f (Expr f (Field r k))
-get x = bindExpr $ UnsafeObjectGet x (symbolVal (Proxy :: Proxy k))
+get x = bindExpr $ UnsafeObjectGet x (T.pack (symbolVal (Proxy :: Proxy k)))
 
 instance
   (KnownSymbol k, u ~ Field r k) =>
@@ -73,7 +78,9 @@ set ::
   Effect f ('MutableObject r) -> Expr f (Field r k) -> EffectSyntax f (f 'Unit)
 set o v =
   toSyntax $
-    UnsafeObjectAssign (UnsafeObjectGet o (symbolVal (Proxy :: Proxy k))) (Lift v)
+    UnsafeObjectAssign
+      (UnsafeObjectGet o (T.pack (symbolVal (Proxy :: Proxy k))))
+      (Lift v)
 
 -- | Empty object of a known record type.
 newObject :: Effect f ('MutableObject r)
@@ -83,7 +90,8 @@ newObject = UnsafeObject "{}"
 field :: forall k r f. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
 field = FieldLit @k
 
-fieldEffect :: forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
+fieldEffect ::
+  forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
 fieldEffect = FieldLitEffect @k
 
 -- | Typed mutable object literal @{k: v, …}@. Identity-sensitive; not cheap to inline.
@@ -106,13 +114,15 @@ delete = DeleteProp
 -- | @Object.prototype.hasOwnProperty.call(o, k)@ — the book's enumeration guard.
 hasOwn :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
 hasOwn o k =
-  FFI (FFICall "Object.prototype.hasOwnProperty.call") (ArgEffect o <: ArgExpr k <: RecNil)
+  FFI
+    (FFICall "Object.prototype.hasOwnProperty.call")
+    (ArgEffect o <: ArgExpr k <: RecNil)
 
 unsafeObject :: Text -> Effect f ('MutableObject a)
 unsafeObject = UnsafeObject
 
 unsafeObjectGet :: Effect f object -> String -> Effect f u
-unsafeObjectGet = UnsafeObjectGet
+unsafeObjectGet o k = UnsafeObjectGet o (T.pack k)
 
 unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
 unsafeObjectAssign = UnsafeObjectAssign

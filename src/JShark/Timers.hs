@@ -1,7 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Wrappers over the JS timer functions.
+-- | @setTimeout@, @requestAnimationFrame@, and animation loops.
+--
+-- Callbacks are JShark 'Effect' thunks; use 'foreverFrame' for a steady
+-- @requestAnimationFrame@ driver.
 module JShark.Timers
   ( setTimeout
   , setInterval
@@ -9,13 +12,14 @@ module JShark.Timers
   , clearInterval
   , requestAnimationFrame
   , foreverFrame
+  , foreverTick
   )
 where
 
 import Control.Monad (void)
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 
 callbackFFI ::
   String
@@ -75,5 +79,32 @@ foreverFrame tick =
       ( \frame ->
           stmts $ do
             void (requestAnimationFrame $ \t0 -> stmts (toSyntax (ApplyE frame (Lift t0))))
+            done
+      )
+
+-- | Uncapped loop via @setTimeout(..., 0)@. Callback receives @performance.now()@.
+foreverTick ::
+  (Expr f 'Number -> EffectSyntax f (f 'Unit)) -> EffectSyntax f (f 'Unit)
+foreverTick tick =
+  toSyntax $
+    bindRec
+      ( \loop ->
+          LambdaE $ \_ ->
+            stmts $ do
+              void $
+                setTimeout
+                  ( \u ->
+                      stmts $ do
+                        now <- bindExpr $ ffi "performance.now" RecNil
+                        void (tick now)
+                        void (toSyntax (ApplyE loop (Lift u)))
+                        done
+                  )
+                  (number 0)
+              done
+      )
+      ( \loop ->
+          stmts $ do
+            void (toSyntax (ApplyE loop noOp))
             done
       )

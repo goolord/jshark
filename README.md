@@ -65,7 +65,13 @@ console.log("max", 2.0, 9.0);
 cabal build
 cabal test          # bun on PATH for the JS-vs-interpreter checks
 cabal run examples  # http://localhost:3000
+./scripts/check-wasm.sh  # rebuild vendored HVM2 wasm; compile-check Life zig
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests and
+`master` pushes: rebuild vendored HVM2 wasm, compile-check Life zig kernels,
+Fourmolu, `cabal test`, then GitHub Pages deploy on `master` only. Optional Nix shell: `nix develop` pins GHC, Zig,
+Bun, LLVM 20, and Fourmolu (`flake.nix`).
 
 `jshark-lucid` writes the DOM in Lucid and compiles it to
 `createElement` calls, so a template lives in one place instead of being
@@ -93,7 +99,7 @@ n1.classList.toggle("completed", n0.completed);
 ```
 
 `examples/` is TodoMVC, Breakout, and a synthesizer as named libraries,
-served together. `/` lists them. After the Pages workflow on `master`:
+served together. `/` lists them. After CI on `master`:
 https://goolord.github.io/jshark/. `test/Main.hs` has more of what
 compiles to what.
 
@@ -133,6 +139,10 @@ evaluateEffectJSONWith
 `Result` (below) — eliminate them with `optionCase` / `resultCase`,
 not host `case`. Numbers are IEEE `Number`: `rem_` is `%`, bitwise
 is ToInt32, and `Math.round` is half toward +Infinity (`2.5` → `3`).
+Exact integers are `'BigInt` (`bigInt`, `42n`): `quot_` is JS `/`
+(trunc toward 0), `rem_` is `rem`, and shifts throw if the count is
+negative. `toBigInt` throws on a non-integer `Number`.
+`parseBigInt_` accepts a sign and `0x` / `0b` / `0o`.
 Host `ByteArray` maps to `'Uint8Array` (`uint8Array`, `new Uint8Array([…])`).
 JS can write the object. A runtime-sized buffer whose bytes are not
 yet known is `newByteArray n` on `Effect` (`new Uint8Array(n)`).

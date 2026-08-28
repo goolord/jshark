@@ -15,6 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Bun
   ( BunConfig (..)
@@ -30,10 +31,12 @@ import qualified JShark.Canvas as Canvas
 import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
+import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
-import JShark.Rec (Rec (..), (<:))
+import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
+import Life (initialCatalogCells, initialPop, soupSeedPop)
 import Support
 import System.Directory (findExecutable)
 import Test.Tasty
@@ -54,6 +57,9 @@ bunEvalTests =
           testGroup
             "eval"
             [ bunCase "addition" (number 1 + number 2)
+            , bunCase "bigint add via toString" (toString (bigInt 10 + bigInt 3))
+            , bunCase "bigint exact via toString" (toString (bigInt (2 ^ (80 :: Int) + 1)))
+            , bunCase "bigint literal via toString" (toString (bigInt 42))
             , bunCase "subtraction" ((number 5 :: Expr f 'Number) - number 2)
             , bunCase
                 "multiplication and division"
@@ -95,8 +101,8 @@ bunEvalTests =
             , bunCase "none is null" (none :: Expr f ('Option 'Number))
             , bunCase "string concat" (Concat (string "a") (string "b"))
             , bunCase "Show number" (Show (number 3))
-            , bunCase "Eq numbers" (Eq (number 1) (number 1))
-            , bunCase "NEq numbers" (NEq (number 1) (number 2))
+            , bunCase "Eq numbers" (number 1 .== number 1)
+            , bunCase "NEq numbers" (number 1 .!= number 2)
             , bunCase "array map" (Array.map numArray (\x -> x + number 1))
             , bunCase
                 "array reduceRight"
@@ -157,14 +163,26 @@ bunEvalTests =
                 ( fromSyntax
                     ( do
                         buf <- toSyntax (newByteArray (number 3))
-                        yield (Eq (var buf) (uint8Array (bytes [0, 0, 0])))
+                        yield (structuralEq (var buf) (uint8Array (bytes [0, 0, 0])))
                     )
                 )
                 "true"
+            , effectCase
+                "catalog seed stamps non-zero species"
+                catalogSeedSpecies
+                "46"
+            , effectCase
+                "soup seed pop matches Haskell reference"
+                soupSeedPopTest
+                (show soupSeedPop)
+            , effectCase
+                "full init pop matches Haskell reference"
+                fullInitPopTest
+                (show initialPop)
             , bunCase "Uint8Array contents" (uint8Array (bytes [1, 2, 3]))
             , bunCase
                 "Uint8Array Eq"
-                (uint8Array (bytes [1, 2]) .== uint8Array (bytes [1, 2]))
+                (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2])))
             , bunCase
                 "Show Uint8Array"
                 (Show (uint8Array (bytes [1, 2, 3])))
@@ -192,6 +210,10 @@ bunEvalTests =
                 (ffi "Math.max" (arg (number 2) <: arg (number 9) <: RecNil) :: Effect f 'Number)
                 "9"
             , effectCase "object set then get" mutSetGet "21"
+            , effectCase "Map insert then lookup" mapRoundTrip "\"v\""
+            , effectCase "Set insert then member" setMember "true"
+            , effectCase "Map foldM sums values" mapFold "3"
+            , effectCase "Map mapM_ runs" mapForEach "undefined"
             , effectCase
                 "catch_ of throw_"
                 (catch_ (throw_ (string "boom")) (\_ -> expr (number 7)))
@@ -246,7 +268,8 @@ bunEvalTests =
                       ("document is not defined" `T.isInfixOf` T.pack (show e))
             , testCase "a non-terminating program hits the timeout" $ do
                 let
-                  spin = renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp))
+                  spin =
+                    T.unpack (renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)
@@ -322,6 +345,30 @@ mutSetGet = fromSyntax $ do
   x <- (Var o).x
   yield x
 
+mapRoundTrip :: forall f. Effect f 'String
+mapRoundTrip = fromSyntax $ Map.withMap $ \m -> do
+  _ <- Map.insert m (string "k") (string "v")
+  v <- Map.lookup m (string "k")
+  yield (orElse v (string "missing"))
+
+setMember :: forall f. Effect f 'Bool
+setMember = fromSyntax $ Set.withSet $ \s -> do
+  _ <- Set.insert s (string "x")
+  b <- Set.member s (string "x")
+  yield b
+
+mapFold :: forall f. Effect f 'Number
+mapFold = fromSyntax $ Map.withMap $ \m -> do
+  _ <- Map.insert m (string "a") (number 1)
+  _ <- Map.insert m (string "b") (number 2)
+  acc <- bindExpr $ Map.foldM (\a _ v -> a + v) (number 0) m
+  yield acc
+
+mapForEach :: forall f. Effect f 'Unit
+mapForEach = fromSyntax $ Map.withMap $ \m -> do
+  _ <- Map.insert m (string "x") (number 1)
+  Map.mapM_ (\_ _ -> toSyntax noOp) m
+
 logHi :: forall f. Effect f 'Unit
 logHi = fromSyntax (Console.log (string "hi" :: Expr f 'String) *> done)
 
@@ -386,20 +433,39 @@ domCanvas = fromSyntax $ do
 wrapReadableExpr :: Text -> String
 wrapReadableExpr src =
   let
-    ls = filter (not . T.null) (T.lines (T.strip src))
+    t = T.strip src
+    ls = filter (not . T.null) (T.lines t)
    in
-    case reverse ls of
+    case ls of
       [] -> "undefined"
-      result : revStmts ->
-        T.unpack
-          $ T.unlines
-          $ "(() => {" : reverse revStmts ++ ["return " <> result, "})()"]
+      [one] -> wrapReturn one
+      many
+        | isStmtSnippet many ->
+            case reverse many of
+              result : revStmts ->
+                T.unpack
+                  $ T.unlines
+                  $ "(() => {" : reverse revStmts ++ ["return " <> result, "})()"]
+              [] -> "undefined"
+        | otherwise -> wrapReturn t
+ where
+  wrapReturn x = "(() => { return " ++ T.unpack x ++ "; })()"
+  isStmtSnippet many =
+    case many of
+      (first : _)
+        | length many >= 2 ->
+            not ((";" `T.isSuffixOf`) (T.strip (last many)))
+              && case T.strip first of
+                stmt | "const " `T.isPrefixOf` stmt -> True
+                stmt | "let " `T.isPrefixOf` stmt -> True
+                _ -> False
+      _ -> False
 
 assertBunAgrees :: (forall f. Expr f u) -> IO ()
 assertBunAgrees e = do
   let
     expected = encodeJSValue (evaluate e)
-    program = renderJS (pureProgram e)
+    program = T.unpack (renderJS (pureProgram e))
   got <- T.unpack <$> runJS program
   assertEqual
     ("evaluate JSON: " <> expected <> "\nbun JSON: " <> got <> "\njs:\n" <> program)
@@ -429,6 +495,7 @@ encodeJSValue = \case
       ++ "}"
   ValueFrozen {} -> error "encodeJSValue: frozen objects are not JSON"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
+  ValueBigInt {} -> error "encodeJSValue: bigint is not JSON"
 
 encodeResult :: Bool -> Value u -> String
 encodeResult okFlag payload =
@@ -450,3 +517,63 @@ encodeJSNumber d
 
 encodeJSString :: String -> String
 encodeJSString s = '"' : escapeJsString s ++ "\""
+
+countAlive :: forall f. Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Number)
+countAlive buf = do
+  popRef <- hold newObject
+  _ <- setProp popRef "n" (number 0)
+  _ <- forRange_ (number 0) (u8Len buf) $ \i -> do
+    whenS (u8Index buf i .== 1) $ do
+      n <- getProp popRef "n"
+      setProp popRef "n" (n + 1)
+  getProp popRef "n"
+
+catalogSeedSpecies :: forall f. Effect f 'Number
+catalogSeedSpecies = fromSyntax $ do
+  a <- fmap var (toSyntax (newByteArray (number 786432)))
+  s <- fmap var (toSyntax (newByteArray (number 786432)))
+  toSyntax_ $
+    seedSoupRegion
+      a
+      (number 256)
+      (number 192)
+      (number 512)
+      (number 384)
+      (number 1024)
+      (number 42)
+  toSyntax_ (seedLiveCells a s initialCatalogCells)
+  yield (u8Index s (number 196928))
+
+soupSeedPopTest :: forall f. Effect f 'Number
+soupSeedPopTest = fromSyntax $ do
+  a <- fmap var (toSyntax (newByteArray (number 786432)))
+  toSyntax_ $
+    seedSoupRegion
+      a
+      (number 256)
+      (number 192)
+      (number 512)
+      (number 384)
+      (number 1024)
+      (number 42)
+  pop <- countAlive a
+  yield pop
+
+fullInitPopTest :: forall f. Effect f 'Number
+-- Soup + catalog stamp; 'initialCatalogCells' must match
+-- 'examples/Life/js/catalog.js' (see CatalogTests).
+fullInitPopTest = fromSyntax $ do
+  a <- fmap var (toSyntax (newByteArray (number 786432)))
+  s <- fmap var (toSyntax (newByteArray (number 786432)))
+  toSyntax_ $
+    seedSoupRegion
+      a
+      (number 256)
+      (number 192)
+      (number 512)
+      (number 384)
+      (number 1024)
+      (number 42)
+  toSyntax_ (seedLiveCells a s initialCatalogCells)
+  pop <- countAlive a
+  yield pop

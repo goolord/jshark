@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install Bend
+        uses: hustcer/setup-bend@v1
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-9.14.1-
+
+      - run: cabal update
+
+      - name: Static assets
+        run: |
+          ./scripts/vendor-speed-highlight.sh
+          ./scripts/gen-synth-keys-css.sh
+          ./scripts/gen-life-tool-preview-css.sh
+
+      - name: Rebuild vendored WASM
+        run: ./scripts/check-wasm.sh --build-only
+
+      # - name: Verify WASM checksums
+      #   run: sha256sum -c wasm/checksums.sha256
+
+      # ghcup has no fourmolu bindist for ubuntu-24.04; the action
+      # fetches the GitHub release zip instead.
+      - name: Fourmolu (advisory)
+        id: fourmolu
+        continue-on-error: true
+        uses: haskell-actions/run-fourmolu@v13
+        with:
+          version: "0.20.1.0"
+          pattern: |
+            src
+            examples
+            test
+            jshark-lucid
+            bench
+
+      - name: Fourmolu advisory notice
+        if: steps.fourmolu.outcome != 'success'
+        run: |
+          echo "::warning title=Fourmolu::Some files are not formatted. Run scripts/format.sh locally."
+
+      - name: Test
+        run: |
+          cabal test jshark-test --test-show-details=direct \
+            --test-options='+RTS -N1 -M4G -RTS -t120'
+
+  pages-build:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-20
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.12"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.setup.outputs.cabal-store }}
+          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-9.14.1-
+
+      - run: cabal update
+
+      - name: Static assets
+        run: |
+          ./scripts/vendor-speed-highlight.sh
+          ./scripts/gen-synth-keys-css.sh
+          ./scripts/gen-life-tool-preview-css.sh
+
+      - name: Export static site
+        run: cabal run examples -- export _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  pages-deploy:
+    needs: pages-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

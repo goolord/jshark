@@ -1,21 +1,76 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module SourcePane (sourceHead, sourcePane) where
+module SourcePane
+  ( SourcePaneSpec (..)
+  , sourceHead
+  , sourceHeadLite
+  , sourcePane
+  , hvm2SourcePanes
+  , sourcePanes
+  )
+where
 
 import qualified Data.Text as T
 import Lucid
+import Lucid.Base (makeAttribute)
+import ThemeHead (sourceLinks, sourceLinksLite)
 
--- | Highlight CSS. Put in @head@ so it is ready before the pane opens.
+data SourcePaneSpec = SourcePaneSpec
+  { paneLabel :: T.Text
+  , paneLang :: T.Text
+  , paneBody :: T.Text
+  }
+
+-- | Highlight + source pane CSS. Themed pages link 'ThemeHead.themeLinks' first.
 sourceHead :: T.Text -> Html ()
-sourceHead staticRoot = do
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/github-dark.min.css")]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/source.css")]
+sourceHead = sourceLinks
+
+-- | TodoMVC skips Pico; includes 'tokens.css' for pane chrome.
+sourceHeadLite :: T.Text -> Html ()
+sourceHeadLite = sourceLinksLite
 
 -- | Collapsed pane of compiled client JS. Scripts follow the markup.
 sourcePane :: T.Text -> T.Text -> Html ()
-sourcePane staticRoot js = do
+sourcePane staticRoot js =
+  sourcePanes
+    staticRoot
+    [SourcePaneSpec "Source" "javascript" js]
+
+-- | HVM2 demo: client JS, Bend kernel, and per-pixel JS fallback.
+hvm2SourcePanes :: T.Text -> T.Text -> T.Text -> T.Text -> Html ()
+hvm2SourcePanes staticRoot js bend mandelJs =
+  sourcePanes
+    staticRoot
+    [ SourcePaneSpec "Client" "javascript" js
+    , SourcePaneSpec "Bend" "python" bend
+    , SourcePaneSpec "JS fallback" "javascript" mandelJs
+    ]
+
+-- | Stack of collapsible highlighted source panes (one highlight/copy setup).
+sourcePanes :: T.Text -> [SourcePaneSpec] -> Html ()
+sourcePanes staticRoot specs = do
+  div_ [class_ "source-stack"] $
+    mapM_ (pane staticRoot) specs
+  script_ [type_ "module", src_ (staticRoot <> "/source-pane.js")] ("" :: Html ())
+
+pane :: T.Text -> SourcePaneSpec -> Html ()
+pane _ (SourcePaneSpec label lang body) = do
   details_ [class_ "js-source"] $ do
-    summary_ "JavaScript source"
-    pre_ $ code_ [class_ "language-javascript"] (toHtml js)
-  script_ [src_ (staticRoot <> "/highlight.min.js")] ("" :: Html ())
-  script_ ("hljs.highlightAll();" :: T.Text)
+    summary_ [class_ "js-source-summary"] $ do
+      span_ [class_ "js-source-summary-inner"] $ do
+        span_ [class_ "js-source-label"] (toHtml label)
+        span_ [class_ "js-source-expand-hint"] "click to expand"
+      button_
+        [ type_ "button"
+        , class_ "js-source-copy"
+        , makeAttribute "aria-label" ("Copy " <> label)
+        ]
+        "Copy"
+    pre_ $
+      code_ [class_ ("shj-lang-" <> shjLang lang)] (toHtml body)
+
+shjLang :: T.Text -> T.Text
+shjLang "javascript" = "js"
+shjLang "python" = "py"
+shjLang "plaintext" = "plain"
+shjLang other = other

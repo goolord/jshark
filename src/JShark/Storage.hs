@@ -14,8 +14,8 @@ module JShark.Storage
 where
 
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Object hiding (get, set)
-import JShark.Rec (Rec (..), (<:))
 
 -- | An opaque phantom type representing a @Storage@ object.
 data Storage
@@ -32,9 +32,9 @@ getItem ::
   -> Expr f 'String
   -> EffectSyntax f (Expr f ('Option 'String))
 getItem s key =
-  fmap unsafeNullable $
-    bindExpr $
-      callMethod s "getItem" (arg key <: RecNil)
+  fmap unsafeNullable
+    $ bindExpr
+    $ callMethod s "getItem" (arg key <: RecNil)
 
 -- | @storage.setItem(key, value)@
 setItem ::

@@ -28,11 +28,15 @@ module Support
   , mulDiv
   , bytes
   , byteElems
+  , assertJSContains
+  , captureStderr
   )
 where
 
+import Control.Exception (evaluate, finally)
 import Data.Array.Byte (ByteArray (..))
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Exts
   ( Int (..)
   , indexWord8Array#
@@ -46,8 +50,18 @@ import GHC.Generics (Generic)
 import GHC.ST (ST (..), runST)
 import GHC.Word (Word8 (..))
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
+import System.IO
+  ( BufferMode (..)
+  , hClose
+  , hFlush
+  , hGetContents
+  , hSetBuffering
+  , stderr
+  )
+import System.Posix.IO (closeFd, createPipe, dup, dupTo, fdToHandle, stdError)
+import Test.Tasty.HUnit ((@?=))
 
 data LitRow
 
@@ -160,3 +174,28 @@ bytes xs = runST go
 byteElems :: ByteArray -> [Word8]
 byteElems (ByteArray ba#) =
   [W8# (indexWord8Array# ba# i#) | I# i# <- [0 .. I# (sizeofByteArray# ba#) - 1]]
+
+-- | Assert emitted JS contains @needle@ (layout-independent smoke check).
+assertJSContains :: Text -> Text -> IO ()
+assertJSContains needle haystack =
+  T.isInfixOf needle haystack @?= True
+
+-- | Run @io@ with stderr redirected to a string (restores stderr afterward).
+captureStderr :: IO a -> IO (a, String)
+captureStderr io = do
+  (readFd, writeFd) <- createPipe
+  backup <- dup stdError
+  _ <- dupTo writeFd stdError
+  closeFd writeFd
+  result <-
+    io `finally` do
+      hFlush stderr
+      _ <- dupTo backup stdError
+      closeFd backup
+      pure ()
+  readH <- fdToHandle readFd
+  hSetBuffering readH NoBuffering
+  msg <- hGetContents readH
+  _ <- evaluate (length msg)
+  hClose readH
+  pure (result, msg)

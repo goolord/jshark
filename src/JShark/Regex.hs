@@ -9,7 +9,7 @@ module JShark.Regex
 where
 
 import Data.Text (Text)
-import JShark.Types
+import JShark.Api.Types
 
 -- | @new RegExp(source)@. The source is a Haskell 'Text' constant, not
 -- spliced into a regex literal.

@@ -1,0 +1,32 @@
+/* Generated — run scripts/gen-life-tool-preview-css.sh */
+
+.life-tool-preview {
+  display: grid;
+  grid-auto-rows: 3px;
+  gap: 1px;
+  justify-content: center;
+}
+
+.life-tool-preview[data-tw="1"] { grid-template-columns: repeat(1, 3px); }
+.life-tool-preview[data-tw="2"] { grid-template-columns: repeat(2, 3px); }
+.life-tool-preview[data-tw="3"] { grid-template-columns: repeat(3, 3px); }
+.life-tool-preview[data-tw="4"] { grid-template-columns: repeat(4, 3px); }
+.life-tool-preview[data-tw="5"] { grid-template-columns: repeat(5, 3px); }
+.life-tool-preview[data-tw="6"] { grid-template-columns: repeat(6, 3px); }
+.life-tool-preview[data-tw="7"] { grid-template-columns: repeat(7, 3px); }
+.life-tool-preview[data-tw="8"] { grid-template-columns: repeat(8, 3px); }
+.life-tool-preview[data-tw="9"] { grid-template-columns: repeat(9, 3px); }
+.life-tool-preview[data-tw="10"] { grid-template-columns: repeat(10, 3px); }
+.life-tool-preview[data-tw="11"] { grid-template-columns: repeat(11, 3px); }
+.life-tool-preview[data-tw="12"] { grid-template-columns: repeat(12, 3px); }
+
+.life-tool[data-tool="46"] .life-tool-cell.is-on { background: rgb(169, 40, 42); }
+.life-tool[data-tool="47"] .life-tool-cell.is-on { background: rgb(169, 40, 55); }
+.life-tool[data-tool="48"] .life-tool-cell.is-on { background: rgb(169, 40, 68); }
+.life-tool[data-tool="60"] .life-tool-cell.is-on { background: rgb(40, 169, 137); }
+.life-tool[data-tool="61"] .life-tool-cell.is-on { background: rgb(40, 169, 152); }
+.life-tool[data-tool="63"] .life-tool-cell.is-on { background: rgb(40, 156, 169); }
+.life-tool[data-tool="68"] .life-tool-cell.is-on { background: rgb(40, 81, 169); }
+.life-tool[data-tool="-1"] .life-tool-cell.is-on { background: #e55; }
+.life-tool[data-tool="-2"] .life-tool-cell.is-on { background: #aaa; }
+.life-tool[data-tool="-3"] .life-tool-cell.is-on { background: rgb(169, 40, 51); }

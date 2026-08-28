@@ -2,7 +2,7 @@
   description = "JShark: a typed subset of JavaScript";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
   };
 
   outputs = { self, nixpkgs }:
@@ -20,16 +20,14 @@
           compose = f: g: x: f (g x);
           apply = prev.lib.foldl' compose prev.lib.id;
         in {
-          haskellPackages = prev.haskellPackages.override {
-            overrides = hself: hsuper: {
-              jshark = apply (
-                [ hlib.dontHaddock hlib.dontCheck ]
-                ++ (if profiling
-                  then [ hlib.enableLibraryProfiling hlib.enableExecutableProfiling ]
-                  else [ hlib.disableLibraryProfiling hlib.disableExecutableProfiling ])
-              ) (hself.callCabal2nix "jshark" self { });
-            };
-          };
+          haskellPackages = (prev.haskell.packages.ghc914.extend (hself: hsuper: {
+            jshark = apply (
+              [ hlib.dontHaddock hlib.dontCheck ]
+              ++ (if profiling
+                then [ hlib.enableLibraryProfiling hlib.enableExecutableProfiling ]
+                else [ hlib.disableLibraryProfiling hlib.disableExecutableProfiling ])
+            ) (hself.callCabal2nix "jshark" self { });
+          }));
         };
 
       pkgsFor = { system, profiling ? false }:
@@ -47,11 +45,26 @@
       });
 
       devShells = forAllSystems (system:
-        let pkgs = pkgsFor { inherit system; };
+        let
+          pkgs = pkgsFor { inherit system; };
+          llvm = pkgs.llvm_20;
         in {
           default = pkgs.haskellPackages.shellFor {
             packages = p: [ p.jshark ];
-            nativeBuildInputs = [ pkgs.cabal-install pkgs.esbuild pkgs.bun ];
+            nativeBuildInputs = with pkgs; [
+              cabal-install
+              esbuild
+              bun
+              fourmolu
+              zig
+              llvm
+            ];
+            shellHook = ''
+              mkdir -p .nix-llvm-wrappers
+              ln -sf ${llvm}/bin/opt .nix-llvm-wrappers/opt-20
+              ln -sf ${llvm}/bin/llc .nix-llvm-wrappers/llc-20
+              export PATH="$PWD/.nix-llvm-wrappers:${llvm}/bin:$PATH"
+            '';
           };
         });
     };

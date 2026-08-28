@@ -7,6 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
+-- | @XMLHttpRequest@ and @fetch@ wrappers for browser I/O.
 module JShark.Ajax
   ( XHR
   , new
@@ -23,7 +24,7 @@ where
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Rec (Rec (..), (<:))
 import Network.HTTP.Types
 
 new :: EffectSyntax f (Effect f ('MutableObject (XHR)))

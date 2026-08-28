@@ -15,7 +15,7 @@ module JShark.String
   )
 where
 
-import JShark.Types
+import JShark.Api.Types
 import Prelude hiding (length)
 
 length :: Expr f 'String -> Expr f 'Number
