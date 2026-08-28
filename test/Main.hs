@@ -9,6 +9,7 @@
 
 module Main (main) where
 
+import BindgenTests (bindgenTests)
 import BunTests (bunEvalTests)
 import CatalogTests (catalogTests)
 import qualified Control.Exception as Ex
@@ -99,6 +100,7 @@ tests =
     , catalogTests
     , lifeWorkerTests
     , staticCssTests
+    , bindgenTests
     ]
 
 bigIntTests :: TestTree

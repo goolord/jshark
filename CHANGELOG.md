@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+* `jshark-bindgen` executable: generate JShark FFI wrappers from TypeScript
+  `.d.ts` / `.ts` (and JS with JSDoc). `cabal run jshark-bindgen -- FILE`.
+  Not part of the `jshark` library.
+
 * Readable JS output is formatted with [Biome](https://biomejs.dev/) when
   `biome` is on PATH (`nix develop` and CI install it). `prettyJS` is now
   `Text -> IO Text` (was pure). On Biome failure, compiles log to stderr and

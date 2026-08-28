@@ -37,22 +37,43 @@ extra-source-files:
   wasm/hvm2/build.zig
   wasm/hvm2/src/root.zig
   wasm/hvm2/README.md
-  data-files:
-    examples/static/*.png
-    examples/static/*.js
-    examples/static/*.css
-    examples/static/pico/*.css
-    examples/static/pico/VERSION
-    examples/static/hvm2-demo.wasm
-    examples/static/speed-highlight/**/*.js
-    examples/static/speed-highlight/**/*.css
-    examples/static/speed-highlight/**/*.ts
-    examples/static/speed-highlight/**/*.map
-    examples/static/speed-highlight/**/*.json
-    examples/Life/js/catalog.js
-    examples/Life/js/pixi.min.js
-    examples/Life/js/EngineWorker.js
-    examples/Life/shaders/cell.frag.glsl
+  jshark-bindgen/extract.mjs
+  jshark-bindgen/package.json
+  test/fixtures/jshark-bindgen/*.d.ts
+  test/fixtures/jshark-bindgen/*.js
+  examples/static/*.png
+  examples/static/*.js
+  examples/static/*.css
+  examples/static/pico/*.css
+  examples/static/pico/VERSION
+  examples/static/hvm2-demo.wasm
+  examples/static/speed-highlight/**/*.js
+  examples/static/speed-highlight/**/*.css
+  examples/static/speed-highlight/**/*.ts
+  examples/static/speed-highlight/**/*.map
+  examples/static/speed-highlight/**/*.json
+  examples/Life/js/catalog.js
+  examples/Life/js/pixi.min.js
+  examples/Life/js/EngineWorker.js
+  examples/Life/shaders/cell.frag.glsl
+data-files:
+  examples/static/*.png
+  examples/static/*.js
+  examples/static/*.css
+  examples/static/pico/*.css
+  examples/static/pico/VERSION
+  examples/static/hvm2-demo.wasm
+  examples/static/speed-highlight/**/*.js
+  examples/static/speed-highlight/**/*.css
+  examples/static/speed-highlight/**/*.ts
+  examples/static/speed-highlight/**/*.map
+  examples/static/speed-highlight/**/*.json
+  examples/Life/js/catalog.js
+  examples/Life/js/pixi.min.js
+  examples/Life/js/EngineWorker.js
+  examples/Life/shaders/cell.frag.glsl
+  jshark-bindgen/extract.mjs
+  jshark-bindgen/package.json
 
 common warnings
   ghc-options:
@@ -182,6 +203,47 @@ library jshark-lucid
     , text
   hs-source-dirs:
     jshark-lucid
+  default-language:
+    Haskell2010
+
+-- Internal library for the jshark-bindgen binary and its tests.
+-- Cabal forbids the same component name as executable jshark-bindgen.
+library bindgen
+  import: warnings
+  exposed-modules:
+    JShark.Bindgen
+    JShark.Bindgen.Ir
+    JShark.Bindgen.Json
+    JShark.Bindgen.Emit
+    JShark.Bindgen.ParseDts
+    JShark.Bindgen.ParseJs
+    JShark.Bindgen.Extract
+  hs-source-dirs:
+    jshark-bindgen
+  other-modules:
+    Paths_jshark
+  autogen-modules:
+    Paths_jshark
+  build-depends:
+    , base >= 4.17 && < 5
+    , text >= 1.2 && < 3
+    , containers >= 0.5 && < 1
+    , directory >= 1.2.7 && < 2
+    , filepath >= 1.4 && < 2
+    , process >= 1.2 && < 2
+  default-language:
+    Haskell2010
+
+executable jshark-bindgen
+  import: warnings
+  main-is:
+    Main.hs
+  hs-source-dirs:
+    jshark-bindgen/app
+  build-depends:
+    , base
+    , bindgen
+    , text
   default-language:
     Haskell2010
 
@@ -354,6 +416,8 @@ test-suite jshark-test
     StaticCssTests
     PerfTests
     Hvm2Tests
+    BindgenTests
+    BindgenToy
   hs-source-dirs:
     test
   build-depends:
@@ -362,6 +426,7 @@ test-suite jshark-test
     , breakout
     , hvm2-demo
     , jshark
+    , bindgen
     , jshark-lucid
     , life
     , synth

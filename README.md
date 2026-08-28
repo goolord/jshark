@@ -65,8 +65,17 @@ console.log("max", 2.0, 9.0);
 cabal build
 cabal test          # bun on PATH for the JS-vs-interpreter checks
 cabal run examples  # http://localhost:3000
+cabal run jshark-bindgen -- lib.d.ts --module JShark.Lib
 ./scripts/check-wasm.sh  # rebuild vendored HVM2 wasm; compile-check Life zig
 ```
+
+`jshark-bindgen` is a **separate binary** (not the `jshark` library). It reads
+a TypeScript declaration file — or JavaScript with JSDoc — and prints a
+Haskell module of `ffi` / `callMethod` wrappers. Names are JS globals; pass
+`--prefix PIXI` for UMD libraries. `--json` dumps the IR. Full TypeScript
+fidelity: `cd jshark-bindgen && bun install`, then run from the repo root (or set
+`JSHARK_BINDGEN_EXTRACT`). Without `typescript` it falls back to a Haskell
+`.d.ts` parser (`--no-ts`).
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on pull requests and
 `master` pushes: rebuild vendored HVM2 wasm, compile-check Life zig kernels,
