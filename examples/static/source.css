@@ -146,6 +146,43 @@
   color: var(--text);
 }
 
+.js-source pre [class*="shj-lang-"] > div,
+.life-source pre [class*="shj-lang-"] > div,
+.life-source-pre [class*="shj-lang-"] > div {
+  display: flex;
+  overflow-x: auto;
+}
+
+.js-source pre [class*="shj-lang-"] > div :last-child,
+.life-source pre [class*="shj-lang-"] > div :last-child,
+.life-source-pre [class*="shj-lang-"] > div :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.js-source .shj-numbers,
+.life-source .shj-numbers {
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  text-align: right;
+  margin: 0 0.75rem 0 0;
+  padding: 0 0.75rem 0 0;
+  user-select: none;
+  counter-reset: line;
+}
+
+.js-source .shj-numbers div::before,
+.life-source .shj-numbers div::before {
+  color: var(--faint);
+  opacity: 1;
+  content: counter(line);
+  counter-increment: line;
+  display: block;
+  min-width: 2.25em;
+  padding-right: 0.15em;
+}
+
 .js-source code:not([class*="shj-lang-"]),
 .life-source-code:not([class*="shj-lang-"]) {
   color: var(--text);

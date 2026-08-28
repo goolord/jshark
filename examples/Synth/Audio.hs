@@ -55,7 +55,11 @@ module Audio
   , setValue
   , setValueAt
   , rampTo
+  , expRampTo
   , cancelFrom
+  , cancelHold
+  , scheduleAdsr
+  , releaseVoice
 
     -- * Sources
   , startAt
@@ -96,6 +100,14 @@ data Voice
 type instance Field Voice "osc" = 'MutableObject Node
 
 type instance Field Voice "vca" = 'MutableObject Node
+
+type instance Field Voice "t0" = 'Number
+
+type instance Field Voice "atk" = 'Number
+
+type instance Field Voice "dec" = 'Number
+
+type instance Field Voice "sus" = 'Number
 
 -- | Anything that lifts to an @AudioContext@ handle.
 type IsCtx f a = ToEffect f ('MutableObject AudioCtx) a
@@ -233,11 +245,125 @@ rampTo ::
 rampTo p v t =
   toSyntax_ (callMethod p "linearRampToValueAtTime" (arg v <: arg t <: RecNil))
 
+-- | @p.exponentialRampToValueAtTime(v, t)@ — perceptual (log) volume; @v@
+-- must stay above zero.
+expRampTo ::
+  Effect f ('MutableObject Param)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f ()
+expRampTo p v t =
+  toSyntax_
+    (callMethod p "exponentialRampToValueAtTime" (arg v <: arg t <: RecNil))
+
 -- | @p.cancelScheduledValues(t)@ — drop automation queued after @t@.
 cancelFrom ::
   Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f ()
 cancelFrom p t =
   toSyntax_ (callMethod p "cancelScheduledValues" (arg t <: RecNil))
+
+-- | @p.cancelAndHoldAtTime(t)@ — drop later events and freeze the computed
+-- value at @t@, so a release can start from the real level, not a jump.
+cancelHold ::
+  Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f ()
+cancelHold p t =
+  toSyntax_ (callMethod p "cancelAndHoldAtTime" (arg t <: RecNil))
+
+-- | One-shot ADSR on a gain param. Attack is a linear rise to peak; decay
+-- and the hold use @setTargetAtTime@ so Chromium cannot drop a second
+-- exponential ramp. @amp.value@ starts at the floor so a new GainNode
+-- does not sit at unity until @t0@.
+scheduleAdsr ::
+  Effect f ('MutableObject Param)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f ()
+scheduleAdsr amp t0 atk dec sus peak minAmp =
+  toSyntax_
+    ( ffi
+        scheduleAdsrJs
+        ( ArgEffect amp
+            <: arg t0
+            <: arg atk
+            <: arg dec
+            <: arg sus
+            <: arg peak
+            <: arg minAmp
+            <: RecNil
+        )
+    )
+
+scheduleAdsrJs :: String
+scheduleAdsrJs =
+  "(amp,t0,atk,dec,sus,peak,floor)=>{"
+    <> "const a=Math.max(0.001,atk),d=Math.max(0.001,dec);"
+    <> "const s=Math.max(floor,Math.min(peak,sus));"
+    <> "try{amp.cancelScheduledValues(0)}catch(e){}"
+    <> "amp.value=floor;"
+    <> "amp.setValueAtTime(floor,t0);"
+    <> "amp.linearRampToValueAtTime(peak,t0+a);"
+    <> "amp.setTargetAtTime(s,t0+a,d/3)"
+    <> "}"
+
+-- | Freeze the computed level, exponential-ramp to a near-zero floor over
+-- the full release, then linear-ramp the last bit to 0 (Web Audio cannot
+-- exponential-ramp to zero). Stop only after silence so the tail is not
+-- a hard cut. Isolated so a missing @cancelAndHoldAtTime@ cannot skip
+-- @stop@ and leave a voice hanging at unity.
+releaseVoice ::
+  (IsNode f osc) =>
+  Effect f ('MutableObject Param)
+  -> osc
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f ()
+releaseVoice amp osc now rel minAmp t0 atk dec sus peak =
+  toSyntax_
+    ( ffi
+        releaseVoiceJs
+        ( ArgEffect amp
+            <: ArgEffect (node osc)
+            <: arg now
+            <: arg rel
+            <: arg minAmp
+            <: arg t0
+            <: arg atk
+            <: arg dec
+            <: arg sus
+            <: arg peak
+            <: RecNil
+        )
+    )
+
+releaseVoiceJs :: String
+releaseVoiceJs =
+  "(amp,osc,now,rel,floor,t0,atk,dec,sus,peak)=>{"
+    <> "const r=Math.max(0.001,rel),a=Math.max(0.001,atk),d=Math.max(0.001,dec);"
+    <> "const s=Math.max(floor,Math.min(peak,sus)),quiet=1e-5,tail=0.03;"
+    <> "let v;"
+    <> "if(now<=t0)v=floor;"
+    <> "else if(now<t0+a){const u=(now-t0)/a;v=floor+(peak-floor)*u;}"
+    <> "else{v=s+(peak-s)*Math.exp(-(now-(t0+a))/(d/3));}"
+    <> "if(!(v>quiet))v=quiet;"
+    <> "try{amp.cancelAndHoldAtTime?amp.cancelAndHoldAtTime(now)"
+    <> ":amp.cancelScheduledValues(now)}catch(e){}"
+    <> "try{"
+    <> "amp.setValueAtTime(v,now);"
+    <> "amp.exponentialRampToValueAtTime(quiet,now+r);"
+    <> "amp.linearRampToValueAtTime(0,now+r+tail)"
+    <> "}catch(e){amp.value=0}"
+    <> "try{osc.stop(now+r+tail+0.02)}catch(e){try{osc.stop()}catch(e2){}}"
+    <> "}"
 
 -- | @src.start(t)@
 startAt :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f ()

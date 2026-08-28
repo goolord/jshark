@@ -19,18 +19,27 @@ module Keys
   , idStatus
   , idCutoff
   , idResonance
+  , idAttack
+  , idDecay
+  , idSustain
   , idRelease
   , dataNote
   , classHeld
   , classWave
-  , attack
-  , sustain
+  , ampFloor
+  , peakAmp
+  , defaultAttack
+  , defaultDecay
+  , defaultSustain
+  , defaultRelease
+  , defaultSlider
   , lookahead
   )
 where
 
 import Data.List (find)
 import Data.Text (Text)
+import qualified Data.Text as T
 
 -- | One playable note. 'keyChar' is the computer key; 'noteId' doubles as
 -- the @data-note@ value and the DOM id.
@@ -184,9 +193,12 @@ idKeyboard = "keyboard"
 idMeterBar = "meter-bar"
 idStatus = "status"
 
-idCutoff, idResonance, idRelease :: Text
+idCutoff, idResonance, idAttack, idDecay, idSustain, idRelease :: Text
 idCutoff = "cutoff"
 idResonance = "resonance"
+idAttack = "attack"
+idDecay = "decay"
+idSustain = "sustain"
 idRelease = "release"
 
 -- | Attribute holding a key's note, read back by the click handler.
@@ -197,14 +209,24 @@ classHeld, classWave :: Text
 classHeld = "held"
 classWave = "wave"
 
--- | Envelope shape, in seconds. Attack is short enough to feel immediate
--- and long enough to avoid a click; 'sustain' is the level a held note
--- settles at.
-attack :: Double
-attack = 0.012
+-- | Envelope defaults — attack/decay/release in seconds, sustain as level.
+defaultAttack, defaultDecay, defaultSustain, defaultRelease :: Double
+defaultAttack = 0.012
+defaultDecay = 0.15
+defaultSustain = 1.0
+defaultRelease = 0.35
 
-sustain :: Double
-sustain = 0.22
+-- | Initial @type=\"range\"@ value string for a Haskell default.
+defaultSlider :: Double -> Text
+defaultSlider = T.pack . show
+
+-- | Peak level at the end of attack before decay.
+peakAmp :: Double
+peakAmp = 1.0
+
+-- | Floor for exponential amplitude ramps — Web Audio cannot ramp to zero.
+ampFloor :: Double
+ampFloor = 0.001
 
 -- | How far ahead of @currentTime@ a note is scheduled. One frame of
 -- slack, so an event that lands mid-frame still starts cleanly.

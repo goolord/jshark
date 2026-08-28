@@ -842,7 +842,7 @@ paletteBytes =
 
 speciesColor :: Int -> (Int, Int, Int)
 speciesColor n
-  | n == soupSpecies = hslRgb 200 palSoftSat palSoftLit
+  | n == soupSpecies = hslRgb 0 0 0.5
   | n == manualSpecies = hslRgb 285 palSat (palLit + 0.02)
   | n >= stillMin && n <= stillMax =
       hslRgb (220 + fromIntegral (n - stillMin) * 5.5) palSat palLit
@@ -863,11 +863,9 @@ speciesColor n
         palLit
   | otherwise = hslRgb 210 palSat palLit
  where
-  palSat, palLit, palSoftSat, palSoftLit :: Double
+  palSat, palLit :: Double
   palSat = 0.62
   palLit = 0.41
-  palSoftSat = 0.54
-  palSoftLit = 0.37
 
 packBytes :: [Word8] -> ByteArray
 packBytes = bytes

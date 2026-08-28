@@ -66,7 +66,7 @@
 
 .synth .slider {
   display: grid;
-  grid-template-columns: 3.5rem 1fr;
+  grid-template-columns: 3.75rem 1fr;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
@@ -82,7 +82,55 @@
   width: 100%;
   min-width: 0;
   margin: 0;
-  accent-color: var(--text);
+  height: 1.125rem;
+  background: transparent;
+  cursor: pointer;
+  --range-fill: 0%;
+}
+
+.synth .slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 0.3rem;
+  border: 0;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--text) 0%,
+    var(--text) var(--range-fill),
+    var(--border) var(--range-fill),
+    var(--border) 100%
+  );
+}
+
+.synth .slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-top: -0.2875rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.synth .slider input[type="range"]::-moz-range-track {
+  height: 0.3rem;
+  border: 0;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.synth .slider input[type="range"]::-moz-range-progress {
+  height: 0.3rem;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.synth .slider input[type="range"]::-moz-range-thumb {
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  box-sizing: border-box;
 }
 
 .synth .meter {

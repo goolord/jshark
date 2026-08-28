@@ -42,7 +42,7 @@ hvm2SourcePanes staticRoot js bend mandelJs =
   sourcePanes
     staticRoot
     [ SourcePaneSpec "Client" "javascript" js
-    , SourcePaneSpec "Bend" "plaintext" bend
+    , SourcePaneSpec "Bend" "python" bend
     , SourcePaneSpec "JS fallback" "javascript" mandelJs
     ]
 
@@ -71,5 +71,6 @@ pane _ (SourcePaneSpec label lang body) = do
 
 shjLang :: T.Text -> T.Text
 shjLang "javascript" = "js"
+shjLang "python" = "py"
 shjLang "plaintext" = "plain"
 shjLang other = other

@@ -5,40 +5,40 @@
   --pico-line-height: 1.45;
   --pico-border-radius: 3px;
   --pico-background-color: #111;
-  --pico-color: #e8e8e8;
-  --pico-muted-color: #888;
-  --pico-muted-border-color: #333;
+  --pico-color: #f0f0f0;
+  --pico-muted-color: #a3a3a3;
+  --pico-muted-border-color: #404040;
   --pico-primary: #fff;
   --pico-primary-background: #181818;
-  --pico-primary-border: #333;
+  --pico-primary-border: #404040;
   --pico-primary-hover: #fff;
   --pico-primary-hover-background: #1a1a1a;
-  --pico-primary-hover-border: #555;
+  --pico-primary-hover-border: #737373;
   --pico-primary-focus: rgba(255, 255, 255, 0.25);
   --pico-primary-inverse: #111;
   --pico-secondary: #e8e8e8;
   --pico-secondary-background: #111;
-  --pico-secondary-border: #333;
+  --pico-secondary-border: #404040;
   --pico-secondary-hover: #fff;
   --pico-secondary-hover-background: #1a1a1a;
-  --pico-secondary-hover-border: #555;
+  --pico-secondary-hover-border: #737373;
   --pico-secondary-focus: rgba(255, 255, 255, 0.15);
   --pico-secondary-inverse: #111;
-  --pico-h1-color: #e8e8e8;
-  --pico-h2-color: #e8e8e8;
-  --pico-h3-color: #e8e8e8;
-  --pico-h4-color: #e8e8e8;
-  --pico-h5-color: #e8e8e8;
-  --pico-h6-color: #e8e8e8;
+  --pico-h1-color: #f0f0f0;
+  --pico-h2-color: #f0f0f0;
+  --pico-h3-color: #f0f0f0;
+  --pico-h4-color: #f0f0f0;
+  --pico-h5-color: #f0f0f0;
+  --pico-h6-color: #f0f0f0;
   --pico-code-background-color: #0a0a0a;
-  --pico-code-color: #e8e8e8;
+  --pico-code-color: #f0f0f0;
   --pico-form-element-background-color: #111;
-  --pico-form-element-border-color: #333;
-  --pico-form-element-color: #e8e8e8;
-  --pico-form-element-active-border-color: #555;
+  --pico-form-element-border-color: #404040;
+  --pico-form-element-color: #f0f0f0;
+  --pico-form-element-active-border-color: #737373;
   --pico-form-element-focus-color: #fff;
   --pico-card-background-color: #181818;
-  --pico-card-border-color: #333;
+  --pico-card-border-color: #404040;
   --pico-box-shadow: none;
   --pico-button-box-shadow: none;
   --pico-button-hover-box-shadow: none;
@@ -60,14 +60,16 @@
   font: 0.92em var(--mono);
 }
 
-[data-theme="dark"] .page button {
+[data-theme="dark"] .page button,
+[data-theme="dark"] .page select,
+[data-theme="dark"] .page textarea {
   margin-bottom: 0;
 }
 
 .page {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: var(--pad-y) var(--pad-x) 2.5rem;
+  /* padding: var(--pad-y) var(--pad-x) 2.5rem; */
 }
 
 .page-header {
@@ -76,7 +78,7 @@
 
 .page-header h1 {
   margin: 0;
-  font-size: 1.125rem;
+  font-size: 1.3125rem;
   font-weight: 600;
   letter-spacing: -0.01em;
 }

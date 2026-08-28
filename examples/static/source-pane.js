@@ -14,14 +14,20 @@ function scheduleIdle(fn) {
   }
 }
 
+function sourceText(code) {
+  var row = code.querySelector(":scope > div");
+  if (row && row.lastElementChild) {
+    return row.lastElementChild.textContent || "";
+  }
+  return code.textContent || "";
+}
+
+var highlightOpts = { showLineNumbers: true, block: true };
+
 async function maybeHighlight(code) {
   if (!code || code.dataset.highlighted) return;
   var lang = langFromClass(code);
-  if (lang === "plain") {
-    code.dataset.highlighted = "1";
-    return;
-  }
-  var text = code.textContent || "";
+  var text = sourceText(code);
   if (
     !text ||
     text === "Expand to load source…" ||
@@ -31,7 +37,7 @@ async function maybeHighlight(code) {
   }
   var run = async function () {
     try {
-      await highlightElement(code, lang, { showLineNumbers: false });
+      await highlightElement(code, lang, highlightOpts);
       code.dataset.highlighted = "1";
     } catch (e) {
       console.error("speed-highlight failed", e);
@@ -90,29 +96,37 @@ document.querySelectorAll(".js-source, .life-source").forEach(function (pane) {
   btn.addEventListener("click", function (e) {
     e.preventDefault();
     e.stopPropagation();
-    var text = code.textContent || "";
-    if (
-      !text ||
-      text === "Loading source…" ||
-      text === "Expand to load source…"
-    ) {
-      return;
-    }
-    navigator.clipboard
-      .writeText(text)
-      .then(function () {
-        btn.textContent = "Copied!";
-        btn.disabled = true;
-        setTimeout(function () {
-          btn.textContent = "Copy";
-          btn.disabled = false;
-        }, 1500);
-      })
-      .catch(function () {
-        btn.textContent = "Copy failed";
-        setTimeout(function () {
-          btn.textContent = "Copy";
-        }, 1500);
-      });
+    var run = async function () {
+      if (!code.dataset.highlighted) {
+        await maybeHighlight(code);
+      }
+      var text = sourceText(code);
+      if (
+        !text ||
+        text === "Loading source…" ||
+        text === "Expand to load source…"
+      ) {
+        return;
+      }
+      navigator.clipboard
+        .writeText(text)
+        .then(function () {
+          btn.textContent = "Copied!";
+          btn.disabled = true;
+          setTimeout(function () {
+            btn.textContent = "Copy";
+            btn.disabled = false;
+          }, 1500);
+        })
+        .catch(function () {
+          btn.textContent = "Copy failed";
+          setTimeout(function () {
+            btn.textContent = "Copy";
+          }, 1500);
+        });
+    };
+    run().catch(function (err) {
+      console.error("copy failed", err);
+    });
   });
 });

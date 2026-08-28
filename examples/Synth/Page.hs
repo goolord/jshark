@@ -59,12 +59,16 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $
               , role_ "group"
               , makeAttribute "aria-labelledby" idEnvelopeLabel
               ]
-              $ slider idRelease "Release" "0.05" "1.5" "0.35"
+              $ do
+                slider idAttack "Attack" "0.001" "3" (defaultSlider defaultAttack)
+                slider idDecay "Decay" "0.01" "1.5" (defaultSlider defaultDecay)
+                slider idSustain "Sustain" "0" "1" (defaultSlider defaultSustain)
+                slider idRelease "Release" "0.05" "9" (defaultSlider defaultRelease)
         div_ [class_ "meter"] $ div_ [id_ idMeterBar, class_ "meter-bar"] mempty
         div_ [id_ idKeyboard, class_ "keyboard"] (mapM_ keyButton keys)
         p_ [id_ idStatus, class_ "status"] "Click a key to start audio"
         footer_ [class_ "page-footer"] $
-          p_ "Web Audio via JShark FFI · envelopes on the audio thread"
+          p_ "Web Audio via JShark FFI · ADSR changes apply on the next note"
       source
       script_ [src_ scriptSrc] ("" :: Html ())
 
