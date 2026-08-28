@@ -31,7 +31,7 @@ performanceNow :: EffectSyntax f (Expr f 'Number)
 performanceNow = bindExpr $ ffi "(()=>performance.now())" RecNil
 
 newWorker :: Expr f 'String -> EffectSyntax f (Effect f ('MutableObject ()))
-newWorker url = pure (ffi "u=>new Worker(u)" (arg url <: RecNil))
+newWorker url = pure (ffi "new Worker" (arg url <: RecNil))
 
 workerPostMessage ::
   Effect f ('MutableObject ())

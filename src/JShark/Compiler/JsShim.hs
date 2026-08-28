@@ -18,6 +18,7 @@ module JShark.Compiler.JsShim
   , insertHoisted
   , mergePreamble
   , renderPreamble
+  , renderPreambleStyled
   , builtinSrc
   )
 where
@@ -130,21 +131,64 @@ mergeHoistedSrc name existing incoming
 -- | @const $name = <src>;@ for every used shim and hoisted lambda,
 -- sorted by name (same order as a single map).
 renderPreamble :: Preamble -> JS
-renderPreamble p =
+renderPreamble = renderPreambleStyled False
+
+-- | When @pretty@, shim bodies get brace/semicolon newlines (Readable /
+-- idiomatic). Hoisted program lambdas stay as emitted.
+renderPreambleStyled :: Bool -> Preamble -> JS
+renderPreambleStyled pretty p =
   vcat
     [ ("const" <+> jsText name <+> "=" <+> jsText src) <> semi
-    | (name, src) <- preambleToList p
+    | (name, src) <- preambleToList pretty p
     ]
 
-preambleToList :: Preamble -> [(Text, Text)]
-preambleToList p =
+preambleToList :: Bool -> Preamble -> [(Text, Text)]
+preambleToList pretty p =
   M.toAscList (builtinMap <> pHoisted p)
  where
   builtinMap =
     M.fromList
-      [ (builtinName b, builtinSrc b)
+      [ (builtinName b, shimBody pretty b)
       | b <- S.toAscList (pBuiltins p)
       ]
+
+shimBody :: Bool -> Builtin -> Text
+shimBody pretty b
+  | pretty = prettyCompactJs (builtinSrc b)
+  | otherwise = builtinSrc b
+
+-- | Newlines after @{@ / @;@ and before @}@, leaving string contents
+-- and existing spaces alone. Same shape as 'prettyJS' on a compact
+-- function body.
+prettyCompactJs :: Text -> Text
+prettyCompactJs = T.pack . go 0 '\0' . T.unpack
+ where
+  go _ _ [] = []
+  go n q (c : cs)
+    | q /= '\0' =
+        c
+          : if c == '\\'
+            then case cs of
+              (d : ds) -> d : go n q ds
+              [] -> []
+            else go n (if c == q then '\0' else q) cs
+    | c == '"' || c == '\'' = c : go n c cs
+    | c == '{' =
+        case dropWhile (== ' ') cs of
+          '}' : rest -> '{' : '}' : go n '\0' rest
+          _ -> '{' : '\n' : indent (n + 1) ++ go (n + 1) '\0' (dropWhile (== ' ') cs)
+    | c == '}' =
+        '\n' : indent n' ++ '}' : go n' '\0' (dropWhile (== ' ') cs)
+    | c == ';' =
+        case dropWhile (== ' ') cs of
+          '}' : _ -> ';' : go n '\0' cs
+          [] -> ";"
+          _ -> ';' : '\n' : indent n ++ go n '\0' (dropWhile (== ' ') cs)
+    | otherwise = c : go n '\0' cs
+   where
+    n' = max 0 (n - 1)
+
+  indent k = replicate (2 * k) ' '
 
 callShim :: Builtin -> [JS] -> JS
 callShim b args =

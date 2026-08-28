@@ -1528,18 +1528,12 @@ flatEffectfulASTGo !mode !env !sIn view nid =
           env' = IM.insert tag loopN env
           (s4, MkCode bodyDecl bodyRef _) = flatEffectChild mode env' s3 view bodyId
           bodyStmt = asStmt bodyDecl bodyRef
+          forInit =
+            "let" <+> loopVar <+> "=" <+> fromMaybe mempty startRef
+          forCond = loopVar <+> "<" <+> fromMaybe mempty endRef
+          forStep = loopVar <> "++"
           forHead =
-            "let"
-              <+> loopVar
-              <+> "="
-              <+> fromMaybe mempty startRef
-              <+> ";"
-              <+> loopVar
-              <+> "<"
-              <+> fromMaybe mempty endRef
-              <+> ";"
-              <+> loopVar
-              <+> "++"
+            hcat [forInit, ";", " ", forCond, ";", " ", forStep]
           forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
          in
           ( s4

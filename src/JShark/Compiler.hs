@@ -1111,6 +1111,7 @@ isCompilerFlag :: String -> Bool
 isCompilerFlag = \case
   "--warn-hvm2-candidates" -> True
   "--progress" -> True
+  "--readable" -> True
   _ -> False
 
 -- | Apply recognized CLI flags to a 'CompilerConfig'.
@@ -1122,4 +1123,5 @@ applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
 applyCompilerArg cfg = \case
   "--warn-hvm2-candidates" -> cfg {configWarnHvm2Candidates = True}
   "--progress" -> cfg {configProgress = True}
+  "--readable" -> cfg {configStyle = Readable}
   _ -> cfg

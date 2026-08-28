@@ -400,18 +400,12 @@ effectfulAST' !env !sIn eff =
           loopVar = nJS s3 loopN
           (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
           bodyStmt = asStmt bodyDecl bodyRef
+          forInit =
+            "let" <+> loopVar <+> "=" <+> fromMaybe mempty startRef
+          forCond = loopVar <+> "<" <+> fromMaybe mempty endRef
+          forStep = loopVar <> "++"
           forHead =
-            "let"
-              <+> loopVar
-              <+> "="
-              <+> fromMaybe mempty startRef
-              <+> ";"
-              <+> loopVar
-              <+> "<"
-              <+> fromMaybe mempty endRef
-              <+> ";"
-              <+> loopVar
-              <+> "++"
+            hcat [forInit, ";", " ", forCond, ";", " ", forStep]
           forStmt = "for" <+> parens forHead <+> blockBody bodyStmt
          in
           ( s4

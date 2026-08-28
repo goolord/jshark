@@ -53,6 +53,7 @@ import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
+import qualified JShark.Worker as Worker
 import Life (mainJS)
 import LifeTests (lifeTests)
 import LifeWorkerTests (lifeWorkerTests)
@@ -497,7 +498,7 @@ controlFlowTests =
                       )
                   )
               )
-        assertJSContains "for (let n0 = 0 ; n0 < 3 ; n0 ++)" js
+        assertJSContains "for (let n0 = 0; n0 < 3; n0++)" js
         assertJSContains "new Uint8Array(1)[n0] = 1;" js
     , testCase "flat forRange_ emits u8Set in loop body" $ do
         let
@@ -1027,7 +1028,7 @@ stdlibTests =
     , testCase "Array.map callback with an internal let is inlined when used once" $
         renderJS
           (pureAST (Array.map numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
-          @?= "[1, 2].map(x => {const n1 = x + 1;\nreturn (n1 * 2)})"
+          @?= "[1, 2].map(x => {const n1 = x + 1;\nreturn n1 * 2})"
     , testCase "Array.join renders as .join" $
         renderJS (pureAST (Array.join numArray (string ",")))
           @?= "[1, 2].join(\",\")"
@@ -1042,7 +1043,7 @@ stdlibTests =
           ( effectfulAST
               (fromSyntax (toSyntax (Array.clear numArray) *> toSyntax noOp))
           )
-          @?= "(a=>{a.length=0})([1, 2]);"
+          @?= "[1, 2].length = 0;"
     , testCase "Array.pushMany renders one call with every argument" $
         renderJS
           ( effectfulAST
@@ -1251,7 +1252,7 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = (()=>new Map())();\nconst n1 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })(n0, \"k\");\nconst n2 = n1;\n(n2 === null ? \"missing\" : n2)"
+          @?= "const n0 = new Map();\nconst n1 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })(n0, \"k\");\nconst n2 = n1;\n(n2 === null ? \"missing\" : n2)"
     , testCase "Map.insert emits set" $
         renderJS
           ( effectfulAST
@@ -1263,7 +1264,7 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = (()=>new Map())();\nn0.set(\"a\", 1);"
+          @?= "const n0 = new Map();\nn0.set(\"a\", 1);"
     , testCase "Set.insert emits add" $
         renderJS
           ( effectfulAST
@@ -1275,7 +1276,7 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = (()=>new Set())();\nn0.add(\"x\");"
+          @?= "const n0 = new Set();\nn0.add(\"x\");"
     , testCase "Map.mapM_ emits forEach with (k,v) callback order" $
         renderJS
           ( effectfulAST
@@ -1285,7 +1286,7 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = (()=>new Map())();\n((m, f) => { m.forEach((v, k) => f(k)(v)); })(n0, n1 => n2 => {})"
+          @?= "const n0 = new Map();\n((m, f) => { m.forEach((v, k) => f(k)(v)); })(n0, n1 => n2 => {})"
     , testCase "multi-use Map.new stays one allocation (identity)" $
         renderJS
           ( effectfulAST
@@ -1298,7 +1299,7 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = (()=>new Map())();\nn0.set(\"a\", 1);\nn0.set(\"b\", 2);"
+          @?= "const n0 = new Map();\nn0.set(\"a\", 1);\nn0.set(\"b\", 2);"
     , testCase "multi-use Set.new stays one allocation (identity)" $
         renderJS
           ( effectfulAST
@@ -1311,7 +1312,25 @@ stdlibTests =
                   )
               )
           )
-          @?= "const n0 = (()=>new Set())();\nn0.add(\"a\");\nn0.add(\"b\");"
+          @?= "const n0 = new Set();\nn0.add(\"a\");\nn0.add(\"b\");"
+    , testCase "Map.fromEntries emits new Map(entries)" $
+        renderJS
+          (effectfulAST (Map.fromEntries (emptyArray :: Expr f ('Array 'Number))))
+          @?= "new Map([])"
+    , testCase "Set.fromList emits new Set(values)" $
+        renderJS
+          (effectfulAST (Set.fromList (emptyArray :: Expr f ('Array 'String))))
+          @?= "new Set([])"
+    , testCase "Worker.newWorker emits new Worker(url)" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax $ do
+                  w <- Worker.newWorker (string "w.js")
+                  toSyntax_ w
+                  toSyntax noOp
+              )
+          )
+          @?= "new Worker(\"w.js\");"
     , testCase "multi-use UnsafeObject stays one const (identity)" $
         renderJS
           ( effectfulAST
@@ -1897,7 +1916,7 @@ optimizeTests =
           @?= "n0 => 1 + n0"
     , testCase "multi-use let inside a lambda stays inside the function" $
         renderJS (pureAST (lambda (\x -> let_ (x + x) (\y -> y + y))))
-          @?= "n0 => {const n1 = n0 + n0;\nreturn (n1 + n1)}"
+          @?= "n0 => {const n1 = n0 + n0;\nreturn n1 + n1}"
     , testCase "array index of a literal folds" $
         renderJS (pureAST (Array.index numArray (number 0))) @?= "1"
     , testCase "let-bound frozen field is cheap and folds" $
@@ -2375,6 +2394,21 @@ compilerTests =
                 (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)
             )
         out @?= "(cond() ? 1 : 2);"
+    , testCase "readableConfig Map.new is a snippet, not an IIFE" $ do
+        out <-
+          compileEffect
+            readableConfig
+            (fromSyntax (Map.withMap $ \m -> Map.clear m))
+        out @?= "const n0 = new Map();\nn0.clear()"
+        assertBool "no IIFE" (not ("(() => {" `T.isInfixOf` out))
+    , testCase "readableConfig $valueEq shim is multiline" $ do
+        out <- compileEffect readableConfig (with2 fooE barE structuralEq)
+        assertBool "shim binding" ("const $valueEq =" `T.isInfixOf` out)
+        assertBool "pretty body" ("{\n" `T.isInfixOf` out)
+        assertBool "no IIFE" (not ("(() => {" `T.isInfixOf` out))
+    , testCase "--readable sets OutputStyle Readable" $
+        configStyle (applyCompilerArgs ["--readable"] defaultCompilerConfig)
+          @?= Readable
     ]
 
 emptyArray8 :: ByteArray

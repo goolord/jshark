@@ -10,11 +10,13 @@ import DevServer (Example (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
 import JShark.Api.Types (fromSyntax)
 import JShark.Compiler
-  ( applyCompilerArgs
+  ( CompilerConfig (..)
+  , OutputStyle (..)
+  , applyCompilerArgs
   , compileJobsLabeled
   , defaultCompilerConfig
   , isCompilerFlag
-  , prettyJS
+  , readableConfig
   )
 import JShark.Hvm2 (bendModule)
 import Kernels (hvm2Entries, mandelJsSource)
@@ -32,6 +34,7 @@ main = do
     (flags, cmd) = partition isCompilerFlag args
     cfg =
       applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
+    paneCfg = readableConfig {configProgress = configProgress cfg}
     labels =
       [ "breakout"
       , "todo-mvc"
@@ -48,19 +51,38 @@ main = do
       , ("life", cfg, fromSyntax Life.mainJS)
       , ("hvm2-demo", cfg, fromSyntax Hvm2Demo.mainJS)
       ]
+  paneCompiled <-
+    if configStyle cfg == Readable
+      then pure compiled
+      else
+        fmap
+          fst
+          ( compileJobsLabeled
+              paneCfg
+              [ ("breakout", paneCfg, fromSyntax Breakout.mainJS)
+              , ("todo-mvc", paneCfg, fromSyntax TodoMvc.mainJS)
+              , ("synth", paneCfg, fromSyntax Synth.mainJS)
+              , ("life", paneCfg, fromSyntax Life.mainJS)
+              , ("hvm2-demo", paneCfg, fromSyntax Hvm2Demo.mainJS)
+              ]
+          )
   let
-    jsByLabel = zip labels compiled
-    lookupJs label =
-      case List.lookup label jsByLabel of
+    lookupIn srcs label =
+      case List.lookup label (zip labels srcs) of
         Just js -> js
         Nothing ->
           error (T.unpack ("examples: missing compile output for " <> label))
+    lookupJs = lookupIn compiled
+    lookupPane = lookupIn paneCompiled
     breakoutJs = lookupJs "breakout"
     todoJs = lookupJs "todo-mvc"
     synthJs = lookupJs "synth"
     lifeJs = lookupJs "life"
     hvm2Js = lookupJs "hvm2-demo"
-    sourceJs = prettyJS
+    breakoutSrc = lookupPane "breakout"
+    todoSrc = lookupPane "todo-mvc"
+    synthSrc = lookupPane "synth"
+    hvm2Src = lookupPane "hvm2-demo"
   hvm2Bend <-
     case bendModule hvm2Entries of
       Left err -> die ("hvm2-demo bend: " <> show err)
@@ -75,11 +97,11 @@ main = do
               Breakout.page
                 static
                 (sourceHead static)
-                (sourcePane static (sourceJs breakoutJs))
+                (sourcePane static breakoutSrc)
                 script
           )
           breakoutJs
-          (Just (sourceJs breakoutJs))
+          (Just breakoutSrc)
       , Example
           "todo-mvc"
           "TodoMVC"
@@ -87,11 +109,11 @@ main = do
               TodoMvc.page
                 static
                 (sourceHeadLite static)
-                (sourcePane static (sourceJs todoJs))
+                (sourcePane static todoSrc)
                 script
           )
           todoJs
-          (Just (sourceJs todoJs))
+          (Just todoSrc)
       , Example
           "synth"
           "Synthesizer"
@@ -99,11 +121,11 @@ main = do
               Synth.page
                 static
                 (sourceHead static)
-                (sourcePane static (sourceJs synthJs))
+                (sourcePane static synthSrc)
                 script
           )
           synthJs
-          (Just (sourceJs synthJs))
+          (Just synthSrc)
       , Example
           "life"
           "Game of Life"
@@ -124,11 +146,11 @@ main = do
                   static
                   demoBase
                   (sourceHead static)
-                  (hvm2SourcePanes static (sourceJs hvm2Js) hvm2Bend hvm2MandelJs)
+                  (hvm2SourcePanes static hvm2Src hvm2Bend hvm2MandelJs)
                   script
           )
           hvm2Js
-          (Just (sourceJs hvm2Js))
+          (Just hvm2Src)
       ]
   case cmd of
     [] ->
@@ -136,4 +158,4 @@ main = do
     ["export", dest] -> exportExamples dest examples
     _ ->
       die
-        "usage: examples [--progress] [--warn-hvm2-candidates] | examples [--progress] [--warn-hvm2-candidates] export DIR"
+        "usage: examples [--progress] [--readable] [--warn-hvm2-candidates] | examples [--progress] [--readable] [--warn-hvm2-candidates] export DIR"

@@ -115,7 +115,10 @@ join xs sep = expr2 FixJoin xs sep
 
 -- | @arr.length = 0@. Clears in place without reallocating.
 clear :: Expr f ('Array u) -> Effect f 'Unit
-clear arr = ffi "a=>{a.length=0}" (arg arr <: RecNil)
+clear arr =
+  UnsafeObjectAssign
+    (UnsafeObjectGet (expr arr) "length")
+    (Lift (number 0))
 
 clear_ :: Expr f ('Array u) -> EffectSyntax f (f 'Unit)
 clear_ arr = toSyntax $ clear arr

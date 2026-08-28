@@ -28,16 +28,15 @@ import JShark.Api.Types (Effect (..), Expr (Var))
 import JShark.Object (unsafeObjectGet)
 import Prelude hiding (lookup, mapM_)
 
--- | @new Map()@. Leading @(@ on the FFI string selects @FFICall@ so the
--- codegen appends @()@ and yields @(()=>new Map())()@, not a bare arrow.
+-- | @new Map()@.
 new :: Effect f ('Map k v)
-new = ffi "(()=>new Map())" RecNil
+new = ffi "new Map" RecNil
 
 -- | @new Map(entries)@ where @entries@ is a JS array of @\[key, value\]@
 -- pairs (e.g. @JSON.parse@ of catalog JSON). Phantom @k@/@v@ are caller
 -- assertions — pair shape is not enforced at compile time.
 fromEntries :: Expr f ('Array u) -> Effect f ('Map k v)
-fromEntries xs = ffi "xs => new Map(xs)" (arg xs <: RecNil)
+fromEntries xs = ffi "new Map" (arg xs <: RecNil)
 
 -- | Allocate a map and run @k@ on the handle (@Lift (Var m)@).
 withMap ::

@@ -79,7 +79,7 @@ import JShark.Compiler.JsShim
   , Preamble
   , emptyPreamble
   , mergePreamble
-  , renderPreamble
+  , renderPreambleStyled
   , useShim
   )
 import JShark.Compiler.Lower
@@ -94,7 +94,8 @@ import JShark.Compiler.Optimize
 
 printComputation computation = T.putStrLn (renderJSCompact computation)
 
-preambleDecls s = renderPreamble (cgPreamble s)
+preambleDecls s =
+  renderPreambleStyled (esSourceNames (cgStyle s)) (cgPreamble s)
 
 emitBuiltin :: CG -> Builtin -> [JS] -> (CG, JS)
 emitBuiltin s b args =
@@ -665,7 +666,7 @@ renderClassic params mDecl mRef =
  where
   ret = case mRef of
     Nothing -> "return"
-    Just r -> "return" <+> parens r
+    Just r -> "return" <+> returnExpr r
 
 renderArrow params mDecl mRef =
   let
@@ -676,7 +677,7 @@ renderArrow params mDecl mRef =
       (Nothing, Just r) -> headJs <+> arrowExpr r
       (Just d, Nothing) -> headJs <+> blockBody (d $$ "return")
       (Just d, Just r) ->
-        headJs <+> blockBody (d $$ ("return" <+> parens r))
+        headJs <+> blockBody (d $$ ("return" <+> returnExpr r))
 
 arrowParams [p] = p
 arrowParams ps = parens (hcat (punctuate ", " ps))
@@ -685,7 +686,17 @@ arrowExpr r =
   let
     t = T.strip (renderJS r)
    in
-    if "{" `T.isPrefixOf` t then parens r else r
+    if needsObjectParens t then parens r else r
+
+-- | Parenthesize only object-literal returns / arrow bodies. Other
+-- expressions stay bare so @return n1 * 2@ is idiomatic.
+returnExpr r =
+  let
+    t = T.strip (renderJS r)
+   in
+    if needsObjectParens t then parens r else r
+
+needsObjectParens t = "{" `T.isPrefixOf` t
 
 -- | Needs no parentheses as an operand: already a primary JS expression.
 allocNIdents :: CG -> Int -> ([Int], CG)

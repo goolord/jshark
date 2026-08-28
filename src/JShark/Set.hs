@@ -24,13 +24,13 @@ import JShark.Api.Types (Effect (..), Expr (Var))
 import JShark.Object (unsafeObjectGet)
 import Prelude hiding (mapM_)
 
--- | @new Set()@. See 'JShark.Map.new' for the @(()=>…)()@ FFI shape.
+-- | @new Set()@.
 new :: Effect f ('Set a)
-new = ffi "(()=>new Set())" RecNil
+new = ffi "new Set" RecNil
 
 -- | @new Set(values)@ from a JS array of @a@.
 fromList :: Expr f ('Array a) -> Effect f ('Set a)
-fromList xs = ffi "xs => new Set(xs)" (arg xs <: RecNil)
+fromList xs = ffi "new Set" (arg xs <: RecNil)
 
 -- | Allocate a set and run @k@ on the handle (@Lift (Var s)@).
 withSet ::
