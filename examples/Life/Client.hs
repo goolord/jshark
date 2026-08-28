@@ -48,6 +48,7 @@ import JShark.Worker (performanceNow)
 import Names (lookupDisplayName)
 import Patterns (gliderOrientationCells, gliderSpeciesSid)
 import qualified Pixi
+import qualified Profile
 import Types
   ( LifeState
   , boardId
@@ -97,7 +98,6 @@ import Types
   , seedOx
   , seedOy
   , seedW
-  , simBudgetMs
   , tickMaxMs
   , tickMinMs
   , zoomLevelLabels
@@ -139,6 +139,7 @@ boot ::
 boot canvas app = do
   appH <- hold (expr app)
   viewport <- initViewport
+  Profile.install canvas viewport
   renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))
   let
     shaderP = Pixi.prefetchLifeShader viewport (string Pixi.lifeCellShaderUrl)
@@ -233,13 +234,30 @@ bootLoaded canvas app appH viewport renderDirty = do
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
+    stepT0 <- performanceNow
     whenS (not_ paused) $
-      stepLifeBudget state viewport registry stepCtx now
+      stepLifeFrame state viewport registry stepCtx now
+    stepT1 <- performanceNow
     tickIndex state registry indexTracker seenSpecies typesList now
     Pixi.tickGlRecovery canvas viewport state
+    otherEnd <- performanceNow
     renderStart <- performanceNow
     renderLife viewport renderDirty state fallback2d
     renderEnd <- performanceNow
+    fpsN <- meter.fps
+    genN <- state.gen
+    popN <- state.pop
+    glLost <- getProp viewport "glLost"
+    Profile.sampleFrame
+      viewport
+      now
+      fpsN
+      genN
+      popN
+      (if_ paused (number 0) (stepT1 - stepT0))
+      (renderEnd - renderStart)
+      (otherEnd - stepT1)
+      glLost
     syncPauseOverlay state pauseOverlay
     lastHud <- getProp viewport "lastHudMs"
     whenS (now - lastHud .>= number (fromIntegral hudRefreshMs)) $ do
@@ -1630,28 +1648,21 @@ tickFps meter now = do
     set @"fps" meter (Math.round (number 1000 / Math.max 1 dt))
   set @"lastMs" meter now
 
-stepLifeBudget ::
+stepLifeFrame ::
   Effect f (MutableObjectOf LifeState)
   -> Effect f ('MutableObject ())
   -> Effect f ('MutableObject Registry)
   -> Effect f (MutableObjectOf StepCtx)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-stepLifeBudget state viewport registry stepCtx frameStart = do
+stepLifeFrame state viewport registry stepCtx frameStart = do
   interval <- state.tickMs
   lastStep <- getProp viewport "lastStepMs"
   let
     due = lastStep .< number 0 .|| frameStart - lastStep .>= interval
-    budget = number (fromIntegral simBudgetMs)
   whenS due $ do
     _ <- setProp viewport "lastStepMs" frameStart
     stepLife state registry stepCtx
-    t1 <- performanceNow
-    whenS (interval .<= number 0 .&& t1 - frameStart .< budget) $ do
-      stepLife state registry stepCtx
-      t2 <- performanceNow
-      whenS (t2 - frameStart .< budget) $
-        stepLife state registry stepCtx
 
 tickIndex ::
   Effect f (MutableObjectOf LifeState)

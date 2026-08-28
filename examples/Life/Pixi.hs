@@ -67,17 +67,35 @@ pixiAvailable =
 
 -- | Shared @new PIXI.Application@ construction. Expects @view@, @width@,
 --   @height@ and @backgroundColor@ in scope; binds @app@ and caches it on
---   the canvas for 'tickGlRecovery'.
+--   the canvas for 'tickGlRecovery'. @high-performance@ makes Chromium on
+--   Linux switch GPU process after the first context is created; Pixi then
+--   logs "WebGL context was lost" and we fall back to the 2D atlas blit.
+--   @default@ keeps the context on whatever GPU created it.
 newAppJs :: String
 newAppJs =
-  " const power = matchMedia('(prefers-reduced-motion: reduce)').matches"
-    <> "   ? 'default' : 'high-performance';"
-    <> " const app = new PIXI.Application({"
+  " const app = new PIXI.Application({"
     <> "   view, width, height, backgroundColor,"
     <> "   antialias: false, autoStart: false, resolution: 1, hello: false,"
-    <> "   powerPreference: power"
+    <> "   powerPreference: 'default'"
     <> " });"
     <> " view.__lifePixiApp = app;"
+    <> " const gl = app.renderer && app.renderer.gl;"
+    <> " let renderer = 'none';"
+    <> " if (gl) {"
+    <> "   const ext = gl.getExtension('WEBGL_debug_renderer_info');"
+    <> "   renderer = ext"
+    <> "     ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL))"
+    <> "     : 'webgl';"
+    <> "   if (gl.isContextLost && gl.isContextLost()) renderer += ' (lost)';"
+    <> " }"
+    <> " view.__lifeGlRenderer = renderer;"
+    <> " console.info('[Life] GL', renderer);"
+    <> " if (!view.__lifeGlArmed) {"
+    <> "   view.__lifeGlArmed = 1;"
+    <> "   view.addEventListener('webglcontextlost', (e) => {"
+    <> "     e.preventDefault();"
+    <> "   }, false);"
+    <> " }"
 
 -- | Drop onion-skin atlas RT while its creating renderer is still alive.
 --   Expects @viewport@.

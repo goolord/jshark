@@ -107,7 +107,12 @@ assetBaseFor script =
 
 focusFrameScript :: T.Text
 focusFrameScript =
-  "document.getElementById('life-frame').addEventListener('load',function(){this.focus();},{once:true});"
+  "(()=>{const f=document.getElementById('life-frame');"
+    <> "Object.defineProperty(window,'__jsharkLifeProfile',{"
+    <> "get(){try{return f.contentWindow&&f.contentWindow.__jsharkLifeProfile}"
+    <> "catch(_){return undefined}},configurable:true});"
+    <> "f.addEventListener('load',function(){this.focus();},{once:true});"
+    <> "})();"
 
 gameDocument :: T.Text -> T.Text -> T.Text -> Html ()
 gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $

@@ -38,7 +38,6 @@ module Types
   , discoverMax
   , discoverEvery
   , indexRefreshMs
-  , simBudgetMs
   , hudRefreshMs
   , lifeIndexHostId
   , lifeTypesListId
@@ -203,10 +202,6 @@ discoverEvery = 45
 
 indexRefreshMs :: Int
 indexRefreshMs = 2000
-
--- | Max wall time per rAF spent stepping (ms).
-simBudgetMs :: Int
-simBudgetMs = 8
 
 -- | Min interval between HUD textContent updates (ms).
 hudRefreshMs :: Int

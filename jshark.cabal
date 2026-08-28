@@ -267,6 +267,7 @@ library life
     Names
     Page
     Pixi
+    Profile
   hs-source-dirs:
     examples/Life
 

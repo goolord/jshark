@@ -380,8 +380,7 @@ swapLiveLists state = do
   set @"nextLiveList" state live
 
 -- | Append this step's dirty cells onto the atlas dirty list. A swap
--- would drop earlier deaths when 'stepLifeBudget' runs more than one
--- step before paint (small grids), leaving live texels behind movers.
+-- would drop deaths if more than one step ran before paint.
 flushChangedList ::
   Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 flushChangedList state = do
