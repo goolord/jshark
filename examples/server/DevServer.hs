@@ -110,6 +110,7 @@ lifeEngineJs =
 hvm2DemoAssets :: [(FilePath, FilePath)]
 hvm2DemoAssets =
   [ ("hvm2-worker.js", "examples/static/hvm2-worker.js")
+  , ("hvm2-grid-worker.js", "examples/static/hvm2-grid-worker.js")
   , ("hvm2-wasm.js", "examples/static/hvm2-wasm.js")
   , ("hvm2-demo.wasm", "examples/static/hvm2-demo.wasm")
   ]
@@ -474,4 +475,5 @@ staticFiles =
   , "hvm2-demo.wasm"
   , "hvm2-wasm.js"
   , "hvm2-worker.js"
+  , "hvm2-grid-worker.js"
   ]

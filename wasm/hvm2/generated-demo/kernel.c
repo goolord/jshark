@@ -6769,7 +6769,9 @@ static void jshark_steal_eval(Net* net, TM* t, Book* book, u32 budget) {
       continue;
     }
     miss++;
-    if (miss >= part * TPC && jshark_bags_empty(net)) { return; }
+    /* G_RBAG_LEN is TPC*RLEN; waiting for part*TPC misses
+     * exceeds the small-grid budget and yields a black frame. */
+    if ((miss & 127u) == 0 && jshark_bags_empty(net)) { return; }
     if (miss >= part * TPC) { miss = 0; }
   }
   jshark_hvm2_last_k = -14;
@@ -6872,6 +6874,7 @@ static int jshark_hvm2_run_grid(u32 fid, const double* args, int cap) {
 }
 
 static void jshark_parallel_normalize(Net* net, Book* book, u32 budget) {
+  /* live_threads is host hardwareConcurrency capped at TPC. */
   u32 live = jshark_import_live_threads();
   u32 cap;
   u32 spawned = 0;

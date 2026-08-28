@@ -19,7 +19,7 @@ import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import qualified JShark.Math as Math
-import JShark.Promise (promiseCatch, promiseThen)
+import JShark.Promise (Promise, promiseCatch, promiseThen)
 import qualified JShark.Timers as Timers
 import Kernels
   ( blockPx
@@ -102,6 +102,7 @@ gridBackendLabelFFI =
     ++ "else s='WASM requested · JS fallback';"
     ++ "}else{"
     ++ "if(b==='hvm2')s='HVM2 net (f24)';"
+    ++ "else if(b==='hvm2-pending')s='HVM2 net · live JS';"
     ++ "else if(b==='hvm2-fail:no-export')s='export missing';"
     ++ "else if(b==='hvm2-fail:trap')s='wasm trap (OOB)';"
     ++ "else if(b==='hvm2-fail:zero'){"
@@ -119,7 +120,8 @@ gridBackendLabelFFI =
     ++ "else s='JS fallback';"
     ++ "}"
     ++ "if(h?.loadNote)s+=' · '+h.loadNote;"
-    ++ "if(h?.blocking&&b==='hvm2')s+=' · '+(h.threads|0)+' threads · UI blocked in normalize';"
+    ++ "const gt=globalThis.__jsharkHvm2GridThreads|0;"
+    ++ "if(m===2&&gt>0)s+=' · '+gt+' workers';"
     ++ "return s;"
     ++ "}"
 
@@ -128,7 +130,7 @@ gridBackendFallbackFFI =
   "(mode)=>{"
     ++ "const b=globalThis.__jsharkGridBackend||'js';"
     ++ "const m=mode|0;"
-    ++ "if(m===2)return b!=='hvm2';"
+    ++ "if(m===2)return b!=='hvm2'&&b!=='hvm2-pending';"
     ++ "if(m===1)return b!=='wasm-simd';"
     ++ "return b!=='js';"
     ++ "}"
@@ -242,8 +244,8 @@ boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st 
     sourceOpen <-
       bindExpr $
         ffiExpr "!!document.querySelector('.js-source[open]')" RecNil
-    -- Optimizer strips whenS/ifS in this timeout callback. HVM2 must
-    -- not re-enter normalize here; sampleGrid is armed from the click.
+    -- Optimizer strips whenS/ifS in this timeout callback. HVM2
+    -- normalize never runs on this thread.
     whenS (not_ paused .&& not_ sourceOpen) $ do
       tickFrame st now
       paint ctxH st status
@@ -272,7 +274,15 @@ wireControls modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st stat
             <> ";"
             <> "if(m>0&&!st.labWasmReady)return;"
             <> "st.labMode=m;"
-            <> "if(m===2)globalThis.__jsharkHvm2Armed=1;"
+            <> "if(m===2){"
+            <> "globalThis.__jsharkHvm2Epoch="
+            <> "(globalThis.__jsharkHvm2Epoch|0)+1;"
+            <> "globalThis.__jsharkHvm2Cache=null;"
+            <> "globalThis.__jsharkHvm2CacheAt=null;"
+            <> "globalThis.__jsharkHvm2CacheGen=0;"
+            <> "globalThis.__jsharkHvm2LastReq=null;"
+            <> "globalThis.__jsharkHvm2GridError=null;"
+            <> "}"
             <> "[wasm,hvm2,js].forEach(b=>b.classList.remove('active'));"
             <> "if(m===0)js.classList.add('active');"
             <> "else if(m===1)wasm.classList.add('active');"
@@ -377,12 +387,10 @@ tickFrame st now = do
     delta = Math.max (now - prev) (number 0)
     dt = Math.min delta (number 100)
   zoomFactor <- bindExpr $ zoomScaleFactor dt
-  -- FFI (not whenS): hold the camera in HVM2 so a stripped tick
-  -- callback cannot zoom while a cached snapshot is on screen.
+  -- FFI (not whenS): optimizer strips conditionals in this tick.
   toSyntax_ $
     ffi
       ( "(st,now,zf,minS,initS)=>{"
-          <> "if((st.labMode|0)===2)return;"
           <> "const shrunk=st.labScale*zf;"
           <> "st.labPrevMs=now;"
           <> "st.labFrame=(st.labFrame||0)+1;"
@@ -514,9 +522,9 @@ blitGrid ctx grid blocksX blocksY blk w h = do
       )
   done
 
--- | @mode@: 0 = JS loop, 1 = WASM SIMD grid, 2 = HVM2 net reduction of the
--- Bend-compiled @jshark_grid@ def. SIMD-grid miss falls back to the JS
--- loop; per-pixel wasm calls lose to a warmed JS JIT on this kernel.
+-- | @mode@: 0 = JS loop, 1 = WASM SIMD grid, 2 = HVM2 net (worker only).
+-- Mode 2 never calls @mandel_grid@ or @mandel_hvm2_grid@ on the UI thread.
+-- Zoom is live; a snapshot is used only when it matches the camera.
 sampleGrid ::
   Expr f 'Number
   -> Expr f 'Number
@@ -534,50 +542,38 @@ sampleGrid mode centerRe centerIm scale w h blk blocksX blocksY =
         <> "const setBackend=b=>{globalThis.__jsharkGridBackend=b;};"
         <> "const ex=globalThis.__jsharkHvm2?.exports;"
         <> "const mem=ex?.memory;"
-        <> "let hvm2Fail=null;"
-        <> "if(mode===2&&mem){"
-        <> "const cache=globalThis.__jsharkHvm2Cache;"
+        <> "if(mode===2){"
         <> "const n=bxN*byN;"
-        <> "if(!globalThis.__jsharkHvm2Armed&&cache&&cache.length===n){"
-        <> "setBackend('hvm2');return cache;"
+        <> "const req=globalThis.__jsharkHvm2RequestGrid;"
+        <> "if(typeof req==='function'){"
+        <> "req({centerRe,centerIm,scale,w,h,blk,bxN,byN});"
         <> "}"
-        <> "const hg=ex?.mandel_hvm2_grid;"
-        <> "if(typeof hg!=='function'){hvm2Fail='no-export';}"
-        <> "else{"
-        <> "try{"
-        <> "globalThis.__jsharkHvm2Armed=0;"
-        <> "const ptr=hg(centerRe,centerIm,scale,w,h,blk,bxN,byN);"
-        <> "if(typeof ex?.jshark_hvm2_last_k==='function'){"
-        <> "globalThis.__jsharkHvm2LastK=ex.jshark_hvm2_last_k();"
-        <> "}"
-        <> "if(ptr){"
-        <> "const g=Int32Array.from(new Int32Array(mem.buffer,ptr,n));"
-        <> "globalThis.__jsharkHvm2Cache=g;"
-        <> "setBackend('hvm2');return g;"
-        <> "}"
-        <> "hvm2Fail='zero';"
-        <> "}catch(_){"
-        <> "globalThis.__jsharkHvm2LastK=-15;"
-        <> "hvm2Fail='trap';"
-        <> "}"
-        <> "}"
+        <> "const cache=globalThis.__jsharkHvm2Cache;"
+        <> "const at=globalThis.__jsharkHvm2CacheAt;"
+        <> "const same=cache&&cache.length===n&&at"
+        <> "&&at.w===w&&at.h===h"
+        <> "&&Math.abs(at.scale-scale)<=at.scale*1e-6"
+        <> "&&Math.abs(at.centerRe-centerRe)<=1e-9"
+        <> "&&Math.abs(at.centerIm-centerIm)<=1e-9;"
+        <> "if(same){setBackend('hvm2');return cache;}"
+        <> "const err=globalThis.__jsharkHvm2GridError;"
+        <> "setBackend(err==='no-export'?'hvm2-fail:no-export':"
+        <> "err==='trap'?'hvm2-fail:trap':"
+        <> "err==='zero'?'hvm2-fail:zero':'hvm2-pending');"
         <> "}"
         <> "const gridFn=ex?.mandel_grid;"
-        <> "if((mode===1)&&typeof gridFn==='function'&&mem){"
+        <> "if(mode===1&&typeof gridFn==='function'&&mem){"
         <> "const ptr=gridFn(centerRe,centerIm,scale,w,h,blk,bxN,byN);"
         <> "if(ptr){"
         <> "setBackend('wasm-simd');"
         <> "return new Int32Array(mem.buffer,ptr,bxN*byN);"
         <> "}"
-        <> "if(mode===1)setBackend('wasm-simd-fail');"
+        <> "setBackend('wasm-simd-fail');"
         <> "}"
         <> "const out=new Array(bxN*byN);"
         <> "const half=blk/2;"
         <> "const js=globalThis.__jsharkMandelJs;"
-        <> "if(hvm2Fail){"
-        <> "setBackend(hvm2Fail==='no-export'?'hvm2-fail:no-export':"
-        <> "hvm2Fail==='trap'?'hvm2-fail:trap':'hvm2-fail:zero');"
-        <> "}else{setBackend('js');}"
+        <> "if(mode!==2)setBackend('js');"
         <> "let k=0;"
         <> "for(let by=0;by<byN;by++){"
         <> "for(let bx=0;bx<bxN;bx++){"
@@ -688,50 +684,54 @@ runBench st status = do
     blocksX = Math.floor (w / blk)
     blocksY = Math.floor (h / blk)
   res <- bindExpr $ benchCompare centerRe centerIm scale w h
-  set @"labPaused" st wasPaused
-  let
-    jsMs = Array.index res 0
-    wasmMs = Array.index res 1
-    speedup = Array.index res 2
-    hvm2Ms = Array.index res 3
-    wasmOk = wasmMs .>= number 0
-    hvm2Ok = hvm2Ms .>= number 0
-    gridTxt =
-      string "per "
-        <> toString blocksX
-        <> string "×"
-        <> toString blocksY
-        <> string " frame: "
-    wasmTxt =
-      if_
-        wasmOk
-        ( string " · WASM SIMD "
-            <> toString wasmMs
-            <> string " ms ("
-            <> toString speedup
-            <> string "× vs JS)"
-        )
-        (string " · WASM unavailable")
-    hvm2Txt =
-      if_
-        hvm2Ok
-        ( string " · HVM2 net "
-            <> toString hvm2Ms
+  hvmP <- hold $ benchHvm2Grid centerRe centerIm scale w h
+  promiseThen hvmP $ \hvm2Raw ->
+    stmts $ do
+      set @"labPaused" st wasPaused
+      let
+        hvm2Ms = var hvm2Raw
+        jsMs = Array.index res 0
+        wasmMs = Array.index res 1
+        speedup = Array.index res 2
+        wasmOk = wasmMs .>= number 0
+        hvm2Ok = hvm2Ms .>= number 0
+        gridTxt =
+          string "per "
+            <> toString blocksX
+            <> string "×"
+            <> toString blocksY
+            <> string " frame: "
+        wasmTxt =
+          if_
+            wasmOk
+            ( string " · WASM SIMD "
+                <> toString wasmMs
+                <> string " ms ("
+                <> toString speedup
+                <> string "× vs JS)"
+            )
+            (string " · WASM unavailable")
+        hvm2Txt =
+          if_
+            hvm2Ok
+            ( string " · HVM2 net "
+                <> toString hvm2Ms
+                <> string " ms"
+            )
+            (string " · HVM2 unavailable")
+      setStatusDisplay
+        status
+        (not_ wasmOk)
+        false_
+        ( string "bench "
+            <> gridTxt
+            <> string "JS "
+            <> toString jsMs
             <> string " ms"
+            <> wasmTxt
+            <> hvm2Txt
         )
-        (string " · HVM2 unavailable")
-  setStatusDisplay
-    status
-    (not_ wasmOk)
-    false_
-    ( string "bench "
-        <> gridTxt
-        <> string "JS "
-        <> toString jsMs
-        <> string " ms"
-        <> wasmTxt
-        <> hvm2Txt
-    )
+      done
   done
 
 benchReps :: Int
@@ -776,20 +776,36 @@ benchCompare cr ci scale w h =
         <> "wasmMs=performance.now()-t1;"
         <> "if(ptr)sink+=new Int32Array(mem.buffer,ptr,1)[0];"
         <> "}"
-        <> "let hvmMs=-1;"
-        <> "const hg=ex?.mandel_hvm2_grid;"
-        <> "if(typeof hg==='function'&&mem){"
-        <> "const t2=performance.now();"
-        <> "try{"
-        <> "const p=hg(cr,ci,scale,w,h,blk,bxN,byN);"
-        <> "if(p){hvmMs=performance.now()-t2;"
-        <> "sink+=new Int32Array(mem.buffer,p,1)[0];}"
-        <> "}catch(_){}"
-        <> "}"
         <> "globalThis.__jsharkBenchSink=sink;"
         <> "const sp=wasmMs>0?r1(jsMs/wasmMs):0;"
-        <> "return[r1(jsMs/reps),wasmMs<0?-1:r1(wasmMs/reps),sp,"
-        <> "hvmMs<0?-1:r1(hvmMs)];"
+        <> "return[r1(jsMs/reps),wasmMs<0?-1:r1(wasmMs/reps),sp];"
+        <> "}"
+    )
+    ( arg cr
+        <: arg ci
+        <: arg scale
+        <: arg w
+        <: arg h
+        <: RecNil
+    )
+
+benchHvm2Grid ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Effect f ('MutableObject (Promise 'Number))
+benchHvm2Grid cr ci scale w h =
+  ffi
+    ( "(cr,ci,scale,w,h)=>{"
+        <> "const bench=globalThis.__jsharkHvm2BenchGrid;"
+        <> "if(typeof bench!=='function')return Promise.resolve(-1);"
+        <> "const blk="
+        <> show blockPx
+        <> ";"
+        <> "const bxN=Math.floor(w/blk),byN=Math.floor(h/blk);"
+        <> "return bench({centerRe:cr,centerIm:ci,scale,w,h,blk,bxN,byN});"
         <> "}"
     )
     ( arg cr

@@ -200,7 +200,7 @@ async function fetchWasm(wasmUrl) {
   return { wasmBytes, module };
 }
 
-async function loadSingle(wasmUrl, loadNote = '') {
+async function loadSingle(wasmUrl, workerUrl, loadNote = '') {
   const { wasmBytes, module } = await fetchWasm(wasmUrl);
   const memPages = importedMemoryPages(wasmBytes);
   const memory = allocMemory(memPages);
@@ -236,6 +236,7 @@ async function loadSingle(wasmUrl, loadNote = '') {
     blocking: false,
     terminate() {},
   };
+  startGridWorker(wasmBytes, workerUrl);
 }
 
 async function loadThreaded(wasmUrl, workerUrl) {
@@ -398,6 +399,7 @@ async function loadThreaded(wasmUrl, workerUrl) {
       for (const w of workers) w.terminate();
     },
   };
+  startGridWorker(wasmBytes, workerUrl);
 }
 
 /**
@@ -413,6 +415,7 @@ globalThis.__jsharkHvm2Load = async (wasmUrl, workerUrl) => {
       console.warn('HVM2 threaded load failed; falling back to single-thread', err);
       await loadSingle(
         wasmUrl,
+        workerUrl,
         'threads: 1 (threaded load failed: ' +
           (err && err.message ? err.message : String(err)) +
           ')',
@@ -422,6 +425,183 @@ globalThis.__jsharkHvm2Load = async (wasmUrl, workerUrl) => {
   }
   await loadSingle(
     wasmUrl,
+    workerUrl,
     'threads: 1 (COOP/COEP off)',
   );
 };
+
+function gridWorkerUrl(workerUrl) {
+  return String(workerUrl || '').replace(
+    /hvm2-worker\.js/,
+    'hvm2-grid-worker.js',
+  );
+}
+
+function stopGridWorker(w) {
+  if (!w) {
+    return;
+  }
+  try {
+    w.postMessage({ type: 'die' });
+  } catch (_) {
+    try {
+      w.terminate();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function startGridWorker(wasmBytes, workerUrl) {
+  const rel = gridWorkerUrl(workerUrl);
+  if (!rel || rel === String(workerUrl || '')) {
+    return;
+  }
+  stopGridWorker(globalThis.__jsharkHvm2GridWorker);
+  globalThis.__jsharkHvm2GridReady = false;
+  globalThis.__jsharkHvm2Job = 0;
+  globalThis.__jsharkHvm2GridError = null;
+  globalThis.__jsharkHvm2CacheAt = null;
+  globalThis.__jsharkHvm2CacheGen = 0;
+  globalThis.__jsharkHvm2GridThreads = 0;
+  globalThis.__jsharkHvm2LastReq = null;
+  globalThis.__jsharkHvm2Epoch = globalThis.__jsharkHvm2Epoch | 0;
+  let jobSeq = 0;
+  let benchWait = null;
+  let w;
+  try {
+    w = new Worker(demoAssetUrl(rel));
+  } catch (err) {
+    console.warn('HVM2 grid worker spawn failed', err);
+    return;
+  }
+  const finishJob = (m) => {
+    if (m.jobId === globalThis.__jsharkHvm2Job) {
+      globalThis.__jsharkHvm2Job = 0;
+    }
+    if (benchWait && benchWait.jobId === m.jobId) {
+      const resolve = benchWait.resolve;
+      benchWait = null;
+      resolve(m.ok && m.ms >= 0 ? Math.round(m.ms * 10) / 10 : -1);
+    }
+  };
+  w.onmessage = (ev) => {
+    const m = ev.data;
+    if (m.type === 'dead') {
+      try {
+        w.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+      return;
+    }
+    if (m.type === 'ready') {
+      globalThis.__jsharkHvm2GridReady = true;
+      globalThis.__jsharkHvm2GridThreads = m.threads || 1;
+      return;
+    }
+    if (m.type === 'error') {
+      if (m.jobId && m.jobId !== globalThis.__jsharkHvm2Job) {
+        return;
+      }
+      finishJob(m);
+      if ((m.epoch | 0) !== (globalThis.__jsharkHvm2Epoch | 0)) {
+        return;
+      }
+      globalThis.__jsharkHvm2GridError = m.kind || 'trap';
+      globalThis.__jsharkHvm2LastK = -15;
+      console.warn('HVM2 grid worker', m.message);
+      return;
+    }
+    if (m.type === 'grid') {
+      finishJob(m);
+      if ((m.epoch | 0) !== (globalThis.__jsharkHvm2Epoch | 0)) {
+        return;
+      }
+      globalThis.__jsharkHvm2LastK = m.lastK;
+      globalThis.__jsharkHvm2LastMs = m.ms;
+      if (m.ok && m.grid) {
+        globalThis.__jsharkHvm2Cache = m.grid;
+        globalThis.__jsharkHvm2CacheAt = {
+          centerRe: m.centerRe,
+          centerIm: m.centerIm,
+          scale: m.scale,
+          w: m.w,
+          h: m.h,
+        };
+        globalThis.__jsharkHvm2CacheGen =
+          (globalThis.__jsharkHvm2CacheGen | 0) + 1;
+        globalThis.__jsharkHvm2GridError = null;
+      } else {
+        globalThis.__jsharkHvm2GridError = 'zero';
+      }
+    }
+  };
+  w.onerror = (ev) => {
+    globalThis.__jsharkHvm2GridReady = false;
+    globalThis.__jsharkHvm2Job = 0;
+    globalThis.__jsharkHvm2GridError = 'trap';
+    if (benchWait) {
+      const resolve = benchWait.resolve;
+      benchWait = null;
+      resolve(-1);
+    }
+    console.warn('HVM2 grid worker failed', ev.message);
+  };
+  w.postMessage({
+    type: 'init',
+    wasmBytes,
+    workerUrl: demoAssetUrl(workerUrl),
+  });
+  globalThis.__jsharkHvm2GridWorker = w;
+  globalThis.__jsharkHvm2RequestGrid = (args) => {
+    if (!globalThis.__jsharkHvm2GridReady || globalThis.__jsharkHvm2Job) {
+      return;
+    }
+    const key = [
+      args.centerRe,
+      args.centerIm,
+      args.scale,
+      args.w,
+      args.h,
+      args.bxN,
+      args.byN,
+    ].join(',');
+    if (key === globalThis.__jsharkHvm2LastReq) {
+      return;
+    }
+    globalThis.__jsharkHvm2LastReq = key;
+    const jobId = ++jobSeq;
+    const epoch = globalThis.__jsharkHvm2Epoch | 0;
+    globalThis.__jsharkHvm2Job = jobId;
+    w.postMessage({ type: 'grid', jobId, epoch, ...args });
+  };
+  globalThis.__jsharkHvm2BenchGrid = (args) =>
+    new Promise((resolve) => {
+      if (!globalThis.__jsharkHvm2GridReady) {
+        resolve(-1);
+        return;
+      }
+      if (globalThis.__jsharkHvm2Job) {
+        resolve(globalThis.__jsharkHvm2LastMs >= 0
+          ? globalThis.__jsharkHvm2LastMs
+          : -1);
+        return;
+      }
+      const jobId = ++jobSeq;
+      const epoch = globalThis.__jsharkHvm2Epoch | 0;
+      globalThis.__jsharkHvm2Job = jobId;
+      globalThis.__jsharkHvm2LastReq = null;
+      benchWait = { jobId, resolve };
+      w.postMessage({ type: 'grid', jobId, epoch, ...args });
+    });
+  const prevTerm = globalThis.__jsharkHvm2?.terminate;
+  if (globalThis.__jsharkHvm2) {
+    globalThis.__jsharkHvm2.terminate = () => {
+      if (typeof prevTerm === 'function') {
+        prevTerm();
+      }
+      stopGridWorker(w);
+    };
+  }
+}

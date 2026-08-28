@@ -172,10 +172,10 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $
             "Build wasm: "
             code_ "cabal run build-hvm2-demo-wasm"
           p_ $
-            "The hvm2 path reduces one Bend fork-tree per click (not per frame) on shared-memory "
-              <> "workers (COOP/COEP; TPC from the wasm export). The net is capped "
-              <> "at 256 leaves so one click cannot lock the tab. Still slower than the SIMD "
-              <> "kernel — that is the point of the lab."
+            "The hvm2 path reduces Bend fork-trees off the UI thread. Zoom "
+              <> "stays live on the JS kernel; a net snapshot is used only "
+              <> "when it matches the camera. Still slower than SIMD — that "
+              <> "is the point of the lab."
       script_ [src_ (demoAsset "hvm2-wasm.js")] ("" :: Html ())
       source
       script_ [src_ scriptSrc] ("" :: Html ())
