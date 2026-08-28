@@ -1,9 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Pure reference for species shape / phase keys (mirrors former Discover.js).
+-- | Pure species shape / phase keys and classify.
 module DiscoverCore
-  ( discoverRgb
-  , extractCoords
+  ( extractCoords
   , collectPhaseKey
   , classifyAndResolve
   , ResolveResult (..)
@@ -32,9 +31,6 @@ data ResolveResult = ResolveResult
 
 defaultResolve :: ResolveResult
 defaultResolve = ResolveResult 0 0 0 0 0 ""
-
-discoverRgb :: Int -> (Int, Int, Int)
-discoverRgb = speciesColor
 
 extractCoords :: Int -> [Int] -> [(Int, Int)]
 extractCoords w cells =
@@ -284,7 +280,7 @@ classifyAndResolve known seen0 pending0 _nextId maxSid w cells =
                                             ResolveResult 3 0 0 0 0 key
                                           else
                                             let
-                                              (r, g, b) = discoverRgb nextId
+                                              (r, g, b) = speciesColor nextId
                                              in
                                               ResolveResult 2 nextId r g b key
 

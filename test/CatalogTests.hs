@@ -10,7 +10,6 @@ import DiscoverCore
   ( ResolveResult (..)
   , classifyAndResolve
   , collectPhaseKey
-  , discoverRgb
   , extractCoords
   )
 import JShark.Bun (evaluateEffectJSON)
@@ -21,7 +20,6 @@ import System.Directory (findExecutable, getCurrentDirectory)
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
-import Types (discoverMin)
 
 catalogTests :: TestTree
 catalogTests =
@@ -46,10 +44,6 @@ catalogTests =
         T.null (phaseKey cross) @?= True
     , testCase "shapeHash normalizes and sorts coords" $
         shapeHash block @?= "0,0;0,1;1,0;1,1"
-    , testCase "discoverRgb matches speciesColor golden angle" $ do
-        let
-          sid = discoverMin + 7
-        discoverRgb sid @?= speciesColor sid
     , testCase "classifyAndResolve waits for second sighting" $ do
         let
           w = 10
@@ -70,7 +64,7 @@ catalogTests =
         rrKey first @?= key
         rrAction second @?= 2
         rrSid second @?= 100
-        discoverRgb 100 @?= (rrR second, rrG second, rrB second)
+        speciesColor 100 @?= (rrR second, rrG second, rrB second)
     , testCase "classifyAndResolve at cap asks to steal a slot" $ do
         let
           w = 10

@@ -824,12 +824,9 @@ lcgRange s n =
 
 paletteBytes :: ByteArray
 paletteBytes =
-  packBytes
+  bytes
     [ w
     | i <- [0 .. discoverMax]
     , (r, g, b) <- [speciesColor i]
     , w <- [fromIntegral r, fromIntegral g, fromIntegral b]
     ]
-
-packBytes :: [Word8] -> ByteArray
-packBytes = bytes

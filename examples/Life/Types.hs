@@ -21,18 +21,8 @@ module Types
   , seedH
   , ink
   , soupSpecies
-  , stillMin
-  , stillMax
-  , oscMin
-  , oscMax
-  , shipMin
-  , shipMax
   , methuselahMin
   , methuselahMax
-  , eaterMin
-  , eaterMax
-  , miscMin
-  , miscMax
   , manualSpecies
   , discoverMin
   , discoverMax
@@ -170,29 +160,9 @@ ink = "#e8e8e8"
 soupSpecies :: Int
 soupSpecies = 0
 
-stillMin, stillMax :: Int
-stillMin = 1
-stillMax = 24
-
-oscMin, oscMax :: Int
-oscMin = 25
-oscMax = 44
-
-shipMin, shipMax :: Int
-shipMin = 45
-shipMax = 59
-
 methuselahMin, methuselahMax :: Int
 methuselahMin = 60
 methuselahMax = 69
-
-eaterMin, eaterMax :: Int
-eaterMin = 70
-eaterMax = 79
-
-miscMin, miscMax :: Int
-miscMin = 80
-miscMax = 89
 
 manualSpecies :: Int
 manualSpecies = 90

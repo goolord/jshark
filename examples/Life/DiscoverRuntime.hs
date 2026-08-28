@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
--- | JShark runtime for species shape keys and discovery (replaces Discover.js).
+-- | JShark effectful classify; same rules as 'DiscoverCore'.
 module DiscoverRuntime (classifyAndResolveEffect, collectPhaseKey) where
 
 import Data.Text (Text)
