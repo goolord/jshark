@@ -27,6 +27,7 @@ module JShark.Compiler.CompileReport
   , drawBatchDone
   , drawBatchStats
   , logFallback
+  , logReadableFallbackIO
   , progressStyleIO
   , writeProgressLine
   , picosecondsToSecs
@@ -92,6 +93,11 @@ logFallbackIO :: String -> IO ()
 logFallbackIO msg =
   CP.withProgressIO $
     hPutStrLn stderr ("JShark.Compiler: " ++ msg ++ "; using unminified source")
+
+logReadableFallbackIO :: String -> IO ()
+logReadableFallbackIO msg =
+  CP.withProgressIO $
+    hPutStrLn stderr ("JShark.Compiler: " ++ msg ++ "; using compact emit")
 
 drawSingleDoneIO :: Double -> IO ()
 drawSingleDoneIO secs = do

@@ -55,6 +55,7 @@
               cabal-install
               esbuild
               bun
+              biome
               fourmolu
               zig
               llvm

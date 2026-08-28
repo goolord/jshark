@@ -31,6 +31,8 @@ wasm/hvm2/generated-demo/
 .ghc.environment.*
 _site/
 tools/
+node_modules/
+bun.lock
 .aider*
 *.csv
 

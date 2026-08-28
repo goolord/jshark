@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+* Readable JS output is formatted with [Biome](https://biomejs.dev/) when
+  `biome` is on PATH (`nix develop` and CI install it). `prettyJS` is now
+  `Text -> IO Text` (was pure). On Biome failure, compiles log to stderr and
+  keep compact emit.
+
 * `'BigInt`. Host `Integer` via `ToJS` / `ToValue` / `bigInt`.
   Literals emit `Nn` (negatives parenthesized). Kernel ops share
   `NumericU` with `'Number` (`rem_`, bitwise, shifts); `quot_` is

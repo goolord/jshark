@@ -2350,10 +2350,10 @@ compilerTests =
         out @?= "console.log(\"hi\");"
     , testCase "readableConfig compilePure has no IIFE and inlines single-use lets" $ do
         out <- compileEffect readableConfig (with1 fooE (\x -> x + number 1))
-        out @?= "const n0 = foo();\nn0 + 1"
+        out @?= "const n0 = foo();\nn0 + 1;"
     , testCase "readableConfig keeps multi-use lets as const" $ do
         out <- compileEffect readableConfig (with1 fooE (\x -> x + x))
-        out @?= "const n0 = foo();\nn0 + n0"
+        out @?= "const n0 = foo();\nn0 + n0;"
     , testCase "Readable style skips the minifier even when a backend is set" $ do
         out <-
           compileEffect
@@ -2368,7 +2368,7 @@ compilerTests =
                 Nothing
             )
             fooE
-        out @?= "foo()"
+        out @?= "foo();"
     , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
         let
           src = "const x = 1 + 2;" :: Text
@@ -2384,24 +2384,24 @@ compilerTests =
               Nothing
         out <- compileWith cfg src
         out @?= src
-    , testCase "prettyJS breaks if/else and function bodies onto their own lines" $
-        prettyJS "if (cond()) {foo();} else {bar();}"
+    , testCase "prettyJS formats if/else when biome is on PATH" $ do
+        requireBiome
+        out <- prettyJS "if (cond()) {foo();} else {bar();}"
+        out
           @?= "if (cond()) {\n  foo();\n} else {\n  bar();\n}"
-    , testCase "prettyJS does not split braces that live inside a string" $
-        prettyJS "foo(\"{;}\");"
-          @?= "foo(\"{;}\");"
-    , testCase "prettyJS keeps else and catch on the closing brace line" $
-        prettyJS "try {foo();} catch (n0) {bar();}"
+    , testCase "prettyJS preserves braces inside strings" $ do
+        requireBiome
+        out <- prettyJS "foo(\"{;}\");"
+        out @?= "foo(\"{;}\");"
+    , testCase "prettyJS formats try/catch when biome is on PATH" $ do
+        requireBiome
+        out <- prettyJS "try {foo();} catch (n0) {bar();}"
+        out
           @?= "try {\n  foo();\n} catch (n0) {\n  bar();\n}"
-    , testCase "prettyJS joins empty if/else and keeps `}(` on one line" $
-        prettyJS "if (c) {\n}\nelse {\n  foo();\n}\n(bar)()"
-          @?= "if (c) {} else {\n  foo();\n}(bar)()"
-    , testCase "prettyJS keeps IIFE call on the closing brace" $
-        prettyJS "function () {return 1;}()"
-          @?= "function () {\n  return 1;\n}()"
-    , testCase "prettyJS does not treat elsewhere as else" $
-        prettyJS "if (c) {}elsewhere"
-          @?= "if (c) {}\nelsewhere"
+    , testCase "prettyJS leaves invalid IIFE unchanged when biome rejects it" $ do
+        requireBiome
+        out <- prettyJS "function () {return 1;}()"
+        out @?= "function () {return 1;}()"
     , testCase "readableConfig pretty-prints ifE" $ do
         out <-
           compileEffect
@@ -2409,13 +2409,13 @@ compilerTests =
             ( fromSyntax
                 (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)
             )
-        out @?= "(cond() ? 1 : 2);"
+        out @?= "cond() ? 1 : 2;"
     , testCase "readableConfig Map.new is a snippet, not an IIFE" $ do
         out <-
           compileEffect
             readableConfig
             (fromSyntax (Map.withMap $ \m -> Map.clear m))
-        out @?= "const n0 = new Map();\nn0.clear()"
+        out @?= "const n0 = new Map();\nn0.clear();"
         assertBool "no IIFE" (not ("(() => {" `T.isInfixOf` out))
     , testCase "readableConfig $valueEq shim is multiline" $ do
         out <- compileEffect readableConfig (with2 fooE barE structuralEq)

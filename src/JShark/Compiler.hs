@@ -13,7 +13,7 @@
 -- Codegen already emits compact JS ('renderJSCompact'). Default config wraps
 -- an IIFE and skips external tools. Opt into esbuild / Terser / Closure via
 -- 'CompilerBackend'. 'readableConfig' emits a debug snippet (no IIFE, then
--- 'prettyJS').
+-- Biome via 'finishReadableIO'). 'prettyJS' is @Text -> IO Text@; see CHANGELOG.
 --
 -- 'compileEffect' honors 'configProgress'. 'compileEffectPure' is silent;
 -- 'compileEffectIO' always draws. 'compilePure' never draws. Minify helpers
@@ -53,6 +53,7 @@ module JShark.Compiler
   , compilePures
   , compilePuresLabeled
   , prettyJS
+  , biomeAvailable
 
     -- * HVM2 lint
   , applyCompilerArgs
@@ -61,7 +62,7 @@ module JShark.Compiler
   )
 where
 
-import Control.Concurrent.Async (mapConcurrently, wait, withAsync)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception
   ( IOException
   , SomeException
@@ -76,8 +77,6 @@ import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString.Lazy as BL
-import Data.Char (isAlphaNum, isSpace)
 import Data.List (sortOn)
 import Data.Maybe (isJust)
 import Data.Text (Text)
@@ -103,16 +102,18 @@ import JShark.Compiler.CompileTiming
   , CompileJobStats (..)
   , seconds
   )
-import JShark.Compiler.Emit (JS, renderJS)
+import JShark.Compiler.Emit (JS)
 import JShark.Compiler.Hvm2Lint
   ( warnHvm2CandidatesEffect
   , warnHvm2CandidatesExpr
   )
-import Numeric (showHex)
-import qualified Streaming.ByteString as Q
-  ( hGetContents
-  , toStrict_
+import JShark.Compiler.JsFormat
+  ( biomeAvailable
+  , prettyJS
+  , tryPrettyJSIO
   )
+import JShark.Compiler.Process (executeProcessStdin)
+import Numeric (showHex)
 import System.CPUTime (getCPUTime)
 import System.Directory
   ( createDirectoryIfMissing
@@ -122,27 +123,9 @@ import System.Directory
   , renameFile
   )
 import System.Environment (lookupEnv)
-import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
-import System.IO
-  ( Handle
-  , hClose
-  , openBinaryTempFile
-  )
-import System.Process.Typed
-  ( byteStringInput
-  , createPipe
-  , getStderr
-  , getStdout
-  , proc
-  , setStderr
-  , setStdin
-  , setStdout
-  , waitExitCode
-  , withProcessWait
-  )
+import System.IO (hClose, openBinaryTempFile)
 import Text.Read (readMaybe)
-import qualified TextBuilder as TB
 
 quietCfg :: CompilerConfig -> CompilerConfig
 quietCfg cfg = cfg {configProgress = False, configQuiet = True}
@@ -356,7 +339,7 @@ compileWithEff ::
 compileWithEff cfg source = do
   res <- tryCompileWithEff cfg source
   case res of
-    Right out -> pure out
+    Right out -> finishReadableEff cfg out
     Left err
       | configFallback cfg -> do
           unless (configQuiet cfg) (CR.logFallback err)
@@ -475,103 +458,7 @@ compileEsbuild = compileWith esbuildCompilerConfig
 compileTerser :: Text -> IO Text
 compileTerser = compileWith terserCompilerConfig
 
--- | Indent generated JavaScript. Understands double/single-quoted strings
--- (with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
--- not @/re/@ literals, so those are not treated as strings. Not a general
--- JS parser.
-prettyJS :: Text -> Text
-prettyJS = renderJS . formatJS . T.strip
-
-formatJS :: Text -> JS
-formatJS = go 0
- where
-  indentLevels :: [JS]
-  indentLevels = take 128 $ iterate (<> "  ") mempty
-
-  indent n = indentLevels !! min n (length indentLevels - 1)
-
-  go :: Int -> Text -> JS
-  go _ t | T.null t = mempty
-  go n t =
-    case T.uncons t of
-      Nothing -> mempty
-      Just ('"', xs) -> TB.char '"' <> string '"' xs (go n)
-      Just ('\'', xs) -> TB.char '\'' <> string '\'' xs (go n)
-      Just ('{', xs) ->
-        let
-          xs' = T.dropWhile isSpace xs
-         in
-          case T.uncons xs' of
-            Just ('}', rest) -> "{}" <> afterClose n rest
-            _ -> TB.char '{' <> TB.char '\n' <> indent (n + 1) <> go (n + 1) xs'
-      Just ('}', xs) ->
-        let
-          n' = max 0 (n - 1)
-         in
-          TB.char '\n'
-            <> indent n'
-            <> TB.char '}'
-            <> afterClose n' (T.dropWhile isSpace xs)
-      Just (';', xs) ->
-        let
-          xs' = T.dropWhile isSpace xs
-         in
-          TB.char ';' <> case T.uncons xs' of
-            Just ('}', _) -> go n xs'
-            Nothing -> mempty
-            _ -> TB.char '\n' <> indent n <> go n xs'
-      Just (c, xs) ->
-        if isSpace c
-          then
-            let
-              xs' = T.dropWhile isSpace xs
-             in
-              case T.uncons xs' of
-                Nothing -> mempty
-                Just ('}', _) -> go n xs'
-                _ -> TB.char ' ' <> go n xs'
-          else TB.char c <> go n xs
-
-  afterClose n s =
-    let
-      t' = T.dropWhile isSpace s
-     in
-      case keyword "else" t' of
-        Just rest -> TB.char ' ' <> go n ("else" <> rest)
-        Nothing ->
-          case keyword "catch" t' of
-            Just rest -> TB.char ' ' <> go n ("catch" <> rest)
-            Nothing ->
-              case T.uncons t' of
-                Nothing -> mempty
-                Just (c, _) | c `elem` (");,.}(" :: String) -> go n t'
-                Just _ -> TB.char '\n' <> indent n <> go n t'
-
-  keyword kw s =
-    let
-      (pre, rest) = T.splitAt (T.length kw) s
-     in
-      if pre == kw && not (startsIdent rest)
-        then Just rest
-        else Nothing
-
-  startsIdent t = case T.uncons t of
-    Just (c, _) -> isAlphaNum c || c == '_' || c == '$'
-    Nothing -> False
-
-  string q t k = case T.uncons t of
-    Nothing -> mempty
-    Just (c, cs) ->
-      if c == '\\'
-        then case T.uncons cs of
-          Just (d, ds) -> TB.char c <> TB.char d <> string q ds k
-          Nothing -> TB.char c
-        else
-          if c == q
-            then TB.char c <> k cs
-            else TB.char c <> string q cs k
-
--- | Compile an effectful JShark computation. 'Readable' emits a pretty
+-- | Compile an effectful JShark tree to text. 'Readable' emits a pretty
 -- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
 --
 -- Batch slot phases use 'JShark.Compiler.CompileProgress' directly (see
@@ -601,7 +488,23 @@ compileTreeEff cfg doc = do
       liftIO $ CP.recordJobMinifySec (seconds tMin0 tMin1)
       pure minified
   liftIO $ CP.recordJobJsBytes (T.length out)
-  liftIO $ forceCompiled (finishStyle style out)
+  formatted <- finishReadableEff cfg out
+  liftIO $ forceCompiled formatted
+
+finishReadableEff ::
+  IOE :> es => CompilerConfig -> Text -> Eff es Text
+finishReadableEff cfg src
+  | configStyle cfg == Readable =
+      liftIO (finishReadableIO (configQuiet cfg) src)
+  | otherwise = pure src
+
+finishReadableIO :: Bool -> Text -> IO Text
+finishReadableIO quiet src =
+  tryPrettyJSIO src >>= \case
+    Right out -> pure out
+    Left err -> do
+      unless quiet (CR.logReadableFallbackIO err)
+      pure (T.strip src)
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff =
@@ -865,10 +768,6 @@ batchProgressCore total jobs = do
 forceCompiled :: Text -> IO Text
 forceCompiled t = t <$ evaluate (T.length t)
 
-finishStyle :: OutputStyle -> Text -> Text
-finishStyle Readable = prettyJS
-finishStyle Minified = id
-
 styleConfig :: CompilerConfig -> CompilerConfig
 styleConfig cfg = case configStyle cfg of
   Readable -> cfg {configBackend = Passthrough}
@@ -1060,37 +959,7 @@ executeProcess cmd args source = do
 -- a pure expression and we want to retry with an ESM export anchor).
 executeProcessRaw :: FilePath -> [String] -> Text -> IO (Either String Text)
 executeProcessRaw cmd args source =
-  ( do
-      let
-        pConfig =
-          setStdin (byteStringInput (BL.fromStrict (TE.encodeUtf8 source)))
-            $ setStdout createPipe
-            $ setStderr createPipe
-            $ proc cmd args
-      withProcessWait pConfig $ \p -> do
-        (code, outBs, errBs) <-
-          withAsync (drainHandle (getStdout p)) $ \outA ->
-            withAsync (drainHandle (getStderr p)) $ \errA -> do
-              exitCode <- waitExitCode p
-              outBs' <- wait outA
-              errBs' <- wait errA
-              pure (exitCode, outBs', errBs')
-        case code of
-          ExitSuccess -> pure (Right (T.strip (TE.decodeUtf8 outBs)))
-          ExitFailure c ->
-            pure
-              ( Left
-                  ( if BS.null errBs
-                      then "Process exited with code " ++ show c
-                      else BC.unpack errBs
-                  )
-              )
-  )
-    `catch` (\(e :: SomeException) -> pure (Left (show e)))
-
--- | Drain a process pipe; minifier stdout/stderr are small enough to hold.
-drainHandle :: Handle -> IO BS.ByteString
-drainHandle h = Q.toStrict_ (Q.hGetContents h)
+  fmap (fmap T.strip) (executeProcessStdin cmd args source)
 
 compileForm :: CompilerConfig -> CompileForm
 compileForm cfg = case configStyle cfg of

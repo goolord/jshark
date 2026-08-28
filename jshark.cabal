@@ -124,6 +124,8 @@ library
     JShark.Compiler.Ir
     JShark.Compiler.JsNum
     JShark.Compiler.JsShim
+    JShark.Compiler.JsFormat
+    JShark.Compiler.Process
     JShark.Compiler.EmitBend
     JShark.Compiler.Evaluate
     JShark.Compiler.Metadata

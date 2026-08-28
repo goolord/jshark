@@ -25,6 +25,7 @@ module Support
   , mulDiv
   , assertJSContains
   , captureStderr
+  , requireBiome
   )
 where
 
@@ -37,6 +38,7 @@ import GHC.Generics (Generic)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
+import JShark.Compiler (biomeAvailable)
 import System.IO
   ( BufferMode (..)
   , hClose
@@ -171,3 +173,9 @@ captureStderr io = do
   _ <- evaluate (length msg)
   hClose readH
   pure (result, msg)
+
+requireBiome :: IO ()
+requireBiome = do
+  avail <- biomeAvailable
+  unless avail $
+    assertFailure "biome not on PATH (install biome, bunx, or use nix develop)"

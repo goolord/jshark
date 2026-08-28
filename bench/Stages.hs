@@ -116,7 +116,7 @@ codepathStages name prog =
         nfClosed (\e -> T.length (renderJS (effectfulAST e))) prog
     , bench "emit" $ nfClosed emit prog
     , bench "emit/bytes" $ nfClosed emitLen prog
-    , bench "prettyJS/e2e" $ nfClosed (\e -> prettyJS (emit e)) prog
+    , bench "prettyJS/e2e" $ nfAppClosed (\e -> prettyJS (emit e)) prog
     , bench "compileEffect/readable/e2e" $
         nfAppClosed (compileEffect readableConfig) prog
     ]
@@ -132,7 +132,7 @@ codepathStagesPure name prog =
     , bench "emit" $ nfPure (\e -> renderJSCompact (pureAST e)) prog
     , bench "emit/bytes" $ nfPure (\e -> T.length (renderJSCompact (pureAST e))) prog
     , bench "prettyJS/e2e" $
-        nfPure (\e -> prettyJS (renderJSCompact (pureAST e))) prog
+        nfAppPure (\e -> prettyJS (renderJSCompact (pureAST e))) prog
     , bench "compilePure/readable/e2e" $ nfAppPure (compilePure readableConfig) prog
     ]
 
@@ -149,9 +149,9 @@ stageBenches name prog =
     , bench "emit/bytes" $ nfClosed emitLen prog
     , bench "effectfulProgram" $
         nfClosed (\e -> renderJSCompact (effectfulProgram e)) prog
-    , bench "prettyJS/e2e" $ nfClosed (\e -> prettyJS (emit e)) prog
+    , bench "prettyJS/e2e" $ nfAppClosed (\e -> prettyJS (emit e)) prog
     , env (pure (emit prog)) $ \js ->
-        bench "prettyJS/precomputed" $ nf prettyJS js
+        bench "prettyJS/precomputed" $ nfAppIO (\() -> prettyJS js) ()
     , bench "compileEffect/readable/e2e" $
         nfAppClosed (compileEffect readableConfig) prog
     , bench "compileEffect/passthrough/e2e" $
@@ -172,9 +172,9 @@ stageBenchesPure name prog =
     , bench "emit/bytes" $ nfPure (\e -> T.length (renderJSCompact (pureAST e))) prog
     , bench "pureProgram" $ nfPure (\e -> renderJSCompact (pureProgram e)) prog
     , bench "prettyJS/e2e" $
-        nfPure (\e -> prettyJS (renderJSCompact (pureAST e))) prog
+        nfAppPure (\e -> prettyJS (renderJSCompact (pureAST e))) prog
     , env (pure (renderJSCompact (pureAST prog))) $ \js ->
-        bench "prettyJS/precomputed" $ nf prettyJS js
+        bench "prettyJS/precomputed" $ nfAppIO (\() -> prettyJS js) ()
     , bench "compilePure/readable/e2e" $ nfAppPure (compilePure readableConfig) prog
     , bench "compilePure/passthrough/e2e" $
         nfAppPure (compilePure passthroughConfig) prog
