@@ -20,13 +20,15 @@
 .life-tool-preview[data-tw="11"] { grid-template-columns: repeat(11, 3px); }
 .life-tool-preview[data-tw="12"] { grid-template-columns: repeat(12, 3px); }
 
-.life-tool[data-tool="46"] .life-tool-cell.is-on { background: rgb(169, 40, 42); }
-.life-tool[data-tool="47"] .life-tool-cell.is-on { background: rgb(169, 40, 55); }
-.life-tool[data-tool="48"] .life-tool-cell.is-on { background: rgb(169, 40, 68); }
-.life-tool[data-tool="60"] .life-tool-cell.is-on { background: rgb(40, 169, 137); }
-.life-tool[data-tool="61"] .life-tool-cell.is-on { background: rgb(40, 169, 152); }
-.life-tool[data-tool="63"] .life-tool-cell.is-on { background: rgb(40, 156, 169); }
-.life-tool[data-tool="68"] .life-tool-cell.is-on { background: rgb(40, 81, 169); }
+.life-tool[data-tool="46"] .life-tool-cell.is-on { background: rgb(88, 103, 114); }
+.life-tool[data-tool="47"] .life-tool-cell.is-on { background: rgb(239, 117, 152); }
+.life-tool[data-tool="48"] .life-tool-cell.is-on { background: rgb(175, 197, 175); }
+.life-tool[data-tool="60"] .life-tool-cell.is-on { background: rgb(208, 162, 184); }
+.life-tool[data-tool="61"] .life-tool-cell.is-on { background: rgb(133, 226, 110); }
+.life-tool[data-tool="62"] .life-tool-cell.is-on { background: rgb(78, 61, 246); }
+.life-tool[data-tool="63"] .life-tool-cell.is-on { background: rgb(184, 158, 141); }
+.life-tool[data-tool="68"] .life-tool-cell.is-on { background: rgb(143, 103, 110); }
+.life-tool[data-tool="70"] .life-tool-cell.is-on { background: rgb(103, 86, 126); }
 .life-tool[data-tool="-1"] .life-tool-cell.is-on { background: #e55; }
 .life-tool[data-tool="-2"] .life-tool-cell.is-on { background: #aaa; }
-.life-tool[data-tool="-3"] .life-tool-cell.is-on { background: rgb(169, 40, 51); }
+.life-tool[data-tool="-3"] .life-tool-cell.is-on { background: rgb(145, 163, 24); }

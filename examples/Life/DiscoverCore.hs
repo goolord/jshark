@@ -11,13 +11,14 @@ module DiscoverCore
 where
 
 import Catalog (canonicalShapeHash, shapeHash)
-import Types (methuselahMax, methuselahMin)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
+import Palette (speciesColor)
+import Types (methuselahMax, methuselahMin)
 
 data ResolveResult = ResolveResult
   { rrAction :: Int
@@ -33,36 +34,7 @@ defaultResolve :: ResolveResult
 defaultResolve = ResolveResult 0 0 0 0 0 ""
 
 discoverRgb :: Int -> (Int, Int, Int)
-discoverRgb n =
-  let
-    hue = fromIntegral ((n * 137508) `mod` 360000) / (1000 :: Double)
-    s = 0.62 :: Double
-    l = 0.41 :: Double
-    c = (1 - abs (2 * l - 1)) * s
-    hp = hue / 60
-    hpMod = hp - 2 * fromIntegral (floor (hp / 2) :: Int)
-    x = c * (1 - abs (hpMod - 1))
-    m = l - c / 2
-    (r1, g1, b1) =
-      if hp < 1
-        then (c, x, 0)
-        else
-          if hp < 2
-            then (x, c, 0)
-            else
-              if hp < 3
-                then (0, c, x)
-                else
-                  if hp < 4
-                    then (0, x, c)
-                    else
-                      if hp < 5
-                        then (x, 0, c)
-                        else (c, 0, x)
-    clamp t =
-      max 0 (min 255 (round (255 * (t + m) :: Double) :: Integer))
-   in
-    (fromIntegral (clamp r1), fromIntegral (clamp g1), fromIntegral (clamp b1))
+discoverRgb = speciesColor
 
 extractCoords :: Int -> [Int] -> [(Int, Int)]
 extractCoords w cells =
@@ -273,47 +245,48 @@ classifyAndResolve known seen0 pending0 _nextId maxSid w cells =
     snap
     hashes
     allowMint =
-    case catalogHit knownMap key of
-      Just sid ->
-        ResolveResult 1 sid 0 0 0 key
-      Nothing ->
-        case catalogHit knownMap snap of
-          Just sid ->
-            ResolveResult 1 sid 0 0 0 snap
-          Nothing ->
-            case lookupHash knownMap hashes of
-              Just sid | not (isMethuselah sid) ->
-                ResolveResult 1 sid 0 0 0 key
-              _ ->
-                case Map.lookup key seen of
-                  Just sid ->
-                    ResolveResult 1 sid 0 0 0 key
-                  Nothing ->
-                    case Map.lookup snap seen of
-                      Just sid ->
-                        ResolveResult 1 sid 0 0 0 snap
-                      Nothing ->
-                        case lookupHash seen hashes of
-                          Just sid ->
-                            ResolveResult 1 sid 0 0 0 key
-                          Nothing ->
-                            if not allowMint
-                              then defaultResolve
-                              else
-                                let
-                                  cnt = Map.findWithDefault 0 key pending + 1
-                                 in
-                                  if cnt < 2
-                                    then defaultResolve {rrKey = key}
-                                    else
-                                      if nextId > maxSidLimit
-                                        then
-                                          ResolveResult 3 0 0 0 0 key
-                                        else
-                                          let
-                                            (r, g, b) = discoverRgb nextId
-                                           in
-                                            ResolveResult 2 nextId r g b key
+      case catalogHit knownMap key of
+        Just sid ->
+          ResolveResult 1 sid 0 0 0 key
+        Nothing ->
+          case catalogHit knownMap snap of
+            Just sid ->
+              ResolveResult 1 sid 0 0 0 snap
+            Nothing ->
+              case lookupHash knownMap hashes of
+                Just sid
+                  | not (isMethuselah sid) ->
+                      ResolveResult 1 sid 0 0 0 key
+                _ ->
+                  case Map.lookup key seen of
+                    Just sid ->
+                      ResolveResult 1 sid 0 0 0 key
+                    Nothing ->
+                      case Map.lookup snap seen of
+                        Just sid ->
+                          ResolveResult 1 sid 0 0 0 snap
+                        Nothing ->
+                          case lookupHash seen hashes of
+                            Just sid ->
+                              ResolveResult 1 sid 0 0 0 key
+                            Nothing ->
+                              if not allowMint
+                                then defaultResolve
+                                else
+                                  let
+                                    cnt = Map.findWithDefault 0 key pending + 1
+                                   in
+                                    if cnt < 2
+                                      then defaultResolve {rrKey = key}
+                                      else
+                                        if nextId > maxSidLimit
+                                          then
+                                            ResolveResult 3 0 0 0 0 key
+                                          else
+                                            let
+                                              (r, g, b) = discoverRgb nextId
+                                             in
+                                              ResolveResult 2 nextId r g b key
 
   lookupHash _ [] = Nothing
   lookupHash seen (h : hs) =

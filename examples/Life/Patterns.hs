@@ -5,7 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UnboxedTuples #-}
 
--- | Pattern catalog and species palette for the life demo.
+-- | Pattern catalog for the life demo. Palette lives in 'Palette'.
 --
 -- Species @0@ soup; @1–24@ still lifes; @25–44@ oscillators; @45–59@ spaceships;
 -- @60–69@ methuselah seeds; @70–79@ eaters; @80–89@ misc; @90@ manual;
@@ -46,35 +46,21 @@ import GHC.Exts
   )
 import GHC.ST (ST (..))
 import GHC.Word (Word8 (W8#))
+import Palette (speciesColor)
 import Types
   ( discoverMax
-  , discoverMin
-  , eaterMax
-  , eaterMin
   , gridH
   , gridN
   , gridW
   , lcgInc
   , lcgModulus
   , lcgMult
-  , manualSpecies
-  , methuselahMax
-  , methuselahMin
-  , miscMax
-  , miscMin
-  , oscMax
-  , oscMin
   , seedH
   , seedOx
   , seedOy
   , seedW
-  , shipMax
-  , shipMin
   , soupDensity
   , soupRngSeed
-  , soupSpecies
-  , stillMax
-  , stillMin
   )
 
 data PatternSpec = PatternSpec
@@ -192,8 +178,8 @@ allPatterns =
 pat :: Int -> Int -> [(Int, Int)] -> PatternSpec
 pat i n cells = PatternSpec i n cells
 
--- | Spaceships and methuselahs that break still-life / oscillator beds.
---   Order is the HUD order: xWSS, then the classic seeds.
+-- | Placement tools after Mouse / Glider / Eraser. HUD order: xWSS,
+--   classic seeds, then eater.
 disturbSids :: [Int]
 disturbSids =
   [ 46
@@ -201,8 +187,10 @@ disturbSids =
   , 48
   , 60
   , 61
+  , 62
   , 63
   , 68
+  , 70
   ]
 
 disturbPatterns :: [PatternSpec]
@@ -559,8 +547,10 @@ rPentomino = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 2)]
 acorn :: [(Int, Int)]
 acorn = [(1, 0), (3, 1), (0, 2), (1, 2), (4, 2), (5, 2), (6, 2)]
 
+-- | LifeWiki Diehard (7 cells, 8×3): 6bo$2o$bo3b2o!
 diehard :: [(Int, Int)]
-diehard = [(6, 1), (0, 2), (1, 2), (2, 2), (2, 3), (6, 5), (7, 5)]
+diehard =
+  [(6, 0), (0, 1), (1, 1), (2, 1), (2, 2), (6, 2), (7, 2)]
 
 -- | LifeWiki Bunnies (9 cells, 8×4): o5bo$2bo3bo$2bo2bobo$bobo!
 bunnies :: [(Int, Int)]
@@ -841,60 +831,5 @@ paletteBytes =
     , w <- [fromIntegral r, fromIntegral g, fromIntegral b]
     ]
 
-speciesColor :: Int -> (Int, Int, Int)
-speciesColor n
-  | n == soupSpecies = hslRgb 0 0 0.5
-  | n == manualSpecies = hslRgb 285 palSat (palLit + 0.02)
-  | n >= stillMin && n <= stillMax =
-      hslRgb (220 + fromIntegral (n - stillMin) * 5.5) palSat palLit
-  | n >= oscMin && n <= oscMax =
-      hslRgb (85 + fromIntegral (n - oscMin) * 5.0) palSat palLit
-  | n >= shipMin && n <= shipMax =
-      hslRgb (355 + fromIntegral (n - shipMin) * 6.0) palSat palLit
-  | n >= methuselahMin && n <= methuselahMax =
-      hslRgb (165 + fromIntegral (n - methuselahMin) * 7.0) palSat palLit
-  | n >= eaterMin && n <= eaterMax =
-      hslRgb (45 + fromIntegral (n - eaterMin) * 7.5) palSat palLit
-  | n >= miscMin && n <= miscMax =
-      hslRgb (300 + fromIntegral (n - miscMin) * 5.5) palSat palLit
-  | n >= discoverMin =
-      hslRgb
-        (fromIntegral ((n * 137508) `mod` 360000) / 1000)
-        palSat
-        palLit
-  | otherwise = hslRgb 210 palSat palLit
- where
-  palSat, palLit :: Double
-  palSat = 0.62
-  palLit = 0.41
-
 packBytes :: [Word8] -> ByteArray
 packBytes = bytes
-
-hslRgb :: Double -> Double -> Double -> (Int, Int, Int)
-hslRgb h s l =
-  let
-    c = (1 - abs (2 * l - 1)) * s
-    hp = h / 60
-    hpMod = hp - 2 * fromIntegral (floor (hp / 2) :: Int)
-    x = c * (1 - abs (hpMod - 1))
-    (r1, g1, b1) =
-      if hp < 1
-        then (c, x, 0)
-        else
-          if hp < 2
-            then (x, c, 0)
-            else
-              if hp < 3
-                then (0, c, x)
-                else
-                  if hp < 4
-                    then (0, x, c)
-                    else
-                      if hp < 5
-                        then (x, 0, c)
-                        else (c, 0, x)
-    m = l - c / 2
-    clamp n = max 0 (min 255 (round (255 * (n + m))))
-   in
-    (clamp r1, clamp g1, clamp b1)

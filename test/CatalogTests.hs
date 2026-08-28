@@ -89,6 +89,8 @@ catalogTests =
         rrKey res @?= key
     , testCase "glider is one 8-connected component" $
         eightComponentSize glider @?= 5
+    , testCase "diehard is classic 8x3 methuselah" $
+        shapeHash diehardCells @?= "0,1;1,1;2,1;2,2;6,0;6,2;7,2"
     , testCase "classifyAndResolve blinker hits catalog on first sight" $ do
         let
           w = 10
@@ -161,6 +163,10 @@ catalogTests =
     case find ((== 26) . patId) allPatterns of
       Just p -> p
       Nothing -> error "toad missing from catalog"
+  diehardCells =
+    case find ((== 62) . patId) allPatterns of
+      Just p -> patCells p
+      Nothing -> error "diehard missing from catalog"
 
   phaseKey coords = fst (collectPhaseKey coords)
 

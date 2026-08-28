@@ -265,6 +265,7 @@ library life
     DiscoverRuntime
     LutBoot
     Names
+    Palette
     Page
     Pixi
     Profile
