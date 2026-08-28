@@ -165,10 +165,6 @@ updateMetricsFFI =
     ++ "}"
     ++ "}"
 
--- | Optimizer drops bare @whenS@ outside callbacks; @forEach_@ preserves it.
-once_ :: EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-once_ body = forEach_ (Array.singleton (number 0)) $ \_ -> body
-
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
@@ -246,10 +242,9 @@ boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st 
     sourceOpen <-
       bindExpr $
         ffiExpr "!!document.querySelector('.js-source[open]')" RecNil
-    once_ $
-      whenS (not_ paused .&& not_ sourceOpen) $ do
-        tickFrame st now
-        paint ctxH st status
+    whenS (not_ paused .&& not_ sourceOpen) $ do
+      tickFrame st now
+      paint ctxH st status
   done
 
 wireControls ::

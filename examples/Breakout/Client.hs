@@ -15,7 +15,6 @@ import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, SumOf)
 import qualified JShark.Api.Generic as G
 import JShark.Api.Rec (Rec (..), (<:))
-import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import qualified JShark.Math as Math
@@ -147,28 +146,21 @@ step state =
     bounce state
     advanceBall state
 
--- | The optimizer currently drops bare @whenS@/@ifS@ assignments outside
--- callbacks; wrapping in @forEach_@ preserves them (same as brick hits).
-once_ :: EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-once_ body = forEach_ (Array.singleton (number 0)) $ \_ -> body
-
 movePaddle :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 movePaddle state = do
   pad <- state.paddle
   px0 <- pad.px
   goR <- state.rightOn
   goL <- state.leftOn
-  once_ $
-    whenS (goR .&& px0 .< number paddleMaxX) $
-      do
-        set @"px" pad (px0 + number paddleSpeed)
-        done
+  whenS (goR .&& px0 .< number paddleMaxX) $
+    do
+      set @"px" pad (px0 + number paddleSpeed)
+      done
   px1 <- pad.px
-  once_ $
-    whenS (goL .&& px1 .> 0) $
-      do
-        set @"px" pad (px1 - number paddleSpeed)
-        done
+  whenS (goL .&& px1 .> 0) $
+    do
+      set @"px" pad (px1 - number paddleSpeed)
+      done
 
 advanceBall :: Effect f (MutableObjectOf Game) -> EffectSyntax f (f 'Unit)
 advanceBall state = do
@@ -230,11 +222,10 @@ bounceWalls ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 bounceWalls b ddx r w nx =
-  once_ $
-    whenS (nx .> (w - r) .|| nx .< r) $
-      do
-        set @"dx" b (negate ddx)
-        done
+  whenS (nx .> (w - r) .|| nx .< r) $
+    do
+      set @"dx" b (negate ddx)
+      done
 
 bounceFloor ::
   Effect f (MutableObjectOf Game)
@@ -248,14 +239,12 @@ bounceFloor ::
   -> EffectSyntax f (f 'Unit)
 bounceFloor state b bx0 ddy px0 r h ny =
   do
-    once_ $
-      whenS (ny .< r) $
-        do
-          set @"dy" b (negate ddy)
-          done
-    once_
-      $ whenS (ny .>= r .&& ny .> (h - r))
-      $ ifS
+    whenS (ny .< r) $
+      do
+        set @"dy" b (negate ddy)
+        done
+    whenS (ny .>= r .&& ny .> (h - r)) $
+      ifS
         (overlapsPaddle bx0 px0)
         ( do
             set @"dx" b (paddleKick bx0 px0)
