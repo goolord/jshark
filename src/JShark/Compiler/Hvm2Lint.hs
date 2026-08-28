@@ -29,8 +29,8 @@ import JShark.Compiler.Ir
   , IrEffect (..)
   , IrExpr (..)
   , IrFieldLit (..)
-  , irMetaPure
-  , irMetaSize
+  , irPure
+  , irSize
   , metaIrExpr
   )
 import qualified JShark.Compiler.Ir as Ir
@@ -166,8 +166,8 @@ scanSome minSize n = \case
 checkIrExpr :: Int -> Int -> IrExpr u -> ([Hvm2Candidate], Int)
 checkIrExpr minSize n e
   | IrHvm2Ref {} <- e = ([], n)
-  | not (irMetaPure (metaIrExpr e)) = ([], n)
-  | irMetaSize (metaIrExpr e) < minSize = ([], n)
+  | not (irPure (metaIrExpr e)) = ([], n)
+  | irSize (metaIrExpr e) < minSize = ([], n)
   | otherwise =
       case emitBendKernel (candidateName n) e of
         Left _ ->
@@ -179,7 +179,7 @@ checkIrExpr minSize n e
             cand =
               Hvm2Candidate
                 { hvm2CandidateName = candidateName n
-                , hvm2CandidateSize = irMetaSize (metaIrExpr e)
+                , hvm2CandidateSize = irSize (metaIrExpr e)
                 , hvm2CandidateParams = length tags
                 , hvm2CandidatePreview = preview
                 }

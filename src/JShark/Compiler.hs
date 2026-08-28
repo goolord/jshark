@@ -10,26 +10,14 @@
 
 -- | Post-process generated JavaScript and optional external minification.
 --
--- JShark codegen already emits compact JS ('renderJSCompact'). The default
--- config ('defaultCompilerConfig') wraps an IIFE and skips external tools.
--- Opt into esbuild / Terser / Closure via 'CompilerBackend' when you want
--- another shrink pass.
+-- Codegen already emits compact JS ('renderJSCompact'). Default config wraps
+-- an IIFE and skips external tools. Opt into esbuild / Terser / Closure via
+-- 'CompilerBackend'. 'readableConfig' emits a debug snippet (no IIFE, then
+-- 'prettyJS').
 --
--- Use 'readableConfig' for a debug snippet (no IIFE, assignment inlining,
--- then 'prettyJS' — not a full JS pretty-printer).
---
--- == @*Pure@ / @*IO@ entry points
---
--- Post-process helpers ('compileWith', 'compileJS', 'compileClosure', …):
---
--- * @*Pure@ — 'quietCfg' (suppresses minifier fallback on stderr)
--- * default and @*IO@ — identical; no progress bars (minify only)
---
--- JShark program helpers ('compileEffect', 'compilePure', …):
---
--- * @*Pure@ — silent 'CompileReport' interpreter
--- * @*IO@ — terminal progress + timing ('compileEffect' / 'compileEffects')
--- * 'compilePure' / 'compilePures' — never draw progress, any suffix
+-- 'compileEffect' honors 'configProgress'. 'compileEffectPure' is silent;
+-- 'compileEffectIO' always draws. 'compilePure' never draws. Minify helpers
+-- have no progress bars; 'compileWithPure' also suppresses fallback stderr.
 module JShark.Compiler
   ( -- * Compiler Configuration
     CompilerConfig (..)
@@ -49,48 +37,22 @@ module JShark.Compiler
 
     -- * Compilation
   , compileJS
-  , compileJSPure
-  , compileJSIO
   , compileWith
   , compileWithPure
-  , compileWithIO
   , tryCompileWith
-  , tryCompileWithPure
-  , tryCompileWithIO
   , compileClosure
-  , compileClosurePure
-  , compileClosureIO
   , compileEsbuild
-  , compileEsbuildPure
-  , compileEsbuildIO
   , compileTerser
-  , compileTerserPure
-  , compileTerserIO
   , compileEffect
   , compileEffectPure
   , compileEffectIO
   , compileEffects
-  , compileEffectsPure
-  , compileEffectsIO
   , compileEffectsLabeled
-  , compileEffectsLabeledPure
-  , compileEffectsLabeledIO
   , compileJobsLabeled
-  , compileJobsLabeledPure
-  , compileJobsLabeledIO
   , compilePure
-  , compilePurePure
-  , compilePureIO
   , compilePures
-  , compilePuresPure
-  , compilePuresIO
   , compilePuresLabeled
-  , compilePuresLabeledPure
-  , compilePuresLabeledIO
   , prettyJS
-
-    -- * Cache
-  , clearCompilerCache
 
     -- * HVM2 lint
   , applyCompilerArgs
@@ -109,6 +71,7 @@ import Control.Exception
   , throwIO
   )
 import Control.Monad (guard, unless, when)
+import qualified Control.Monad.Catch as MC
 import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
@@ -194,7 +157,7 @@ closureCompilerConfig :: ClosureLevel -> CompilerConfig
 closureCompilerConfig lvl =
   CompilerConfig
     (Closure (CompilerClosureConfig lvl []))
-    MemoryCache
+    NoCache
     False
     Minified
     False
@@ -206,7 +169,7 @@ esbuildCompilerConfig :: CompilerConfig
 esbuildCompilerConfig =
   CompilerConfig
     (Esbuild defaultEsbuildConfig)
-    MemoryCache
+    NoCache
     False
     Minified
     False
@@ -218,7 +181,7 @@ terserCompilerConfig :: CompilerConfig
 terserCompilerConfig =
   CompilerConfig
     (Terser defaultTerserConfig)
-    MemoryCache
+    NoCache
     False
     Minified
     False
@@ -262,7 +225,6 @@ data CompilerEsbuildConfig = CompilerEsbuildConfig
   }
   deriving (Show, Eq, Ord)
 
--- | Default esbuild configuration with minification enabled.
 defaultEsbuildConfig :: CompilerEsbuildConfig
 defaultEsbuildConfig = CompilerEsbuildConfig True Nothing []
 
@@ -274,7 +236,6 @@ data CompilerTerserConfig = CompilerTerserConfig
   }
   deriving (Show, Eq, Ord)
 
--- | Default Terser configuration with compression and mangling enabled.
 defaultTerserConfig :: CompilerTerserConfig
 defaultTerserConfig = CompilerTerserConfig True True []
 
@@ -290,13 +251,8 @@ data CompilerBackend
   deriving (Show, Eq, Ord)
 
 -- | Caching strategy for minified JavaScript artifacts.
---
--- 'DiskCache' stores entries on disk and verifies keys on read.
--- 'MemoryCache' is kept for API compatibility but does not retain an
--- in-process table (each call recompiles).
 data CacheStrategy
   = NoCache
-  | MemoryCache
   | DiskCache FilePath
   deriving (Show, Eq, Ord)
 
@@ -352,10 +308,6 @@ cacheFormatVersion = "jshark-minify-2"
 diskCacheMagic :: BS.ByteString
 diskCacheMagic = "jshark-cache-v1\n"
 
--- | No-op; retained for test harness compatibility.
-clearCompilerCache :: IO ()
-clearCompilerCache = pure ()
-
 fnv1a64 :: BS.ByteString -> Word64
 fnv1a64 = BS.foldl' step 14695981039346656037
  where
@@ -385,26 +337,16 @@ cacheKey cfg source =
 compileJS :: Text -> IO Text
 compileJS = compileWith defaultCompilerConfig
 
-compileJSPure :: Text -> IO Text
-compileJSPure = compileWithPure defaultCompilerConfig
-
--- | Same as 'compileJS'; minify has no progress output ('*IO' symmetry).
-compileJSIO :: Text -> IO Text
-compileJSIO = compileJS
-
 -- | Minify using 'tryCompileWith'. On 'Left', either throw or (when
 -- 'configFallback' is set) log to stderr and return the original source.
 compileWith :: CompilerConfig -> Text -> IO Text
 compileWith cfg source =
   runEff $ CR.runCompileReportSilent (compileWithEff cfg source)
 
+-- | Like 'compileWith' but suppresses minifier-fallback stderr.
 compileWithPure :: CompilerConfig -> Text -> IO Text
 compileWithPure cfg source =
   runEff $ CR.runCompileReportSilent (compileWithEff (quietCfg cfg) source)
-
--- | Same as 'compileWith'; minify has no progress output ('*IO' symmetry).
-compileWithIO :: CompilerConfig -> Text -> IO Text
-compileWithIO = compileWith
 
 compileWithEff ::
   (CR.CompileReport :> es, IOE :> es) =>
@@ -429,14 +371,6 @@ compileWithEff cfg source = do
 tryCompileWith :: CompilerConfig -> Text -> IO (Either String Text)
 tryCompileWith cfg source = runEff (tryCompileWithEff cfg source)
 
--- | Like 'tryCompileWith' with 'quietCfg' (for API symmetry).
-tryCompileWithPure :: CompilerConfig -> Text -> IO (Either String Text)
-tryCompileWithPure cfg source = tryCompileWith (quietCfg cfg) source
-
--- | Same as 'tryCompileWith'; try-compile never emits progress output.
-tryCompileWithIO :: CompilerConfig -> Text -> IO (Either String Text)
-tryCompileWithIO = tryCompileWith
-
 tryCompileWithEff ::
   IOE :> es =>
   CompilerConfig
@@ -448,7 +382,6 @@ tryCompileWithEff cfg0 source =
    in
     case configCache cfg of
       NoCache -> tryRunCompileEff cfg source
-      MemoryCache -> tryRunCompileEff cfg source
       DiskCache dir -> do
         liftIO $ createDirectoryIfMissing True dir
         let
@@ -534,34 +467,13 @@ atomicWriteFile dest bytes = do
 compileClosure :: ClosureLevel -> Text -> IO Text
 compileClosure lvl = compileWith (closureCompilerConfig lvl)
 
-compileClosurePure :: ClosureLevel -> Text -> IO Text
-compileClosurePure lvl = compileWithPure (closureCompilerConfig lvl)
-
--- | Same as 'compileClosure'; minify has no progress output.
-compileClosureIO :: ClosureLevel -> Text -> IO Text
-compileClosureIO = compileClosure
-
 -- | Minify with esbuild. Throws if esbuild is missing or fails.
 compileEsbuild :: Text -> IO Text
 compileEsbuild = compileWith esbuildCompilerConfig
 
-compileEsbuildPure :: Text -> IO Text
-compileEsbuildPure = compileWithPure esbuildCompilerConfig
-
--- | Same as 'compileEsbuild'; minify has no progress output.
-compileEsbuildIO :: Text -> IO Text
-compileEsbuildIO = compileEsbuild
-
 -- | Minify with Terser. Throws if terser is missing or fails.
 compileTerser :: Text -> IO Text
 compileTerser = compileWith terserCompilerConfig
-
-compileTerserPure :: Text -> IO Text
-compileTerserPure = compileWithPure terserCompilerConfig
-
--- | Same as 'compileTerser'; minify has no progress output.
-compileTerserIO :: Text -> IO Text
-compileTerserIO = compileTerser
 
 -- | Indent generated JavaScript. Understands double/single-quoted strings
 -- (with backslash escapes). Regexes are emitted as @new RegExp(\"…\")@,
@@ -677,23 +589,16 @@ compileTreeEff cfg doc = do
     !js = renderJSCompact (doc style)
   tCodegen1 <- liftIO getMonotonicTime
   liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
-  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.Compiler.CompileReport'.
   liftIO CP.finishEmitPhase
   let
     postCfg = styleConfig cfg
   out <- case configBackend postCfg of
     Passthrough -> pure js
-    _ -> do
-      case configProgressSlot cfg of
-        Nothing -> pure ()
-        Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 0 1
+    _ -> withJobPhase cfg CP.PhaseMinify $ do
       tMin0 <- liftIO getMonotonicTime
       minified <- compileWithEff postCfg js
       tMin1 <- liftIO getMonotonicTime
       liftIO $ CP.recordJobMinifySec (seconds tMin0 tMin1)
-      case configProgressSlot cfg of
-        Nothing -> pure ()
-        Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseMinify 1 1
       pure minified
   liftIO $ CP.recordJobJsBytes (T.length out)
   liftIO $ forceCompiled (finishStyle style out)
@@ -721,15 +626,9 @@ compileEffectEff cfg eff = do
   start <- liftIO getCPUTime
   liftIO $ CP.recordJobForm (compileForm cfg)
   tLint0 <- liftIO getMonotonicTime
-  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.Compiler.CompileReport'.
-  case configProgressSlot cfg of
-    Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 0 1
-    Nothing -> pure ()
-  when (configWarnHvm2Candidates cfg) $
-    liftIO (warnHvm2CandidatesEffect eff)
-  case configProgressSlot cfg of
-    Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 1 1
-    Nothing -> pure ()
+  withJobPhase cfg CP.PhaseLint
+    $ when (configWarnHvm2Candidates cfg)
+    $ liftIO (warnHvm2CandidatesEffect eff)
   tLint1 <- liftIO getMonotonicTime
   liftIO $ CP.recordJobLintSec (seconds tLint0 tLint1)
   out <- compileTreeEff cfg (`effectDoc` eff)
@@ -739,15 +638,8 @@ compileEffectEff cfg eff = do
 
 -- | Compile a pure JShark expression. Never draws progress bars.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePure = compilePurePure
-
-compilePurePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePurePure cfg e =
+compilePure cfg e =
   runEff $ CR.runCompileReportSilent (compilePureEff (quietCfg cfg) e)
-
--- | Same as 'compilePurePure'; pure JShark never draws progress (API symmetry).
-compilePureIO :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePureIO = compilePurePure
 
 compilePureEff ::
   (CR.CompileReport :> es, IOE :> es) =>
@@ -755,16 +647,23 @@ compilePureEff ::
   -> ClosedExpr u
   -> Eff es Text
 compilePureEff cfg e = do
-  -- Batch slot ticks bypass 'CompileReport'; see 'JShark.Compiler.CompileReport'.
-  case configProgressSlot cfg of
-    Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 0 1
-    Nothing -> pure ()
-  when (configWarnHvm2Candidates cfg) $
-    liftIO (warnHvm2CandidatesExpr e)
-  case configProgressSlot cfg of
-    Just slot -> liftIO $ CP.reportJobPhase slot CP.PhaseLint 1 1
-    Nothing -> pure ()
+  withJobPhase cfg CP.PhaseLint
+    $ when (configWarnHvm2Candidates cfg)
+    $ liftIO (warnHvm2CandidatesExpr e)
   compileTreeEff cfg (`pureDoc` e)
+
+withJobPhase ::
+  IOE :> es =>
+  CompilerConfig
+  -> CP.CompilePhase
+  -> Eff es a
+  -> Eff es a
+withJobPhase cfg phase act =
+  case configProgressSlot cfg of
+    Nothing -> act
+    Just slot -> do
+      liftIO $ CP.reportJobPhase slot phase 0 1
+      act `MC.finally` liftIO (CP.reportJobPhase slot phase 1 1)
 
 -- | Compile many effectful programs concurrently (one capability per item).
 -- When 'configProgress' is set, prints a live progress bar and total time.
@@ -772,14 +671,6 @@ compileEffects ::
   CompilerConfig -> [ClosedEffect u] -> IO [Text]
 compileEffects cfg effs =
   compileEffectsLabeled cfg (zipWith numberedEffectJob ([1 ..] :: [Int]) effs)
-
-compileEffectsPure :: CompilerConfig -> [ClosedEffect u] -> IO [Text]
-compileEffectsPure cfg effs =
-  compileEffectsLabeledPure cfg (zipWith numberedEffectJob ([1 ..] :: [Int]) effs)
-
-compileEffectsIO :: CompilerConfig -> [ClosedEffect u] -> IO [Text]
-compileEffectsIO cfg effs =
-  compileEffectsLabeledIO cfg (zipWith numberedEffectJob ([1 ..] :: [Int]) effs)
 
 -- | Like 'compileEffects' but labels each job on the progress bar.
 compileEffectsLabeled ::
@@ -789,19 +680,6 @@ compileEffectsLabeled cfg jobs =
     CR.runCompileReportFromConfig
       (configProgress cfg)
       (compileBatchEff cfg compileEffectEff jobs)
-
-compileEffectsLabeledPure ::
-  CompilerConfig -> [(Text, ClosedEffect u)] -> IO [Text]
-compileEffectsLabeledPure cfg jobs =
-  runEff $
-    CR.runCompileReportSilent (compileBatchEff (quietCfg cfg) compileEffectEff jobs)
-
-compileEffectsLabeledIO ::
-  CompilerConfig -> [(Text, ClosedEffect u)] -> IO [Text]
-compileEffectsLabeledIO cfg jobs =
-  runEff $
-    CR.runCompileReportIO
-      (compileBatchEff (cfg {configProgress = True}) compileEffectEff jobs)
 
 -- | Mixed-config batch compile. When 'configProgress' is enabled, draws a
 -- progress bar, prints per-job compile stats, and returns those stats.
@@ -815,35 +693,10 @@ compileJobsLabeled cfg jobs =
       (configProgress cfg)
       (compileMixedBatchEff cfg jobs)
 
-compileJobsLabeledPure ::
-  CompilerConfig
-  -> [(Text, CompilerConfig, ClosedEffect u)]
-  -> IO ([Text], [CompileJobStats])
-compileJobsLabeledPure cfg jobs =
-  runEff $
-    CR.runCompileReportSilent (compileMixedBatchEff (quietCfg cfg) jobs)
-
-compileJobsLabeledIO ::
-  CompilerConfig
-  -> [(Text, CompilerConfig, ClosedEffect u)]
-  -> IO ([Text], [CompileJobStats])
-compileJobsLabeledIO cfg jobs =
-  runEff $
-    CR.runCompileReportIO
-      (compileMixedBatchEff (cfg {configProgress = True}) jobs)
-
 -- | Compile many pure programs concurrently. Never draws progress bars.
 compilePures :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
 compilePures cfg exprs =
   compilePuresLabeled cfg (zipWith numberedPureJob ([1 ..] :: [Int]) exprs)
-
-compilePuresPure :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
-compilePuresPure cfg exprs =
-  compilePuresLabeledPure cfg (zipWith numberedPureJob ([1 ..] :: [Int]) exprs)
-
-compilePuresIO :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
-compilePuresIO cfg exprs =
-  compilePuresLabeledIO cfg (zipWith numberedPureJob ([1 ..] :: [Int]) exprs)
 
 -- | Like 'compilePures' but labels each job on the progress bar.
 compilePuresLabeled ::
@@ -851,15 +704,6 @@ compilePuresLabeled ::
 compilePuresLabeled cfg jobs =
   runEff $
     CR.runCompileReportSilent (compileBatchEff (quietCfg cfg) compilePureEff jobs)
-
-compilePuresLabeledPure ::
-  CompilerConfig -> [(Text, ClosedExpr u)] -> IO [Text]
-compilePuresLabeledPure cfg jobs = compilePuresLabeled cfg jobs
-
--- | Same as 'compilePuresLabeledPure'; pure JShark never draws progress.
-compilePuresLabeledIO ::
-  CompilerConfig -> [(Text, ClosedExpr u)] -> IO [Text]
-compilePuresLabeledIO cfg jobs = compilePuresLabeled cfg jobs
 
 type CompileEff = '[CR.CompileReport, IOE]
 

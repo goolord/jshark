@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | JS @Math@ constants and functions beyond Haskell 'Num'/'Floating'.

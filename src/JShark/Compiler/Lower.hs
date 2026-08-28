@@ -7,26 +7,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds -Wno-pattern-namespace-specifier -Wno-unused-imports -Wno-missing-signatures #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-signatures #-}
 
 -- | Lower PHOAS 'Expr'/'Effect' to first-order IR.
 module JShark.Compiler.Lower
-  ( lowerArg
-  , lowerArgAt
-  , lowerExpr
-  , lowerExprAt
-  , lowerEffect
+  ( lowerExprAt
   , lowerEffectAt
-  , lowerOptExprAt
-  , lowerOptEffectAt
   , lowerEffectClosed
   , optEffectClosed
   , lowerOptEffectIr
-  , reifyExpr
   , reifyEffect
-  , reifyArg
-  , irFnTags
   , irEffectFromClosed
   , irExprFromClosed
   , allocFnTags
@@ -37,16 +27,14 @@ module JShark.Compiler.Lower
 where
 
 import qualified Data.IntMap.Strict as IM
-import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Typeable (Typeable, type (:~:) (Refl))
-import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
+import Data.Typeable (Typeable)
+import GHC.TypeLits (KnownSymbol)
 import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
   ( Stamp (..)
-  , nestedDummy
   , pattern Name
   )
 import JShark.Compiler.Flatten
@@ -55,17 +43,10 @@ import JShark.Compiler.Flatten
   , rebindEff
   , rebindExpr
   , rebindExpr2
-  , renameEff
-  , renameExpr
   )
 import qualified JShark.Compiler.Ir as Ir
-import JShark.Compiler.Metadata (Metadata (..), optStep)
+import JShark.Compiler.Metadata (optStep)
 import Unsafe.Coerce (unsafeCoerce)
-
-lowerArg :: Arg Stamp u -> Ir.IrArg u
-lowerArg = \case
-  ArgExpr e -> Ir.IrArgExpr (lowerExpr e)
-  ArgEffect e -> Ir.IrArgEffect (lowerEffect e)
 
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
 lowerArgAt !t0 a = case a of
@@ -90,10 +71,6 @@ lowerRecArgsAt !t0 args = case args of
       (t2, xs') = lowerRecArgsAt t1 xs
      in
       (t2, RecCons x' xs')
-
-lowerArgsAt ::
-  Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us)
-lowerArgsAt = lowerRecArgsAt
 
 lowerFixedArgsAt ::
   Int -> FixedArgs Stamp a b c -> (Int, Ir.IrFixedArgs a b c)
@@ -272,13 +249,6 @@ reifyFixedArgs = \case
   Ir.IrArgsU x -> ArgsU (reifyExpr x)
   Ir.IrArgsB x y -> ArgsB (reifyExpr x) (reifyExpr y)
   Ir.IrArgsT x y z -> ArgsT (reifyExpr x) (reifyExpr y) (reifyExpr z)
-
-lowerFixedArgs ::
-  FixedArgs Stamp a b c -> Ir.IrFixedArgs a b c
-lowerFixedArgs args = snd (lowerFixedArgsAt (-2) args)
-
-lowerKernelK :: Kernel Stamp u -> Ir.IrKernel u
-lowerKernelK k = snd (lowerKernelKAt (-2) k)
 
 reifyKernelK :: Ir.IrKernel u -> Kernel Stamp u
 reifyKernelK = \case
@@ -504,9 +474,6 @@ rebindFn tags expr = unsafeCoerce (rebindGo tags expr)
   rebindGo [] e = JfNil e
   rebindGo (t : ts) e = unsafeCoerce (JfCons $ \s -> rebindGo ts (rebindExpr t e s))
 
-lowerFnBody :: FnBody Stamp us r -> Ir.IrFnBody us r
-lowerFnBody body = snd (lowerFnBodyAt (-2) body)
-
 lowerFnBodyAt :: Int -> FnBody Stamp us r -> (Int, Ir.IrFnBody us r)
 lowerFnBodyAt !t0 body =
   let
@@ -705,13 +672,6 @@ reifyExpr = \case
   Ir.IrHvm2Ref name ->
     error ("JShark.reifyExpr: IrHvm2Ref " <> T.unpack name)
 
-lowerEffect :: Effect Stamp u -> Ir.IrEffect u
-lowerEffect e =
-  let
-    (!_, !ir) = lowerEffectAt (-2) e
-   in
-    ir
-
 lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u)
 lowerEffectAt !t0 eff = case eff of
   Lift x ->
@@ -721,7 +681,7 @@ lowerEffectAt !t0 eff = case eff of
       (t1, Ir.IrLift x')
   FFI n args ->
     let
-      (t1, args') = lowerArgsAt t0 args
+      (t1, args') = lowerRecArgsAt t0 args
      in
       (t1, Ir.IrFFI n args')
   UnsafeObject o -> (t0, Ir.IrUnsafeObject o)
@@ -739,7 +699,7 @@ lowerEffectAt !t0 eff = case eff of
   CallMethod x n args ->
     let
       (t1, x') = lowerEffectAt t0 x
-      (t2, args') = lowerArgsAt t1 args
+      (t2, args') = lowerRecArgsAt t1 args
      in
       (t2, Ir.IrCallMethod x' n args')
   Bind x f ->
@@ -1203,7 +1163,7 @@ lowerOptEffectIr :: ClosedEffect u -> (Ir.IrEffect u, Int)
 lowerOptEffectIr e =
   let
     (!_, !irOpt, !mdOpt) = lowerOptEffectAt (-2) (flattenEff e)
-    !nodes = Ir.irMetaSize mdOpt
+    !nodes = Ir.irSize mdOpt
    in
     Ir.metaIrEffect irOpt `seq` (irOpt, nodes)
 {-# NOINLINE lowerOptEffectIr #-}

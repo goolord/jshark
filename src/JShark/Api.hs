@@ -673,7 +673,6 @@ forRange2 y0 y1 x0 x1 body =
     forRange x0 x1 $ \x ->
       body y x
 
--- | 'forRange2' in 'EffectSyntax'.
 forRange2_ ::
   Expr f 'Number
   -> Expr f 'Number
@@ -703,7 +702,6 @@ forRange_ start end f = toSyntax $ forRange start end (\x -> stmts (f x))
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])
 
--- | @String(x)@.
 toString :: Expr f u -> Expr f 'String
 toString = Show
 

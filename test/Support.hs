@@ -1,11 +1,8 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UnboxedTuples #-}
 
 module Support
   ( LitRow
@@ -26,29 +23,16 @@ module Support
   , prettyIfLambda
   , numArray
   , mulDiv
-  , bytes
-  , byteElems
   , assertJSContains
   , captureStderr
   )
 where
 
 import Control.Exception (evaluate, finally)
-import Data.Array.Byte (ByteArray (..))
+import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
 import qualified Data.Text as T
-import GHC.Exts
-  ( Int (..)
-  , indexWord8Array#
-  , newByteArray#
-  , sizeofByteArray#
-  , unsafeFreezeByteArray#
-  , writeWord8Array#
-  , (+#)
-  )
 import GHC.Generics (Generic)
-import GHC.ST (ST (..), runST)
-import GHC.Word (Word8 (..))
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
@@ -155,25 +139,6 @@ numArray = Literal (ValueArray [ValueNumber 1, ValueNumber 2])
 
 mulDiv :: forall f. Expr f 'Number
 mulDiv = number 6 * number 7 / number 2
-
-bytes :: [Word8] -> ByteArray
-bytes xs = runST go
- where
-  !(I# n#) = length xs
-  go :: ST s ByteArray
-  go = ST $ \s0 ->
-    case newByteArray# n# s0 of
-      (# s1, mba #) ->
-        case write 0# xs mba s1 of
-          s2 -> case unsafeFreezeByteArray# mba s2 of
-            (# s3, ba #) -> (# s3, ByteArray ba #)
-  write _ [] _ s = s
-  write i# (W8# w : rest) mba s =
-    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
-
-byteElems :: ByteArray -> [Word8]
-byteElems (ByteArray ba#) =
-  [W8# (indexWord8Array# ba# i#) | I# i# <- [0 .. I# (sizeofByteArray# ba#) - 1]]
 
 -- | Assert emitted JS contains @needle@ (layout-independent smoke check).
 assertJSContains :: Text -> Text -> IO ()

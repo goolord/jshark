@@ -7,13 +7,10 @@
 -- | Emit Bend source for the HVM2 pipeline (Bend → HVM2 → C → WASM).
 -- Bend is the human-readable frontend; HVM2 is the interaction-net IR.
 module JShark.Compiler.EmitBend
-  ( BendType (..)
-  , Hvm2Error (..)
+  ( Hvm2Error (..)
   , bendDefNames
   , emitBendKernel
-  , emitBendModule
   , emitBendModuleFromDefs
-  , emitIrExpr
   , emitKernelExportsC
   , emitKernelWasmBridge
   , sanitizeKernelCForWasm
@@ -30,7 +27,7 @@ import JShark.Api.Types (Universe (Bool), Value (..))
 import JShark.Compiler.Ir
   ( IrExpr (..)
   , IrKernel (..)
-  , irMetaPure
+  , irPure
   , metaIrExpr
   )
 import Unsafe.Coerce (unsafeCoerce)
@@ -47,11 +44,6 @@ data Hvm2Error
   = Hvm2Unsupported Text
   | Hvm2ImpureKernel
   deriving (Eq, Show)
-
-emitBendModule :: [(Text, IrExpr u)] -> Either Hvm2Error Text
-emitBendModule kernels = do
-  defs <- traverse (uncurry emitBendKernel) kernels
-  emitBendModuleFromDefs defs
 
 -- | Join kernel defs and emit a parallelizable @main@ in Bend's canonical
 -- two-phase form: @bend@ grows a balanced binary tree whose leaves are
@@ -524,7 +516,7 @@ emitKernelExportsC _exports =
 
 guardPure :: IrExpr u -> Either Hvm2Error ()
 guardPure ir =
-  if irMetaPure (metaIrExpr ir)
+  if irPure (metaIrExpr ir)
     then Right ()
     else Left Hvm2ImpureKernel
 

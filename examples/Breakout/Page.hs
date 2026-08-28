@@ -8,8 +8,7 @@ import Lucid.Base (makeAttribute)
 import ThemeHead (themeLinks)
 import Types (boardId, canvasH, canvasW)
 
--- | Breakout shell. @staticRoot@ is the shared assets prefix; @headExtra@ /
--- @source@ are the highlighter and JS pane.
+-- | Breakout shell.
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
 page staticRoot headExtra source scriptSrc = doctypehtml_ $
   html_ [makeAttribute "data-theme" "dark"] $ do

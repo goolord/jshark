@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Fixed-arity pure JS stdlib: host math, JS names, and codegen templates.
--- Interpreter / optimizer dispatch lives in 'JShark' ('evalFixed', …).
+-- Interpreter / optimizer dispatch lives in Evaluate / Optimize.
 module JShark.Api.Prim
   ( mathUnaryFn
   , mathBinaryFn
@@ -17,6 +17,7 @@ module JShark.Api.Prim
   , fixedBinaryJS
   , fixedTernaryJS
   , isPureFixed
+  , isFiniteDouble
   , MathUnary (..)
   , MathBinary (..)
   , matchMathUnary

@@ -24,8 +24,6 @@ module JShark.Compiler.CompileProgress
   , renderBatchProgress
   , withActiveJob
   , finishEmitPhase
-  , phaseLabel
-  , jobProgressPct
   , setProgressRedraw
   , clearProgressRedraw
   , withProgressIO
@@ -43,7 +41,6 @@ module JShark.Compiler.CompileProgress
   , recordJobFlatPrepare
   , recordJobPhoasPrepare
   , recordJobForm
-  , snapshotJobStats
   , snapshotJobStatsFromSlot
   , setProgressBoardHandle
   , clearProgressBoardHandle

@@ -85,7 +85,6 @@ import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Object (unsafeObjectAssign, unsafeObjectGet)
 
--- | An @AudioContext@.
 data AudioCtx
 
 -- | Any @AudioNode@: oscillator, gain, filter, analyser, destination.
@@ -315,7 +314,7 @@ scheduleAdsrJs =
 -- a hard cut. Isolated so a missing @cancelAndHoldAtTime@ cannot skip
 -- @stop@ and leave a voice hanging at unity.
 releaseVoice ::
-  (IsNode f osc) =>
+  IsNode f osc =>
   Effect f ('MutableObject Param)
   -> osc
   -> Expr f 'Number

@@ -24,20 +24,12 @@ module JShark.Compiler.Ir
   , IrMeta (..)
   , metaIrExpr
   , metaIrEffect
-  , irMetaSize
-  , irMetaFree
-  , irMetaPure
-  , irMetaCheap
   , optIrExpr
   , optIrEffect
-  , substIrExpr
-  , substIrEffect
-  , irNestedDummyId
   , elimIrBind
   , effectMd
   , nodeMeta
   , bindMeta
-  , optIrArgs
   )
 where
 
@@ -59,18 +51,12 @@ import JShark.Api.Types
   , Universe (..)
   , Value (..)
   )
+import JShark.Compiler.Binder (strictFoldMap)
+import JShark.Compiler.Evaluate (isCheapValue)
+import JShark.Compiler.Metadata (optSmall, optStep)
 import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (Bool)
 import qualified Prelude as P
-
-irNestedDummyId :: Int
-irNestedDummyId = minBound
-
-optSmall :: Int
-optSmall = 16
-
-optStep :: Int
-optStep = 2
 
 data IrMeta = IrMeta
   { irSize :: {-# UNPACK #-} !Int
@@ -86,44 +72,9 @@ instance Semigroup IrMeta where
 instance Monoid IrMeta where
   mempty = IrMeta 0 IM.empty True True
 
--- | 'foldMap' is a lazy right fold. IrMeta merges IntMaps; a lazy
--- accumulator builds a thunk chain of unions on every list child.
-strictFoldMap :: Monoid m => (a -> m) -> [a] -> m
-strictFoldMap f xs = foldl' (\ !acc x -> acc <> f x) mempty xs
-{-# INLINE strictFoldMap #-}
-
-irMetaSize :: IrMeta -> Int
-irMetaSize = irSize
-
-irMetaFree :: IrMeta -> IntMap Int
-irMetaFree = irFree
-
-irMetaPure :: IrMeta -> P.Bool
-irMetaPure = irPure
-
-irMetaCheap :: IrMeta -> P.Bool
-irMetaCheap = irCheap
-
 -- | Force impure on optimized metadata (empty 'RecNil' args are otherwise pure).
 effectMd :: IrMeta -> IrMeta
 effectMd !md = md <> IrMeta 0 IM.empty False False
-
-isCheapValueIr :: Value u -> P.Bool
-isCheapValueIr = \case
-  ValueNumber {} -> True
-  ValueBigInt {} -> True
-  ValueString {} -> True
-  ValueBool {} -> True
-  ValueUnit -> True
-  ValueOption Nothing -> True
-  ValueOption (Just v) -> isCheapValueIr v
-  ValueResult (Left v) -> isCheapValueIr v
-  ValueResult (Right v) -> isCheapValueIr v
-  ValueRegex {} -> False
-  ValueUint8Array {} -> False
-  ValueArray {} -> False
-  ValueFunction {} -> False
-  ValueFrozen {} -> False
 
 data IrMethod :: Universe -> Type where
   IrMethMap ::
@@ -280,7 +231,7 @@ data IrEffect :: Universe -> Type where
 -- skip test off 'irFree'.
 metaIrExpr :: IrExpr u -> IrMeta
 metaIrExpr !e = case e of
-  IrLiteral v -> IrMeta 1 IM.empty True (isCheapValueIr v)
+  IrLiteral v -> IrMeta 1 IM.empty True (isCheapValue v)
   IrVar i -> IrMeta 1 (IM.singleton i 1) True True
   IrEmbedEff x -> metaIrEffect x
   _ ->
@@ -862,7 +813,7 @@ optIrExpr !t0 expr = case expr of
       (t1, e', md)
 
 litMeta :: Value u -> IrMeta
-litMeta v = IrMeta 1 IM.empty True (isCheapValueIr v)
+litMeta v = IrMeta 1 IM.empty True (isCheapValue v)
 
 varMeta :: Int -> IrMeta
 varMeta !i = IrMeta 1 (IM.singleton i 1) True True

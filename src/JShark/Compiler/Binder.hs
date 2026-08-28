@@ -1,9 +1,9 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-pattern-namespace-specifier #-}
 
 -- | PHOAS binder tags and literal-peeling helpers for opt/codegen.
@@ -17,6 +17,7 @@ module JShark.Compiler.Binder
   , peelString
   , nestedDummyId
   , nestedDummy
+  , strictFoldMap
   )
 where
 
@@ -74,3 +75,8 @@ nestedDummyId = minBound
 
 nestedDummy :: Stamp u
 nestedDummy = Name nestedDummyId
+
+-- | Strict left fold. Lazy 'foldMap' thunks IntMap unions on IR metadata.
+strictFoldMap :: Monoid m => (a -> m) -> [a] -> m
+strictFoldMap f xs = foldl' (\ !acc x -> acc <> f x) mempty xs
+{-# INLINE strictFoldMap #-}

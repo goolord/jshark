@@ -1,111 +1,50 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-unused-imports -Wno-type-defaults -Wno-incomplete-patterns #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults -Wno-incomplete-patterns #-}
 
 -- | Flat IR → JavaScript (effectful compile path).
 module JShark.Compiler.Codegen.Flat where
 
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Monad (forM_, when)
+import Control.Monad (forM_)
 import Control.Monad.ST (runST)
-import Data.Bits (xor, (.&.), (.|.))
-import Data.Char (isDigit)
-import qualified Data.Char as Char
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
-import Data.List (foldl', mapAccumL, nub, sortBy)
-import qualified Data.Map.Strict as M
-import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
-import Data.Monoid (All (..), Any (..), Sum (..))
-import Data.Proxy (Proxy (..))
+import Data.List (mapAccumL)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
-import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import Data.Typeable (Typeable, type (:~:) (Refl))
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import GHC.Clock (getMonotonicTime)
-import qualified GHC.IO as GHCIO
 import GHC.IO.Unsafe (unsafePerformIO)
-import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
-import JShark.Api.Prim
-  ( MathBinary (..)
-  , MathUnary (..)
-  , isPureFixed
-  , matchMathBinary
-  , matchMathUnary
-  )
 import qualified JShark.Api.Prim as Prim
-import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
-  ( Stamp (..)
-  , nestedDummy
-  , nestedDummyId
-  , peelBoolEffect
-  , peelOption
-  , peelResult
-  , peelString
-  , stampId
-  , pattern Name
+  ( pattern Name
   )
 import JShark.Compiler.Codegen.Core
 import JShark.Compiler.Codegen.Phoas
   ( asStmt
   , assignResult
-  , effectfulAST'
   , emitBranching
   , hvm2ExportRef
   , ifAssignOrStmt
   , ifElseStmt
   , letResult
-  , pureAST'
   , recBindStmt
   , renderFFIInvoke
   , renderFunction
   , renderResultLit
   , resultObject
   , tryCatchStmt
-  )
-import JShark.Compiler.CompileProgress
-  ( EmitCtx
-  , captureEmitCtx
-  , initEmitCtxTotal
-  , recordJobFlatPrepare
-  , recordJobPhoasPrepare
-  , reportFlatOptPhase
-  , reportIrPreparePhase
-  , reportPackPhase
-  , tickEmitCtx
-  )
-import JShark.Compiler.CompileTiming
-  ( FlatOptProfile (..)
-  , FlatPrepareTiming (..)
-  , IrOptProfile (..)
-  , LowerProfile (..)
-  , PhoasPrepareTiming (..)
-  , reportFlatPrepareTiming
-  , reportPhoasPrepareTiming
-  , seconds
   )
 import JShark.Compiler.Emit
   ( JS
@@ -115,15 +54,11 @@ import JShark.Compiler.Emit
   , colon
   , dquotes
   , hcat
-  , iifeBody
   , jsDouble
   , jsString
   , jsText
-  , nonEmpty
   , parens
   , punctuate
-  , renderJS
-  , renderJSCompact
   , semi
   , vcat
   , vcatNonEmpty
@@ -132,33 +67,14 @@ import JShark.Compiler.Emit
   )
 import JShark.Compiler.Evaluate
   ( bigOpJS
-  , eqFoldableValue
-  , evaluate
-  , evaluateBigInt
-  , evaluateCached
-  , evaluateNumber
-  , foldFixed
-  , isFiniteDouble
-  , isOrderableValue
   , jsBigIntLit
   , jsQuote
-  , jsShow
   , jsUint8ArrayLit
-  , mapFixedArgs
-  , parseBigIntString
-  , tryEvalBigBin
-  , typeOfValue
-  , valueCompare
-  , valueEq
   )
 import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.FlatSoA as FlatSoA
 import qualified JShark.Compiler.FlatView as FlatView
 import JShark.Compiler.Hoist (emitHoistedFnValue)
-import qualified JShark.Compiler.Ir as Ir
-import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
-import JShark.Compiler.Optimize (optimizeEffect)
-import Unsafe.Coerce (unsafeCoerce)
 
 flatRenderLiteral ::
   Env -> CG -> Value u -> (CG, Code)
@@ -1586,17 +1502,13 @@ flatEffectfulCodegenFromView soa =
           flatEmitLayered soa root plan s1
 {-# NOINLINE flatEffectfulCodegenFromView #-}
 
-flatEffectfulCodegenFromSoA :: FlatSoA.FlatSoA -> (CG, Code)
-flatEffectfulCodegenFromSoA = flatEffectfulCodegenFromView
-{-# NOINLINE flatEffectfulCodegenFromSoA #-}
-
 flatEffectfulCodegen ::
   ClosedEffect u -> (CG, Code)
 flatEffectfulCodegen (e :: ClosedEffect u) =
   let
     !(soa, _s0) = unsafePerformIO (prepareFlatEffectProgram e)
    in
-    flatEffectfulCodegenFromSoA soa
+    flatEffectfulCodegenFromView soa
 {-# NOINLINE flatEffectfulCodegen #-}
 
 effectfulASTFromFlat :: ClosedEffect u -> JS
@@ -1604,13 +1516,11 @@ effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
 
 effectfulASTFromSoA :: FlatSoA.FlatSoA -> JS
 effectfulASTFromSoA soa =
-  uncurry renderWithHelpers (flatEffectfulCodegenFromSoA soa)
+  uncurry renderWithHelpers (flatEffectfulCodegenFromView soa)
 
 effectfulAST :: ClosedEffect u -> JS
 effectfulAST = effectfulASTFromFlat
 
--- | Flat IR codegen after 'Ir.optIrEffect'. Same path as 'effectfulAST'
--- now that the flat pipeline is always selected.
 effectfulASTIr = effectfulASTFromFlat
 
 -- | Stmt-only codegen for branching effects (no shared @let result@).

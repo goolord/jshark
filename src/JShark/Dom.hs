@@ -1,9 +1,5 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -41,10 +37,7 @@ import JShark
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 
--- | An opaque phantom type representing a DOM element (what
--- @document.getElementById@ /etc. return in the browser). Modeled as an
--- 'MutableObject' so it can share the same property-access machinery ('get',
--- 'Field') as other foreign objects.
+-- | Browser node. 'MutableObject' so 'get' / 'Field' apply.
 data DomElement
 
 type instance Field DomElement "innerHTML" = 'String
@@ -84,7 +77,6 @@ createElement ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 createElement tag = hold $ ffi "document.createElement" (arg tag <: RecNil)
 
--- | @el.setAttribute(name, value)@
 setAttribute ::
   Effect f ('MutableObject DomElement)
   -> Text
@@ -94,20 +86,17 @@ setAttribute el name value =
   toSyntax $
     callMethod el "setAttribute" (arg (string name) <: arg value <: RecNil)
 
--- | @el.getAttribute(name)@
 getAttribute ::
   Effect f ('MutableObject DomElement) -> Text -> EffectSyntax f (Expr f 'String)
 getAttribute el name =
   bindExpr $ callMethod el "getAttribute" (arg (string name) <: RecNil)
 
--- | @parent.appendChild(child)@
 appendChild ::
   Effect f ('MutableObject DomElement)
   -> Effect f ('MutableObject DomElement)
   -> EffectSyntax f (f 'Unit)
 appendChild parent child = toSyntax $ callMethod parent "appendChild" (ArgEffect child <: RecNil)
 
--- | @parent.removeChild(child)@
 removeChild ::
   Effect f ('MutableObject DomElement)
   -> Effect f ('MutableObject DomElement)
@@ -172,7 +161,6 @@ getValue ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)
 getValue el = getProp el "value"
 
--- | @el.value = v@.
 setValue ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'String

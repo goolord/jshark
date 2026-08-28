@@ -7,9 +7,7 @@
 -- 'emitHoistedFnValue'; PHOAS codegen calls 'registerHoistedTag' after
 -- rendering the lambda body.
 module JShark.Compiler.Hoist
-  ( canonicalHoistSrc
-  , emitHoistedFnValue
-  , hoistTagName
+  ( emitHoistedFnValue
   , registerHoistedTag
   )
 where

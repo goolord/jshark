@@ -6,8 +6,7 @@ import qualified Data.Text as T
 import Ids
 import Lucid
 
--- | TodoMVC shell. @staticRoot@ is the shared assets prefix; @headExtra@ /
--- @source@ are the highlighter and JS pane.
+-- | TodoMVC shell.
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
 page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
   head_ $ do

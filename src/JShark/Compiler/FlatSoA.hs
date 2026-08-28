@@ -7,9 +7,6 @@
 module JShark.Compiler.FlatSoA
   ( FlatSoA (..)
   , flatSoaParallelThreshold
-  , propagatePureFlags
-  , optConstantFoldNum
-  , packEffectProgramSoA
   , packEffectProgramDirect
   , optimizeFlatPack
   , flatSoaNodeCount
@@ -28,7 +25,6 @@ module JShark.Compiler.FlatSoA
   , constantFoldWithStats
   , propagatePureWithStats
   , optConstantFoldNumOnce
-  , exprMask
   , soaColumnsEqual
   )
 where
@@ -40,7 +36,6 @@ import Control.Monad.ST (runST)
 import Data.Bits ((.&.))
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
-import Data.Map.Strict ()
 import qualified Data.Map.Strict as Map
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
@@ -50,7 +45,7 @@ import qualified Data.Vector.Generic.Mutable as GM
 import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
-import Data.Word (Word16, Word8)
+import Data.Word (Word8)
 import GHC.IO.Unsafe (unsafePerformIO)
 import JShark.Api.Types (BigBinOp (..), FFIForm (..), Value (..))
 import JShark.Compiler.Flat
@@ -72,241 +67,88 @@ import JShark.Compiler.Flat
   , packStateSoaSide
   , sideAccToVectors
   )
-import JShark.Compiler.FlatEnc (freezeEncSeq)
-import JShark.Compiler.Ir (IrEffect)
-import Unsafe.Coerce (unsafeCoerce)
-
-type Op = Word16
-
-oFE_LITERAL
-  , oFE_VAR
-  , oFE_LET
-  , oFE_LETREC
-  , oFE_LAMBDA
+import JShark.Compiler.FlatEnc
+  ( Op
+  , freezeEncSeq
   , oFE_APPLY
-  , oFE_EMBEDEFF ::
-    Op
-oFE_IF
-  , oFE_OPTIONCASE
-  , oFE_RESOK
-  , oFE_RESERR
-  , oFE_RESCASE
-  , oFE_INDEX
-  , oFE_U8INDEX ::
-    Op
-oFE_ERROR
+  , oFE_EMBEDEFF
+  , oFE_ERROR
   , oFE_FIXED
   , oFE_FNLIT
   , oFE_FROZEN
   , oFE_GETFIELD
-  , oFE_UNSAFENULL
-  , oFE_KCONCAT ::
-    Op
-oFE_KPLUS
-  , oFE_KTIMES
-  , oFE_KMINUS
-  , oFE_KNEG
-  , oFE_KDIV
-  , oFE_KREM
-  , oFE_KBITAND
-  , oFE_KBITOR ::
-    Op
-oFE_KBITXOR
-  , oFE_KSHL
-  , oFE_KSHR
-  , oFE_KUSHR
+  , oFE_HVM2REF
+  , oFE_IF
+  , oFE_INDEX
+  , oFE_KAND
   , oFE_KBIG
   , oFE_KBIGNEG
-  , oFE_KAND
-  , oFE_KOR ::
-    Op
-oFE_KEQ
-  , oFE_KNEQ
-  , oFE_KGTH
-  , oFE_KLTH
+  , oFE_KBITAND
+  , oFE_KBITOR
+  , oFE_KBITXOR
+  , oFE_KCONCAT
+  , oFE_KDIV
+  , oFE_KEQ
   , oFE_KGTEQ
+  , oFE_KGTH
   , oFE_KLTEQ
+  , oFE_KLTH
+  , oFE_KMINUS
+  , oFE_KNEG
+  , oFE_KNEQ
+  , oFE_KOR
+  , oFE_KPLUS
+  , oFE_KREM
+  , oFE_KSHL
   , oFE_KSHOW
-  , oFE_KTYPEOF ::
-    Op
-oFE_MMAP
+  , oFE_KSHR
+  , oFE_KTIMES
+  , oFE_KTYPEOF
+  , oFE_KUSHR
+  , oFE_LAMBDA
+  , oFE_LET
+  , oFE_LETREC
+  , oFE_LITERAL
   , oFE_MFILTER
+  , oFE_MFROM
+  , oFE_MMAP
   , oFE_MREDUCE
   , oFE_MREDUCER
   , oFE_MTOSORTED
-  , oFE_MFROM
-  , oFE_HVM2REF ::
-    Op
-oFX_LIFT
-  , oFX_FFI
-  , oFX_UNSAFEOBJ
-  , oFX_UNSAFEOBJGET
-  , oFX_UNSAFEOBJSET
-  , oFX_CALLMETHOD ::
-    Op
-oFX_BIND
-  , oFX_THENE
-  , oFX_BINDREC
-  , oFX_LAMBDAE
+  , oFE_OPTIONCASE
+  , oFE_RESCASE
+  , oFE_RESERR
+  , oFE_RESOK
+  , oFE_U8INDEX
+  , oFE_UNSAFENULL
+  , oFE_VAR
   , oFX_APPLYE
+  , oFX_ARRAYLIT
+  , oFX_BIND
+  , oFX_BINDREC
+  , oFX_CALLMETHOD
+  , oFX_DELETEPROP
+  , oFX_FFI
+  , oFX_FORRANGE
   , oFX_IFE
-  , oFX_WHILE
-  , oFX_FORRANGE ::
-    Op
-oFX_U8SET
-  , oFX_U8FILL
+  , oFX_LAMBDAE
+  , oFX_LIFT
+  , oFX_OBJLIT
   , oFX_OPTCASEE
   , oFX_RESCASEE
   , oFX_STRCASEE
+  , oFX_THENE
   , oFX_THROW
-  , oFX_TRY ::
-    Op
-oFX_OBJLIT, oFX_DELETEPROP, oFX_ARRAYLIT :: Op
-oFE_LITERAL = 1
-oFE_VAR = 2
-oFE_LET = 3
-oFE_LETREC = 4
-oFE_LAMBDA = 5
-oFE_APPLY = 6
-oFE_EMBEDEFF = 7
-
-oFE_IF = 8
-
-oFE_OPTIONCASE = 9
-
-oFE_RESOK = 10
-
-oFE_RESERR = 11
-
-oFE_RESCASE = 12
-
-oFE_INDEX = 13
-
-oFE_U8INDEX = 14
-
-oFE_ERROR = 15
-
-oFE_FIXED = 16
-
-oFE_FNLIT = 17
-
-oFE_FROZEN = 18
-
-oFE_GETFIELD = 19
-
-oFE_UNSAFENULL = 20
-
-oFE_KCONCAT = 21
-
-oFE_KPLUS = 22
-
-oFE_KTIMES = 23
-
-oFE_KMINUS = 24
-
-oFE_KNEG = 25
-
-oFE_KDIV = 26
-
-oFE_KREM = 27
-
-oFE_KBITAND = 28
-
-oFE_KBITOR = 29
-
-oFE_KBITXOR = 30
-
-oFE_KSHL = 31
-
-oFE_KSHR = 32
-
-oFE_KUSHR = 33
-
-oFE_KBIG = 34
-
-oFE_KBIGNEG = 35
-
-oFE_KAND = 36
-
-oFE_KOR = 37
-
-oFE_KEQ = 38
-
-oFE_KNEQ = 39
-
-oFE_KGTH = 40
-
-oFE_KLTH = 41
-
-oFE_KGTEQ = 42
-
-oFE_KLTEQ = 43
-
-oFE_KSHOW = 44
-
-oFE_KTYPEOF = 45
-
-oFE_MMAP = 46
-
-oFE_MFILTER = 47
-
-oFE_MREDUCE = 48
-
-oFE_MREDUCER = 49
-
-oFE_MTOSORTED = 50
-
-oFE_MFROM = 51
-
-oFE_HVM2REF = 52
-
-oFX_LIFT = 100
-
-oFX_FFI = 101
-
-oFX_UNSAFEOBJ = 102
-
-oFX_UNSAFEOBJGET = 103
-
-oFX_UNSAFEOBJSET = 104
-
-oFX_CALLMETHOD = 105
-
-oFX_BIND = 106
-
-oFX_THENE = 107
-
-oFX_BINDREC = 108
-
-oFX_LAMBDAE = 109
-
-oFX_APPLYE = 110
-
-oFX_IFE = 111
-
-oFX_WHILE = 112
-
-oFX_FORRANGE = 113
-
-oFX_U8SET = 114
-
-oFX_U8FILL = 115
-
-oFX_OPTCASEE = 116
-
-oFX_RESCASEE = 117
-
-oFX_STRCASEE = 118
-
-oFX_THROW = 119
-
-oFX_TRY = 120
-
-oFX_OBJLIT = 121
-
-oFX_DELETEPROP = 122
-
-oFX_ARRAYLIT = 123
+  , oFX_TRY
+  , oFX_U8FILL
+  , oFX_U8SET
+  , oFX_UNSAFEOBJ
+  , oFX_UNSAFEOBJGET
+  , oFX_UNSAFEOBJSET
+  , oFX_WHILE
+  )
+import JShark.Compiler.Ir (IrEffect)
+import Unsafe.Coerce (unsafeCoerce)
 
 data FlatSoA = FlatSoA
   { fsaOpcodes :: !(VU.Vector Op)
@@ -329,9 +171,6 @@ data FlatSoA = FlatSoA
   , fsaRoot :: !NodeId
   , fsaSubtreeSizes :: !(V.Vector Int)
   }
-
-packEffectProgramSoA :: IrEffect u -> FlatSoA
-packEffectProgramSoA = packEffectProgramDirect
 
 flatSoaNodeCount :: FlatSoA -> Int
 flatSoaNodeCount soa = VU.length (fsaOpcodes soa)
@@ -385,7 +224,7 @@ packEffectProgramDirect e =
 optimizeFlatPack :: FlatSoA -> FlatSoA
 optimizeFlatPack soa0 =
   let
-    !(soa1, _folded) = optConstantFoldNumWithChangedPar soa0
+    !(soa1, _folded) = optConstantFoldNumWithChanged soa0
     !soa2 = propagatePureFlagsPar soa1
    in
     attachFlatSoaSubtreeSizes soa2
@@ -637,21 +476,6 @@ flatSoaLayerBuckets soa root =
    in
     V.fromList [bucket d | d <- [0 .. maxD]]
 
-exprMask :: FlatSoA -> VU.Vector Word8
-exprMask soa =
-  VU.map (\op -> if op < oFX_LIFT then 1 else 0) (fsaOpcodes soa)
-
-propagatePureFlags :: FlatSoA -> FlatSoA
-propagatePureFlags soa0 =
-  let
-    go soa =
-      let
-        (soa', changed) = propagatePureFlagsPass soa
-       in
-        if changed then go soa' else soa'
-   in
-    go soa0
-
 propagatePureFlagsPass :: FlatSoA -> (FlatSoA, Bool)
 propagatePureFlagsPass soa =
   let
@@ -859,21 +683,6 @@ optConstantFoldNumOnce soa0 = runST $ do
   changed <- readSTRef changedRef
   pure (soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}, changed)
 
-optConstantFoldNum :: FlatSoA -> FlatSoA
-optConstantFoldNum soa0 =
-  fst (optConstantFoldNumWithChanged soa0)
-
-optConstantFoldNumWithChanged :: FlatSoA -> (FlatSoA, Bool)
-optConstantFoldNumWithChanged soa0 =
-  let
-    go soa didFold =
-      let
-        (soa', changed) = optConstantFoldNumOnce soa
-       in
-        if changed then go soa' True else (soa, didFold)
-   in
-    go soa0 False
-
 soaColumnsEqual :: FlatSoA -> FlatSoA -> Bool
 soaColumnsEqual a b =
   soaUnboxedEqual a b
@@ -1076,29 +885,19 @@ propagatePureFlagsPar soa0 =
    in
     go soa0
 
-optConstantFoldNumOncePar :: FlatSoA -> (FlatSoA, Bool)
-optConstantFoldNumOncePar = optConstantFoldNumOnce
--- Parallel scan used IO per node; on Life (~88k nodes) that was ~100s+ for
--- a no-op pass. Sequential 'runST' scan is sub-millisecond when nothing folds.
-{-# NOINLINE optConstantFoldNumOncePar #-}
-
-optConstantFoldNumWithChangedPar :: FlatSoA -> (FlatSoA, Bool)
-optConstantFoldNumWithChangedPar soa0 =
-  let
-    go soa didFold =
-      let
-        (soa', changed) = optConstantFoldNumOncePar soa
-       in
-        if changed then go soa' True else (soa, didFold)
-   in
-    go soa0 False
+-- Sequential 'runST' scan. A parallel IO-per-node walk was ~100s on Life.
+optConstantFoldNumWithChanged :: FlatSoA -> (FlatSoA, Bool)
+optConstantFoldNumWithChanged soa =
+  let (soa', _, folded) = constantFoldWithStats soa
+   in (soa', folded)
+{-# NOINLINE optConstantFoldNumWithChanged #-}
 
 constantFoldWithStats :: FlatSoA -> (FlatSoA, Int, Bool)
 constantFoldWithStats soa0 =
   let
     go soa passes didFold =
       let
-        (soa', changed) = optConstantFoldNumOncePar soa
+        (soa', changed) = optConstantFoldNumOnce soa
        in
         if changed
           then go soa' (passes + 1) True

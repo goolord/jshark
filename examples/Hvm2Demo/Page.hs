@@ -82,9 +82,7 @@ metricRow label valId unit =
       Just u -> span_ [class_ "hvm2-metric-u"] (toHtml u)
       Nothing -> pure ()
 
--- | HVM2 lab shell. @staticRoot@ is shared assets; @demoBase@ prefixes wasm
--- | assets (@""@ for export, @"/hvm2-demo"@ on Scotty); @headExtra@ / @source@
--- | are the highlighter and source panes.
+-- | HVM2 lab shell. @demoBase@ is @""@ on export, @"/hvm2-demo"@ on Scotty.
 page :: T.Text -> T.Text -> Html () -> Html () -> T.Text -> Html ()
 page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $
   html_ [makeAttribute "data-theme" "dark"] $ do

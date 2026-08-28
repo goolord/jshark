@@ -15,7 +15,6 @@ module JShark.Compiler.CompileTiming
   , IrOptProfile (..)
   , LowerProfile (..)
   , PhoasPrepareTiming (..)
-  , timingEnabled
   , reportFlatPrepareTiming
   , reportPhoasPrepareTiming
   , seconds

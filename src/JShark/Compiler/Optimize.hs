@@ -1,28 +1,22 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds -Wno-pattern-namespace-specifier -Wno-unused-imports -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-orphans #-}
 
--- | PHOAS optimizer and IR preparation wrappers.
+-- | PHOAS optimizer and IR preparation.
 module JShark.Compiler.Optimize
   ( optimize
   , optimizeEffect
   , optimizeEffectFromIr
   , optimizeEffectIr
-  , optimizeEffectTree
   , phoasNodeCountFromIr
   , nodeCountExpr
   , nodeCountEff
@@ -34,28 +28,17 @@ module JShark.Compiler.Optimize
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
   , collectHvm2Kernels
-  , evalFnBody
-  , fnArity
-  , reoptExpr
-  , reoptEff
   , bindProbeTag
   , letProbeTag
   )
 where
 
-import Control.Monad (forM_)
 import Data.Bits (xor, (.&.), (.|.))
-import Data.Char (isDigit)
-import qualified Data.Char as Char
-import qualified Data.IntMap.Strict as IM
-import Data.List (foldl', mapAccumL, nub, sortBy)
-import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
-import Data.Monoid (All (..), Any (..), Sum (..))
-import Data.Proxy (Proxy (..))
+import Data.List (mapAccumL)
+import Data.Maybe (fromMaybe)
+import Data.Monoid (All (..), Sum (..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Typeable (Typeable, type (:~:) (Refl))
-import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import JShark.Api.Prim
   ( MathBinary (..)
   , MathUnary (..)
@@ -69,24 +52,14 @@ import JShark.Api.Types
 import JShark.Compiler.Binder
   ( Stamp (..)
   , nestedDummy
-  , nestedDummyId
   , peelBoolEffect
   , peelOption
   , peelResult
   , peelString
-  , stampId
-  , pattern Name
-  )
-import JShark.Compiler.Emit
-  ( JS
-  , dquotes
-  , jsString
-  , jsText
   )
 import JShark.Compiler.Evaluate
-  ( bigOpJS
-  , eqFoldableValue
-  , escapeJsString
+  ( eqFoldableValue
+  , isCheapValue
   , isFiniteDouble
   , isOrderableValue
   , jsShow
@@ -106,7 +79,7 @@ import JShark.Compiler.Flatten
   , foldGetField
   , inlineEff
   , inlineExpr
-  , isPureExpr
+  , isPureExpr_
   , occursVarInEff
   , occursVarInExpr
   , rebindEff
@@ -118,20 +91,18 @@ import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Compiler.Lower
   ( allocFnTags
   , evalFnBody
-  , fnDepthStamp
   , lowerEffectAt
   , lowerExprAt
   , lowerOptEffectIr
   , rebindFn
   , reifyEffect
   )
-import JShark.Compiler.Metadata (Metadata (..), optStep)
+import JShark.Compiler.Metadata (Metadata (..), optSmall, optStep)
 import Unsafe.Coerce (unsafeCoerce)
 
 instance PhoasDummy Stamp where
   phoasDummy = nestedDummy
   isPureExpr_ = pureExpr
-  isPureEffect_ = pureEffect
 
 countLazyExpr :: Int -> Expr Stamp u -> Int
 countLazyExpr t e = if occursVarInExpr t e then 2 else 0
@@ -228,7 +199,7 @@ closedExprNodes (e :: ClosedExpr u) =
   let
     (_, ir) = lowerExprAt (-2) (flattenExpr (optimize e))
    in
-    Ir.irMetaSize (Ir.metaIrExpr ir)
+    Ir.irSize (Ir.metaIrExpr ir)
 {-# NOINLINE closedExprNodes #-}
 
 cheapExpr :: Expr Stamp u -> Bool
@@ -327,20 +298,9 @@ pureEffect e =
             e
         )
 
-isPureEffect :: Effect Stamp u -> Bool
-isPureEffect = pureEffect
-
--- Re-opt only small trees. A second walk of a @bindRec@ / do-chain
--- paint body is what hung todo-mvc and breakout.
-optSmall :: Int
-optSmall = 16
-
 -- | PHOAS 'optEffect' is quadratic on long bind chains; IR opt for huge ASTs.
 optIrLargeThreshold :: Int
 optIrLargeThreshold = 0
-
-fnArity :: FnBody Stamp us r -> Int
-fnArity = fnDepthStamp
 
 keepExprCont ::
   Int
@@ -383,14 +343,6 @@ reoptExpr t f b = let (_, e, _) = optExpr t (flattenExpr (f b)) in e
 
 reoptEff :: Int -> (Stamp u -> Effect Stamp v) -> Stamp u -> Effect Stamp v
 reoptEff t f b = let (_, e, _) = optEffect t (flattenEff (f b)) in e
-
-reoptExpr2 ::
-  Int
-  -> (Stamp u -> Stamp w -> Expr Stamp v)
-  -> Stamp u
-  -> Stamp w
-  -> Expr Stamp v
-reoptExpr2 t f a b = let (_, e, _) = optExpr t (flattenExpr (f a b)) in e
 
 irOptimizedExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
 irOptimizedExprFromClosed (e :: ClosedExpr u) =
@@ -529,34 +481,13 @@ collectHvm2Kernels expr = collectAny (unsafeCoerce expr :: Expr Stamp u)
     ArgExpr e -> collectAny (unsafeCoerce e :: Expr Stamp v)
     ArgEffect e -> collectEffectAny (unsafeCoerce e :: Effect Stamp v)
 
-hvm2ExportRef :: Text -> JS
-hvm2ExportRef name =
-  let
-    key = dquotes (jsString (escapeJsString (T.unpack name)))
-    err =
-      dquotes
-        (jsString (escapeJsString ("HVM2 kernel not loaded: " ++ T.unpack name)))
-   in
-    "((function(){var f=globalThis.__jsharkHvm2?.exports?.["
-      <> key
-      <> "];if(typeof f!==\"function\")return function(){throw new Error("
-      <> err
-      <> ")};"
-      <> "function toI64(x){var buf=new ArrayBuffer(8);"
-      <> "var f64=new Float64Array(buf);var i64=new BigInt64Array(buf);"
-      <> "f64[0]=+x;return i64[0];}"
-      <> "function fromOut(r){return typeof r===\"bigint\"?Number(r):r;}"
-      <> "if(f.length>=2){return function(a){return function(b){"
-      <> "return fromOut(f(toI64(a),toI64(b)));};};}"
-      <> "return function(a){return fromOut(f(toI64(a)));};})())"
-
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =
   let
     (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
     (!_, !_, !md) = Ir.optIrExpr (-2) ir
    in
-    Ir.irMetaSize md
+    Ir.irSize md
 
 optimizedEffectSize :: ClosedEffect u -> Int
 optimizedEffectSize e = snd (lowerOptEffectIr e)
@@ -577,11 +508,6 @@ optimizeEffectIr e =
    in
     flattenEff (reifyEffect irOpt)
 {-# NOINLINE optimizeEffectIr #-}
-
-optimizeEffectTree :: ClosedEffect u -> Effect Stamp u
-optimizeEffectTree e =
-  flattenEff (reifyEffect (fst (lowerOptEffectIr e)))
-{-# NOINLINE optimizeEffectTree #-}
 
 optimizeEffectFromIr :: Ir.IrEffect u -> Effect Stamp u
 optimizeEffectFromIr ir = flattenEff (reifyEffect ir)
@@ -624,36 +550,6 @@ optUnder2 t0 f =
     (t1, body, md) = optExpr (t0 - 2 * optStep) (f (Stamp tA) (Stamp tB))
    in
     (t1, tA, tB, body, md)
-
-isCheapValue :: Value u -> Bool
-isCheapValue = \case
-  ValueNumber {} -> True
-  ValueBigInt {} -> True
-  ValueString {} -> True
-  ValueBool {} -> True
-  ValueUnit -> True
-  ValueOption Nothing -> True
-  ValueOption (Just v) -> isCheapValue v
-  ValueResult (Left v) -> isCheapValue v
-  ValueResult (Right v) -> isCheapValue v
-  ValueRegex {} -> False
-  ValueUint8Array {} -> False
-  ValueArray {} -> False
-  ValueFunction {} -> False
-  ValueFrozen {} -> False
-
-isCheap :: Expr Stamp u -> Bool
-isCheap = cheapExpr
-
-isCheapFieldLit :: FieldLit Stamp r -> Bool
-isCheapFieldLit = \case
-  FieldLit e -> isCheap e
-  FieldLitExtra e -> isCheap e
-  FieldLitEffect {} -> False
-  FieldLitExtraEffect {} -> False
-
-isCheapEffect :: Effect Stamp u -> Bool
-isCheapEffect = cheapEffect
 
 optArgs :: Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us, Metadata)
 optArgs t0 RecNil = (t0, RecNil, mempty)
@@ -705,7 +601,7 @@ foldAnd x y = case (x, y) of
   (Literal (ValueBool False), _) -> Literal (ValueBool False)
   (Literal (ValueBool True), y') -> y'
   (_, Literal (ValueBool True)) -> x
-  (x', Literal (ValueBool False)) | isPureExpr x' -> Literal (ValueBool False)
+  (x', Literal (ValueBool False)) | isPureExpr_ x' -> Literal (ValueBool False)
   _ -> Std (Kernel (KAnd x y))
 
 foldOr :: Expr Stamp 'Bool -> Expr Stamp 'Bool -> Expr Stamp 'Bool
@@ -713,7 +609,7 @@ foldOr x y = case (x, y) of
   (Literal (ValueBool True), _) -> Literal (ValueBool True)
   (Literal (ValueBool False), y') -> y'
   (_, Literal (ValueBool False)) -> x
-  (x', Literal (ValueBool True)) | isPureExpr x' -> Literal (ValueBool True)
+  (x', Literal (ValueBool True)) | isPureExpr_ x' -> Literal (ValueBool True)
   _ -> Std (Kernel (KOr x y))
 
 foldCmp ::
@@ -726,12 +622,6 @@ foldCmp ::
 foldCmp cmp ok k x y = case (x, y) of
   (Literal a, Literal b) | ok a && ok b -> Literal (ValueBool (cmp a b))
   _ -> k x y
-
-foldEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldEq = foldFrozenEq valueEq structuralEq
-
-foldNEq :: Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool
-foldNEq = foldFrozenEq (\a b -> not (valueEq a b)) structuralNEq
 
 foldFrozenEq ::
   (forall a. Value a -> Value a -> Bool)
@@ -870,7 +760,7 @@ optFixed t0 op args = case (op, args) of
         let
           (t1, x', mdX) = optExpr t0 x
           res = foldFixedUnary n' x'
-          md = Metadata 1 True (isCheap res) <> mdX
+          md = Metadata 1 True (cheapExpr res) <> mdX
          in
           (t1, res, md)
   (n, ArgsB x y)
@@ -879,42 +769,42 @@ optFixed t0 op args = case (op, args) of
           (t1, x', mdX) = optExpr t0 x
           (t2, y', mdY) = optExpr t1 y
           res = foldFixedBinary n' x' y'
-          md = Metadata 1 True (isCheap res) <> mdX <> mdY
+          md = Metadata 1 True (cheapExpr res) <> mdX <> mdY
          in
           (t2, res, md)
   (FixArrLen, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldArrLen x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   (FixToBigInt, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldToBigInt x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   (FixFromBigInt, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldFromBigInt x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   (FixParseBigInt, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldParseBigInt x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   (n, ArgsU x) ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = expr1 n x'
-      md = Metadata 1 (isPureFixed n) (isCheap res) <> mdX
+      md = Metadata 1 (isPureFixed n) (cheapExpr res) <> mdX
      in
       (t1, res, md)
   (n, ArgsB x y) ->
@@ -922,7 +812,7 @@ optFixed t0 op args = case (op, args) of
       (t1, x', mdX) = optExpr t0 x
       (t2, y', mdY) = optExpr t1 y
       res = expr2 n x' y'
-      md = Metadata 1 (isPureFixed n) (isCheap res) <> mdX <> mdY
+      md = Metadata 1 (isPureFixed n) (cheapExpr res) <> mdX <> mdY
      in
       (t2, res, md)
   (n, ArgsT x y z) ->
@@ -931,7 +821,7 @@ optFixed t0 op args = case (op, args) of
       (t2, y', mdY) = optExpr t1 y
       (t3, z', mdZ) = optExpr t2 z
       res = expr3 n x' y' z'
-      md = Metadata 1 True (isCheap res) <> mdX <> mdY <> mdZ
+      md = Metadata 1 True (cheapExpr res) <> mdX <> mdY <> mdZ
      in
       (t3, res, md)
 
@@ -1040,7 +930,7 @@ elimBindFrom t x mdX f tag body mdBody =
   elimFrom
     ElimOps
       { elimCount = elimEffUses
-      , elimPure = const (isPureEffect x)
+      , elimPure = const (pureEffect x)
       , elimCheap = mdIsCheap
       , elimSize = \_ -> nodeCountEff body
       , elimRebuild = Bind x . rebindEff tag
@@ -1080,7 +970,7 @@ optBinNum t0 f k x y =
     (t2, y', mdY) = optExpr t1 y
     res = foldNum2 f k x' y'
    in
-    (t2, res, Metadata 1 True (isCheap res) <> mdX <> mdY)
+    (t2, res, Metadata 1 True (cheapExpr res) <> mdX <> mdY)
 
 optUnNum ::
   Int
@@ -1093,7 +983,7 @@ optUnNum t0 f k x =
     (t1, x', mdX) = optExpr t0 x
     res = foldNum1 f k x'
    in
-    (t1, res, Metadata 1 True (isCheap res) <> mdX)
+    (t1, res, Metadata 1 True (cheapExpr res) <> mdX)
 
 optUnderFn ::
   Int
@@ -1223,7 +1113,7 @@ optExpr t0 expr = case expr of
       (t1, arr', mdA) = optExpr t0 arr
       (t2, idx', mdI) = optExpr t1 idx
       res = foldIndex arr' idx'
-      md = Metadata 1 True (isCheap res) <> mdA <> mdI
+      md = Metadata 1 True (cheapExpr res) <> mdA <> mdI
      in
       (t2, res, md)
   U8Index buf idx ->
@@ -1250,7 +1140,7 @@ optExpr t0 expr = case expr of
     let
       (t1, x', mdX) = optExpr t0 x
      in
-      (t1, UnsafeNullable x', Metadata 1 True (isCheap x') <> mdX)
+      (t1, UnsafeNullable x', Metadata 1 True (cheapExpr x') <> mdX)
   FrozenLit fs ->
     let
       (t1, fs', mdFS) = mapAccumField t0 fs
@@ -1345,14 +1235,14 @@ optKernel t0 k = case k of
       (t1, x', mdX) = optExpr t0 x
       (t2, y', mdY) = optExpr t1 y
       res = foldBig op x' y'
-      md = Metadata 1 True (isCheap res) <> mdX <> mdY
+      md = Metadata 1 True (cheapExpr res) <> mdX <> mdY
      in
       (t2, res, md)
   KBigNeg x ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldBigNeg x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   KConcat x y ->
@@ -1360,21 +1250,21 @@ optKernel t0 k = case k of
       (t1, x', mdX) = optExpr t0 x
       (t2, y', mdY) = optExpr t1 y
       res = foldConcat x' y'
-      md = Metadata 1 True (isCheap res) <> mdX <> mdY
+      md = Metadata 1 True (cheapExpr res) <> mdX <> mdY
      in
       (t2, res, md)
   KShow x ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldShow x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   KTypeOf x ->
     let
       (t1, x', mdX) = optExpr t0 x
       res = foldTypeOf x'
-      md = Metadata 1 True (isCheap res) <> mdX
+      md = Metadata 1 True (cheapExpr res) <> mdX
      in
       (t1, res, md)
   KAnd x y ->
@@ -1388,7 +1278,7 @@ optKernel t0 k = case k of
           let
             (t2, y', mdY) = optExpr t1 y
             res = foldAnd x' y'
-            md = Metadata 1 True (isCheap res) <> mdX <> mdY
+            md = Metadata 1 True (cheapExpr res) <> mdX <> mdY
            in
             (t2, res, md)
   KOr x y ->
@@ -1402,7 +1292,7 @@ optKernel t0 k = case k of
           let
             (t2, y', mdY) = optExpr t1 y
             res = foldOr x' y'
-            md = Metadata 1 True (isCheap res) <> mdX <> mdY
+            md = Metadata 1 True (cheapExpr res) <> mdX <> mdY
            in
             (t2, res, md)
   KEq structural x y ->
@@ -1444,7 +1334,7 @@ optEffect t0 eff = case eff of
      in
       case x' of
         Var (EmbedEff e) -> optEffect t1 e
-        _ -> (t1, Lift x', Metadata 1 True (isCheap x') <> mdX)
+        _ -> (t1, Lift x', Metadata 1 True (cheapExpr x') <> mdX)
   FFI n args ->
     let
       (t1, args', md) = optArgs t0 args

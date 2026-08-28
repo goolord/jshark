@@ -163,7 +163,7 @@ bunEvalTests =
                 ( fromSyntax
                     ( do
                         buf <- toSyntax (newByteArray (number 3))
-                        yield (structuralEq (var buf) (uint8Array (bytes [0, 0, 0])))
+                        yield (structuralEq (var buf) (uint8Array (packUint8 [0, 0, 0])))
                     )
                 )
                 "true"
@@ -179,15 +179,14 @@ bunEvalTests =
                 "full init pop matches Haskell reference"
                 fullInitPopTest
                 (show initialPop)
-            , bunCase "Uint8Array contents" (uint8Array (bytes [1, 2, 3]))
+            , bunCase "Uint8Array contents" (uint8Array (packUint8 [1, 2, 3]))
             , bunCase
                 "Uint8Array Eq"
-                (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2])))
+                (structuralEq (uint8Array (packUint8 [1, 2])) (uint8Array (packUint8 [1, 2])))
             , bunCase
                 "Show Uint8Array"
-                (Show (uint8Array (bytes [1, 2, 3])))
+                (Show (uint8Array (packUint8 [1, 2, 3])))
             , testCase "prettyJS compileEffect ifE+LambdaE" $ do
-                clearCompilerCache
                 out <- compileEffect readableConfig prettyIfLambda
                 assertBool "indented if body" ("{\n" `T.isInfixOf` out)
                 got <- T.unpack <$> runJS (wrapReadableExpr out)
@@ -490,7 +489,7 @@ encodeJSValue = \case
       ++ intercalate
         ","
         [ encodeJSString (show i) ++ ":" ++ show w
-        | (i, w) <- zip [0 :: Int ..] (byteElems ba)
+        | (i, w) <- zip [0 :: Int ..] (uint8Elems ba)
         ]
       ++ "}"
   ValueFrozen {} -> error "encodeJSValue: frozen objects are not JSON"

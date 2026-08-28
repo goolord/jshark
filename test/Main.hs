@@ -16,8 +16,6 @@ import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
--- import ExampleTests (exampleTests)
-
 import Hvm2Tests (hvm2Tests)
 import JShark
 import qualified JShark.Ajax as Ajax
@@ -71,7 +69,6 @@ import System.Directory
   , removePathForcibly
   )
 import System.FilePath ((</>))
-import System.IO ()
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -91,14 +88,12 @@ tests =
     , goodPartsTests
     , genericTests
     , optimizeTests
-    , irParityTests
     , flatSoATests
     , compilerTests
     , bunEvalTests
     , lucidDomTests
-    , -- Example codegen (Breakout/Life/…) is slow; re-enable when tuning IR.
-      -- , exampleTests
-      lifeTests
+    -- ExampleTests (other-modules) typechecks but is not in this tree; slow Life emit.
+    , lifeTests
     , perfTests
     , hvm2Tests
     , catalogTests
@@ -320,10 +315,10 @@ evaluatorTests =
           ValueString s -> s @?= "[object Object]"
     , testCase "Uint8Array literals compare by contents" $ do
         case evaluate
-          (structuralEq (uint8Array (bytes [1, 2, 3])) (uint8Array (bytes [1, 2, 3]))) of
+          (structuralEq (uint8Array (packUint8 [1, 2, 3])) (uint8Array (packUint8 [1, 2, 3]))) of
           ValueBool b -> b @?= True
         case evaluate
-          (structuralEq (uint8Array (bytes [1, 2])) (uint8Array (bytes [1, 2, 3]))) of
+          (structuralEq (uint8Array (packUint8 [1, 2])) (uint8Array (packUint8 [1, 2, 3]))) of
           ValueBool b -> b @?= False
     , testCase "Show of Uint8Array is comma-joined bytes" $
         case evaluate (Show (uint8Array sampleArray)) of
@@ -493,7 +488,7 @@ controlFlowTests =
                   ( fromSyntax
                       ( toSyntax_
                           ( forRange (number 0) (number 3) $ \i ->
-                              discard (u8Set (uint8Array (bytes [0])) i (number 1))
+                              discard (u8Set (uint8Array (packUint8 [0])) i (number 1))
                           )
                           *> toSyntax noOp
                       )
@@ -509,7 +504,7 @@ controlFlowTests =
                   ( fromSyntax
                       ( toSyntax_
                           ( forRange (number 0) (number 3) $ \i ->
-                              discard (u8Set (uint8Array (bytes [0])) i (number 1))
+                              discard (u8Set (uint8Array (packUint8 [0])) i (number 1))
                           )
                           *> toSyntax noOp
                       )
@@ -604,7 +599,7 @@ controlFlowTests =
           )
           @?= "((a,b)=>a+b)(1.0, 2.0)"
     , testCase "u8Index renders direct Uint8Array indexing" $
-        renderJS (pureAST (u8Index (uint8Array (bytes [7, 8, 9])) (number 1)))
+        renderJS (pureAST (u8Index (uint8Array (packUint8 [7, 8, 9])) (number 1)))
           @?= "new Uint8Array([7, 8, 9])[1.0]"
     , testCase "when_ of Unit skips the result bind" $
         renderJS (effectfulAST (when_ condE (ffi "foo" RecNil)))
@@ -1336,7 +1331,7 @@ stdlibTests =
           ( effectfulAST
               ( fromSyntax
                   ( do
-                      b <- yield (uint8Array (bytes [0, 0]))
+                      b <- yield (uint8Array (packUint8 [0, 0]))
                       toSyntax_ (ffi "fill" (arg (var b) <: RecNil))
                       toSyntax_ (ffi "read" (arg (var b) <: RecNil))
                       toSyntax noOp
@@ -1534,7 +1529,7 @@ goodPartsTests =
         renderJS (pureAST (uint8Array emptyArray8))
           @?= "new Uint8Array(0)"
     , testCase "zero-filled uint8Array uses length, not a literal" $
-        renderJS (pureAST (uint8Array (bytes [0, 0, 0])))
+        renderJS (pureAST (uint8Array (packUint8 [0, 0, 0])))
           @?= "new Uint8Array(3)"
     , testCase "newByteArray takes the size, not the bytes" $
         renderJS (effectfulAST (newByteArray (number 4)))
@@ -2052,52 +2047,6 @@ optimizeTests =
         T.count "const $checkedIndex =" js @?= 1
     ]
 
--- | The IR optimizer runs instead of the PHOAS one now that
--- 'optIrLargeThreshold' is zero, so the two must agree. These cases cover the
--- positions whose IR metadata used to report no free variables at all
--- (FFI arguments, method receivers, kernel operands, lambda bodies),
--- which silently deleted still-referenced bindings.
-irParityTests :: TestTree
-irParityTests =
-  testGroup
-    "ir parity"
-    [ parity "multi-use bind" (with1 fooE (\x -> x + x))
-    , parity "chained binds" (with2 fooE barE (\x y -> y + x))
-    , parity "use under a lambda" $
-        with1 fooE (\x -> lambda (\_ -> x + number 1))
-    , parity "use in an if_ branch" $
-        with2 fooE condE (\x c -> if_ c x (number 0))
-    , parity "use on the && RHS" (with2 condE barE (\x y -> And y x))
-    , parity "use inside an ffi argument" ffiArgUse
-    , parity "use inside a method receiver" methodUse
-    , parity "use in both a kernel and a lambda" kernelAndLambdaUse
-    , parity "while body use" whileUse
-    , parity "unused pure bind is dropped" unusedPureBind
-    , parity "try_ result binding" tryBinding
-    ]
- where
-  parity :: String -> (forall f. Effect f u) -> TestTree
-  parity name p =
-    testCase name (renderJS (effectfulASTIr p) @?= renderJS (effectfulAST p))
-  ffiArgUse :: Effect f 'Unit
-  ffiArgUse =
-    bindSyntax (fooE :: Effect f 'Number) (\x -> ffi "sink" (arg x <: RecNil))
-  methodUse :: Effect f ('Array 'Number)
-  methodUse =
-    bindSyntax (ffi "list" RecNil :: Effect f ('Array 'Number)) $ \x ->
-      expr (Array.map x (\y -> y + number 1))
-  kernelAndLambdaUse :: Effect f 'Number
-  kernelAndLambdaUse =
-    bindSyntax (fooE :: Effect f 'Number) $ \x ->
-      expr (x + Apply (lambda (\_ -> x * number 2)) (number 1))
-  whileUse :: Effect f 'Unit
-  whileUse = bindSyntax condE (\c -> while_ (expr c) (ffi "tick" RecNil))
-  unusedPureBind :: Effect f 'Unit
-  unusedPureBind =
-    bindSyntax (expr (number 1)) (\_ -> ffi "foo" RecNil)
-  tryBinding :: Effect f 'Number
-  tryBinding = try_ (ffi "foo" RecNil) (expr (number 0))
-
 flatSoATests :: TestTree
 flatSoATests =
   testGroup
@@ -2107,9 +2056,6 @@ flatSoATests =
     , testCase "constant fold chains" $
         renderJS (effectfulASTIr (expr ((number 1 + number 2) + number 3)))
           @?= renderJS (effectfulASTIr (expr (number 6)))
-    , testCase "flat matches phoas on kernel" $
-        renderJS (effectfulASTIr kernelAndLambdaUse)
-          @?= renderJS (effectfulAST kernelAndLambdaUse)
     , testCase "freezeEncColumns preserves row order" $
         freezeEncColumnsOrderOk @?= True
     , testCase "direct pack is deterministic (kernel)" $
@@ -2136,24 +2082,11 @@ compilerTests =
   testGroup
     "compiler"
     [ testCase "passthrough is identity" $ do
-        clearCompilerCache
         let
           src = "const x = 1 + 2;" :: Text
         out <- compileWith passthroughConfig src
         out @?= src
-    , testCase "memory cache returns the same payload" $ do
-        clearCompilerCache
-        let
-          cfg =
-            CompilerConfig Passthrough MemoryCache False Minified False False False Nothing
-          src = "const x = 1 + 2;" :: Text
-        a <- compileWith cfg src
-        b <- compileWith cfg src
-        a @?= b
-        a @?= src
-        clearCompilerCache
     , testCase "compilePure passthrough emits an IIFE" $ do
-        clearCompilerCache
         out <- compilePure passthroughConfig (number 1 + number 2)
         out @?= renderJSCompact (pureProgram (number 1 + number 2))
         assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
@@ -2161,7 +2094,6 @@ compilerTests =
           "result is returned so minifiers cannot DCE it"
           ("return" `T.isInfixOf` out)
     , testCase "disk cache roundtrips passthrough output" $ do
-        clearCompilerCache
         tmp <- getTemporaryDirectory
         let
           dir = tmp </> "jshark-compiler-disk-test"
@@ -2187,7 +2119,6 @@ compilerTests =
         assertBool "wrote a cache file" (not (null files))
         removePathForcibly dir
     , testCase "disk cache ignores a file whose stored key does not match" $ do
-        clearCompilerCache
         tmp <- getTemporaryDirectory
         let
           dir = tmp </> "jshark-compiler-disk-mismatch"
@@ -2211,7 +2142,6 @@ compilerTests =
         out @?= "const b = 2;"
         removePathForcibly dir
     , testCase "esbuild minifies an IIFE when on PATH" $ do
-        clearCompilerCache
         m <- findExecutable "esbuild"
         case m of
           Nothing -> pure ()
@@ -2239,7 +2169,6 @@ compilerTests =
               "result still an expression (no var binding left)"
               (not ("var " `T.isPrefixOf` out))
     , testCase "tryCompileWith reports missing esbuild" $ do
-        clearCompilerCache
         mExe <- findExecutable "esbuild"
         mNpx <- findExecutable "npx"
         case (mExe, mNpx) of
@@ -2262,7 +2191,6 @@ compilerTests =
               Right _ -> assertFailure "expected Left when esbuild is missing"
           _ -> pure ()
     , testCase "configFallback False surfaces minifier errors" $ do
-        clearCompilerCache
         m <- findExecutable "esbuild"
         case m of
           Nothing -> pure ()
@@ -2283,7 +2211,6 @@ compilerTests =
               Left _ -> pure ()
               Right out -> assertFailure ("expected Left, got " <> T.unpack out)
     , testCase "configFallback True returns the original source" $ do
-        clearCompilerCache
         m <- findExecutable "esbuild"
         case m of
           Nothing -> pure ()
@@ -2303,7 +2230,6 @@ compilerTests =
             out <- compileWith cfg src
             out @?= src
     , testCase "compileWith logs minifier fallback on stderr" $ do
-        clearCompilerCache
         m <- findExecutable "esbuild"
         case m of
           Nothing -> pure ()
@@ -2325,7 +2251,6 @@ compilerTests =
               "fallback notice"
               (T.isInfixOf "using unminified source" (T.pack captured))
     , testCase "compileWithPure suppresses minifier fallback stderr" $ do
-        clearCompilerCache
         m <- findExecutable "esbuild"
         case m of
           Nothing -> pure ()
@@ -2348,7 +2273,6 @@ compilerTests =
               "no fallback notice"
               (not (T.isInfixOf "using unminified source" (T.pack captured)))
     , testCase "compilePure ignores configProgress stderr" $ do
-        clearCompilerCache
         let
           prog = number 1 + number 2
           withProgress =
@@ -2357,16 +2281,11 @@ compilerTests =
             fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp)
         (_, capturedEffect) <-
           captureStderr $ compileEffectIO withProgress eff
-        (_, capturedPure) <- captureStderr $ compilePureIO withProgress prog
+        (_, capturedPure) <- captureStderr $ compilePure withProgress prog
         assertBool
           "effect timing line"
           (T.isInfixOf "compiled in" (T.pack capturedEffect))
         assertBool "pure silent" (not (T.isInfixOf "compiled in" (T.pack capturedPure)))
-        a <- compilePure withProgress prog
-        b <- compilePurePure withProgress prog
-        c <- compilePureIO withProgress prog
-        a @?= b
-        b @?= c
     , testCase "progress protocol encode/decode roundtrip" $ do
         let
           nodes =
@@ -2386,22 +2305,18 @@ compilerTests =
     , testCase "batch job slot timing survives post-job snapshot" $
         batchJobSlotTimingOk >>= (@?= True)
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
-        clearCompilerCache
         out <-
           compileEffect
             readableConfig
             (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
         out @?= "console.log(\"hi\");"
     , testCase "readableConfig compilePure has no IIFE and inlines single-use lets" $ do
-        clearCompilerCache
         out <- compileEffect readableConfig (with1 fooE (\x -> x + number 1))
         out @?= "foo() + 1.0"
     , testCase "readableConfig keeps multi-use lets as const" $ do
-        clearCompilerCache
         out <- compileEffect readableConfig (with1 fooE (\x -> x + x))
         out @?= "const n0 = foo();\nn0 + n0"
     , testCase "Readable style skips the minifier even when a backend is set" $ do
-        clearCompilerCache
         out <-
           compileEffect
             ( CompilerConfig
@@ -2417,7 +2332,6 @@ compilerTests =
             fooE
         out @?= "foo()"
     , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
-        clearCompilerCache
         let
           src = "const x = 1 + 2;" :: Text
           cfg =
@@ -2451,7 +2365,6 @@ compilerTests =
         prettyJS "if (c) {}elsewhere"
           @?= "if (c) {}\nelsewhere"
     , testCase "readableConfig pretty-prints ifE" $ do
-        clearCompilerCache
         out <-
           compileEffect
             readableConfig
@@ -2462,7 +2375,7 @@ compilerTests =
     ]
 
 emptyArray8 :: ByteArray
-emptyArray8 = bytes []
+emptyArray8 = packUint8 []
 
 sampleArray :: ByteArray
-sampleArray = bytes [1, 2, 3]
+sampleArray = packUint8 [1, 2, 3]

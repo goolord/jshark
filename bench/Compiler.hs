@@ -1,13 +1,9 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UnboxedTuples #-}
 
 -- | Compiler microbenchmarks across JShark AST constructors and Life-shaped
 -- paths. AST size, not loop bounds, drives compile time.
@@ -17,20 +13,10 @@
 --   cabal bench jshark-compiler -- jshark-compiler -p 'codepaths/effect/bindRec'
 module Main (main) where
 
-import Data.Array.Byte (ByteArray (..))
-import GHC.Exts
-  ( Int (..)
-  , newByteArray#
-  , unsafeFreezeByteArray#
-  , writeWord8Array#
-  , (+#)
-  )
 import GHC.Generics (Generic)
-import GHC.ST (ST (..), runST)
-import GHC.Word (Word8 (..))
 import Grid (RenderDirty (..))
-import JShark (Expr (Literal))
-import JShark.Api
+import JShark (Expr (Literal), packUint8)
+import JShark.Api hiding (forRange2)
 import JShark.Api.Generic (newRecord, toObject)
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
@@ -193,7 +179,7 @@ resultCasePure =
   resultCase (ok (number 7)) (\e -> number 0 + e) (\a -> a + number 1)
 
 uint8Lit :: ClosedExpr 'Uint8Array
-uint8Lit = uint8Array (packBytes [1, 2, 3, 4, 5])
+uint8Lit = uint8Array (packUint8 [1, 2, 3, 4, 5])
 
 arrayMap :: ClosedExpr ('Array 'Number)
 arrayMap =
@@ -537,18 +523,3 @@ lifeMedium = fromSyntax $ do
           (number 7)
       done
   done
-
-packBytes :: [Word8] -> ByteArray
-packBytes xs = runST go
- where
-  !(I# n#) = length xs
-  go :: ST s ByteArray
-  go = ST $ \s0 ->
-    case newByteArray# n# s0 of
-      (# s1, mba #) ->
-        case write 0# xs mba s1 of
-          s2 -> case unsafeFreezeByteArray# mba s2 of
-            (# s3, ba #) -> (# s3, ByteArray ba #)
-  write _ [] _ s = s
-  write i# (W8# w : rest) mba s =
-    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)

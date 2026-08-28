@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
@@ -44,24 +43,24 @@ import Grid
   , syncPaletteRgbaSid
   , u8Get
   )
-import Names (lookupDisplayName, refreshTakenNames)
-import Patterns (paletteBytes)
 import JShark.Api
-import JShark.Api.Types (Effect (Lift))
 import JShark.Api.Generic (MutableObjectOf, newRecord)
 import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (Effect (Lift))
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
-import qualified JShark.Math as Math
 import JShark.Lucid
   ( JsHtml
   , renderFragment
   , text_
   )
 import qualified JShark.Map as Map
+import qualified JShark.Math as Math
 import JShark.Object (field, frozen)
 import qualified JShark.Set as Set
 import Lucid (class_, div_, span_)
+import Names (lookupDisplayName, refreshTakenNames)
+import Patterns (paletteBytes)
 import Types
   ( LifeState
   , discoverMax
@@ -265,43 +264,43 @@ purgeEmergentDiscoveries
   container
   totalEl
   now = do
-  worldW <- state.worldW
-  worldH <- state.worldH
-  alive <- state.alive
-  species <- state.species
-  nextSpecies <- state.nextSpecies
-  pal <- state.palette
-  paletteRgba <- state.paletteRgba
-  purgeEmergentCells worldW worldH alive species nextSpecies
-  purgeEmergentRegistry registry
-  resetDiscoverPaletteSlots pal paletteRgba
-  set @"nextDiscover" state (fromIntegral discoverMin)
-  set @"recentDiscover" state (string "")
-  set @"sceneDirty" state true_
-  _ <- setProp viewport "renderPanValid" false_
-  _ <- Set.clear seen
-  _ <- setProp tracker "lastMs" (number 0)
-  _ <- setProp tracker "pending" false_
-  liveX0 <- state.boundX0
-  liveY0 <- state.boundY0
-  liveX1 <- state.boundX1
-  liveY1 <- state.boundY1
-  stepIndexTracker
-    alive
-    species
-    pal
-    registry
-    tracker
-    seen
-    container
-    totalEl
-    now
-    liveX0
-    liveY0
-    liveX1
-    liveY1
-    worldW
-    worldH
+    worldW <- state.worldW
+    worldH <- state.worldH
+    alive <- state.alive
+    species <- state.species
+    nextSpecies <- state.nextSpecies
+    pal <- state.palette
+    paletteRgba <- state.paletteRgba
+    purgeEmergentCells worldW worldH alive species nextSpecies
+    purgeEmergentRegistry registry
+    resetDiscoverPaletteSlots pal paletteRgba
+    set @"nextDiscover" state (fromIntegral discoverMin)
+    set @"recentDiscover" state (string "")
+    set @"sceneDirty" state true_
+    _ <- setProp viewport "renderPanValid" false_
+    _ <- Set.clear seen
+    _ <- setProp tracker "lastMs" (number 0)
+    _ <- setProp tracker "pending" false_
+    liveX0 <- state.boundX0
+    liveY0 <- state.boundY0
+    liveX1 <- state.boundX1
+    liveY1 <- state.boundY1
+    stepIndexTracker
+      alive
+      species
+      pal
+      registry
+      tracker
+      seen
+      container
+      totalEl
+      now
+      liveX0
+      liveY0
+      liveX1
+      liveY1
+      worldW
+      worldH
 
 purgeEmergentCells ::
   Expr f 'Number

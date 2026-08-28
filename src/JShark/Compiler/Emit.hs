@@ -24,8 +24,7 @@ module JShark.Compiler.Emit
   , blockBody
   , iifeBody
   , nonEmpty
-  , isEmpty
-  )
+)
 where
 
 import Data.List (intersperse)
@@ -42,7 +41,6 @@ type JS = TextBuilder
 renderJS :: JS -> Text
 renderJS = TB.toText
 
--- | Backward-compatible alias for 'renderJS' (layout is fixed at emit time).
 renderJSCompact :: JS -> Text
 renderJSCompact = renderJS
 

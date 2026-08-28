@@ -14,8 +14,6 @@ import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 
--- | An opaque phantom type representing a @Promise@ resolving to a value of
--- universe @u@.
 data Promise (u :: Universe)
 
 promiseMethod ::
@@ -26,14 +24,12 @@ promiseMethod ::
 promiseMethod name p handler =
   toSyntax $ callMethod p name (ArgEffect (LambdaE handler) <: RecNil)
 
--- | @promise.then(function(x){...})@
 promiseThen ::
   Effect f ('MutableObject (Promise u))
   -> (f u -> Effect f v)
   -> EffectSyntax f (f v)
 promiseThen = promiseMethod "then"
 
--- | @promise.catch(function(err){...})@
 promiseCatch ::
   Effect f ('MutableObject (Promise u))
   -> (f u -> Effect f v)

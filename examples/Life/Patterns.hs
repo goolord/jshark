@@ -1,9 +1,4 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE UnboxedTuples #-}
 
 -- | Pattern catalog for the life demo. Palette lives in 'Palette'.
 --
@@ -31,21 +26,13 @@ where
 
 import Control.Monad (forM_, replicateM_, when)
 import Control.Monad.ST (ST, runST)
-import Data.Array.Byte (ByteArray (..))
+import Data.Array.Byte (ByteArray)
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
 import Data.Word (Word8)
-import GHC.Exts
-  ( Int (I#)
-  , newByteArray#
-  , unsafeFreezeByteArray#
-  , writeWord8Array#
-  , (+#)
-  )
-import GHC.ST (ST (..))
-import GHC.Word (Word8 (W8#))
+import JShark (packUint8)
 import Palette (speciesColor)
 import Types
   ( discoverMax
@@ -793,21 +780,6 @@ touchBounds :: STRef s (Int, Int, Int, Int) -> Int -> Int -> ST s ()
 touchBounds ref x y = modifySTRef ref $ \(x0, y0, x1, y1) ->
   (min x0 x, min y0 y, max x1 x, max y1 y)
 
-bytes :: [Word8] -> ByteArray
-bytes xs = runST go
- where
-  !(I# n#) = length xs
-  go :: ST s ByteArray
-  go = ST $ \s0 ->
-    case newByteArray# n# s0 of
-      (# s1, mba #) ->
-        case write 0# xs mba s1 of
-          s2 -> case unsafeFreezeByteArray# mba s2 of
-            (# s3, ba #) -> (# s3, ByteArray ba #)
-  write _ [] _ s = s
-  write i# (W8# w : rest) mba s =
-    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
-
 lcg01 :: Int -> (Int, Double)
 lcg01 s =
   let
@@ -824,7 +796,7 @@ lcgRange s n =
 
 paletteBytes :: ByteArray
 paletteBytes =
-  bytes
+  packUint8
     [ w
     | i <- [0 .. discoverMax]
     , (r, g, b) <- [speciesColor i]

@@ -108,7 +108,7 @@ main = do
           "life"
           "Game of Life"
           ( \script static ->
-              Life.page static script (Life.frameSrcFor script)
+              Life.page static (Life.frameSrcFor script)
           )
           lifeJs
           Nothing

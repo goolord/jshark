@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | PixiJS 7.4.2 WebGL for Life ('examples/Life/js/pixi.min.js'). All Pixi /
 -- GL calls live here via 'ffi', including two-frame onion skin + glow SDF.
@@ -51,7 +50,6 @@ prefetchLifeShaderJs =
     <> " viewport.cellFragSrc = await r.text();"
     <> " })()"
 
--- | @PIXI.Application@.
 data Application
 
 -- | @PIXI.Texture@ backed by an RGBA byte buffer.
@@ -563,7 +561,6 @@ presentGrid app viewport tex now upload stageDirty = do
       )
   done
 
--- | @new PIXI.Sprite(texture)@.
 newSprite ::
   Expr f ('MutableObject Texture)
   -> EffectSyntax f (Expr f ('MutableObject Sprite))
@@ -577,7 +574,6 @@ newSprite tex =
         )
     )
 
--- | @app.stage.addChild(sprite)@.
 mountSprite ::
   Effect f ('MutableObject Application)
   -> Expr f ('MutableObject Sprite)
@@ -606,7 +602,7 @@ setSpriteViewport sprite panX panY zoom px = do
       (ArgEffect sprite <: arg panX <: arg panY <: arg zoom <: arg px <: RecNil)
   done
 
--- | @app.render()@.
+-- | Present the stage; no-op if the GL context is already lost.
 render ::
   Expr f ('MutableObject Application) -> EffectSyntax f (f 'Unit)
 render app = do

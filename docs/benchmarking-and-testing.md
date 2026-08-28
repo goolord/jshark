@@ -1,14 +1,14 @@
 # Benchmarking, profiling, and testing
 
-Guide for humans and AI agents working on JShark. Commands assume repo root and
-Cabal v2 (`cabal build`, `cabal test`, `cabal bench`).
+Commands assume repo root and Cabal v2 (`cabal build`, `cabal test`,
+`cabal bench`).
 
 ## Prerequisites
 
 | Tool | Required for |
 |------|----------------|
 | GHC 9.14+ / Cabal 3.x | build, test, bench |
-| [Bun](https://bun.sh) on `PATH` | `jshark-test` example parse checks, `BunTests`, `LifeTests` JS engine probes |
+| [Bun](https://bun.sh) on `PATH` | `BunTests`, `LifeTests` JS engine probes |
 | `esbuild` / `terser` (optional) | compiler minifier tests in `test/Main.hs` (skipped if missing) |
 
 Build the library and test executable first:
@@ -61,18 +61,11 @@ cabal test jshark-test --test-options='-t 120s' --test-show-details=direct
 | Compiler | `compiler` | minify, cache, `readableConfig`, `prettyJS` |
 | Bun eval | `BunTests` | emitted JS vs interpreter |
 | Lucid | `LucidTests` | `jshark-lucid` DOM codegen |
-| **Examples** | `ExampleTests` | each example compiled alone; full JS parsed by Bun |
 | Life | `LifeTests` | Conway rules, grid steps, WASM/JS engine helpers |
 
-### Example parse tests (`ExampleTests`)
-
-Each case:
-
-1. Compiles **only its own** `mainJS` via `compileEffect readableConfig` (optimized `effectfulAST`, no minifier).
-2. Wraps output in an unused function so Bun **parses** every line without executing DOM/audio/listeners.
-3. Does **not** share a compile hook across examples (Life cannot block Breakout).
-
-Requires Bun on `PATH` (`after AllSucceed "bun is on PATH"`).
+`test/ExampleTests.hs` typechecks with the suite (`other-modules`) but is
+not in the default Tasty tree — Life's full emit is too slow for every
+`cabal test`. Wire `exampleTests` into `test/Main.hs` to run it.
 
 ### Slow tests
 
@@ -281,7 +274,7 @@ EXE=$(cabal list-bin jshark-compiler)
 | Path | Role |
 |------|------|
 | `test/Main.hs` | main test tree |
-| `test/ExampleTests.hs` | per-example Bun parse tests |
+| `test/ExampleTests.hs` | optional Bun parse tests; not in default Tasty tree |
 | `test/BunTests.hs`, `test/LifeTests.hs` | runtime JS checks |
 | `bench/Stages.hs` | shared stage benchmarks |
 | `bench/Compiler.hs` | `jshark-compiler` |

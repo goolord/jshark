@@ -1,7 +1,5 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RankNTypes #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds #-}
 
 -- | JShark compiler facade: PHOAS terms to JavaScript.
 --
@@ -120,6 +118,8 @@ module JShark
   , evaluateNumber
   , evaluateBigInt
   , evaluateCached
+  , packUint8
+  , uint8Elems
   , optimize
   , optimizeEffect
   , optimizeEffectFromIr
@@ -193,6 +193,8 @@ import JShark.Compiler.Evaluate
   , evaluateBigInt
   , evaluateCached
   , evaluateNumber
+  , packUint8
+  , uint8Elems
   )
 import JShark.Compiler.Lower
   ( irEffectFromClosed

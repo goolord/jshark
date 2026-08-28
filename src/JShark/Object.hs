@@ -86,7 +86,6 @@ set o v =
 newObject :: Effect f ('MutableObject r)
 newObject = UnsafeObject "{}"
 
--- | One typed field of an 'obj' literal.
 field :: forall k r f. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
 field = FieldLit @k
 
@@ -107,7 +106,6 @@ frozen = FrozenLit
 create :: Effect f ('MutableObject proto) -> Effect f ('MutableObject child)
 create proto = FFI (FFICall "Object.create") (ArgEffect proto <: RecNil)
 
--- | @delete o[k]@
 delete :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
 delete = DeleteProp
 

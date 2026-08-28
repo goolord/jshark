@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 -- | Pure reference interpreter for closed 'Expr' terms.
 module JShark.Compiler.Evaluate
@@ -18,11 +19,10 @@ module JShark.Compiler.Evaluate
   , evaluateNumber
   , evaluateBigInt
   , evaluateCached
-  , evalValue
   , valueEq
+  , isCheapValue
   , mapFixedArgs
   , foldFixed
-  , cannotEval
   , isFiniteDouble
   , escapeJsString
   , jsQuote
@@ -30,6 +30,7 @@ module JShark.Compiler.Evaluate
   , jsUint8ArrayLit
   , bigOpJS
   , uint8Elems
+  , packUint8
   , tryEvalBigBin
   , isOrderableValue
   , eqFoldableValue
@@ -50,12 +51,22 @@ import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable, eqT, type (:~:) (Refl))
-import GHC.Exts (Int (..), indexWord8Array#, sizeofByteArray#)
+import GHC.Exts
+  ( Int (..)
+  , indexWord8Array#
+  , newByteArray#
+  , sizeofByteArray#
+  , unsafeFreezeByteArray#
+  , writeWord8Array#
+  , (+#)
+  )
+import GHC.ST (ST (..), runST)
 import GHC.TypeLits (KnownSymbol, sameSymbol)
 import GHC.Word (Word8 (..))
 import JShark.Api.Prim
   ( MathBinary (..)
   , MathUnary (..)
+  , isFiniteDouble
   , matchMathBinary
   , matchMathUnary
   )
@@ -110,6 +121,23 @@ valueEq (ValueUint8Array a) (ValueUint8Array b) = a == b
 valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
 valueEq (ValueFunction _) (ValueFunction _) =
   error "evaluate: functions cannot be compared for equality"
+
+isCheapValue :: Value u -> Bool
+isCheapValue = \case
+  ValueNumber {} -> True
+  ValueBigInt {} -> True
+  ValueString {} -> True
+  ValueBool {} -> True
+  ValueUnit -> True
+  ValueOption Nothing -> True
+  ValueOption (Just v) -> isCheapValue v
+  ValueResult (Left v) -> isCheapValue v
+  ValueResult (Right v) -> isCheapValue v
+  ValueRegex {} -> False
+  ValueUint8Array {} -> False
+  ValueArray {} -> False
+  ValueFunction {} -> False
+  ValueFrozen {} -> False
 
 -- | Last-wins records. JS @===@ is identity; we keep value equality
 -- because a frozen object is a Good Parts record, not a mutable handle.
@@ -238,12 +266,6 @@ jsShowNumber d
  where
   isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
 
-isFiniteDouble :: Double -> Bool
-isFiniteDouble d = not (isNaN d) && not (isInfinite d)
-
--- | JS @Math.floor@ / @ceil@ / @round@ / @trunc@: non-finite inputs are
--- the identity. Prim.mathUnaryFn uses 'JShark.Api.Prim.jsToIntegral'; kept
--- here only as documentation of evaluate's NaN-safe integral conversion.
 cannotEval :: String -> a
 cannotEval what = error ("evaluate: cannot evaluate " ++ what)
 
@@ -427,6 +449,21 @@ escapeJsString = concatMap esc
 uint8Elems :: ByteArray -> [Word8]
 uint8Elems (ByteArray ba#) =
   [W8# (indexWord8Array# ba# i#) | I# i# <- [0 .. I# (sizeofByteArray# ba#) - 1]]
+
+packUint8 :: [Word8] -> ByteArray
+packUint8 xs = runST go
+ where
+  !(I# n#) = length xs
+  go :: ST s ByteArray
+  go = ST $ \s0 ->
+    case newByteArray# n# s0 of
+      (# s1, mba #) ->
+        case write 0# xs mba s1 of
+          s2 -> case unsafeFreezeByteArray# mba s2 of
+            (# s3, ba #) -> (# s3, ByteArray ba #)
+  write _ [] _ s = s
+  write i# (W8# w : rest) mba s =
+    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
 
 -- | JS @String(uint8arr)@ is @Array.prototype.toString@: comma-joined bytes.
 jsShowUint8Array :: ByteArray -> Text

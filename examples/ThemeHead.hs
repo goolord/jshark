@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Shared stylesheet links for example pages (@examples/ThemeHead.hs@).
+-- | Shared stylesheet links for example pages.
 module ThemeHead (themeLinks, sourceLinks, sourceLinksLite) where
 
 import qualified Data.Text as T

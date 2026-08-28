@@ -1,7 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Canvas 2D. Get a context from a canvas element, then draw.
@@ -47,7 +45,6 @@ import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Dom (DomElement)
 
--- | @CanvasRenderingContext2D@.
 data Context2D
 
 -- | CSS color strings. Gradients / patterns are not in the 'Field' yet.
@@ -63,10 +60,8 @@ type instance Field Context2D "textAlign" = 'String
 
 type instance Field Context2D "globalAlpha" = 'Number
 
--- | @TextMetrics@ from 'measureText'.
 data TextMetrics
 
--- | @ImageData@ from 'createImageData'.
 data ImageData
 
 type instance Field TextMetrics "width" = 'Number

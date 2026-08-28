@@ -38,8 +38,8 @@ import Types
   , lifeSettingsCollapseId
   , lifeSettingsGridId
   , lifeSettingsId
-  , lifeSettingsResetId
   , lifeSettingsPurgeId
+  , lifeSettingsResetId
   , lifeSettingsTickId
   , lifeSettingsTickValId
   , lifeSettingsZoomId
@@ -70,8 +70,8 @@ import Types
 --   frames into their own process (Chromium/Electron) fail to bring up the
 --   WebGL renderer there: the sim ticks but the board stays black.
 --   If WebGL is unavailable in the frame the game falls back to a 2D canvas.
-page :: T.Text -> T.Text -> T.Text -> Html ()
-page staticRoot _scriptSrc frameSrc = doctypehtml_ $
+page :: T.Text -> T.Text -> Html ()
+page staticRoot frameSrc = doctypehtml_ $
   html_ [makeAttribute "data-theme" "dark"] $ do
     head_ $ do
       meta_ [charset_ "utf-8"]

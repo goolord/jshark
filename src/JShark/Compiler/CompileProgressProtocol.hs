@@ -17,7 +17,6 @@ module JShark.Compiler.CompileProgressProtocol
   , decodeProgressMessage
   , writeProgressMessage
   , drainProgressFd
-  , progressNameLimit
   , maxProgressNodes
   )
 where

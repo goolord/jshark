@@ -1,10 +1,5 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | @XMLHttpRequest@ and @fetch@ wrappers for browser I/O.
@@ -75,7 +70,6 @@ type instance Field FetchResponse "ok" = 'Bool
 
 type instance Field FetchResponse "status" = 'Number
 
--- | @fetch(url)@
 fetch ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject FetchResponse))
 fetch url = hold $ ffi "fetch" (arg url <: RecNil)

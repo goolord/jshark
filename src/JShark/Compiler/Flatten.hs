@@ -1,28 +1,21 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds -Wno-pattern-namespace-specifier -Wno-unused-imports -Wno-redundant-constraints #-}
 
 -- | PHOAS tree normalization before lower/opt.
 module JShark.Compiler.Flatten
   ( flattenExpr
   , flattenEff
-  , renameExpr
-  , renameEff
   , inlineExpr
   , inlineEff
   , foldGetField
-  , projectFrozenField
   , fieldsPure
   , foldExpr
   , foldEff
@@ -32,15 +25,13 @@ module JShark.Compiler.Flatten
   , rebindExpr
   , rebindExpr2
   , PhoasDummy (..)
-  , isPureExpr
-  , isPureEffectStamp
   )
 where
 
-import Data.Monoid (Any (..), Sum (..))
+import Data.Monoid (Any (..))
 import Data.Proxy (Proxy (..))
 import Data.Typeable (type (:~:) (Refl))
-import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
+import GHC.TypeLits (KnownSymbol, sameSymbol)
 import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
@@ -48,10 +39,9 @@ import JShark.Compiler.Binder
   , nestedDummy
   , nestedDummyId
   , stampId
-  , pattern Name
+  , strictFoldMap
   )
-import JShark.Compiler.Evaluate (cannotEval, foldFixed, mapFixedArgs)
-import Unsafe.Coerce (unsafeCoerce)
+import JShark.Compiler.Evaluate (foldFixed, mapFixedArgs)
 
 occursVarInExpr :: Int -> Expr Stamp u -> Bool
 occursVarInExpr t expr = case expr of
@@ -90,7 +80,6 @@ mapFnBody ge = \case
 
 foldFnBody ::
   forall f us r m.
-  Monoid m =>
   (forall v. f v)
   -> (forall v. Expr f v -> m)
   -> FnBody f us r
@@ -236,10 +225,6 @@ mapEff ge gf eff = case eff of
 -- | Immediate children. Lazy positions (&&/|| RHS, lambda, ?: arms)
 -- use @le@. Binders are applied to @dummy@.
 -- 'Expr' has no lazy 'Effect' child; see 'foldEff' for @lf@.
-strictFoldMap :: Monoid m => (a -> m) -> [a] -> m
-strictFoldMap f = foldl' (\ !acc x -> acc <> f x) mempty
-{-# INLINE strictFoldMap #-}
-
 foldExpr ::
   forall f m u.
   Monoid m =>
@@ -397,8 +382,8 @@ lookupField = findLit . reverse
 
 fieldsPure :: PhoasDummy f => [FieldLit f r] -> Bool
 fieldsPure = all $ \case
-  FieldLit e -> isPureExpr e
-  FieldLitExtra e -> isPureExpr e
+  FieldLit e -> isPureExpr_ e
+  FieldLitExtra e -> isPureExpr_ e
   FieldLitEffect {} -> False
   FieldLitExtraEffect {} -> False
 
@@ -411,17 +396,6 @@ projectFrozenField fs
   | fieldsPure fs = lookupField @k fs
   | otherwise = Nothing
 
-withFrozenField ::
-  forall k r a.
-  KnownSymbol k =>
-  Value ('Object r)
-  -> (Expr Value (Field r k) -> a)
-  -> a
-withFrozenField (ValueFrozen fs) k =
-  case projectFrozenField @k fs of
-    Just e -> k e
-    Nothing -> cannotEval "GetField of a frozen object with effectful fields"
-
 foldGetField ::
   forall k r f.
   (KnownSymbol k, PhoasDummy f) =>
@@ -432,10 +406,7 @@ foldGetField = \case
   If (Literal (ValueBool False)) _ e -> foldGetField @k e
   _ -> Nothing
 
--- | Unwrap 'Embed' holes. The universe of the hole is the universe of the
--- 'Var', so this is ordinary GADT coverage — not a cast.
--- | Remove 'Embed' nodes from the tree. Phantom in the universe, so this
--- does not need a cast.
+-- | Remove 'Embed' nodes from the tree.
 flattenExpr :: Expr Stamp u -> Expr Stamp u
 flattenExpr = \case
   Var (Embed x) -> flattenExpr x
@@ -506,15 +477,7 @@ rebindExpr2 tA tB body a b = rebindExpr tA (rebindExpr tB body b) a
 class PhoasDummy f where
   phoasDummy :: f u
   isPureExpr_ :: Expr f u -> Bool
-  isPureEffect_ :: Effect f u -> Bool
 
 instance PhoasDummy Value where
   phoasDummy = error "JShark.phoasDummy: Value binder"
   isPureExpr_ _ = True
-  isPureEffect_ _ = True
-
-isPureExpr :: PhoasDummy f => Expr f u -> Bool
-isPureExpr = isPureExpr_
-
-isPureEffectStamp :: PhoasDummy f => Effect f u -> Bool
-isPureEffectStamp = isPureEffect_

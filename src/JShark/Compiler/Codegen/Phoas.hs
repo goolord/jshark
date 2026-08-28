@@ -1,59 +1,26 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-unused-imports -Wno-type-defaults -Wno-incomplete-patterns #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults -Wno-incomplete-patterns #-}
 
 -- | Direct PHOAS → JavaScript (pure snippets and legacy paths).
 module JShark.Compiler.Codegen.Phoas where
 
-import Control.Concurrent.Async (mapConcurrently)
-import Control.Monad (forM_, when)
-import Control.Monad.ST (runST)
-import Data.Bits (xor, (.&.), (.|.))
-import Data.Char (isDigit)
-import qualified Data.Char as Char
-import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
-import Data.List (foldl', mapAccumL, nub, sortBy)
-import qualified Data.Map.Strict as M
-import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
-import Data.Monoid (All (..), Any (..), Sum (..))
+import Data.List (mapAccumL)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Proxy (Proxy (..))
-import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import Data.Typeable (Typeable, type (:~:) (Refl))
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
-import GHC.Clock (getMonotonicTime)
-import qualified GHC.IO as GHCIO
-import GHC.IO.Unsafe (unsafePerformIO)
-import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
-import JShark.Api.Prim
-  ( MathBinary (..)
-  , MathUnary (..)
-  , isPureFixed
-  , matchMathBinary
-  , matchMathUnary
-  )
+import GHC.TypeLits (symbolVal)
 import qualified JShark.Api.Prim as Prim
 import JShark.Api.Rec
 import JShark.Api.Types
@@ -61,35 +28,10 @@ import JShark.Compiler.Binder
   ( Stamp (..)
   , nestedDummy
   , nestedDummyId
-  , peelBoolEffect
-  , peelOption
-  , peelResult
-  , peelString
   , stampId
   , pattern Name
   )
 import JShark.Compiler.Codegen.Core
-import JShark.Compiler.CompileProgress
-  ( EmitCtx
-  , captureEmitCtx
-  , initEmitCtxTotal
-  , recordJobFlatPrepare
-  , recordJobPhoasPrepare
-  , reportFlatOptPhase
-  , reportIrPreparePhase
-  , reportPackPhase
-  , tickEmitCtx
-  )
-import JShark.Compiler.CompileTiming
-  ( FlatOptProfile (..)
-  , FlatPrepareTiming (..)
-  , IrOptProfile (..)
-  , LowerProfile (..)
-  , PhoasPrepareTiming (..)
-  , reportFlatPrepareTiming
-  , reportPhoasPrepareTiming
-  , seconds
-  )
 import JShark.Compiler.Emit
   ( JS
   , blockBody
@@ -98,15 +40,12 @@ import JShark.Compiler.Emit
   , colon
   , dquotes
   , hcat
-  , iifeBody
   , jsDouble
   , jsString
   , jsText
-  , nonEmpty
   , parens
   , punctuate
   , renderJS
-  , renderJSCompact
   , semi
   , vcat
   , vcatNonEmpty
@@ -115,37 +54,16 @@ import JShark.Compiler.Emit
   )
 import JShark.Compiler.Evaluate
   ( bigOpJS
-  , eqFoldableValue
   , escapeJsString
-  , evaluate
-  , evaluateBigInt
-  , evaluateCached
-  , evaluateNumber
-  , foldFixed
-  , isFiniteDouble
-  , isOrderableValue
   , jsBigIntLit
   , jsQuote
-  , jsShow
   , jsUint8ArrayLit
-  , mapFixedArgs
-  , parseBigIntString
-  , tryEvalBigBin
-  , typeOfValue
-  , valueCompare
-  , valueEq
   )
-import qualified JShark.Compiler.Flat as Flat
-import qualified JShark.Compiler.FlatSoA as FlatSoA
-import qualified JShark.Compiler.FlatView as FlatView
-import JShark.Compiler.Flatten (flattenEff, flattenExpr)
+import JShark.Compiler.Flatten (flattenExpr)
 import JShark.Compiler.Hoist (registerHoistedTag)
-import qualified JShark.Compiler.Ir as Ir
-import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
+import JShark.Compiler.Lower (evalFnBody, fnDepthStamp)
 import JShark.Compiler.Optimize
   ( bindProbeTag
-  , evalFnBody
-  , fnArity
   , letProbeTag
   , optimize
   )
@@ -263,8 +181,7 @@ bindEffectCode env s0 x f =
                   yFX
               )
 
--- Flat codegen ('flatPureAST'' / 'flatEffectfulAST'') mirrors the PHOAS
--- emitters above; keep in sync — 'irParityTests' diff the two paths.
+-- Flat codegen mirrors these PHOAS emitters.
 isUnitWitness = \case
   Lift (Literal ValueUnit) -> True
   Lift (Var (EmbedEff e)) -> isUnitWitness e
@@ -1084,7 +1001,7 @@ emitHoistedLambdaValue env s0 f =
 renderFn :: forall us r. Env -> CG -> FnBody Stamp us r -> (CG, Code)
 renderFn env s0 body =
   let
-    n = fnArity body
+    n = fnDepthStamp body
     (ids, s1) = allocNIdents s0 n
     (s2, Code d r) = pureAST' s1 env (evalFnBody body ids)
    in

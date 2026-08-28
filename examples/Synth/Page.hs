@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The synthesizer shell. Static markup only; 'Synth.Client' wires it.
+-- | Synth shell. Static markup; 'Synth.Client' wires it.
 module Page (page) where
 
 import qualified Data.Text as T
@@ -14,8 +14,6 @@ idWaveLabel = "synth-wave-label"
 idFilterLabel = "synth-filter-label"
 idEnvelopeLabel = "synth-envelope-label"
 
--- | @staticRoot@ is the shared assets prefix; @headExtra@ / @source@ are the
--- highlighter and the JS pane.
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
 page staticRoot headExtra source scriptSrc = doctypehtml_ $
   html_ [makeAttribute "data-theme" "dark"] $ do

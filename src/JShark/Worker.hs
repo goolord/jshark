@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Web Workers, SharedArrayBuffer, and Atomics helpers for parallel JS.
 module JShark.Worker

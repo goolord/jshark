@@ -1,71 +1,34 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -fno-warn-unused-top-binds -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-unused-imports -Wno-type-defaults -Wno-missing-pattern-synonym-signatures #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults -Wno-missing-pattern-synonym-signatures #-}
 
 -- | Codegen state ('CG'), snippet assembly ('Code'), and compile prep.
 module JShark.Compiler.Codegen.Core where
 
-import Control.Concurrent.Async (mapConcurrently)
-import Control.Monad (forM_, when)
-import Control.Monad.ST (runST)
-import Data.Bits (xor, (.&.), (.|.))
 import qualified Data.Char as Char
-import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
-import Data.List (foldl', mapAccumL)
 import qualified Data.Map.Strict as M
-import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
-import Data.Monoid (All (..), Any (..), Sum (..))
-import Data.Proxy (Proxy (..))
-import Data.STRef (newSTRef, readSTRef, writeSTRef)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import Data.Typeable (Typeable, type (:~:) (Refl))
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
 import GHC.Clock (getMonotonicTime)
 import qualified GHC.IO as GHCIO
 import GHC.IO.Unsafe (unsafePerformIO)
-import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
-import JShark.Api.Prim
-  ( MathBinary (..)
-  , MathUnary (..)
-  , isPureFixed
-  , matchMathBinary
-  , matchMathUnary
-  )
-import qualified JShark.Api.Prim as Prim
-import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
   ( Stamp (..)
-  , nestedDummy
-  , nestedDummyId
-  , peelBoolEffect
-  , peelOption
-  , peelResult
-  , peelString
   , stampId
-  , pattern Name
   )
 import JShark.Compiler.CompileProgress
   ( EmitCtx
@@ -90,67 +53,29 @@ import JShark.Compiler.CompileTiming
   )
 import JShark.Compiler.Emit
   ( JS
-  , blockBody
-  , braces
-  , brackets
-  , colon
   , dquotes
-  , hcat
   , iifeBody
-  , jsDouble
-  , jsString
   , jsText
   , nonEmpty
   , parens
-  , punctuate
-  , renderJS
   , renderJSCompact
   , semi
   , vcat
-  , vcatNonEmpty
   , ($$)
   , (<+>)
   )
-import JShark.Compiler.Evaluate
-  ( bigOpJS
-  , eqFoldableValue
-  , evaluate
-  , evaluateBigInt
-  , evaluateCached
-  , evaluateNumber
-  , foldFixed
-  , isFiniteDouble
-  , isOrderableValue
-  , jsBigIntLit
-  , jsQuote
-  , jsShow
-  , jsUint8ArrayLit
-  , mapFixedArgs
-  , parseBigIntString
-  , tryEvalBigBin
-  , typeOfValue
-  , valueCompare
-  , valueEq
-  )
-import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.FlatSoA as FlatSoA
-import qualified JShark.Compiler.FlatView as FlatView
-import JShark.Compiler.Flatten (flattenExpr, foldExpr)
 import JShark.Compiler.Hoist.Canonical (canonicalHoistSrc)
 import qualified JShark.Compiler.Ir as Ir
-import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Compiler.Lower
   ( lowerEffectClosed
   , lowerOptEffectIr
   , optEffectClosed
   )
 import JShark.Compiler.Optimize
-  ( nodeCountEff
-  , nodeCountExpr
+  ( nodeCountExpr
   , optimize
-  , optimizeEffectTree
   )
-import Unsafe.Coerce (unsafeCoerce)
 
 printComputation computation = T.putStrLn (renderJSCompact computation)
 
@@ -176,44 +101,6 @@ jsCheckedIndexSrc =
 
 jsCheckedIndex arr idx =
   "$checkedIndex" <> parens (arr <> ("," <+> idx))
-
-valueNeedsStructuralEq = \case
-  ValueArray _ -> True
-  ValueFrozen _ -> True
-  ValueUint8Array _ -> True
-  _ -> False
-
-stdNeedsStructuralEq = \case
-  Fixed {} -> False
-  Method {} -> True
-  -- 'Kernel' itself never forces structural @===@; 'renderKernel' checks
-  -- 'needsStructuralEq' on 'KEq'/'KNEq' operands via 'foldKernel'.
-  Kernel {} -> False
-
-needsStructuralEq e = case e of
-  Var (Embed e') -> needsStructuralEq (flattenExpr e')
-  Var _ -> True
-  _ ->
-    getAny
-      ( foldExpr
-          nestedDummy
-          p
-          (const mempty)
-          (const mempty)
-          e
-      )
- where
-  p x =
-    Any
-      ( case x of
-          Literal v -> valueNeedsStructuralEq v
-          Std s -> stdNeedsStructuralEq s
-          Index {} -> True
-          U8Index {} -> True
-          FrozenLit {} -> True
-          GetField {} -> True
-          _ -> False
-      )
 
 -- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
 -- path ('location.hash'); @o["0"]@ otherwise. A single key that is
@@ -337,40 +224,6 @@ preparePureProgram e = do
       pure (startCG {cgEmitCtx = Just ctx}, expr)
 {-# NOINLINE preparePureProgram #-}
 
-prepareEffectProgram :: ClosedEffect u -> IO (CG, Effect Stamp u)
-prepareEffectProgram e = do
-  mCtx <- captureEmitCtx
-  case mCtx of
-    Nothing -> do
-      t0 <- getMonotonicTime
-      let
-        !eff = optimizeEffectTree e
-      t1 <- getMonotonicTime
-      reportPhoasPrepareTiming
-        PhoasPrepareTiming
-          { pptOptimizeSec = seconds t0 t1
-          , pptTotalSec = seconds t0 t1
-          }
-      pure (startCG, eff)
-    Just ctx -> do
-      reportPackPhase ctx 0 1
-      t0 <- getMonotonicTime
-      let
-        !eff = optimizeEffectTree e
-      t1 <- getMonotonicTime
-      let
-        timing =
-          PhoasPrepareTiming
-            { pptOptimizeSec = seconds t0 t1
-            , pptTotalSec = seconds t0 t1
-            }
-      reportPhoasPrepareTiming timing
-      recordJobPhoasPrepare timing
-      reportPackPhase ctx 1 1
-      initEmitCtxTotal ctx (nodeCountEff eff)
-      pure (startCG {cgEmitCtx = Just ctx}, eff)
-{-# NOINLINE prepareEffectProgram #-}
-
 prepareFlatEffectProgram :: ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
 prepareFlatEffectProgram e = do
   mCtx <- captureEmitCtx
@@ -473,12 +326,12 @@ profileIrOptFromIr :: Ir.IrEffect u -> IO IrOptProfile
 profileIrOptFromIr !irRaw = do
   tMetaRaw0 <- getMonotonicTime
   let
-    !rawNodes = Ir.irMetaSize (Ir.metaIrEffect irRaw)
+    !rawNodes = Ir.irSize (Ir.metaIrEffect irRaw)
   tMetaRaw1 <- getMonotonicTime
   tOpt0 <- getMonotonicTime
   let
     !(_, !irOpt, !mdOpt) = Ir.optIrEffect (-2) irRaw
-    !optNodes = Ir.irMetaSize mdOpt
+    !optNodes = Ir.irSize mdOpt
   tOpt1 <- getMonotonicTime
   tMetaOpt0 <- getMonotonicTime
   let
@@ -512,7 +365,7 @@ profileIrOptFromClosed e = do
   tPrep0 <- getMonotonicTime
   let
     !irOpt = optEffectClosed irRaw
-    !optNodes = Ir.irMetaSize (Ir.metaIrEffect irOpt)
+    !optNodes = Ir.irSize (Ir.metaIrEffect irOpt)
   tPrep1 <- getMonotonicTime
   _ <- GHCIO.evaluate irOpt
   breakdown <- profileIrOptFromIr irRaw
@@ -537,7 +390,7 @@ profileLowerFromClosed e = do
   tLazy1 <- getMonotonicTime
   tForce0 <- getMonotonicTime
   let
-    !rawNodes = Ir.irMetaSize (Ir.metaIrEffect irRaw)
+    !rawNodes = Ir.irSize (Ir.metaIrEffect irRaw)
   tForce1 <- getMonotonicTime
   let
     lazySec = seconds tLazy0 tLazy1

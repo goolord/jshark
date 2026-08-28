@@ -4,6 +4,7 @@
 module JShark.Compiler.Metadata
   ( Metadata (..)
   , optStep
+  , optSmall
   )
 where
 
@@ -12,6 +13,11 @@ where
 -- other is counting.
 optStep :: Int
 optStep = 2
+
+-- | Re-opt only small trees. A second walk of a @bindRec@ / do-chain
+-- paint body is what hung todo-mvc and breakout.
+optSmall :: Int
+optSmall = 16
 
 data Metadata = Metadata
   { mdSize :: {-# UNPACK #-} !Int

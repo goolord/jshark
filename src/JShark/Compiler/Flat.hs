@@ -22,15 +22,12 @@ module JShark.Compiler.Flat
   , flatNodeChildRefs
   , flatArgRef
   , flatFieldRef
-  , encodeFlatNode
-  , emptySoaSideAcc
   , packStateEncs
   , packStateNodeCount
   , packStateSoaSide
   , packStateSideTables
   , packStateHoistTags
   , PackState
-  , SoaSideAcc (..)
   , sideAccToVectors
   )
 where

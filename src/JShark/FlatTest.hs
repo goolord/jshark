@@ -100,7 +100,7 @@ optIrEffectForRangeImpure =
   let
     (_, _, md) = Ir.optIrEffect 0 forRangeU8SetLoop
    in
-    not (Ir.irMetaPure md)
+    not (Ir.irPure md)
 
 -- | Slot-backed timing refs survive snapshot after 'withActiveJob' returns.
 batchJobSlotTimingOk :: IO Bool
