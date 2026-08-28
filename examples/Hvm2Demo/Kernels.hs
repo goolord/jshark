@@ -49,8 +49,9 @@ maxIter = 256
 
 zoomRate, initialCenterRe, initialCenterIm, initialScale :: Double
 zoomRate = 0.988
-initialCenterRe = -0.745429
-initialCenterIm = 0.113062
+-- Seahorse-valley minibrot; stays on structure to minScale.
+initialCenterRe = -0.743643887037151
+initialCenterIm = 0.13182590420533
 initialScale = 2.4
 
 -- | @zoomRate@ is applied per this many ms (~60 Hz reference).
@@ -140,7 +141,7 @@ mandelAt ::
 mandelAt px py w h centerRe centerIm scale =
   mandelEscapes (crAt px w centerRe scale) (ciAt py h centerIm scale)
 
--- | JS fallback body; keep in sync with 'examples/Hvm2Demo/shims.c'.
+-- | JS fallback body.
 mandelJsSource :: String
 mandelJsSource =
   "function(cr,ci){"

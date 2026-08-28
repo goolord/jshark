@@ -172,7 +172,7 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $
             "Build wasm: "
             code_ "cabal run build-hvm2-demo-wasm"
           p_ $
-            "The hvm2 path reduces one Bend fork-tree per frame on shared-memory "
+            "The hvm2 path reduces one Bend fork-tree per click (not per frame) on shared-memory "
               <> "workers (COOP/COEP; TPC from the wasm export). The net is capped "
               <> "at 4096 leaves so it fits wasm. Still slower than the SIMD "
               <> "kernel — that is the point of the lab."

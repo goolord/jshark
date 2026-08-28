@@ -242,9 +242,26 @@ boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st 
     sourceOpen <-
       bindExpr $
         ffiExpr "!!document.querySelector('.js-source[open]')" RecNil
-    whenS (not_ paused .&& not_ sourceOpen) $ do
-      tickFrame st now
-      paint ctxH st status
+    mode <- st.labMode
+    lastT <- st.labTickMs
+    let
+      -- HVM2 normalize is sync and blocks the tab. One reduce per mode
+      -- click; re-click hvm2 to snapshot again. Do not zoom on that shot.
+      live = mode .!= number 2
+      hvm2Shot = mode .== number 2 .&& lastT .< number 0
+    whenS (not_ paused .&& not_ sourceOpen .&& (live .|| hvm2Shot)) $
+      ifS
+        live
+        ( do
+            tickFrame st now
+            paint ctxH st status
+            done
+        )
+        ( do
+            set @"labTickMs" st now
+            paint ctxH st status
+            done
+        )
   done
 
 wireControls ::
@@ -270,6 +287,7 @@ wireControls modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st stat
             <> ";"
             <> "if(m>0&&!st.labWasmReady)return;"
             <> "st.labMode=m;"
+            <> "if(m===2)st.labTickMs=-1;"
             <> "[wasm,hvm2,js].forEach(b=>b.classList.remove('active'));"
             <> "if(m===0)js.classList.add('active');"
             <> "else if(m===1)wasm.classList.add('active');"
@@ -677,11 +695,14 @@ runBench st status = do
   scale <- st.labScale
   w <- st.labWidth
   h <- st.labHeight
+  wasPaused <- st.labPaused
+  set @"labPaused" st true_
   let
     blk = number (fromIntegral blockPx)
     blocksX = Math.floor (w / blk)
     blocksY = Math.floor (h / blk)
   res <- bindExpr $ benchCompare centerRe centerIm scale w h
+  set @"labPaused" st wasPaused
   let
     jsMs = Array.index res 0
     wasmMs = Array.index res 1
