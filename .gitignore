@@ -33,6 +33,7 @@ _site/
 tools/
 node_modules/
 bun.lock
+!/jshark-bindgen/bun.lock
 .aider*
 *.csv
 

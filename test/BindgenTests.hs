@@ -10,6 +10,11 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import JShark.Api
 import JShark.Bindgen
+import JShark.Bindgen.Cli
+  ( Cli (..)
+  , Mode (..)
+  , parseCliArgs
+  )
 import JShark.Bindgen.Extract (tsExtractorAvailable)
 import JShark.Bindgen.Ir
 import JShark.Bindgen.Json (decodeModule, encodeModule)
@@ -128,6 +133,46 @@ bindgenTests =
             assertBool
               "resize"
               ("callMethod self \"resize\"" `T.isInfixOf` t)
+    , testCase "CLI parses module / prefix / no-ts flags" $ do
+        case parseCliArgs
+          [ "--no-ts"
+          , "-m"
+          , "JShark.Demo.Toy"
+          , "-p"
+          , "acme"
+          , fixture "toy.d.ts"
+          ] of
+          Left e -> fail e
+          Right cli -> do
+            assertEqual "file" (fixture "toy.d.ts") (cliFile cli)
+            assertEqual "mode" Haskell (cliMode cli)
+            assertEqual
+              "module"
+              (Just "JShark.Demo.Toy")
+              (optModuleName (cliOpts cli))
+            assertEqual
+              "prefix"
+              (Just "acme")
+              (optPrefix (cliOpts cli))
+            assertBool "no-ts" (optNoTs (cliOpts cli))
+    , testCase "CLI rejects unknown flag with usage" $ do
+        case parseCliArgs ["--nope", fixture "toy.d.ts"] of
+          Left msg ->
+            assertBool "usage" ("Usage:" `T.isInfixOf` T.pack msg)
+          Right _ -> fail "expected unknown-flag parse error"
+    , testCase "CLI rejects extra positional argument" $ do
+        case parseCliArgs
+          [ "--no-ts"
+          , fixture "toy.d.ts"
+          , "extra.d.ts"
+          ] of
+          Left msg ->
+            assertBool
+              "invalid arg"
+              ( "Invalid argument" `T.isInfixOf` T.pack msg
+                  || "extra.d.ts" `T.isInfixOf` T.pack msg
+              )
+          Right _ -> fail "expected extra-arg parse error"
     , testCase "generated wrappers compileEffect to JS" $ do
         js <- compileEffect readableConfig toyDemo
         assertBool "greet" ("toy.greet" `T.isInfixOf` js)

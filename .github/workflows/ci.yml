@@ -84,6 +84,10 @@ jobs:
         run: |
           echo "::warning title=Fourmolu::Some files are not formatted. Run scripts/format.sh locally."
 
+      - name: Install jshark-bindgen TypeScript deps
+        run: bun install
+        working-directory: jshark-bindgen
+
       - name: Test
         run: |
           cabal test jshark-test --test-show-details=direct \
