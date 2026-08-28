@@ -33,6 +33,11 @@
   gap: 0.25rem;
 }
 
+.hvm2 .controls button,
+.hvm2 .controls select {
+  margin-bottom: 0;
+}
+
 .hvm2 button {
   font: inherit;
   font-size: 0.8125rem;

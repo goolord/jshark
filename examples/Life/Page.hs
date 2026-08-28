@@ -190,18 +190,17 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
 lifeSourceSection :: Html ()
 lifeSourceSection =
   details_ [class_ "life-source"] $ do
-    summary_ [class_ "life-source-summary"] $
-      span_ [class_ "life-source-summary-row"] $ do
-        span_ [class_ "life-source-summary-inner"] $ do
-          span_ [class_ "life-source-title"] "Source"
-          span_ [class_ "life-source-expand-hint"] "click to expand"
-        button_
-          [ type_ "button"
-          , class_ "js-source-copy life-source-copy"
-          , makeAttribute "aria-label" "Copy generated JavaScript"
-          , makeAttribute "disabled" "true"
-          ]
-          "Copy"
+    summary_ [class_ "life-source-summary"] $ do
+      span_ [class_ "life-source-summary-inner"] $ do
+        span_ [class_ "life-source-title"] "Source"
+        span_ [class_ "life-source-expand-hint"] "click to expand"
+      button_
+        [ type_ "button"
+        , class_ "js-source-copy life-source-copy"
+        , makeAttribute "aria-label" "Copy generated JavaScript"
+        , makeAttribute "disabled" "true"
+        ]
+        "Copy"
     pre_ [class_ "life-source-pre"] $
       code_ [class_ "shj-lang-js life-source-code"] "Expand to load source…"
 

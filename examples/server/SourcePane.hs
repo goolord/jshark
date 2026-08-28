@@ -56,17 +56,16 @@ sourcePanes staticRoot specs = do
 pane :: T.Text -> SourcePaneSpec -> Html ()
 pane _ (SourcePaneSpec label lang body) = do
   details_ [class_ "js-source"] $ do
-    summary_ [class_ "js-source-summary"] $
-      span_ [class_ "js-source-summary-row"] $ do
-        span_ [class_ "js-source-summary-inner"] $ do
-          span_ [class_ "js-source-label"] (toHtml label)
-          span_ [class_ "js-source-expand-hint"] "click to expand"
-        button_
-          [ type_ "button"
-          , class_ "js-source-copy"
-          , makeAttribute "aria-label" ("Copy " <> label)
-          ]
-          "Copy"
+    summary_ [class_ "js-source-summary"] $ do
+      span_ [class_ "js-source-summary-inner"] $ do
+        span_ [class_ "js-source-label"] (toHtml label)
+        span_ [class_ "js-source-expand-hint"] "click to expand"
+      button_
+        [ type_ "button"
+        , class_ "js-source-copy"
+        , makeAttribute "aria-label" ("Copy " <> label)
+        ]
+        "Copy"
     pre_ $
       code_ [class_ ("shj-lang-" <> shjLang lang)] (toHtml body)
 

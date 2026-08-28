@@ -20,17 +20,36 @@
 
 .js-source-summary,
 .life-source-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   cursor: pointer;
   padding: 0.6rem 0.85rem;
   margin-bottom: 0 !important;
   user-select: none;
+  list-style: none;
 }
 
-.js-source-summary-row,
-.life-source-summary-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.js-source-summary::-webkit-details-marker,
+.life-source-summary::-webkit-details-marker {
+  display: none;
+}
+
+.js-source > .js-source-summary::after,
+.life-source > .life-source-summary::after {
+  float: none;
+  position: static;
+  display: block;
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  transform: rotate(-90deg);
+}
+
+.js-source[open] > .js-source-summary::after,
+.life-source[open] > .life-source-summary::after {
+  transform: rotate(0);
 }
 
 .js-source[open] > .js-source-summary,
@@ -75,7 +94,7 @@
   appearance: none;
   flex: 0 0 auto;
   align-self: center;
-  margin: 0 0 0 auto;
+  margin: 0;
   cursor: pointer;
   padding: 0.2rem 0.55rem;
   border: 1px solid var(--border);
