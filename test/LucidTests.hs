@@ -12,6 +12,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import JShark.Bun
   ( BunConfig (..)
   , BunEnv (..)
@@ -22,8 +24,6 @@ import JShark.Bun
   )
 import qualified JShark.Dom as Dom
 import JShark.Lucid
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
 import Lucid (button_, class_, div_, label_, li_, renderText, type_)
 import Lucid.Base (Attribute, Html, Term)
 import Test.Tasty
@@ -85,6 +85,15 @@ lucidDomTests =
           )
           "\"dynamic\""
       , domCase "on wires an event listener" clickTemplate "\"yes\""
+      , domCase
+          "renderFragment inserts in one replaceChildrenFrom"
+          ( fromSyntax $ do
+              frag <- renderFragment (li_ (text_ "batched"))
+              root <- Dom.lookupId (string "root")
+              _ <- Dom.replaceChildrenFrom root frag
+              Dom.innerHTML root >>= yield
+          )
+          "\"<li>batched</li>\""
       ]
 
 -- | A template with no holes, so it is polymorphic over 'Term' and can be

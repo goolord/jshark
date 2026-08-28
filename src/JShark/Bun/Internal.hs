@@ -54,7 +54,7 @@ import System.Process
   )
 
 -- | Wall-clock ceiling on one bun run. The object language has
--- 'JShark.Types.While' and 'JShark.Timers', so a program that never
+-- 'JShark.Api.Types.While' and 'JShark.Timers', so a program that never
 -- terminates is expressible; without a ceiling the caller waits forever.
 bunTimeoutMicroseconds :: Int
 bunTimeoutMicroseconds = 10 * 1000 * 1000

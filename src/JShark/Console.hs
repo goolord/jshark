@@ -12,7 +12,7 @@ module JShark.Console
 where
 
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Rec (Rec (..), (<:))
 import Prelude hiding (error, log)
 
 console_ :: String -> Expr f u -> EffectSyntax f ()

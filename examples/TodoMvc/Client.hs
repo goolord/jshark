@@ -15,9 +15,10 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import Ids
 import JShark.Api
+import JShark.Api.Generic (MutableObjectOf, newRecord)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
-import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Json as Json
 import JShark.Lucid
   ( JsHtml
@@ -29,7 +30,6 @@ import JShark.Lucid
   , voidWith_
   )
 import JShark.Object (field, obj)
-import JShark.Rec (Rec (..), (<:))
 import qualified JShark.Storage as Storage
 import qualified JShark.String as String
 import Lucid (button_, class_, div_, label_, li_, type_)

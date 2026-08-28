@@ -10,8 +10,8 @@ module JShark.Json
 where
 
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 
 -- | @JSON.stringify(x)@. Observationally pure (no mutation; the result
 -- is determined by @x@). Closed-name 'Std' 'Un', not a general FFI.

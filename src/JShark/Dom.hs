@@ -7,6 +7,10 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
+-- | DOM element helpers on 'Effect' ('lookupId', attributes, classes, …).
+--
+-- Elements are opaque 'DomElement' values; use 'JShark.Api.unsafeObject' at
+-- integration boundaries when the host already has a node reference.
 module JShark.Dom
   ( DomElement
   , lookupId
@@ -19,6 +23,10 @@ module JShark.Dom
   , getAttribute
   , appendChild
   , removeChild
+  , replaceChildren
+  , replaceChildrenFrom
+  , setTextContent
+  , setStyleProperty
   , innerHTML
   , setInnerHTML
   , innerText
@@ -31,7 +39,7 @@ where
 import Data.Text (Text)
 import JShark
 import JShark.Api
-import JShark.Rec (Rec (..), (<:))
+import JShark.Api.Rec (Rec (..), (<:))
 
 -- | An opaque phantom type representing a DOM element (what
 -- @document.getElementById@ /etc. return in the browser). Modeled as an
@@ -105,6 +113,39 @@ removeChild ::
   -> Effect f ('MutableObject DomElement)
   -> EffectSyntax f (f 'Unit)
 removeChild parent child = toSyntax $ callMethod parent "removeChild" (ArgEffect child <: RecNil)
+
+replaceChildren ::
+  Effect f ('MutableObject DomElement) -> EffectSyntax f (f 'Unit)
+replaceChildren el = toSyntax $ callMethod el "replaceChildren" RecNil
+
+-- | @parent.replaceChildren(...source.childNodes)@ — one live-DOM update.
+replaceChildrenFrom ::
+  Effect f ('MutableObject DomElement)
+  -> Effect f ('MutableObject DomElement)
+  -> EffectSyntax f (f 'Unit)
+replaceChildrenFrom parent source =
+  toSyntax $
+    ffi
+      "((p, s) => { p.replaceChildren(...s.childNodes); })"
+      (ArgEffect parent <: ArgEffect source <: RecNil)
+
+setTextContent ::
+  Effect f ('MutableObject DomElement)
+  -> Expr f 'String
+  -> EffectSyntax f (f 'Unit)
+setTextContent el x = setProp el "textContent" x
+
+setStyleProperty ::
+  Effect f ('MutableObject DomElement)
+  -> Text
+  -> Expr f 'String
+  -> EffectSyntax f (f 'Unit)
+setStyleProperty el prop value =
+  toSyntax
+    $ discard
+    $ ffi
+      "((el, p, v) => { el.style[p] = v; })"
+      (ArgEffect el <: arg (string prop) <: arg value <: RecNil)
 
 innerHTML ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)

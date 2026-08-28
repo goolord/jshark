@@ -58,6 +58,7 @@ module JShark.Lucid
 
     -- * Rendering
   , renderInto
+  , renderFragment
 
     -- * Text
   , text_
@@ -80,8 +81,8 @@ import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Dom as Dom
-import JShark.Rec (Rec (..), (<:))
 import Lucid.Base (Attribute (..), Term (..), With (..))
 
 -- | A DOM fragment. The @a@ parameter exists so @do@ blocks sequence
@@ -208,6 +209,15 @@ renderInto parent (JsHtml (ns, _)) = do
   mapM_ (renderNode parent) ns
   done
 
+-- | Build the fragment offline, then append it once for a single live-DOM
+-- insertion (see @DocumentFragment@ in the DOM performance guides).
+renderFragment ::
+  JsHtml f () -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+renderFragment (JsHtml (ns, _)) = do
+  frag <- hold $ ffi "document.createDocumentFragment" RecNil
+  mapM_ (renderNode frag) ns
+  pure frag
+
 renderNode ::
   Effect f ('MutableObject Dom.DomElement) -> Node f -> EffectSyntax f ()
 renderNode parent = \case
@@ -236,7 +246,8 @@ build parent name attrs ns = do
   el <- Dom.createElement (string name)
   mapM_ (applyAttribute el) attrs
   -- Attributes first, then modifiers: a dynAttr overrides a static one.
-  let (mods, children) = partitionNodes ns
+  let
+    (mods, children) = partitionNodes ns
   mapM_ (applyModifier el) mods
   mapM_ (renderNode el) children
   void (Dom.appendChild parent el)

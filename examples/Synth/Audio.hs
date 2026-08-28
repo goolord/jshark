@@ -4,24 +4,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 
-{- | Web Audio bound with 'ffi'.
-
-The Good Parts subset has no @new@, no dynamic property access, and no
-knowledge of browser objects. All three live behind 'ffi' /
-'JShark.Api.callMethod' / 'unsafeObjectGet', and this module is the only
-place in the example that touches them: everything below hands back an
-ordinary typed JShark term, so 'Client' never writes a string of
-JavaScript.
-
-The phantom types keep the graph honest — 'connect' takes nodes, the
-automation functions take params — even though JavaScript would let you
-aim anything at anything.
-
-Node handles are 'Expr' because a voice stores them in an object;
-params are 'Effect' because they are read straight back out of a node
-(@osc.frequency@) and used on the spot. Arguments are accepted through
-'ToEffect', so either form works at a call site.
--}
+-- | Web Audio bound with 'ffi'.
+--
+-- The Good Parts subset has no @new@, no dynamic property access, and no
+-- knowledge of browser objects. All three live behind 'ffi' /
+-- 'JShark.Api.callMethod' / 'unsafeObjectGet', and this module is the only
+-- place in the example that touches them: everything below hands back an
+-- ordinary typed JShark term, so 'Client' never writes a string of
+-- JavaScript.
+--
+-- The phantom types keep the graph honest — 'connect' takes nodes, the
+-- automation functions take params — even though JavaScript would let you
+-- aim anything at anything.
+--
+-- Node handles are 'Expr' because a voice stores them in an object;
+-- params are 'Effect' because they are read straight back out of a node
+-- (@osc.frequency@) and used on the spot. Arguments are accepted through
+-- 'ToEffect', so either form works at a call site.
 module Audio
   ( -- * Handles
     AudioCtx
@@ -56,7 +55,11 @@ module Audio
   , setValue
   , setValueAt
   , rampTo
+  , expRampTo
   , cancelFrom
+  , cancelHold
+  , scheduleAdsr
+  , releaseVoice
 
     -- * Sources
   , startAt
@@ -78,9 +81,9 @@ where
 
 import Data.Text (Text)
 import JShark.Api
+import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types
 import JShark.Object (unsafeObjectAssign, unsafeObjectGet)
-import JShark.Rec (Rec (..), (<:))
-import JShark.Types
 
 -- | An @AudioContext@.
 data AudioCtx
@@ -98,6 +101,14 @@ type instance Field Voice "osc" = 'MutableObject Node
 
 type instance Field Voice "vca" = 'MutableObject Node
 
+type instance Field Voice "t0" = 'Number
+
+type instance Field Voice "atk" = 'Number
+
+type instance Field Voice "dec" = 'Number
+
+type instance Field Voice "sus" = 'Number
+
 -- | Anything that lifts to an @AudioContext@ handle.
 type IsCtx f a = ToEffect f ('MutableObject AudioCtx) a
 
@@ -112,17 +123,15 @@ node = toEffect
 ctxOf :: IsCtx f a => a -> Effect f ('MutableObject AudioCtx)
 ctxOf = toEffect
 
-{- | @new AudioContext()@.
-
-'ffi' is free text, so a constructor is reachable even though the object
-language has no @new@.
--}
+-- | @new AudioContext()@.
+--
+-- 'ffi' is free text, so a constructor is reachable even though the object
+-- language has no @new@.
 newAudioContext :: EffectSyntax f (Expr f ('MutableObject AudioCtx))
 newAudioContext = fmap var (toSyntax (ffi "new AudioContext" RecNil))
 
-{- | @ctx.resume()@. A context starts suspended until a user gesture, so
-this belongs in an input handler.
--}
+-- | @ctx.resume()@. A context starts suspended until a user gesture, so
+-- this belongs in an input handler.
 resume :: IsCtx f a => a -> EffectSyntax f ()
 resume ctx = toSyntax_ (callMethod (ctxOf ctx) "resume" RecNil)
 
@@ -130,9 +139,8 @@ resume ctx = toSyntax_ (callMethod (ctxOf ctx) "resume" RecNil)
 contextState :: IsCtx f a => a -> EffectSyntax f (Expr f 'String)
 contextState ctx = getProp (ctxOf ctx) "state"
 
-{- | @ctx.currentTime@ — the audio clock, in seconds. Read it fresh at
-every use: it advances continuously, so a bound value goes stale.
--}
+-- | @ctx.currentTime@ — the audio clock, in seconds. Read it fresh at
+-- every use: it advances continuously, so a bound value goes stale.
 currentTime :: IsCtx f a => a -> EffectSyntax f (Expr f 'Number)
 currentTime ctx = getProp (ctxOf ctx) "currentTime"
 
@@ -156,11 +164,10 @@ biquadFilter = create "createBiquadFilter"
 analyser :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 analyser = create "createAnalyser"
 
-{- | @ctx.createDynamicsCompressor()@.
-
-Voices sum, so a handful of held notes would otherwise exceed unity and
-clip. One of these ahead of the speakers keeps a full chord in range.
--}
+-- | @ctx.createDynamicsCompressor()@.
+--
+-- Voices sum, so a handful of held notes would otherwise exceed unity and
+-- clip. One of these ahead of the speakers keeps a full chord in range.
 compressor :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 compressor = create "createDynamicsCompressor"
 
@@ -174,32 +181,32 @@ connect :: (IsNode f a, IsNode f b) => a -> b -> EffectSyntax f ()
 connect from to =
   toSyntax_ (callMethod (node from) "connect" (ArgEffect (node to) <: RecNil))
 
-{- | @node.disconnect()@.
-
-A stopped oscillator is collected, but the gain node it fed stays wired
-to the graph. Without this each note played leaks one node.
--}
+-- | @node.disconnect()@.
+--
+-- A stopped oscillator is collected, but the gain node it fed stays wired
+-- to the graph. Without this each note played leaks one node.
 disconnect :: IsNode f a => a -> EffectSyntax f ()
 disconnect n = toSyntax_ (callMethod (node n) "disconnect" RecNil)
 
-{- | @src.onended = () => …@ — runs once the source has finished, which
-is when its part of the graph can be taken down.
--}
+-- | @src.onended = () => …@ — runs once the source has finished, which
+-- is when its part of the graph can be taken down.
 onEnded :: IsNode f a => a -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 onEnded n body =
   toSyntax_
-    (unsafeObjectAssign (unsafeObjectGet (node n) "onended") (LambdaE (\_ -> stmts body)))
+    ( unsafeObjectAssign
+        (unsafeObjectGet (node n) "onended")
+        (LambdaE (\_ -> stmts body))
+    )
 
 -- | @node.type = t@ (@"sawtooth"@, @"lowpass"@, …).
 setType :: IsNode f a => a -> Expr f 'String -> EffectSyntax f (f 'Unit)
 setType n t = setProp (node n) "type" t
 
-{- | @analyser.fftSize = n@.
-
-The bin count is half of this, and the bins span the whole spectrum, so
-reading a 32-byte buffer from the default 2048 would only cover the
-bottom 750Hz or so. Size the transform to the buffer instead.
--}
+-- | @analyser.fftSize = n@.
+--
+-- The bin count is half of this, and the bins span the whole spectrum, so
+-- reading a 32-byte buffer from the default 2048 would only cover the
+-- bottom 750Hz or so. Size the transform to the buffer instead.
 setFftSize :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 setFftSize n v = setProp (node n) "fftSize" v
 
@@ -211,9 +218,8 @@ param n = unsafeObjectGet (node n)
 paramValue :: Effect f ('MutableObject Param) -> EffectSyntax f (Expr f 'Number)
 paramValue p = getProp p "value"
 
-{- | @p.value = v@. Immediate and unscheduled — right for a control the
-user is dragging, wrong for anything an envelope owns.
--}
+-- | @p.value = v@. Immediate and unscheduled — right for a control the
+-- user is dragging, wrong for anything an envelope owns.
 setValue ::
   Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
 setValue p v = setProp p "value" v
@@ -227,11 +233,10 @@ setValueAt ::
 setValueAt p v t =
   toSyntax_ (callMethod p "setValueAtTime" (arg v <: arg t <: RecNil))
 
-{- | @p.linearRampToValueAtTime(v, t)@.
-
-Where the timing guarantee comes from: the ramp runs on the audio thread,
-so a busy main thread cannot make it stutter.
--}
+-- | @p.linearRampToValueAtTime(v, t)@.
+--
+-- Where the timing guarantee comes from: the ramp runs on the audio thread,
+-- so a busy main thread cannot make it stutter.
 rampTo ::
   Effect f ('MutableObject Param)
   -> Expr f 'Number
@@ -240,11 +245,125 @@ rampTo ::
 rampTo p v t =
   toSyntax_ (callMethod p "linearRampToValueAtTime" (arg v <: arg t <: RecNil))
 
+-- | @p.exponentialRampToValueAtTime(v, t)@ — perceptual (log) volume; @v@
+-- must stay above zero.
+expRampTo ::
+  Effect f ('MutableObject Param)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f ()
+expRampTo p v t =
+  toSyntax_
+    (callMethod p "exponentialRampToValueAtTime" (arg v <: arg t <: RecNil))
+
 -- | @p.cancelScheduledValues(t)@ — drop automation queued after @t@.
 cancelFrom ::
   Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f ()
 cancelFrom p t =
   toSyntax_ (callMethod p "cancelScheduledValues" (arg t <: RecNil))
+
+-- | @p.cancelAndHoldAtTime(t)@ — drop later events and freeze the computed
+-- value at @t@, so a release can start from the real level, not a jump.
+cancelHold ::
+  Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f ()
+cancelHold p t =
+  toSyntax_ (callMethod p "cancelAndHoldAtTime" (arg t <: RecNil))
+
+-- | One-shot ADSR on a gain param. Attack is a linear rise to peak; decay
+-- and the hold use @setTargetAtTime@ so Chromium cannot drop a second
+-- exponential ramp. @amp.value@ starts at the floor so a new GainNode
+-- does not sit at unity until @t0@.
+scheduleAdsr ::
+  Effect f ('MutableObject Param)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f ()
+scheduleAdsr amp t0 atk dec sus peak minAmp =
+  toSyntax_
+    ( ffi
+        scheduleAdsrJs
+        ( ArgEffect amp
+            <: arg t0
+            <: arg atk
+            <: arg dec
+            <: arg sus
+            <: arg peak
+            <: arg minAmp
+            <: RecNil
+        )
+    )
+
+scheduleAdsrJs :: String
+scheduleAdsrJs =
+  "(amp,t0,atk,dec,sus,peak,floor)=>{"
+    <> "const a=Math.max(0.001,atk),d=Math.max(0.001,dec);"
+    <> "const s=Math.max(floor,Math.min(peak,sus));"
+    <> "try{amp.cancelScheduledValues(0)}catch(e){}"
+    <> "amp.value=floor;"
+    <> "amp.setValueAtTime(floor,t0);"
+    <> "amp.linearRampToValueAtTime(peak,t0+a);"
+    <> "amp.setTargetAtTime(s,t0+a,d/3)"
+    <> "}"
+
+-- | Freeze the computed level, exponential-ramp to a near-zero floor over
+-- the full release, then linear-ramp the last bit to 0 (Web Audio cannot
+-- exponential-ramp to zero). Stop only after silence so the tail is not
+-- a hard cut. Isolated so a missing @cancelAndHoldAtTime@ cannot skip
+-- @stop@ and leave a voice hanging at unity.
+releaseVoice ::
+  (IsNode f osc) =>
+  Effect f ('MutableObject Param)
+  -> osc
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f ()
+releaseVoice amp osc now rel minAmp t0 atk dec sus peak =
+  toSyntax_
+    ( ffi
+        releaseVoiceJs
+        ( ArgEffect amp
+            <: ArgEffect (node osc)
+            <: arg now
+            <: arg rel
+            <: arg minAmp
+            <: arg t0
+            <: arg atk
+            <: arg dec
+            <: arg sus
+            <: arg peak
+            <: RecNil
+        )
+    )
+
+releaseVoiceJs :: String
+releaseVoiceJs =
+  "(amp,osc,now,rel,floor,t0,atk,dec,sus,peak)=>{"
+    <> "const r=Math.max(0.001,rel),a=Math.max(0.001,atk),d=Math.max(0.001,dec);"
+    <> "const s=Math.max(floor,Math.min(peak,sus)),quiet=1e-5,tail=0.03;"
+    <> "let v;"
+    <> "if(now<=t0)v=floor;"
+    <> "else if(now<t0+a){const u=(now-t0)/a;v=floor+(peak-floor)*u;}"
+    <> "else{v=s+(peak-s)*Math.exp(-(now-(t0+a))/(d/3));}"
+    <> "if(!(v>quiet))v=quiet;"
+    <> "try{amp.cancelAndHoldAtTime?amp.cancelAndHoldAtTime(now)"
+    <> ":amp.cancelScheduledValues(now)}catch(e){}"
+    <> "try{"
+    <> "amp.setValueAtTime(v,now);"
+    <> "amp.exponentialRampToValueAtTime(quiet,now+r);"
+    <> "amp.linearRampToValueAtTime(0,now+r+tail)"
+    <> "}catch(e){amp.value=0}"
+    <> "try{osc.stop(now+r+tail+0.02)}catch(e){try{osc.stop()}catch(e2){}}"
+    <> "}"
 
 -- | @src.start(t)@
 startAt :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f ()
@@ -254,44 +373,40 @@ startAt n t = toSyntax_ (callMethod (node n) "start" (arg t <: RecNil))
 stopAt :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f ()
 stopAt n t = toSyntax_ (callMethod (node n) "stop" (arg t <: RecNil))
 
-{- | A zeroed analysis buffer of @n@ bytes.
-
-'JShark.Api.newByteArray' asks for the size and nothing else, which is
-what an output buffer wants: the analyser supplies the contents.
-'JShark.Api.uint8Array' is the host 'ByteArray' literal.
-
-Bound, so the analyser and the meter share one array. JS can write the
-object.
--}
+-- | A zeroed analysis buffer of @n@ bytes.
+--
+-- 'JShark.Api.newByteArray' asks for the size and nothing else, which is
+-- what an output buffer wants: the analyser supplies the contents.
+-- 'JShark.Api.uint8Array' is the host 'ByteArray' literal.
+--
+-- Bound, so the analyser and the meter share one array. JS can write the
+-- object.
 analysisBuffer ::
   Int -> EffectSyntax f (Expr f 'Uint8Array)
 analysisBuffer n =
   fmap var (toSyntax (newByteArray (number (fromIntegral n))))
 
-{- | The @fftSize@ that yields @bins@ frequency bins.
-
-The analyser reports half its transform size, and a buffer shorter than
-that only ever sees the low end of the spectrum.
--}
+-- | The @fftSize@ that yields @bins@ frequency bins.
+--
+-- The analyser reports half its transform size, and a buffer shorter than
+-- that only ever sees the low end of the spectrum.
 fftSizeFor :: Int -> Expr f 'Number
 fftSizeFor bins = number (fromIntegral (bins * 2))
 
-{- | @analyser.getByteFrequencyData(buf)@. Fills @buf@ in place.
--}
+-- | @analyser.getByteFrequencyData(buf)@. Fills @buf@ in place.
 byteFrequencyData ::
-  IsNode f a
-  => a
+  IsNode f a =>
+  a
   -> Expr f 'Uint8Array
   -> EffectSyntax f ()
 byteFrequencyData a buf =
   toSyntax_ (callMethod (node a) "getByteFrequencyData" (arg buf <: RecNil))
 
-{- | Mean of the buffer, scaled to @0..1@.
-
-Byte arrays carry no fold in the object language, so the reduction is an
-'ffi'. Doing it in one call also keeps the per-frame work to a single
-crossing. Reads the handle directly.
--}
+-- | Mean of the buffer, scaled to @0..1@.
+--
+-- Byte arrays carry no fold in the object language, so the reduction is an
+-- 'ffi'. Doing it in one call also keeps the per-frame work to a single
+-- crossing. Reads the handle directly.
 meanByte ::
   Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Number)
 meanByte buf =
@@ -304,16 +419,15 @@ meanByte buf =
         )
     )
 
-{- | @o[k]@ with a computed key, as an 'Option'.
-
-'JShark.Api.getProp' only takes a literal name, and the voice table is
-keyed by whichever note is held, so this one needs 'ffi'. The result type
-is the caller's assertion.
-
-The @?? null@ matters: 'Option' is @null@ to JShark, and a missing
-property is @undefined@, which would fail the @=== null@ test that
-'unsafeNullable' compiles to.
--}
+-- | @o[k]@ with a computed key, as an 'Option'.
+--
+-- 'JShark.Api.getProp' only takes a literal name, and the voice table is
+-- keyed by whichever note is held, so this one needs 'ffi'. The result type
+-- is the caller's assertion.
+--
+-- The @?? null@ matters: 'Option' is @null@ to JShark, and a missing
+-- property is @undefined@, which would fail the @=== null@ test that
+-- 'unsafeNullable' compiles to.
 dictGet ::
   Effect f ('MutableObject r) -> Expr f 'String -> Effect f ('Option u)
 dictGet o k =
@@ -331,11 +445,10 @@ dictSet o k v =
   toSyntax_
     (ffi "((o, k, v) => { o[k] = v; })" (ArgEffect o <: arg k <: arg v <: RecNil))
 
-{- | Run the body for every key of @o@.
-
-@Object.keys@ snapshots, so the body may delete as it goes. Used to drop
-every held note at once.
--}
+-- | Run the body for every key of @o@.
+--
+-- @Object.keys@ snapshots, so the body may delete as it goes. Used to drop
+-- every held note at once.
 forEachKey ::
   Effect f ('MutableObject r)
   -> (Expr f 'String -> EffectSyntax f (f 'Unit))
@@ -347,11 +460,10 @@ forEachKey o body =
         (ArgEffect o <: ArgEffect (LambdaE (\k -> stmts (body (var k)))) <: RecNil)
     )
 
-{- | @el.addEventListener(ev, fn, { once: true })@.
-
-The browser drops the listener after the first call, which is cheaper and
-simpler than a "have I started yet" flag in the program.
--}
+-- | @el.addEventListener(ev, fn, { once: true })@.
+--
+-- The browser drops the listener after the first call, which is cheaper and
+-- simpler than a "have I started yet" flag in the program.
 listenOnce ::
   Text
   -> Effect f ('MutableObject o)
