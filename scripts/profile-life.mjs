@@ -11,7 +11,11 @@ function pct(sorted, q) {
 }
 
 function summarize(raw) {
-  const frames = raw?.frames || [];
+  const cap = raw?.count ?? raw?.frames?.length ?? 0;
+  const frames =
+    cap > 0 && raw?.frames?.length
+      ? raw.frames.slice(0, Math.min(cap, raw.frames.length))
+      : raw?.frames || [];
   const fps = frames.map((f) => f.fps).filter((n) => Number.isFinite(n) && n > 0);
   const step = frames.map((f) => f.stepMs).filter((n) => Number.isFinite(n));
   const render = frames.map((f) => f.renderMs).filter((n) => Number.isFinite(n));
@@ -76,7 +80,10 @@ try {
   console.error(`open ${URL}`);
   await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(
-    () => window.__jsharkLifeProfile && window.__jsharkLifeProfile.frames.length > 2,
+    () => {
+      const p = window.__jsharkLifeProfile;
+      return p && (p.count > 2 || (p.last && p.last.gen > 0));
+    },
     { timeout: 20000 },
   );
   await new Promise((r) => setTimeout(r, MS));

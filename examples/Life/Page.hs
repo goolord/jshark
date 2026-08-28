@@ -32,6 +32,7 @@ import Types
   , lifeEraserRadiusValId
   , lifeEraserSizeId
   , lifeIndexHostId
+  , lifeIndexTotalId
   , lifePauseLabelId
   , lifePauseOverlayId
   , lifeSettingsCollapseId
@@ -177,13 +178,15 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
           settingsMenu
           toolsHud
         ul_ [class_ "life-hints"] $ do
-          li_ "Esc pause · Shift-drag pan · +/− zoom · empty click pauses"
+          li_ "Esc pause · Scroll or +/− zoom · Shift-drag pan · empty click pauses"
           li_ "Eraser or stamp tool · hover cell for name"
         div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
           span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
           span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
         section_ [class_ "life-index"] $ do
-          h2_ "Biomass Index"
+          div_ [class_ "life-index-head"] $ do
+            h2_ "Biomass Index"
+            span_ [id_ lifeIndexTotalId, class_ "life-index-total"] mempty
           div_ [id_ lifeIndexHostId] $
             div_ [id_ lifeTypesListId, class_ "life-index-grid"] mempty
       lifeSourceSection

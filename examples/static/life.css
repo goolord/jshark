@@ -373,25 +373,49 @@ main {
 }
 
 .life-index {
-  margin-top: 1.5rem;
+  margin-top: 1.75rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 88%, transparent),
+      color-mix(in srgb, var(--surface) 96%, transparent)
+    );
   contain: layout style paint;
 }
 
+.life-index-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
 .life-index h2 {
-  margin: 0 0 0.5rem;
+  margin: 0;
   font-size: 0.8125rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+  color: var(--text);
+}
+
+.life-index-total {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .life-index-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.2rem 1.5rem;
-  font-size: 0.8125rem;
-  color: var(--muted);
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.45rem;
   contain: layout style;
 }
 
@@ -402,12 +426,25 @@ main {
 .index-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 0.4rem;
+  gap: 0.65rem;
   align-items: center;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.index-row:not(.index-row-dead):hover {
+  border-color: color-mix(in srgb, var(--border) 90%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
 }
 
 .index-row-dead {
-  opacity: 0.4;
+  opacity: 0.38;
 }
 
 .index-row-dead .index-name,
@@ -415,27 +452,60 @@ main {
   color: var(--faint);
 }
 
-.index-row-dead .swatch {
+.index-row-dead .swatch,
+.index-row-dead .index-bar-fill {
   filter: grayscale(1);
+}
+
+.index-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 
 .index-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 500;
   color: var(--text);
 }
 
+.index-bar-track {
+  height: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  overflow: hidden;
+}
+
+.index-bar-fill {
+  height: 100%;
+  width: 0;
+  min-width: 0;
+  border-radius: inherit;
+  opacity: 0.85;
+  transition: width 0.2s ease;
+}
+
 .index-count {
+  min-width: 3.25rem;
+  text-align: right;
+  font-size: 0.8125rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 
 .swatch {
-  width: 0.625rem;
-  height: 0.625rem;
+  width: 0.75rem;
+  height: 0.75rem;
   display: inline-block;
   flex-shrink: 0;
+  border-radius: 0.125rem;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 8%, transparent);
 }
 
 .life-tooltip {

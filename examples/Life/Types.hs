@@ -40,6 +40,7 @@ module Types
   , indexRefreshMs
   , hudRefreshMs
   , lifeIndexHostId
+  , lifeIndexTotalId
   , lifeTypesListId
   , lifeTooltipId
   , lifeTooltipSwatchId
@@ -84,6 +85,7 @@ module Types
   , zoomSteps
   , zoomLevels
   , zoomLevelLabels
+  , wheelZoomRate
   , soupRngSeed
   , lcgMult
   , lcgInc
@@ -209,6 +211,9 @@ hudRefreshMs = 100
 
 lifeIndexHostId :: Text
 lifeIndexHostId = "life-index-host"
+
+lifeIndexTotalId :: Text
+lifeIndexTotalId = "life-index-total"
 
 lifeTypesListId :: Text
 lifeTypesListId = "life-types"
@@ -354,6 +359,10 @@ zoomLevels = map fst zoomSteps
 -- | HUD labels aligned with 'zoomLevels'.
 zoomLevelLabels :: [Text]
 zoomLevelLabels = map snd zoomSteps
+
+-- | Wheel zoom sensitivity: @exp(-deltaY * rate)@ per event (~1.5%/100px).
+wheelZoomRate :: Double
+wheelZoomRate = 0.003
 
 -- | Shared with 'JShark.Api.seedSoupRegion' and 'Patterns.seedCell'.
 soupRngSeed :: Int

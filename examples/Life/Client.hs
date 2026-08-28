@@ -15,6 +15,7 @@ import Discover
   ( IndexTracker
   , Registry
   , initIndexContainer
+  , initIndexTotal
   , initIndexTracker
   , initRegistry
   , initSeenSpecies
@@ -34,7 +35,7 @@ import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, toObject)
 import qualified JShark.Api.Generic as G
 import JShark.Api.Rec (Rec (..), (<:))
-import JShark.Api.Types (Effect (Lift), Expr (Literal, Var))
+import JShark.Api.Types (Effect (LambdaE, Lift), Expr (Literal, Var))
 import qualified JShark.Api.Types as Ts
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom
@@ -100,8 +101,9 @@ import Types
   , seedW
   , tickMaxMs
   , tickMinMs
-  , zoomLevelLabels
   , zoomLevels
+  , zoomLevelLabels
+  , wheelZoomRate
   )
 
 data Fps = Fps
@@ -164,6 +166,7 @@ bootLoaded canvas app appH viewport renderDirty = do
   indexTracker <- initIndexTracker
   seenSpecies <- initSeenSpecies
   typesList <- initIndexContainer
+  indexTotal <- initIndexTotal
   tooltip <- Dom.lookupId (string lifeTooltipId)
   swatchEl <- Dom.lookupId (string lifeTooltipSwatchId)
   nameEl <- Dom.lookupId (string lifeTooltipNameId)
@@ -238,7 +241,7 @@ bootLoaded canvas app appH viewport renderDirty = do
     whenS (not_ paused) $
       stepLifeFrame state viewport registry stepCtx now
     stepT1 <- performanceNow
-    tickIndex state registry indexTracker seenSpecies typesList now
+    tickIndex state registry indexTracker seenSpecies typesList indexTotal now
     Pixi.tickGlRecovery canvas viewport state
     otherEnd <- performanceNow
     renderStart <- performanceNow
@@ -640,6 +643,29 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
     stmts $ do
       _ <- setProp tipRef "over" (number 0)
       endPointer
+  toSyntax_
+    $ discard
+    $ ffi
+      ( "(canvas, h) => canvas.addEventListener('wheel', (e) => {"
+          <> " e.preventDefault(); h(e);"
+          <> " }, {passive: false})"
+      )
+      ( ArgEffect canvas
+          <: ArgEffect
+            ( LambdaE $ \(e :: f ('MutableObject ())) ->
+                stmts $ do
+                  delta <- getProp' (var e) "deltaY"
+                  ox <- getProp' (var e) "offsetX"
+                  oy <- getProp' (var e) "offsetY"
+                  clientW <- getProp canvas "clientWidth"
+                  let
+                    bufScale = number canvasW / clientW
+                    fx = ox * bufScale
+                    fy = oy * bufScale
+                  whenS (delta .!= 0) $ wheelZoomAt viewport delta fx fy
+            )
+          <: RecNil
+      )
   toSyntax_ $ callMethod canvas "focus" RecNil
   done
 
@@ -1005,6 +1031,18 @@ stepZoom ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 stepZoom viewport delta = do
+  let
+    cx = number (canvasW / 2)
+    cy = number (canvasH / 2)
+  stepZoomAt viewport delta cx cy
+
+stepZoomAt ::
+  Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+stepZoomAt viewport delta fx fy = do
   levels <- getProp viewport "zoomLevels"
   indices <- getProp viewport "zoomIndices"
   z0 <- getProp viewport "zoom"
@@ -1012,25 +1050,58 @@ stepZoom viewport delta = do
     idx = nearestZoomIndex levels indices z0
     nextIdx = clampZoomIndex indices (idx + delta)
     z1 = Array.index levels nextIdx
-  applyZoom viewport z0 z1
+  applyZoomAt viewport z0 z1 fx fy
 
-applyZoom ::
+applyZoomAt ::
   Effect f ('MutableObject ())
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-applyZoom viewport z0 z1 = do
-  let
-    cx = number (canvasW / 2)
-    cy = number (canvasH / 2)
+applyZoomAt viewport z0 z1 fx fy = do
   whenS (z1 .!= z0) $ do
     panX0 <- getProp viewport "panX"
     panY0 <- getProp viewport "panY"
     _ <- setProp viewport "zoom" z1
-    _ <- setProp viewport "panX" (cx - (cx - panX0) * z1 / z0)
-    _ <- setProp viewport "panY" (cy - (cy - panY0) * z1 / z0)
+    _ <- setProp viewport "panX" (fx - (fx - panX0) * z1 / z0)
+    _ <- setProp viewport "panY" (fy - (fy - panY0) * z1 / z0)
     clampPan viewport
     invalidateViewportRender viewport
+    done
+
+-- | Scroll wheel: continuous zoom toward cursor (trackpad-friendly).
+wheelZoomAt ::
+  Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+wheelZoomAt viewport deltaY fx fy = do
+  z0 <- getProp viewport "zoom"
+  factor <- wheelZoomFactor deltaY
+  let
+    minZ = Array.index zoomLevelsLit (number 0)
+    maxZ =
+      Array.index zoomLevelsLit (number (fromIntegral (length zoomLevels - 1)))
+    z1raw = z0 * factor
+    z1 = Math.max minZ (Math.min maxZ z1raw)
+  applyZoomAt viewport z0 z1 fx fy
+
+wheelZoomFactor ::
+  Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+wheelZoomFactor deltaY =
+  fmap
+    var
+    ( toSyntax
+        ( ffi
+            ( "(d) => Math.exp(-d * "
+                <> show wheelZoomRate
+                <> ")"
+            )
+            (arg deltaY <: RecNil)
+        )
+    )
 
 zoomIn ::
   Effect f ('MutableObject ())
@@ -1670,9 +1741,10 @@ tickIndex ::
   -> Effect f ('MutableObject IndexTracker)
   -> Effect f ('Set Number)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-tickIndex state registry tracker seen listEl now = do
+tickIndex state registry tracker seen listEl totalEl now = do
   pending <- getProp tracker "pending"
   indexLastMs <- getProp tracker "lastMs"
   let
@@ -1695,6 +1767,7 @@ tickIndex state registry tracker seen listEl now = do
       tracker
       seen
       listEl
+      totalEl
       now
       liveX0
       liveY0

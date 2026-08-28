@@ -17,6 +17,7 @@ module Discover
   , initRegistry
   , initIndexTracker
   , initIndexContainer
+  , initIndexTotal
   , initSeenSpecies
   , discoverLife
   , stepIndexTracker
@@ -52,8 +53,8 @@ import Lucid (class_, div_, span_)
 import Names (lookupDisplayName)
 import Types
   ( discoverMax
-  , discoverMin
   , indexRefreshMs
+  , lifeIndexTotalId
   , lifeTypesListId
   , manualSpecies
   , soupSpecies
@@ -94,6 +95,17 @@ initIndexTracker = do
   templateE <- getProp frag "firstChild"
   _ <- setProp t "rowTemplate" templateE
   pure t
+
+initIndexTotal ::
+  EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+initIndexTotal = do
+  el <- Dom.lookupId (string lifeIndexTotalId)
+  raw <- bindExpr el
+  hold $
+    optionCaseE
+      (unsafeNullable raw)
+      (throw_ (string "missing index total: life-index-total"))
+      (\hit -> expr hit)
 
 initIndexContainer ::
   EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
@@ -352,6 +364,7 @@ stepIndexTracker ::
   -> Effect f ('MutableObject IndexTracker)
   -> Effect f ('Set Number)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -360,32 +373,47 @@ stepIndexTracker ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-stepIndexTracker alive species palette registry tracker seen container now x0 y0 x1 y1 w0 h0 = do
-  pending <- getProp tracker "pending"
-  lastMs <- getProp tracker "lastMs"
-  let
-    refresh = number (fromIntegral indexRefreshMs)
-    (ix0, iy0, ixStop, iyStop) =
-      clampLiveBounds w0 h0 x0 y0 x1 y1 (number 0)
-  whenS
-    (not_ pending .&& (lastMs .== 0 .|| now - lastMs .>= refresh))
-    ( do
-        _ <- setProp tracker "lastMs" now
-        _ <- setProp tracker "pending" true_
-        counts <- getProp tracker "counts"
-        toSyntax_ (u8Fill counts (number 0))
-        whenS (ixStop .> ix0 .&& iyStop .> iy0) $
-          forRange_ iy0 iyStop $ \y ->
-            forRange_ ix0 ixStop $ \x -> do
-              let
-                i = cellIdx w0 x y
-              whenS (packedIsAlive alive i) $ do
-                sid <- u8Get species i
-                _ <- incCount counts sid
-                Set.insert seen sid
-        paintIndex tracker counts palette registry seen container
-        done
-    )
+stepIndexTracker
+  alive
+  species
+  palette
+  registry
+  tracker
+  seen
+  container
+  totalEl
+  now
+  x0
+  y0
+  x1
+  y1
+  w0
+  h0 = do
+    pending <- getProp tracker "pending"
+    lastMs <- getProp tracker "lastMs"
+    let
+      refresh = number (fromIntegral indexRefreshMs)
+      (ix0, iy0, ixStop, iyStop) =
+        clampLiveBounds w0 h0 x0 y0 x1 y1 (number 0)
+    whenS
+      (not_ pending .&& (lastMs .== 0 .|| now - lastMs .>= refresh))
+      ( do
+          _ <- setProp tracker "lastMs" now
+          _ <- setProp tracker "pending" true_
+          counts <- getProp tracker "counts"
+          toSyntax_ (u8Fill counts (number 0))
+          whenS (ixStop .> ix0 .&& iyStop .> iy0) $
+            forRange_ iy0 iyStop $ \y ->
+              forRange_ ix0 ixStop $ \x -> do
+                let
+                  i = cellIdx w0 x y
+                whenS (packedIsAlive alive i) $ do
+                  sid <- u8Get species i
+                  _ <- incCount counts sid
+                  Set.insert seen sid
+          paintIndex tracker counts palette registry seen container totalEl
+          done
+      )
 
 -- | 16-bit count in a 512-byte buffer: @lo@ at @sid*2@, @hi@ at @sid*2+1@.
 incCount :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (f 'Unit)
@@ -415,7 +443,10 @@ indexRowTemplate :: JsHtml f ()
 indexRowTemplate =
   div_ [class_ "index-row"] $ do
     span_ [class_ "swatch"] mempty
-    span_ [class_ "index-name"] (text_ "")
+    div_ [class_ "index-body"] $ do
+      span_ [class_ "index-name"] (text_ "")
+      div_ [class_ "index-bar-track"] $
+        div_ [class_ "index-bar-fill"] mempty
     span_ [class_ "index-count"] (text_ "0")
 
 cloneIndexRow ::
@@ -424,13 +455,16 @@ cloneIndexRow ::
   -> Effect f ('MutableObject Registry)
   -> Expr f 'Number
   -> Expr f 'Number
+  -> Expr f 'Number
   -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-cloneIndexRow template palette registry sid cnt = do
+cloneIndexRow template palette registry sid cnt maxCnt = do
   row <- hold $ callMethod template "cloneNode" (arg true_ <: RecNil)
   swatch <-
     hold $ callMethod row "querySelector" (arg (string ".swatch") <: RecNil)
   nameEl <-
     hold $ callMethod row "querySelector" (arg (string ".index-name") <: RecNil)
+  barFill <-
+    hold $ callMethod row "querySelector" (arg (string ".index-bar-fill") <: RecNil)
   countEl <-
     hold $ callMethod row "querySelector" (arg (string ".index-count") <: RecNil)
   let
@@ -448,8 +482,12 @@ cloneIndexRow template palette registry sid cnt = do
         <> toString b
         <> string ")"
     dead = cnt .== 0
+    pct =
+      if_ (maxCnt .> 0) (cnt / maxCnt * number 100) (number 0)
   nm <- lookupDisplayName sid registry
   _ <- Dom.setStyleProperty swatch "background" rgb
+  _ <- Dom.setStyleProperty barFill "width" (toString pct <> string "%")
+  _ <- Dom.setStyleProperty barFill "background" rgb
   _ <- Dom.setTextContent nameEl nm
   _ <- Dom.setTextContent countEl (toString cnt)
   toSyntax_ $
@@ -466,25 +504,22 @@ paintIndex ::
   -> Effect f ('MutableObject Registry)
   -> Effect f ('Set Number)
   -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-paintIndex tracker counts palette registry seen container = do
+paintIndex tracker counts palette registry seen container totalEl = do
   _ <-
     Set.mapM_
       ( \sid ->
-          whenS
-            ( countOf counts sid
-                .== 0
-                .&& sid
-                .>= number (fromIntegral discoverMin)
-            )
-            (Set.delete seen sid)
+          whenS (countOf counts sid .== 0) (Set.delete seen sid)
       )
       seen
   entries <- bindExpr $ Array.fromEffects []
   _ <-
     Set.mapM_
-      ( \sid ->
-          Array.push_ entries (sidCount sid (countOf counts sid))
+      ( \sid -> do
+          let
+            cnt = countOf counts sid
+          whenS (cnt .> 0) (Array.push_ entries (sidCount sid cnt))
       )
       seen
   toSyntax_
@@ -494,12 +529,32 @@ paintIndex tracker counts palette registry seen container = do
          in
           if_ (d .!= 0) d (a.sid - b.sid)
     )
-  templateE <- getProp tracker "rowTemplate"
-  fragH <- hold $ ffi "document.createDocumentFragment" RecNil
-  forRange_ (number 0) (Array.length entries) $ \idx -> do
+  let
+    n = Array.length entries
+    maxCnt =
+      if_ (n .> 0) (Array.index entries (number 0)).cnt (number 1)
+  _ <- setProp tracker "indexTotal" (number 0)
+  forRange_ (number 0) n $ \idx -> do
     let
       e = Array.index entries idx
-    row <- cloneIndexRow (expr templateE) palette registry e.sid e.cnt
+    cur <- getProp tracker "indexTotal"
+    _ <- setProp tracker "indexTotal" (cur + e.cnt)
+    done
+  total <- getProp tracker "indexTotal"
+  let
+    label =
+      toString total
+        <> string " cells · "
+        <> toString n
+        <> string " types"
+  _ <- Dom.setTextContent totalEl label
+  templateE <- getProp tracker "rowTemplate"
+  fragH <- hold $ ffi "document.createDocumentFragment" RecNil
+  forRange_ (number 0) n $ \idx -> do
+    let
+      e = Array.index entries idx
+    row <-
+      cloneIndexRow (expr templateE) palette registry e.sid e.cnt maxCnt
     Dom.appendChild fragH row
   Dom.replaceChildrenFrom container fragH
   setProp tracker "pending" false_
