@@ -242,26 +242,11 @@ boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st 
     sourceOpen <-
       bindExpr $
         ffiExpr "!!document.querySelector('.js-source[open]')" RecNil
-    mode <- st.labMode
-    lastT <- st.labTickMs
-    let
-      -- HVM2 normalize is sync and blocks the tab. One reduce per mode
-      -- click; re-click hvm2 to snapshot again. Do not zoom on that shot.
-      live = mode .!= number 2
-      hvm2Shot = mode .== number 2 .&& lastT .< number 0
-    whenS (not_ paused .&& not_ sourceOpen .&& (live .|| hvm2Shot)) $
-      ifS
-        live
-        ( do
-            tickFrame st now
-            paint ctxH st status
-            done
-        )
-        ( do
-            set @"labTickMs" st now
-            paint ctxH st status
-            done
-        )
+    -- Optimizer strips whenS/ifS in this timeout callback. HVM2 must
+    -- not re-enter normalize here; sampleGrid is armed from the click.
+    whenS (not_ paused .&& not_ sourceOpen) $ do
+      tickFrame st now
+      paint ctxH st status
   done
 
 wireControls ::
@@ -287,7 +272,7 @@ wireControls modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st stat
             <> ";"
             <> "if(m>0&&!st.labWasmReady)return;"
             <> "st.labMode=m;"
-            <> "if(m===2)st.labTickMs=-1;"
+            <> "if(m===2)globalThis.__jsharkHvm2Armed=1;"
             <> "[wasm,hvm2,js].forEach(b=>b.classList.remove('active'));"
             <> "if(m===0)js.classList.add('active');"
             <> "else if(m===1)wasm.classList.add('active');"
@@ -388,20 +373,31 @@ tickFrame ::
   -> EffectSyntax f (f 'Unit)
 tickFrame st now = do
   prev <- st.labPrevMs
-  f <- st.labFrame
-  scale <- st.labScale
   let
     delta = Math.max (now - prev) (number 0)
     dt = Math.min delta (number 100)
   zoomFactor <- bindExpr $ zoomScaleFactor dt
-  let
-    shrunk = scale * zoomFactor
-    nextScale =
-      if_ (shrunk .< number minScale) (number initialScale) shrunk
-  set @"labPrevMs" st now
-  set @"labFrame" st (f + 1)
-  set @"labScale" st nextScale
-  set @"labTickMs" st now
+  -- FFI (not whenS): hold the camera in HVM2 so a stripped tick
+  -- callback cannot zoom while a cached snapshot is on screen.
+  toSyntax_ $
+    ffi
+      ( "(st,now,zf,minS,initS)=>{"
+          <> "if((st.labMode|0)===2)return;"
+          <> "const shrunk=st.labScale*zf;"
+          <> "st.labPrevMs=now;"
+          <> "st.labFrame=(st.labFrame||0)+1;"
+          <> "st.labScale=shrunk<minS?initS:shrunk;"
+          <> "st.labTickMs=now;"
+          <> "}"
+      )
+      ( ArgEffect st
+          <: arg now
+          <: arg zoomFactor
+          <: arg (number minScale)
+          <: arg (number initialScale)
+          <: RecNil
+      )
+  done
 
 -- | @zoomRate@ per @zoomReferenceMs@, raised to elapsed ms (fps-independent).
 zoomScaleFactor :: Expr f 'Number -> Effect f 'Number
@@ -519,8 +515,8 @@ blitGrid ctx grid blocksX blocksY blk w h = do
   done
 
 -- | @mode@: 0 = JS loop, 1 = WASM SIMD grid, 2 = HVM2 net reduction of the
--- Bend-compiled @jshark_grid@ def. Both wasm paths fall back to the scalar
--- exports and then the JS loop if their batched export is unavailable.
+-- Bend-compiled @jshark_grid@ def. SIMD-grid miss falls back to the JS
+-- loop; per-pixel wasm calls lose to a warmed JS JIT on this kernel.
 sampleGrid ::
   Expr f 'Number
   -> Expr f 'Number
@@ -540,17 +536,24 @@ sampleGrid mode centerRe centerIm scale w h blk blocksX blocksY =
         <> "const mem=ex?.memory;"
         <> "let hvm2Fail=null;"
         <> "if(mode===2&&mem){"
+        <> "const cache=globalThis.__jsharkHvm2Cache;"
+        <> "const n=bxN*byN;"
+        <> "if(!globalThis.__jsharkHvm2Armed&&cache&&cache.length===n){"
+        <> "setBackend('hvm2');return cache;"
+        <> "}"
         <> "const hg=ex?.mandel_hvm2_grid;"
         <> "if(typeof hg!=='function'){hvm2Fail='no-export';}"
         <> "else{"
         <> "try{"
+        <> "globalThis.__jsharkHvm2Armed=0;"
         <> "const ptr=hg(centerRe,centerIm,scale,w,h,blk,bxN,byN);"
         <> "if(typeof ex?.jshark_hvm2_last_k==='function'){"
         <> "globalThis.__jsharkHvm2LastK=ex.jshark_hvm2_last_k();"
         <> "}"
         <> "if(ptr){"
-        <> "setBackend('hvm2');"
-        <> "return new Int32Array(mem.buffer,ptr,bxN*byN);"
+        <> "const g=Int32Array.from(new Int32Array(mem.buffer,ptr,n));"
+        <> "globalThis.__jsharkHvm2Cache=g;"
+        <> "setBackend('hvm2');return g;"
         <> "}"
         <> "hvm2Fail='zero';"
         <> "}catch(_){"
@@ -570,20 +573,10 @@ sampleGrid mode centerRe centerIm scale w h blk blocksX blocksY =
         <> "}"
         <> "const out=new Array(bxN*byN);"
         <> "const half=blk/2;"
-        <> "const buf=new ArrayBuffer(8);"
-        <> "const f64=new Float64Array(buf);"
-        <> "const i64=new BigInt64Array(buf);"
-        <> "const pack=x=>{f64[0]=+x;return i64[0];};"
-        <> "const wasm64=ex?.mandel_f64;"
-        <> "const wasm=ex?.mandel;"
         <> "const js=globalThis.__jsharkMandelJs;"
-        <> "const useWasm64=mode>=1&&typeof wasm64==='function';"
-        <> "const useWasmI64=mode>=1&&!useWasm64&&typeof wasm==='function';"
         <> "if(hvm2Fail){"
         <> "setBackend(hvm2Fail==='no-export'?'hvm2-fail:no-export':"
         <> "hvm2Fail==='trap'?'hvm2-fail:trap':'hvm2-fail:zero');"
-        <> "}else if(mode===1){"
-        <> "setBackend(useWasm64||useWasmI64?'wasm-scalar':'js');"
         <> "}else{setBackend('js');}"
         <> "let k=0;"
         <> "for(let by=0;by<byN;by++){"
@@ -592,14 +585,7 @@ sampleGrid mode centerRe centerIm scale w h blk blocksX blocksY =
         <> "const invW=1/w,invH=1/h,halfW=w*0.5,halfH=h*0.5;"
         <> "const cr=centerRe+(px-halfW)*scale*invW;"
         <> "const ci=centerIm+(py-halfH)*scale*invH;"
-        <> "if(useWasm64){"
-        <> "out[k++]=wasm64(cr,ci);"
-        <> "}else if(useWasmI64){"
-        <> "const r=wasm(pack(cr),pack(ci));"
-        <> "out[k++]=typeof r==='bigint'?Number(r):r;"
-        <> "}else{"
         <> "out[k++]=js(cr,ci);"
-        <> "}"
         <> "}"
         <> "}"
         <> "return out;"

@@ -49,9 +49,10 @@ maxIter = 256
 
 zoomRate, initialCenterRe, initialCenterIm, initialScale :: Double
 zoomRate = 0.988
--- Seahorse-valley minibrot; stays on structure to minScale.
-initialCenterRe = -0.743643887037151
-initialCenterIm = 0.13182590420533
+-- Seahorse-valley filament (not the minibrot interior). Interior
+-- pixels pin SIMD quads to maxIter and make WASM lose to a JS JIT.
+initialCenterRe = -0.7466003
+initialCenterIm = 0.1330505
 initialScale = 2.4
 
 -- | @zoomRate@ is applied per this many ms (~60 Hz reference).

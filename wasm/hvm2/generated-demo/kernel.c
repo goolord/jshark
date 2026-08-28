@@ -6787,10 +6787,9 @@ static u32 jshark_norm_budget(int cells) {
   return b;
 }
 
-/* One net per frame. 4096 leaves matches Bend main's 64×64 tree;
- * larger canvases downsample, then nearest-neighbor expand so the
- * JS blit contract (bxN×byN) stays unchanged. */
-#define JSHARK_HVM2_MAX_CELLS 4096
+/* Interactive cap. 4096 leaves lock the tab on one normalize;
+ * 256 still shows the net and upsamples to the JS blit size. */
+#define JSHARK_HVM2_MAX_CELLS 256
 static int32_t jshark_hvm2_scratch[JSHARK_HVM2_MAX_CELLS];
 
 static void jshark_hvm2_fit_grid(int nx, int ny, int* fnx, int* fny) {
