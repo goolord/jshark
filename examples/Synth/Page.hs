@@ -66,7 +66,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $
         div_ [id_ idKeyboard, class_ "keyboard"] (mapM_ keyButton keys)
         p_ [id_ idStatus, class_ "status"] "Click a key to start audio"
         footer_ [class_ "page-footer"] $
-          p_ "Web Audio via JShark FFI · ADSR changes apply on the next note"
+          p_ "Web Audio via JShark FFI"
       source
       script_ [src_ scriptSrc] ("" :: Html ())
 

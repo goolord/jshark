@@ -142,7 +142,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
             toHtml (T.pack (show gridW))
             "×"
             toHtml (T.pack (show gridH))
-            " · Conway's game of life sandbox"
+            " · Conway's Game of Life sandbox"
         div_ [class_ "life-stage"] $ do
           canvas_
             [ id_ boardId
@@ -186,7 +186,6 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
           toolsHud
         ul_ [class_ "life-hints"] $ do
           li_ "Esc pause · Scroll or +/− zoom · Shift-drag pan · empty click pauses"
-          li_ "Eraser or stamp tool · hover cell for name"
         div_ [id_ lifeTooltipId, class_ "life-tooltip", role_ "tooltip"] $ do
           span_ [id_ lifeTooltipSwatchId, class_ "life-tooltip-swatch"] mempty
           span_ [id_ lifeTooltipNameId, class_ "life-tooltip-name"] mempty
