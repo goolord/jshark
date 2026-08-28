@@ -121,9 +121,9 @@ static const f32 I24_MIN = (f32) (i32) ((-1u) << 23);
 
 // Global Net
 #define HLEN (1ul << 16) // max 16k high-priority redexes
-#define RLEN (1ul << 14) // max 16m low-priority redexes
-#define G_NODE_LEN (1ul << 18) // max 536m nodes
-#define G_VARS_LEN (1ul << 18) // max 536m vars
+#define RLEN (1ul << 18) // max 16m low-priority redexes
+#define G_NODE_LEN (1ul << 23) // max 536m nodes
+#define G_VARS_LEN (1ul << 23) // max 536m vars
 #define G_RBAG_LEN (TPC * RLEN)
 
 typedef struct Net {
@@ -6679,13 +6679,19 @@ static u32 jshark_hvm2_def_id(const char* name) {
 
 static void jshark_hvm2_reset(void) {
   Net* net = jshark_hvm2_net;
-  TM* t0 = tm[0];
-  u32 nhw = t0->nput + 16;
-  u32 vhw = t0->vput + 16;
-  if (nhw > G_NODE_LEN) { nhw = G_NODE_LEN; }
-  if (vhw > G_VARS_LEN) { vhw = G_VARS_LEN; }
-  memset((void*)net->node_buf, 0, sizeof(net->node_buf[0]) * (u64)nhw);
-  memset((void*)net->vars_buf, 0, sizeof(net->vars_buf[0]) * (u64)vhw);
+  /* HVM alloc is tid*(G_NODE_LEN/TPC) + nput%part — clear each slice. */
+  u32 part = G_NODE_LEN / TPC;
+  if (part == 0) { part = G_NODE_LEN; }
+  for (u32 ti = 0; ti < TPC; ++ti) {
+    u32 n = tm[ti]->nput + 16;
+    u32 v = tm[ti]->vput + 16;
+    if (n > part) { n = part; }
+    if (v > part) { v = part; }
+    memset((void*)(net->node_buf + (u64)ti * part), 0,
+        sizeof(net->node_buf[0]) * (u64)n);
+    memset((void*)(net->vars_buf + (u64)ti * part), 0,
+        sizeof(net->vars_buf[0]) * (u64)v);
+  }
   memset((void*)net->rbag_buf, 0, sizeof(net->rbag_buf));
   vars_create(net, get_val(ROOT), 0);
   atomic_store(&net->itrs, 0);
@@ -6714,22 +6720,63 @@ void jshark_import_wait_evals(u32 count);
 __attribute__((import_module("jshark"), import_name("eval_done")))
 void jshark_import_eval_done(void);
 
+__attribute__((import_module("jshark"), import_name("reset_evals")))
+void jshark_import_reset_evals(void);
+
+__attribute__((import_module("jshark"), import_name("live_threads")))
+u32 jshark_import_live_threads(void);
+
 static void jshark_parallel_normalize(Net* net, Book* book, u32 budget);
 
-/* Single-thread wasm: skip evaluator idle/steal loop (can spin
- * forever when interact re-queues a stuck redex). */
-static void jshark_wasm_normalize(Net* net, Book* book, u32 budget) {
-  TM* t0 = tm[0];
-  while (rbag_len(net, t0) > 0) {
-    if (budget-- == 0) {
-      jshark_hvm2_last_k = -14;
-      return;
-    }
-    if (!interact(net, t0, book)) {
-      jshark_hvm2_last_k = -13;
-      return;
-    }
+/* Do not call HVM evaluator(): it resets idle and sync_threads()
+ * for all TPC slots, so a late worker deadlocks the barrier. */
+static volatile u32 jshark_eval_cancel = 0;
+static u32 jshark_shared_budget = 0;
+
+static int jshark_bags_empty(Net* net) {
+  u32 ti;
+  for (ti = 0; ti < TPC; ++ti) {
+    if (rbag_len(net, tm[ti]) > 0) { return 0; }
   }
+  return 1;
+}
+
+static void jshark_steal_eval(Net* net, TM* t, Book* book, u32 budget) {
+  u32 miss = 0;
+  u32 part = G_RBAG_LEN / TPC;
+  if (part == 0) { part = 1; }
+  while (budget-- > 0) {
+    Pair got;
+    u32 sid;
+    u32 idx;
+    if (jshark_eval_cancel) { return; }
+    if (rbag_len(net, t) > 0) {
+      miss = 0;
+      if (!interact(net, t, book)) {
+        jshark_hvm2_last_k = -13;
+        return;
+      }
+      continue;
+    }
+    sid = (t->tid + 1) % TPC;
+    idx = sid * part + (t->sidx % part);
+    t->sidx++;
+    got = atomic_exchange_explicit(
+        &net->rbag_buf[idx], 0, memory_order_relaxed);
+    if (got != 0) {
+      push_redex(net, t, got);
+      miss = 0;
+      continue;
+    }
+    miss++;
+    if (miss >= part * TPC && jshark_bags_empty(net)) { return; }
+    if (miss >= part * TPC) { miss = 0; }
+  }
+  jshark_hvm2_last_k = -14;
+}
+
+static void jshark_wasm_normalize(Net* net, Book* book, u32 budget) {
+  jshark_steal_eval(net, tm[0], book, budget);
 }
 
 static u32 jshark_norm_budget(int cells) {
@@ -6740,18 +6787,46 @@ static u32 jshark_norm_budget(int cells) {
   return b;
 }
 
-#define JSHARK_HVM2_TILE_W 4
-#define JSHARK_HVM2_TILE_H 5
+/* One net per frame. 4096 leaves matches Bend main's 64×64 tree;
+ * larger canvases downsample, then nearest-neighbor expand so the
+ * JS blit contract (bxN×byN) stays unchanged. */
+#define JSHARK_HVM2_MAX_CELLS 4096
+static int32_t jshark_hvm2_scratch[JSHARK_HVM2_MAX_CELLS];
 
-static int jshark_hvm2_blit_tile(
-    int nx, int ny, int tx0, int ty0, int tw, int th) {
-  for (int row = 0; row < th; row++) {
-    for (int col = 0; col < tw; col++) {
-      jshark_grid_buf[(ty0 + row) * nx + (tx0 + col)] =
-          jshark_grid_buf[row * tw + col];
+static void jshark_hvm2_fit_grid(int nx, int ny, int* fnx, int* fny) {
+  int x = nx;
+  int y = ny;
+  while ((long)x * (long)y > JSHARK_HVM2_MAX_CELLS && (x > 1 || y > 1)) {
+    if (x > 1) { x = (x * 7) / 8; if (x < 1) { x = 1; } }
+    if (y > 1) { y = (y * 7) / 8; if (y < 1) { y = 1; } }
+  }
+  while ((long)(x + 1) * (long)y <= JSHARK_HVM2_MAX_CELLS && x < nx) {
+    x++;
+  }
+  while ((long)x * (long)(y + 1) <= JSHARK_HVM2_MAX_CELLS && y < ny) {
+    y++;
+  }
+  *fnx = x;
+  *fny = y;
+}
+
+static void jshark_hvm2_upsample(int fnx, int fny, int nx, int ny) {
+  int n;
+  int i;
+  int by;
+  if (fnx == nx && fny == ny) { return; }
+  n = fnx * fny;
+  for (i = 0; i < n; i++) {
+    jshark_hvm2_scratch[i] = jshark_grid_buf[i];
+  }
+  for (by = 0; by < ny; by++) {
+    int sy = by * fny / ny;
+    int bx;
+    for (bx = 0; bx < nx; bx++) {
+      int sx = bx * fnx / nx;
+      jshark_grid_buf[by * nx + bx] = jshark_hvm2_scratch[sy * fnx + sx];
     }
   }
-  return 1;
 }
 
 static int jshark_hvm2_run_grid(u32 fid, const double* args, int cap) {
@@ -6798,24 +6873,35 @@ static int jshark_hvm2_run_grid(u32 fid, const double* args, int cap) {
 }
 
 static void jshark_parallel_normalize(Net* net, Book* book, u32 budget) {
-#if TPC <= 1
-  jshark_wasm_normalize(net, book, budget);
-#else
+  u32 live = jshark_import_live_threads();
+  u32 cap;
   u32 spawned = 0;
-  for (u32 t = 1; t < TPC; ++t) {
+  u32 t;
+  jshark_eval_cancel = 0;
+  jshark_shared_budget = budget;
+  if (live <= 1) {
+    jshark_wasm_normalize(net, book, budget);
+    return;
+  }
+  cap = live < (u32)TPC ? live : (u32)TPC;
+  jshark_import_reset_evals();
+  for (t = 1; t < cap; ++t) {
     jshark_import_spawn_eval(t, (u32)(uintptr_t)net, (u32)(uintptr_t)book);
     spawned++;
   }
-  evaluator(net, tm[0], book);
+  jshark_steal_eval(net, tm[0], book, budget);
   jshark_import_wait_evals(spawned);
-#endif
 }
 
 __attribute__((export_name("jshark_worker_eval")))
 void jshark_worker_eval(u32 tid, u32 net_ptr, u32 book_ptr) {
-  evaluator((Net*)(uintptr_t)net_ptr, tm[tid], (Book*)(uintptr_t)book_ptr);
+  jshark_steal_eval((Net*)(uintptr_t)net_ptr, tm[tid],
+      (Book*)(uintptr_t)book_ptr, jshark_shared_budget);
   jshark_import_eval_done();
 }
+
+__attribute__((export_name("jshark_cancel_eval")))
+void jshark_export_cancel_eval(void) { jshark_eval_cancel = 1; }
 
 __attribute__((export_name("jshark_tpc")))
 u32 jshark_export_tpc(void) { return (u32)TPC; }
@@ -6885,42 +6971,35 @@ int32_t jshark_export_mandel_hvm2_grid(double centerRe, double centerIm, double 
     jshark_hvm2_last_k = -2;
     return 0;
   }
-  int total = nx * ny;
-  if (total <= JSHARK_HVM2_TILE_W * JSHARK_HVM2_TILE_H) {
-    double args[8] = {centerRe, centerIm, scale, w, h, blk, bxN, byN};
-    int k = jshark_hvm2_run_grid(fid, args, total);
+  int fnx = 0;
+  int fny = 0;
+  int cells;
+  int k;
+  double blk2;
+  double args[8];
+  (void)blk;
+  jshark_hvm2_fit_grid(nx, ny, &fnx, &fny);
+  cells = fnx * fny;
+  blk2 = w / (double)fnx;
+  {
+    double bh = h / (double)fny;
+    if (bh < blk2) { blk2 = bh; }
+  }
+  args[0] = centerRe;
+  args[1] = centerIm;
+  args[2] = scale;
+  args[3] = w;
+  args[4] = h;
+  args[5] = blk2;
+  args[6] = (double)fnx;
+  args[7] = (double)fny;
+  k = jshark_hvm2_run_grid(fid, args, cells);
+  if (k != cells) {
     jshark_hvm2_last_k = k;
-    if (k != total) { return 0; }
-    return (int32_t)(uintptr_t)jshark_grid_buf;
+    return 0;
   }
-  for (int ty0 = 0; ty0 < ny; ty0 += JSHARK_HVM2_TILE_H) {
-    int th = ny - ty0;
-    if (th > JSHARK_HVM2_TILE_H) { th = JSHARK_HVM2_TILE_H; }
-    for (int tx0 = 0; tx0 < nx; tx0 += JSHARK_HVM2_TILE_W) {
-      int tw = nx - tx0;
-      if (tw > JSHARK_HVM2_TILE_W) { tw = JSHARK_HVM2_TILE_W; }
-      int cells = tw * th;
-      double tileW = (double)tw * blk;
-      double tileH = (double)th * blk;
-      double tileCenterRe = centerRe
-          + ((((double)tx0 * blk) + (tileW * 0.5)) - (w * 0.5)) * scale / w;
-      double tileCenterIm = centerIm
-          + ((((double)ty0 * blk) + (tileH * 0.5)) - (h * 0.5)) * scale / h;
-      double targs[8] = {
-          tileCenterRe, tileCenterIm, scale, tileW, tileH, blk,
-          (double)tw, (double)th};
-      int k = jshark_hvm2_run_grid(fid, targs, cells);
-      if (k != cells) {
-        jshark_hvm2_last_k = k;
-        return 0;
-      }
-      if (!jshark_hvm2_blit_tile(nx, ny, tx0, ty0, tw, th)) {
-        jshark_hvm2_last_k = -3;
-        return 0;
-      }
-    }
-  }
-  jshark_hvm2_last_k = total;
+  jshark_hvm2_upsample(fnx, fny, nx, ny);
+  jshark_hvm2_last_k = nx * ny;
   return (int32_t)(uintptr_t)jshark_grid_buf;
 }
 

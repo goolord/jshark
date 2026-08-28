@@ -53,6 +53,15 @@ hvm2Tests =
             T.isInfixOf "export_name(\"jshark_tpc\")" bridge @?= True
             T.isInfixOf "import_name(\"spawn_eval\")" bridge @?= True
             T.isInfixOf "import_name(\"eval_done\")" bridge @?= True
+            T.isInfixOf "import_name(\"reset_evals\")" bridge @?= True
+            T.isInfixOf "import_name(\"live_threads\")" bridge @?= True
+            T.isInfixOf "JSHARK_HVM2_MAX_CELLS" bridge @?= True
+            T.isInfixOf "JSHARK_HVM2_TILE" bridge @?= False
+            T.isInfixOf "jshark_hvm2_blit_tile" bridge @?= False
+            T.isInfixOf "jshark_steal_eval" bridge @?= True
+            T.isInfixOf "export_name(\"jshark_cancel_eval\")" bridge @?= True
+            T.isInfixOf "node_buf + (u64)ti * part" bridge @?= True
+            T.isInfixOf "evaluator(net, tm[0], book)" bridge @?= False
     , testCase "bend demo kernels pass bend check (no or/and)" $
         case bendModule hvm2Entries of
           Left bendErr -> assertFailure (show bendErr)
@@ -138,6 +147,20 @@ hvm2Tests =
           Left bendErr -> assertFailure (show bendErr)
           Right bend ->
             T.pack (show maxIter) `T.isInfixOf` bend @?= True
+    , testCase "sanitizeKernelCForWasm sizes one-net buffers" $
+        let
+          out =
+            sanitizeKernelCForWasm $
+              "#define G_NODE_LEN (1ul << 29)\n"
+                <> "#define G_VARS_LEN (1ul << 29)\n"
+                <> "#define RLEN (1ul << 24)\n"
+                <> "#define TPC_L2 8\n"
+         in
+          do
+            T.isInfixOf "#define G_NODE_LEN (1ul << 23)" out @?= True
+            T.isInfixOf "#define G_VARS_LEN (1ul << 23)" out @?= True
+            T.isInfixOf "#define RLEN (1ul << 18)" out @?= True
+            T.isInfixOf "#ifndef TPC_L2" out @?= True
     , testCase "applyCompilerArgs enables hvm2 warnings" $
         configWarnHvm2Candidates
           (applyCompilerArgs ["--warn-hvm2-candidates"] readableConfig)

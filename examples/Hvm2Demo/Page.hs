@@ -174,10 +174,10 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $
             "Build wasm: "
             code_ "cabal run build-hvm2-demo-wasm"
           p_ $
-            "WebAssembly is still single-threaded in browsers, so the hvm2 path "
-              <> "(Bend → HVM evaluator in wasm) runs slower than the hand-written "
-              <> "SIMD kernel. It’s here mostly because wiring that pipeline up "
-              <> "seemed fun."
+            "The hvm2 path reduces one Bend fork-tree per frame on shared-memory "
+              <> "workers (COOP/COEP; TPC from the wasm export). The net is capped "
+              <> "at 4096 leaves so it fits wasm. Still slower than the SIMD "
+              <> "kernel — that is the point of the lab."
       script_ [src_ (demoAsset "hvm2-wasm.js")] ("" :: Html ())
       source
       script_ [src_ scriptSrc] ("" :: Html ())

@@ -159,7 +159,7 @@ compileHvm2Wasm cfg outDir maxIter bendSrc = do
           , "--build-file"
           , absBuildFile
           , "-Doptimize=ReleaseFast"
-          , "-Dtpc-l2=0"
+          , "-Dtpc-l2=2"
           , "-Dkernel-c=" ++ absCPath
           , "-Dexports-c=" ++ absExportsPath
           , "--prefix"

@@ -40,6 +40,7 @@ function buildImports(module, evalSync, memory) {
         if (imp.name === 'eval_done') {
           ns[imp.name] = () => {
             Atomics.add(evalSync, EVAL_DONE, 1);
+            Atomics.notify(evalSync, EVAL_DONE);
           };
         } else {
           ns[imp.name] = () => {};
@@ -60,6 +61,7 @@ let instance = null;
 function signalError(evalSync) {
   Atomics.store(evalSync, EVAL_ERR, 1);
   Atomics.add(evalSync, EVAL_DONE, 1);
+  Atomics.notify(evalSync, EVAL_DONE);
 }
 
 function fail(workerId, evalSync, err) {

@@ -101,6 +101,8 @@ function buildImports(module, jshark, memory) {
     spawn_eval: () => {},
     wait_evals: () => {},
     eval_done: () => {},
+    reset_evals: () => {},
+    live_threads: () => 1,
   };
   /** @type {WebAssembly.Imports} */
   const out = {};
@@ -137,22 +139,57 @@ function checkExports(ex) {
 function signalEvalError(evalSync) {
   Atomics.store(evalSync, EVAL_ERR, 1);
   Atomics.add(evalSync, EVAL_DONE, 1);
+  Atomics.notify(evalSync, EVAL_DONE);
 }
 
-function waitEvals(evalSync, count) {
+function resetEvals(evalSync) {
   Atomics.store(evalSync, EVAL_DONE, 0);
   Atomics.store(evalSync, EVAL_ERR, 0);
+}
+
+function memNote(memPages) {
+  return 'mem ' + memPages.initial + '..' + memPages.maximum + 'p';
+}
+
+function allocMemory(memPages) {
+  try {
+    return new WebAssembly.Memory({
+      initial: memPages.initial,
+      maximum: memPages.maximum,
+      shared: memPages.shared,
+    });
+  } catch (err) {
+    throw new Error(
+      'HVM2 Memory alloc failed (' +
+        memNote(memPages) +
+        ', shared=' +
+        !!memPages.shared +
+        '): ' +
+        (err && err.message ? err.message : String(err)),
+    );
+  }
+}
+
+/** Park on evalSync[DONE] instead of spinning the main thread. */
+function waitEvals(evalSync, count, onTimeout) {
   const deadline = performance.now() + 30000;
-  while (Atomics.load(evalSync, EVAL_DONE) < count) {
+  for (;;) {
+    const done = Atomics.load(evalSync, EVAL_DONE);
     if (Atomics.load(evalSync, EVAL_ERR) !== 0) {
       throw new Error('HVM2 worker eval failed');
     }
-    if (performance.now() > deadline) {
+    if (done >= count) {
+      return;
+    }
+    const ms = deadline - performance.now();
+    if (ms <= 0) {
+      if (typeof onTimeout === 'function') {
+        onTimeout();
+      }
       throw new Error('HVM2 worker wait timeout');
     }
+    Atomics.wait(evalSync, EVAL_DONE, done, ms);
   }
-  Atomics.store(evalSync, EVAL_DONE, 0);
-  Atomics.store(evalSync, EVAL_ERR, 0);
 }
 
 async function fetchWasm(wasmUrl) {
@@ -166,11 +203,7 @@ async function fetchWasm(wasmUrl) {
 async function loadSingle(wasmUrl, loadNote = '') {
   const { wasmBytes, module } = await fetchWasm(wasmUrl);
   const memPages = importedMemoryPages(wasmBytes);
-  const memory = new WebAssembly.Memory({
-    initial: memPages.initial,
-    maximum: memPages.maximum,
-    shared: memPages.shared,
-  });
+  const memory = allocMemory(memPages);
   /** @type {WebAssembly.Exports | null} */
   let ex = null;
   const jshark = {
@@ -181,6 +214,10 @@ async function loadSingle(wasmUrl, loadNote = '') {
     },
     wait_evals() {},
     eval_done() {},
+    reset_evals() {},
+    live_threads() {
+      return 1;
+    },
   };
   const instance = new WebAssembly.Instance(
     module,
@@ -193,7 +230,9 @@ async function loadSingle(wasmUrl, loadNote = '') {
     memory,
     threads: 1,
     loadMode: 'single',
-    loadNote,
+    loadNote: loadNote
+      ? loadNote + ' · ' + memNote(memPages)
+      : memNote(memPages),
     blocking: false,
     terminate() {},
   };
@@ -209,14 +248,40 @@ async function loadThreaded(wasmUrl, workerUrl) {
 
   const { wasmBytes, module } = await fetchWasm(wasmUrl);
   const memPages = importedMemoryPages(wasmBytes);
-  const memory = new WebAssembly.Memory({
-    initial: memPages.initial,
-    maximum: memPages.maximum,
-    shared: memPages.shared,
-  });
+  const memory = allocMemory(memPages);
 
   const evalSync = new Int32Array(new SharedArrayBuffer(16));
   const workers = [];
+  let live = 1;
+  /** @type {WebAssembly.Exports | null} */
+  let ex = null;
+
+  const killPool = (reason) => {
+    if (typeof ex?.jshark_cancel_eval === 'function') {
+      try {
+        ex.jshark_cancel_eval();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    Atomics.store(evalSync, EVAL_ERR, 1);
+    Atomics.notify(evalSync, EVAL_DONE);
+    for (const w of workers) {
+      try {
+        w.terminate();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    workers.length = 0;
+    live = 1;
+    const h = globalThis.__jsharkHvm2;
+    if (h) {
+      h.threads = 1;
+      h.blocking = false;
+      h.loadNote = 'threads: 1 (workers killed: ' + reason + ') · ' + memNote(memPages);
+    }
+  };
 
   const jshark = {
     spawn_eval(tid, netPtr, bookPtr) {
@@ -225,9 +290,15 @@ async function loadThreaded(wasmUrl, workerUrl) {
       w.postMessage({ type: 'eval', tid, netPtr, bookPtr });
     },
     wait_evals(count) {
-      waitEvals(evalSync, count);
+      waitEvals(evalSync, count, () => killPool('wait timeout'));
     },
     eval_done() {},
+    reset_evals() {
+      resetEvals(evalSync);
+    },
+    live_threads() {
+      return live;
+    },
   };
 
   const instance = new WebAssembly.Instance(
@@ -235,7 +306,7 @@ async function loadThreaded(wasmUrl, workerUrl) {
     buildImports(module, jshark, memory),
   );
 
-  const ex = instance.exports;
+  ex = instance.exports;
   checkExports(ex);
   if (!(memory.buffer instanceof SharedArrayBuffer)) {
     throw new Error('wasm memory is not shared (need COOP/COEP + threaded build)');
@@ -312,15 +383,17 @@ async function loadThreaded(wasmUrl, workerUrl) {
         sendInit(true);
       }
     });
+    live = tpc;
   }
 
   globalThis.__jsharkHvm2 = {
     exports: ex,
     memory,
-    threads: tpc,
+    threads: live,
     loadMode: 'threaded',
-    loadNote: '',
-    blocking: tpc > 1,
+    loadNote:
+      (live > 1 ? 'threads: ' + live : 'threads: 1') + ' · ' + memNote(memPages),
+    blocking: live > 1,
     terminate() {
       for (const w of workers) w.terminate();
     },
@@ -328,8 +401,8 @@ async function loadThreaded(wasmUrl, workerUrl) {
 }
 
 /**
- * Load HVM2 wasm. Uses threaded workers when COOP/COEP is active; otherwise
- * falls back to single-threaded SIMD (still supports wasm + hvm2 modes).
+ * Load HVM2 wasm. Shared-memory workers when COOP/COEP is on (TPC from
+ * jshark_tpc); otherwise one thread (wasm + hvm2 modes still work).
  */
 globalThis.__jsharkHvm2Load = async (wasmUrl, workerUrl) => {
   if (globalThis.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined') {
@@ -338,7 +411,12 @@ globalThis.__jsharkHvm2Load = async (wasmUrl, workerUrl) => {
       return;
     } catch (err) {
       console.warn('HVM2 threaded load failed; falling back to single-thread', err);
-      await loadSingle(wasmUrl, 'threads: 1 (threaded load failed)');
+      await loadSingle(
+        wasmUrl,
+        'threads: 1 (threaded load failed: ' +
+          (err && err.message ? err.message : String(err)) +
+          ')',
+      );
       return;
     }
   }

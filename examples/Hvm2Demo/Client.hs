@@ -119,7 +119,7 @@ gridBackendLabelFFI =
     ++ "else s='JS fallback';"
     ++ "}"
     ++ "if(h?.loadNote)s+=' · '+h.loadNote;"
-    ++ "if(h?.blocking&&b==='hvm2')s+=' · main thread blocks during normalize';"
+    ++ "if(h?.blocking&&b==='hvm2')s+=' · '+(h.threads|0)+' threads · UI blocked in normalize';"
     ++ "return s;"
     ++ "}"
 
