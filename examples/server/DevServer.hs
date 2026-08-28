@@ -281,7 +281,7 @@ exportExamples dest examples = do
     case path of
       Nothing -> pure ()
       Just filePath ->
-        copyFile
+        copyFileInto
           filePath
           (dest </> "static" </> (T.unpack (exampleName ex) <> ".png"))
   forM_ examples $ \ex -> do
@@ -308,11 +308,11 @@ exportExamples dest examples = do
       createDirectoryIfMissing True (dir </> "js/shaders")
       forM_ lifeEngineJs $ \(route, rel) -> do
         src <- resolveDataFile rel
-        copyFile src (dir </> route)
+        copyFileInto src (dir </> route)
     when (exampleName ex == "hvm2-demo") $
       forM_ hvm2DemoAssets $ \(route, rel) -> do
         src <- resolveDataFile rel
-        copyFile src (dir </> route)
+        copyFileInto src (dir </> route)
 
 -- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
 -- @app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
@@ -329,12 +329,17 @@ slashRedirect name =
     <> show (name <> "/")
     <> ")</script>"
 
+copyFileInto :: FilePath -> FilePath -> IO ()
+copyFileInto src dest = do
+  createDirectoryIfMissing True (takeDirectory dest)
+  copyFile src dest
+
 copyStatic :: FilePath -> FilePath -> IO ()
 copyStatic dest name = do
   src <- resolveDataFile ("examples/static/" <> name)
   exists <- doesFileExist src
   if exists
-    then copyFile src (dest </> "static" </> name)
+    then copyFileInto src (dest </> "static" </> name)
     else fail ("export: missing data-file examples/static/" <> name)
 
 exampleShot :: Example -> IO (Example, Maybe FilePath)
@@ -390,8 +395,7 @@ copySpeedHighlight dest = do
   forM_ assets $ \(route, src) -> do
     let
       out = dest </> "static" </> route
-    createDirectoryIfMissing True (takeDirectory out)
-    copyFile src out
+    copyFileInto src out
 
 demoAssetPath :: (FilePath, FilePath) -> IO (FilePath, FilePath)
 demoAssetPath (route, rel) = do
