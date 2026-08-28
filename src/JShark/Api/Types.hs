@@ -201,10 +201,12 @@ data Value :: Universe -> Type where
     -> Value ('Object r)
     -- ^ Eval-only; not a surface literal.
 
--- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen.
+-- | How to render an 'FFI' callee. 'FFILambda' is parenthesized at codegen;
+--   'FFIExpr' omits the trailing @()@ that 'FFICall' adds when args are empty.
 data FFIForm
   = FFICall !Text
   | FFILambda !Text
+  | FFIExpr !Text
   deriving stock (Eq, Ord)
 
 data Effect :: (Universe -> Type) -> Universe -> Type where

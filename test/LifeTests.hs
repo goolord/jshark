@@ -145,7 +145,7 @@ testLutRegion = fromSyntax $ do
         bi = u8Index b i
         ci = u8Index c i
       whenS (bitAnd bi (number 1) .!= bitAnd ci (number 1)) $ do
-        toSyntax_ $ ffi "(()=>{throw new Error('lut mismatch');})" RecNil
+        toSyntax_ $ throw_ (string "lut mismatch")
         done
       done
   done
@@ -172,7 +172,7 @@ testLutGliderSeam = fromSyntax $ do
       let
         i = y * w + x
       whenS (bitAnd (u8Index b i) (number 1) .!= bitAnd (u8Index c i) (number 1)) $ do
-        toSyntax_ $ ffi "(()=>{throw new Error('seam mismatch');})" RecNil
+        toSyntax_ $ throw_ (string "seam mismatch")
         done
       done
   st <- hold newObject
@@ -290,7 +290,7 @@ testFinishStepPacked = fromSyntax $ do
     (number 1)
     (bitAnd (u8Index nextAlive (number 9)) (number 1))
   whenS (shr (u8Index nextAlive (number 9)) (number 1) .== 0) $ do
-    toSyntax_ $ ffi "(()=>{throw new Error('packed count');})" RecNil
+    toSyntax_ $ throw_ (string "packed count")
     done
   done
 
@@ -339,7 +339,7 @@ testFinishStepBirthSpecies = fromSyntax $ do
     (bitAnd (u8Index nextAlive (number 36)) (number 1))
   whenS (not_ engineOk) $
     do
-      toSyntax_ $ ffi "(()=>{throw new Error('finishStep failed');})" RecNil
+      toSyntax_ $ throw_ (string "finishStep failed")
       done
   done
 
@@ -374,7 +374,7 @@ testLutStepTile = fromSyntax $ do
       whenS
         (bitAnd (u8Index full i) (number 1) .!= bitAnd (u8Index tile i) (number 1))
         $ do
-          toSyntax_ $ ffi "(()=>{throw new Error('stepTile mismatch');})" RecNil
+          toSyntax_ $ throw_ (string "stepTile mismatch")
           done
     done
   done

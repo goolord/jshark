@@ -245,7 +245,7 @@ boot ctxH status modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st 
     paused <- st.labPaused
     sourceOpen <-
       bindExpr $
-        ffi "(()=>!!document.querySelector('.js-source[open]'))" RecNil
+        ffiExpr "!!document.querySelector('.js-source[open]')" RecNil
     once_ $
       whenS (not_ paused .&& not_ sourceOpen) $ do
         tickFrame st now

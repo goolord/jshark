@@ -371,6 +371,22 @@ codegenTests =
     , testCase "unknown function application renders as a direct call" $
         renderJS (effectfulAST (ApplyE (ffi "f" RecNil) fooE))
           @?= "(f())(foo())"
+    , testCase "ffiExpr with no args omits trailing call parens" $
+        renderJS
+          (effectfulAST (ffiExpr "globalThis.crossOriginIsolated===true" RecNil))
+          @?= "globalThis.crossOriginIsolated===true"
+    , testCase "call FFI with no args appends trailing call parens" $
+        renderJS (effectfulAST (ffi "performance.now" RecNil))
+          @?= "performance.now()"
+    , testCase "ffiExpr typeof omits trailing call parens" $
+        renderJS
+          ( effectfulAST
+              (ffiExpr "typeof PIXI !== 'undefined'" RecNil)
+          )
+          @?= "typeof PIXI !== 'undefined'"
+    , testCase "parenthesized IIFE FFI still invokes" $
+        renderJS (effectfulAST (ffi "(function(){return 1})" RecNil))
+          @?= "(function(){return 1})()"
     , testCase "effectfulProgram wraps decls and the result in a JS IIFE" $
         renderJS (effectfulProgram (with1 fooE (\x -> x + x)))
           @?= "(() => {\n  const n0 = foo();\n  return n0 + n0;\n})()"

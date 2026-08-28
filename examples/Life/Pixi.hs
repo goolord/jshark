@@ -61,7 +61,7 @@ data Sprite
 -- | @typeof PIXI !== 'undefined'@: false when the script failed to load.
 pixiAvailable :: EffectSyntax f (Expr f 'Bool)
 pixiAvailable =
-  fmap var (toSyntax (ffi "(() => typeof PIXI !== 'undefined')" RecNil))
+  fmap var (toSyntax (ffiExpr "typeof PIXI !== 'undefined'" RecNil))
 
 -- | Shared @new PIXI.Application@ construction. Expects @view@, @width@,
 --   @height@ and @backgroundColor@ in scope; binds @app@ and caches it on

@@ -119,6 +119,7 @@ module JShark.Api
 
     -- * FFI
   , ffi
+  , ffiExpr
   , callMethod
   , assign
 
@@ -229,9 +230,19 @@ onClick_ ::
   Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 onClick_ el body = onClick el $ \_ -> stmts body
 
+-- | Raw JS call. Codegen appends @(...)@ for the argument list; with
+--   'RecNil' that is a trailing @()@ (e.g. @performance.now@ →
+--   @performance.now()@). Parenthesized callees (IIFEs) stay 'FFICall'.
 ffi :: String -> Rec (Arg f) us -> Effect f v
 ffi s = FFI (classifyFFI s)
 
+-- | Raw JS expression. With 'RecNil', codegen emits the string as-is (no
+--   trailing @()@). Use for comparisons, @typeof@, property reads, etc.
+ffiExpr :: String -> Rec (Arg f) us -> Effect f v
+ffiExpr s = FFI (FFIExpr (T.pack s))
+
+-- | Classify a string for 'ffi'. Unparenthesized arrows become 'FFILambda';
+--   everything else (including parenthesized IIFEs) becomes 'FFICall'.
 classifyFFI :: String -> FFIForm
 classifyFFI s@('(' : _) = FFICall (T.pack s)
 classifyFFI s

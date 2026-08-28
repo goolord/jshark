@@ -290,6 +290,7 @@ tryCatchStmt mRes catchJs aDecl aRef bDecl bRef =
 renderFFIForm = \case
   FFICall s -> jsText s
   FFILambda s -> parens (jsText s)
+  FFIExpr s -> jsText s
 
 -- | Multi-parameter arrow lambdas are invalid IIFEs as @(...=>{...})(a,b)@;
 --   wrap the lambda in an extra pair of parens so the call applies cleanly.
@@ -297,6 +298,7 @@ renderFFIForm = \case
 --   when the callee is not already a whole parenthesized expression.
 renderFFIInvoke fn argRefs = case fn of
   FFILambda s -> parens (jsText s) <> parens argRefs
+  FFIExpr s -> jsText s
   FFICall s ->
     let
       callee = jsText s
@@ -305,25 +307,30 @@ renderFFIInvoke fn argRefs = case fn of
         then parens callee <> parens argRefs
         else callee <> parens argRefs
 
--- | True when @t@ is @(… )@ with balanced outer parentheses only.
-isWholeParenthesized t =
+wholeParenInner :: Text -> Maybe Text
+wholeParenInner t =
   case T.uncons t of
-    Nothing -> False
     Just ('(', rest) ->
       case T.unsnoc rest of
-        Nothing -> False
-        Just (inner, ')') -> parenBalanced inner (0 :: Int)
-        Just _ -> False
-    _ -> False
- where
-  parenBalanced txt depth =
-    case T.uncons txt of
-      Nothing -> depth == 0
-      Just ('(', rest) -> parenBalanced rest (depth + 1)
-      Just (')', rest)
-        | depth == 0 -> False
-        | otherwise -> parenBalanced rest (depth - 1)
-      Just (_, rest) -> parenBalanced rest depth
+        Just (inner, ')') | parenBalanced inner (0 :: Int) -> Just inner
+        _ -> Nothing
+    _ -> Nothing
+
+-- | True when @t@ is @(… )@ with balanced outer parentheses only.
+isWholeParenthesized t =
+  case wholeParenInner t of
+    Just _ -> True
+    Nothing -> False
+
+parenBalanced :: Text -> Int -> Bool
+parenBalanced txt depth =
+  case T.uncons txt of
+    Nothing -> depth == 0
+    Just ('(', rest) -> parenBalanced rest (depth + 1)
+    Just (')', rest)
+      | depth == 0 -> False
+      | otherwise -> parenBalanced rest (depth - 1)
+    Just (_, rest) -> parenBalanced rest depth
 
 effectfulAST' :: forall v. Env -> CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !env !sIn eff =
