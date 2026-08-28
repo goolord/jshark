@@ -292,11 +292,11 @@ var = Var
 
 -- | Anonymous curried lambda (@function(x){…}@).
 lambda :: (Expr f u -> Expr f v) -> Expr f ('Function u v)
-lambda f = Lambda Nothing (\x -> f (var x))
+lambda f = Lambda noLamInfo (\x -> f (var x))
 
 -- | Named unary lambda; codegen hoists a shared @$name@ helper.
 namedLambda :: Text -> (Expr f u -> Expr f v) -> Expr f ('Function u v)
-namedLambda name f = Lambda (Just name) (\x -> f (var x))
+namedLambda name f = Lambda (LamInfo (Just name) Nothing) (\x -> f (var x))
 
 -- | Named binary lambda over a 'ParamRec' row.
 --

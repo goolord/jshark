@@ -141,12 +141,15 @@ bunEvalTests =
                 "array index 1.9 is the integer slot"
                 (Array.index numArray (number 1.9))
             , bunCase
-                "array zipWith"
-                ( Array.zipWith
-                    (+)
-                    numArray
-                    (Literal (ValueArray [ValueNumber 10, ValueNumber 20, ValueNumber 30]))
+                "id then apply stays curried"
+                ( apply
+                    (apply (lambda (\f -> f)) (lambda (\x -> x + number 1)))
+                    (number 2)
                 )
+            , effectCase
+                "capturing reduce indexes with both args"
+                capturingReduceIndex
+                "\"100\""
             , bunCase "Math.sqrt" (sqrt (number 9))
             , bunCase "Math.round half toward +Infinity" (Math.round (number 2.5))
             , bunCase "Math.round negative half" (Math.round (number (-2.5)))
@@ -336,6 +339,30 @@ effectCase :: String -> (forall f. Effect f u) -> String -> TestTree
 effectCase name e expected = testCase name $ do
   got <- T.unpack <$> evaluateEffectJSON e
   assertEqual name expected got
+
+-- | Life HUD path: capturing 'Array.reduce' then 'Array.index'.
+-- Uncurrying an opaque @f(a, b)@ dropped @b@ and @$checkedIndex@ threw.
+capturingReduceIndex :: forall f. Effect f 'String
+capturingReduceIndex =
+  expr
+    $ let_
+      (Literal (ValueArray [ValueNumber 0.5, ValueNumber 1, ValueNumber 2]))
+    $ \levels ->
+      let_
+        (Literal (ValueArray [ValueNumber 0, ValueNumber 1, ValueNumber 2]))
+        $ \indices ->
+          let_
+            ( Literal
+                (ValueArray [ValueString "50", ValueString "100", ValueString "200"])
+            )
+            $ \labels ->
+              Array.index labels $
+                Array.reduce indices (number 0) $ \bestIdx i ->
+                  let
+                    bestDist = abs (Array.index levels bestIdx - number 1)
+                    curDist = abs (Array.index levels i - number 1)
+                   in
+                    if_ (curDist .< bestDist) i bestIdx
 
 mutSetGet :: forall f. Effect f 'Number
 mutSetGet = fromSyntax $ do

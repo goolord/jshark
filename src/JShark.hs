@@ -27,12 +27,12 @@
 --                 ('JShark.Compiler.Flat', 'JShark.Compiler.FlatSoA', 'JShark.Compiler.Codegen.Flat')
 --
 -- Evaluate ('JShark.Compiler.Evaluate')      -- reference interpreter (tests, REPL)
--- Hoist    ('JShark.Compiler.Hoist')         -- named @$tag@ helper registration
+-- Hoist    ('JShark.Compiler.Hoist')         -- named @$tag@ registration
 --           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
 -- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
 -- @
 --
--- Named lambdas ('Lambda' with 'Just' tag) hoist to shared helpers via
+-- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings via
 -- 'JShark.Compiler.Hoist.registerHoistedTag' (see 'JShark.Api.namedLambda',
 -- 'namedLambdaRow', 'applyNamed2').
 module JShark
@@ -82,6 +82,8 @@ module JShark
       , Hvm2Kernel
       )
   , FnBody (..)
+  , LamInfo (..)
+  , noLamInfo
   , Value (..)
   , GroupBy
   , Arg (..)
@@ -121,6 +123,7 @@ module JShark
   , packUint8
   , uint8Elems
   , optimize
+  , optimizeWith
   , optimizeEffect
   , optimizeEffectFromIr
   , phoasNodeCountFromIr
@@ -134,7 +137,9 @@ module JShark
   , optimizedExprSize
   , optimizedEffectSize
   , pureAST
+  , pureASTWith
   , effectfulAST
+  , effectfulASTWith
   , effectfulASTFromFlat
   , effectfulASTFromSoA
   , effectfulASTIr
@@ -159,6 +164,8 @@ module JShark
   , escapeJsString
   , structuralEq
   , structuralNEq
+  , Builtin (ValueEq)
+  , builtinSrc
   )
 where
 
@@ -183,9 +190,10 @@ import JShark.Compiler.Codegen.Flat
   , effectfulASTFromFlat
   , effectfulASTFromSoA
   , effectfulASTIr
+  , effectfulASTWith
   , flatEffectfulCodegen
   )
-import JShark.Compiler.Codegen.Phoas (pureAST, pureAST')
+import JShark.Compiler.Codegen.Phoas (pureAST, pureAST', pureASTWith)
 import JShark.Compiler.Emit (JS, renderJS, renderJSCompact)
 import JShark.Compiler.Evaluate
   ( escapeJsString
@@ -196,6 +204,7 @@ import JShark.Compiler.Evaluate
   , packUint8
   , uint8Elems
   )
+import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
   ( irEffectFromClosed
   , irExprFromClosed
@@ -214,6 +223,7 @@ import JShark.Compiler.Optimize
   , optimizeEffect
   , optimizeEffectFromIr
   , optimizeEffectIr
+  , optimizeWith
   , optimizedEffectSize
   , optimizedExprSize
   , phoasNodeCountFromIr

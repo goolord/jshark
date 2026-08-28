@@ -83,7 +83,7 @@ hvm2Tests =
           do
             T.isInfixOf "__jsharkHvm2" js @?= True
             T.isInfixOf "Float64Array" js @?= True
-            T.isInfixOf "(3.0)" js @?= True
+            T.isInfixOf "(3)" js @?= True
     , testCase "loadHvm2Wasm emits fetch/instantiate loader" $
         let
           js =

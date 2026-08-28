@@ -27,6 +27,7 @@ module JShark.Compiler.Flat
   , packStateSoaSide
   , packStateSideTables
   , packStateHoistTags
+  , packStateParamNames
   , PackState
   , sideAccToVectors
   )
@@ -46,7 +47,13 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import JShark.Api.Rec (Rec (..))
-import JShark.Api.Types (BigBinOp (..), FFIForm (..), FixedOp, Value (..))
+import JShark.Api.Types
+  ( BigBinOp (..)
+  , FFIForm (..)
+  , FixedOp
+  , LamInfo (..)
+  , Value (..)
+  )
 import JShark.Compiler.FlatEnc (Enc (..))
 import qualified JShark.Compiler.FlatEnc as FE
 import JShark.Compiler.Ir
@@ -122,7 +129,7 @@ data FlatNode
   | FE_MethReduceRight NodeId NodeId Int Int NodeId
   | FE_MethToSorted NodeId Int Int NodeId
   | FE_MethFrom NodeId Int NodeId
-  | FE_FnLit [Int] NodeId
+  | FE_FnLit [Int] [Maybe Text] NodeId
   | FE_UnsafeNullable NodeId
   | FE_FrozenLit Int
   | FE_GetField Int NodeId
@@ -156,7 +163,7 @@ data FlatNode
 data SoaSideAcc = SoaSideAcc
   { saFixed :: !(Seq FlatFixed)
   , saFixedCount :: !Int
-  , saFnLit :: !(Seq ([Int], NodeId))
+  , saFnLit :: !(Seq ([Int], [Maybe Text]))
   , saFnLitCount :: !Int
   , saArrays :: !(Seq [NodeId])
   , saArrayCount :: !Int
@@ -176,7 +183,7 @@ emptySoaSideAcc =
 sideAccToVectors ::
   SoaSideAcc
   -> ( Vector FlatFixed
-     , Vector ([Int], NodeId)
+     , Vector ([Int], [Maybe Text])
      , Vector (Vector NodeId)
      )
 sideAccToVectors side =
@@ -239,13 +246,13 @@ encodeFlatNode node side = case node of
           , saFixedCount = fi + 1
           }
       )
-  FE_FnLit tags b ->
+  FE_FnLit tags names b ->
     let
       fi = saFnLitCount side
      in
       ( Enc FE.oFE_FNLIT (encI32 fi) (encI32 b) 0 0 0
       , side
-          { saFnLit = saFnLit side Seq.|> (tags, b)
+          { saFnLit = saFnLit side Seq.|> (tags, names)
           , saFnLitCount = fi + 1
           }
       )
@@ -357,6 +364,7 @@ emptyPackState =
     , psArgGroupCount = 0
     , psFFICache = Map.empty
     , psHoistTags = Map.empty
+    , psParamNames = Map.empty
     }
 
 data PackState = PackState
@@ -377,6 +385,7 @@ data PackState = PackState
   , psArgGroupCount :: !Int
   , psFFICache :: !(Map FFIForm Int)
   , psHoistTags :: !(Map NodeId Text)
+  , psParamNames :: !(Map NodeId Text)
   }
 
 packStateEncs :: PackState -> Seq Enc
@@ -391,8 +400,15 @@ packStateSoaSide = psSoaSide
 packStateHoistTags :: PackState -> Map NodeId Text
 packStateHoistTags = psHoistTags
 
+packStateParamNames :: PackState -> Map NodeId Text
+packStateParamNames = psParamNames
+
 addHoistTag :: NodeId -> Text -> State PackState ()
 addHoistTag nid tag = modify $ \st -> st {psHoistTags = Map.insert nid tag (psHoistTags st)}
+
+addParamName :: NodeId -> Text -> State PackState ()
+addParamName nid name =
+  modify $ \st -> st {psParamNames = Map.insert nid name (psParamNames st)}
 
 packStateSideTables ::
   PackState
@@ -543,7 +559,7 @@ flatNodeChildRefs = \case
   FE_MethReduceRight a z _ _ body -> [a, z, body]
   FE_MethToSorted a _ _ b -> [a, b]
   FE_MethFrom n _ b -> [n, b]
-  FE_FnLit _ b -> [b]
+  FE_FnLit _ _ b -> [b]
   FE_UnsafeNullable x -> [x]
   FE_FrozenLit _ -> []
   FE_GetField _ o -> [o]
@@ -645,12 +661,12 @@ packFieldLit = \case
 packFieldLits :: [IrFieldLit r] -> State PackState Int
 packFieldLits fs = addFieldGroup =<< traverse packFieldLit fs
 
-packFnBody :: IrFnBody us r -> State PackState ([Int], NodeId)
+packFnBody :: IrFnBody us r -> State PackState ([Int], [Maybe Text], NodeId)
 packFnBody = \case
-  IrJfNil e -> (,) [] <$> packExpr e
-  IrJfCons t rest -> do
-    (ts, body) <- packFnBody rest
-    pure (t : ts, body)
+  IrJfNil e -> ([],[],) <$> packExpr e
+  IrJfCons t pn rest -> do
+    (ts, pns, body) <- packFnBody rest
+    pure (t : ts, pn : pns, body)
 
 packFixed ::
   FixedOp a b c u -> IrFixedArgs a b c -> State PackState NodeId
@@ -810,11 +826,14 @@ packExpr = \case
     nr <- packExpr r
     nb <- packExpr b
     addNode (FE_LetRec tag nr nb)
-  IrLambda tag hoist body -> do
+  IrLambda tag info body -> do
     nb <- packExpr body
     n <- addNode (FE_Lambda tag nb)
-    case hoist of
+    case lamTag info of
       Just name -> addHoistTag n name
+      Nothing -> pure ()
+    case lamParam info of
+      Just pn -> addParamName n pn
       Nothing -> pure ()
     pure n
   IrApply f x -> do
@@ -860,8 +879,8 @@ packExpr = \case
   IrKernelK k -> packKernel k
   IrMethod m -> packMethod m
   IrFnLit body -> do
-    (tags, nBody) <- packFnBody body
-    addNode (FE_FnLit tags nBody)
+    (tags, names, nBody) <- packFnBody body
+    addNode (FE_FnLit tags names nBody)
   IrUnsafeNullable x -> do
     n <- packExpr x
     addNode (FE_UnsafeNullable n)

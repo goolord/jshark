@@ -2,6 +2,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
@@ -48,6 +49,7 @@ import JShark.Api.Types
   , FFIForm (..)
   , Field
   , FixedOp
+  , LamInfo (..)
   , Universe (..)
   , Value (..)
   )
@@ -155,7 +157,7 @@ data IrExpr :: Universe -> Type where
   IrLiteral :: Value u -> IrExpr u
   IrLet :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
   IrLetRec :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
-  IrLambda :: !Int -> !(Maybe Text) -> IrExpr v -> IrExpr ('Function u v)
+  IrLambda :: !Int -> !LamInfo -> IrExpr v -> IrExpr ('Function u v)
   IrApply :: IrExpr ('Function u v) -> IrExpr u -> IrExpr v
   IrVar :: !Int -> IrExpr u
   IrEmbedEff :: IrEffect u -> IrExpr u
@@ -181,7 +183,7 @@ data IrExpr :: Universe -> Type where
 
 data IrFnBody :: [Universe] -> Universe -> Type where
   IrJfNil :: IrExpr r -> IrFnBody '[] r
-  IrJfCons :: !Int -> IrFnBody us r -> IrFnBody (u ': us) r
+  IrJfCons :: !Int -> !(Maybe Text) -> IrFnBody us r -> IrFnBody (u ': us) r
 
 data IrFieldLit r where
   IrFieldLit :: KnownSymbol k => IrExpr (Field r k) -> IrFieldLit r
@@ -417,8 +419,8 @@ foldIrFnBody ::
   -> m
 foldIrFnBody le b = case b of
   IrJfNil e -> le e
-  IrJfCons _ (IrJfNil e) -> le e
-  IrJfCons _ k -> foldIrFnBody le k
+  IrJfCons _ _ (IrJfNil e) -> le e
+  IrJfCons _ _ k -> foldIrFnBody le k
 
 foldIrFieldLit ::
   (forall v. IrExpr v -> m)
@@ -571,7 +573,7 @@ mapIrFnBody ::
   -> IrFnBody us r
 mapIrFnBody ge b = case b of
   IrJfNil e -> IrJfNil (ge e)
-  IrJfCons tag k -> IrJfCons tag (mapIrFnBody ge k)
+  IrJfCons tag pn k -> IrJfCons tag pn (mapIrFnBody ge k)
 
 mapIrFieldLit ::
   (forall v. IrExpr v -> IrExpr v)
@@ -689,6 +691,7 @@ isAliasIrEffect = \case
   _ -> False
 
 elimIrLet ::
+  (?keepLets :: P.Bool) =>
   IrMeta
   -> Int
   -> IrExpr u
@@ -701,10 +704,15 @@ elimIrLet !mdX !tag !x !body !mdBody =
     closed = bindMeta tag mdBody
     spliced = closed <> mdX
     once = irCheap mdX P.|| not (lazyOccursIrExpr tag body)
+    preserve =
+      not (isIrLambda x) && not (isIdentityIrExpr tag body)
    in
     case uses of
       0 | irPure mdX -> (body, closed)
       0 -> (IrLet tag x body, nodeMeta mdX closed)
+      1
+        | ?keepLets && preserve ->
+            (IrLet tag x body, nodeMeta mdX closed)
       1
         | irSize mdBody <= optSmall
         , once ->
@@ -715,7 +723,28 @@ elimIrLet !mdX !tag !x !body !mdBody =
             (inlineIrExpr tag x body, spliced)
       _ -> (IrLet tag x body, nodeMeta mdX closed)
 
+isIrLambda :: IrExpr u -> P.Bool
+isIrLambda = \case
+  IrLambda {} -> True
+  _ -> False
+
+isIrLambdaE :: IrEffect u -> P.Bool
+isIrLambdaE = \case
+  IrLambdaE {} -> True
+  _ -> False
+
+isIdentityIrExpr :: Int -> IrExpr u -> P.Bool
+isIdentityIrExpr tag = \case
+  IrVar i -> i == tag
+  _ -> False
+
+isIdentityIrEffect :: Int -> IrEffect u -> P.Bool
+isIdentityIrEffect tag = \case
+  IrLift x -> isIdentityIrExpr tag x
+  _ -> False
+
 elimIrBind ::
+  (?keepLets :: P.Bool) =>
   IrMeta
   -> Int
   -> IrEffect u
@@ -731,10 +760,17 @@ elimIrBind !mdX !tag !x !body !mdBody =
       isAliasIrEffect x
         P.|| irCheap mdX
         P.|| not (lazyOccursIrEffect tag body)
+    preserve =
+      not (isIrLambdaE x)
+        && not (isIdentityIrEffect tag body)
+        && not (isAliasIrEffect x)
    in
     case uses of
       0 | irPure mdX, not (isAliasIrEffect x) -> (body, closed)
       0 -> (IrThenE x body, nodeMeta mdX closed)
+      1
+        | ?keepLets && preserve ->
+            (IrBind tag x body, nodeMeta mdX closed)
       1
         | irSize mdBody <= optSmall
         , once ->
@@ -755,7 +791,7 @@ nodeMeta !mdX !mdY =
 bindMeta :: Int -> IrMeta -> IrMeta
 bindMeta !tag !md = md {irFree = IM.delete tag (irFree md)}
 
-optIrExpr :: Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
+optIrExpr :: (?keepLets :: P.Bool) => Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
 optIrExpr !t0 expr = case expr of
   IrLiteral v -> (t0, IrLiteral v, litMeta v)
   IrVar i -> (t0, IrVar i, varMeta i)
@@ -771,16 +807,16 @@ optIrExpr !t0 expr = case expr of
   -- Named hoists (@Just@ tag) always stay as calls so codegen can emit one
   -- shared helper (e.g. @$groupBy@). Literal partial application would
   -- beta into an untagged inner lambda and duplicate the body at each site.
-  IrApply (IrLambda bindTag (Just hoistTag) g) x ->
+  IrApply (IrLambda bindTag info@LamInfo {lamTag = Just _} g) x ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, g', mdG) = optIrExpr t1 g
      in
       ( t2
-      , IrApply (IrLambda bindTag (Just hoistTag) g') x'
+      , IrApply (IrLambda bindTag info g') x'
       , nodeMeta mdX mdG
       )
-  IrApply (IrLambda tag Nothing g) x ->
+  IrApply (IrLambda tag LamInfo {lamTag = Nothing} g) x ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, g', mdG) = optIrExpr t1 g
@@ -818,7 +854,8 @@ litMeta v = IrMeta 1 IM.empty True (isCheapValue v)
 varMeta :: Int -> IrMeta
 varMeta !i = IrMeta 1 (IM.singleton i 1) True True
 
-optIrExprChildren :: Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
+optIrExprChildren ::
+  (?keepLets :: P.Bool) => Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
 optIrExprChildren !t0 expr = case expr of
   IrEmbedEff e ->
     let
@@ -914,6 +951,7 @@ optIrExprChildren !t0 expr = case expr of
   _ -> error "JShark.Compiler.Ir.optIrExprChildren: unhandled constructor"
 
 binOptIr ::
+  (?keepLets :: P.Bool) =>
   Int
   -> (IrExpr a -> IrExpr b -> IrExpr c)
   -> IrExpr a
@@ -927,6 +965,7 @@ binOptIr !t0 k x y =
     (t2, k x' y', nodeMeta mdX mdY)
 
 optIrFixedArgs ::
+  (?keepLets :: P.Bool) =>
   Int -> IrFixedArgs a b c -> (Int, IrFixedArgs a b c, IrMeta)
 optIrFixedArgs !t0 a = case a of
   IrArgsU x ->
@@ -948,7 +987,8 @@ optIrFixedArgs !t0 a = case a of
      in
       (t3, IrArgsT x' y' z', nodeMeta mdX (nodeMeta mdY mdZ))
 
-optIrKernel :: Int -> IrKernel u -> (Int, IrKernel u, IrMeta)
+optIrKernel ::
+  (?keepLets :: P.Bool) => Int -> IrKernel u -> (Int, IrKernel u, IrMeta)
 optIrKernel !t0 k = case k of
   KPlus x y -> binOptKernel t0 KPlus x y
   KTimes x y -> binOptKernel t0 KTimes x y
@@ -993,6 +1033,7 @@ optIrKernel !t0 k = case k of
   KLTEq x y -> binOptKernel t0 KLTEq x y
 
 binOptKernel ::
+  (?keepLets :: P.Bool) =>
   Int
   -> (IrExpr a -> IrExpr b -> IrKernel c)
   -> IrExpr a
@@ -1005,7 +1046,8 @@ binOptKernel t0 k x y =
    in
     (t2, k x' y', nodeMeta mdX mdY)
 
-optIrMethod :: Int -> IrMethod u -> (Int, IrMethod u, IrMeta)
+optIrMethod ::
+  (?keepLets :: P.Bool) => Int -> IrMethod u -> (Int, IrMethod u, IrMeta)
 optIrMethod !t0 m = case m of
   IrMethMap x tag g ->
     let
@@ -1055,20 +1097,22 @@ optIrMethod !t0 m = case m of
      in
       (t2, IrMethFrom n' tag g', nodeMeta mdN (bindMeta tag mdG))
 
-optIrFnBody :: Int -> IrFnBody us r -> (Int, IrFnBody us r, IrMeta)
+optIrFnBody ::
+  (?keepLets :: P.Bool) => Int -> IrFnBody us r -> (Int, IrFnBody us r, IrMeta)
 optIrFnBody !t0 b = case b of
   IrJfNil e ->
     let
       (t1, e', md) = optIrExpr t0 e
      in
       (t1, IrJfNil e', md)
-  IrJfCons tag k ->
+  IrJfCons tag pn k ->
     let
       (t1, k', md) = optIrFnBody (t0 - optStep) k
      in
-      (t1, IrJfCons tag k', bindMeta tag md)
+      (t1, IrJfCons tag pn k', bindMeta tag md)
 
 mapAccumIrFieldLit ::
+  (?keepLets :: P.Bool) =>
   Int -> [IrFieldLit r] -> (Int, [IrFieldLit r], IrMeta)
 mapAccumIrFieldLit !t0 fs =
   foldr
@@ -1081,7 +1125,8 @@ mapAccumIrFieldLit !t0 fs =
     (t0, [], mempty)
     fs
  where
-  step :: Int -> IrFieldLit r -> (Int, IrFieldLit r, IrMeta)
+  step ::
+    (?keepLets :: P.Bool) => Int -> IrFieldLit r -> (Int, IrFieldLit r, IrMeta)
   step !t = \case
     IrFieldLit @k e ->
       let
@@ -1104,7 +1149,8 @@ mapAccumIrFieldLit !t0 fs =
        in
         (t', IrFieldLitExtraEffect @k e', md)
 
-optIrEffect :: Int -> IrEffect u -> (Int, IrEffect u, IrMeta)
+optIrEffect ::
+  (?keepLets :: P.Bool) => Int -> IrEffect u -> (Int, IrEffect u, IrMeta)
 optIrEffect !t0 eff = case eff of
   IrLift x ->
     let
@@ -1255,6 +1301,7 @@ optIrEffect !t0 eff = case eff of
       (t1, IrArrayLit es', md)
 
 mapAccumIrEffect ::
+  (?keepLets :: P.Bool) =>
   Int -> [(Text, IrEffect u)] -> (Int, [(Text, IrEffect u)], IrMeta)
 mapAccumIrEffect !t0 arms =
   foldr
@@ -1267,7 +1314,8 @@ mapAccumIrEffect !t0 arms =
     (t0, [], mempty)
     arms
 
-mapAccumIrEffects :: Int -> [IrEffect u] -> (Int, [IrEffect u], IrMeta)
+mapAccumIrEffects ::
+  (?keepLets :: P.Bool) => Int -> [IrEffect u] -> (Int, [IrEffect u], IrMeta)
 mapAccumIrEffects !t0 es =
   foldr
     ( \e (!t, acc, !md) ->
@@ -1279,7 +1327,8 @@ mapAccumIrEffects !t0 es =
     (t0, [], mempty)
     es
 
-optIrArgs :: Int -> Rec (IrArg) us -> (Int, Rec (IrArg) us, IrMeta)
+optIrArgs ::
+  (?keepLets :: P.Bool) => Int -> Rec (IrArg) us -> (Int, Rec (IrArg) us, IrMeta)
 optIrArgs !t0 args = case args of
   RecNil -> (t0, RecNil, mempty)
   RecCons (IrArgExpr x) xs ->

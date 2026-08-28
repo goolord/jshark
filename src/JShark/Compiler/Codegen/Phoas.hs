@@ -40,7 +40,6 @@ import JShark.Compiler.Emit
   , colon
   , dquotes
   , hcat
-  , jsDouble
   , jsString
   , jsText
   , parens
@@ -61,11 +60,11 @@ import JShark.Compiler.Evaluate
   )
 import JShark.Compiler.Flatten (flattenExpr)
 import JShark.Compiler.Hoist (registerHoistedTag)
-import JShark.Compiler.Lower (evalFnBody, fnDepthStamp)
+import JShark.Compiler.Lower (evalFnBody)
 import JShark.Compiler.Optimize
   ( bindProbeTag
   , letProbeTag
-  , optimize
+  , optimizeWith
   )
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -173,7 +172,7 @@ bindEffectCode env s0 x f =
               , MkCode
                   ( Just
                       ( fromMaybe mempty xDecl
-                          $$ constBind nBind (fromMaybe mempty xRef)
+                          $$ constBind s3 nBind (fromMaybe mempty xRef)
                           $$ fromMaybe mempty yDecl
                       )
                   )
@@ -232,11 +231,11 @@ resultCasePrelude env s0 res =
     (s1, MkCode rDecl rRef _) = pureAST' s0 env res
     (nObj, s2) = allocIdent s1
     (nUnw, s3) = allocIdent s2
-    obj = nName nObj
+    obj = identName s3 nObj
     prelude =
       fromMaybe mempty rDecl
-        $$ constBind nObj (fromMaybe mempty rRef)
-        $$ constBind nUnw (jsText obj <> ".value")
+        $$ constBind s3 nObj (fromMaybe mempty rRef)
+        $$ constBind s3 nUnw (jsText obj <> ".value")
    in
     (s3, prelude, obj, nUnw)
 
@@ -253,7 +252,7 @@ emitBranching unit s0 prelude k
       let
         (s1, pre, extra) = prelude s0
         (n, s2) = allocIdent s1
-        rv = nName n
+        rv = identName s2 n
         (s3, stmt) = k (Just rv) extra s2
        in
         (s3, MkCode (Just (pre $$ letResult rv $$ stmt)) (Just (jsText rv)) False)
@@ -274,9 +273,9 @@ ifAssignOrStmt (Just rv) c tD tR eD eR =
     $$ "else"
     <+> blockBody (fromMaybe mempty eD $$ assignResult rv eR)
 
-tryCatchStmt mRes catchN aDecl aRef bDecl bRef =
+tryCatchStmt mRes catchJs aDecl aRef bDecl bRef =
   let
-    catchHead = "catch" <+> parens (nJS catchN)
+    catchHead = "catch" <+> parens catchJs
    in
     case mRes of
       Nothing ->
@@ -287,23 +286,6 @@ tryCatchStmt mRes catchN aDecl aRef bDecl bRef =
         "try"
           <+> blockBody (fromMaybe mempty aDecl $$ assignResult rv aRef)
           $$ (catchHead <+> blockBody (fromMaybe mempty bDecl $$ assignResult rv bRef))
-
-renderFunction nParam decl ref =
-  "function"
-    <+> parens (nJS nParam)
-    <+> blockBody (fromMaybe mempty decl $$ ret)
- where
-  -- Empty ref is Unit (event handlers, forEach of noOp). `return ()`
-  -- is a SyntaxError; HughesPJ `parens` of empty is `()`.
-  ret = case ref of
-    Nothing -> "return"
-    Just r -> "return" <+> parens r
-
--- | @function (n0, n1) { decls return ref }@ — callback style (bare return).
-jsCallback params decl ref =
-  "function"
-    <+> parens (hcat (punctuate ", " params))
-    <+> blockBody (decl $$ "return" <+> ref)
 
 renderFFIForm = \case
   FFICall s -> jsText s
@@ -356,25 +338,52 @@ effectfulAST' !env !sIn eff =
          in
           (s1, fxCode argDecl (renderFFIInvoke fn argRefs))
       IfE c t e ->
-        -- Value-producing @if@: a shared result var is assigned in both
-        -- arms. Do not use emptiness to pick a ternary — a Unit leftover
-        -- ref is not a genuinely-empty Doc.
-        emitBranching
-          (isUnitWitness t && isUnitWitness e)
-          s0
-          ( \s ->
-              let
-                (s1, Code cDecl cRef) = effectfulAST' env s c
-               in
-                (s1, cDecl, cRef)
-          )
-          ( \mRes cRef s ->
-              let
-                (s1, MkCode tDecl tRef _) = effectfulAST' env s t
-                (s2, MkCode eDecl eRef _) = effectfulAST' env s1 e
-               in
-                (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
-          )
+        let
+          unit = isUnitWitness t && isUnitWitness e
+          (s1, MkCode cDecl cRef _) = effectfulAST' env s0 c
+          (s2, MkCode tDecl tRef tFX) = effectfulAST' env s1 t
+          (s3, MkCode eDecl eRef eFX) = effectfulAST' env s2 e
+          cJs = fromMaybe mempty cRef
+         in
+          if unit
+            then
+              ( s3
+              , MkCode
+                  (Just (fromMaybe mempty cDecl $$ ifElseStmt cJs tDecl tRef eDecl eRef))
+                  Nothing
+                  False
+              )
+            else
+              if isNothing tDecl && isNothing eDecl && not tFX && not eFX
+                then
+                  ( s3
+                  , Code
+                      (fromMaybe mempty cDecl)
+                      ( parens
+                          ( cJs
+                              <+> "?"
+                              <+> fromMaybe "undefined" tRef
+                              <+> ":"
+                              <+> fromMaybe "undefined" eRef
+                          )
+                      )
+                  )
+                else
+                  let
+                    (n, s4) = allocIdent s3
+                    rv = identName s4 n
+                   in
+                    ( s4
+                    , MkCode
+                        ( Just
+                            ( fromMaybe mempty cDecl
+                                $$ letResult rv
+                                $$ ifAssignOrStmt (Just rv) cJs tDecl tRef eDecl eRef
+                            )
+                        )
+                        (Just (jsText rv))
+                        False
+                    )
       While cond body ->
         let
           (s1, MkCode condDecl condRef _) = effectfulAST' env s0 cond
@@ -387,8 +396,8 @@ effectfulAST' !env !sIn eff =
         let
           (s1, MkCode startDecl startRef _) = pureAST' s0 env start
           (s2, MkCode endDecl endRef _) = pureAST' s1 env end
-          (loopN, s3) = allocIdent s2
-          loopVar = nJS loopN
+          (loopN, s3) = allocIdentHint s2 (Just "i")
+          loopVar = nJS s3 loopN
           (s4, MkCode bodyDecl bodyRef _) = effectfulAST' env s3 (body (Name loopN))
           bodyStmt = asStmt bodyDecl bodyRef
           forHead =
@@ -438,14 +447,14 @@ effectfulAST' !env !sIn eff =
                   (s1, Code oDecl oRef) = pureAST' s env opt
                   (nBind, s2) = allocIdent s1
                  in
-                  (s2, oDecl $$ constBind nBind oRef, nBind)
+                  (s2, oDecl $$ constBind s2 nBind oRef, nBind)
             )
             ( \mRes nBind s ->
                 let
                   env' = IM.insert binderTag nBind env
                   (s1, MkCode nDecl nRef _) = effectfulAST' env s noneE
                   (s2, MkCode sDecl sRef _) = effectfulAST' env' s1 tagged
-                  cond = nJS nBind <+> "===" <+> "null"
+                  cond = nJS s nBind <+> "===" <+> "null"
                  in
                   (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
             )
@@ -464,14 +473,14 @@ effectfulAST' !env !sIn eff =
                   env' = IM.insert binderTag catchN env
                   (s3, MkCode bDecl bRef _) = effectfulAST' env' s2 tagged
                  in
-                  (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
+                  (s3, tryCatchStmt mRes (nJS s3 catchN) aDecl aRef bDecl bRef)
             )
       Bind x f -> bindEffectCode env s0 x f
       ThenE x y -> seqEffectCode env s0 x y
       BindRec r b ->
         let
           (nBind, s1) = allocIdent s0
-          n = nJS nBind
+          n = nJS s1 nBind
           (s2, MkCode rDecl rRef _) = effectfulAST' env s1 (r (Name nBind))
           (s3, MkCode bDecl bRef bFX) = effectfulAST' env s2 (b (Name nBind))
          in
@@ -512,12 +521,7 @@ effectfulAST' !env !sIn eff =
          in
           (s2, fxCode (rDecl $$ argDecl) (rRef <> "." <> jsText name <> parens argRefs))
       LambdaE f -> emitEffectLambda env s0 f
-      ApplyE fex ex ->
-        let
-          (s1, Code exprXDecl exprXRef) = effectfulAST' env s0 fex
-          (s2, Code exprYDecl exprYRef) = effectfulAST' env s1 ex
-         in
-          (s2, fxCode (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
+      ApplyE fex ex -> emitApplyE env s0 fex ex
 
 letCode env s0 x g =
   let
@@ -543,14 +547,20 @@ letCode env s0 x g =
           ( s3
           , keepRef
               ( fromMaybe mempty xDecl
-                  $$ constBind nBind (fromMaybe mempty xRef)
+                  $$ constBind s3 nBind (fromMaybe mempty xRef)
                   $$ fromMaybe mempty (codeDecl y)
               )
               y
           )
 
 pureAST :: ClosedExpr u -> JS
-pureAST e = uncurry renderWithHelpers (pureAST' startCG IM.empty (optimize e))
+pureAST = pureASTWith idiomaticStyle
+
+pureASTWith :: EmitStyle -> ClosedExpr u -> JS
+pureASTWith style e =
+  uncurry
+    renderWithPreamble
+    (pureAST' (startCGWith style) IM.empty (optimizeWith (esKeepLets style) e))
 
 pureAST' ::
   forall v.
@@ -564,7 +574,7 @@ pureAST' !sIn env expr =
    in
     case expr of
       Literal v -> case v of
-        ValueNumber d -> (s0, Code mempty (jsDouble d))
+        ValueNumber d -> (s0, Code mempty (jsNumber (cgStyle s0) d))
         ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
         ValueArray xs ->
           let
@@ -588,36 +598,31 @@ pureAST' !sIn env expr =
         ValueBool True -> (s0, Code mempty "true")
         ValueBool False -> (s0, Code mempty "false")
         ValueFrozen {} -> error "JShark.pureAST: ValueFrozen is eval-only"
-      Lambda (Just tag) f ->
+      Lambda (LamInfo (Just tag) p) f ->
         let
-          (s1, fnJs) = emitHoistedLambdaValue env s0 f
+          (s1, fnJs) = emitHoistedLambdaValue env s0 p f
           (s2, name) = registerHoistedTag s1 tag (renderJS fnJs)
          in
           (s2, Code mempty (jsText name))
-      Lambda Nothing f -> emitExprLambda env s0 f
+      Lambda (LamInfo Nothing p) f -> emitExprLambda env s0 p f
       -- `const` when shared or used under a lambda/loop/short-circuit.
       Let x g -> letCode env s0 x g
       LetRec r b ->
         let
           (nBind, s1) = allocIdent s0
-          n = nJS nBind
+          n = nJS s1 nBind
           (s2, MkCode rDecl rRef _) = pureAST' s1 env (r (Name nBind))
           (s3, bCode) = pureAST' s2 env (b (Name nBind))
          in
           ( s3
           , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
           )
-      Apply fex ex ->
-        let
-          (s1, Code exprXDecl exprXRef) = pureAST' s0 env fex
-          (s2, Code exprYDecl exprYRef) = pureAST' s1 env ex
-         in
-          (s2, Code (exprXDecl $$ exprYDecl) (jsCall exprXRef exprYRef))
+      Apply fex ex -> emitApply env s0 fex ex
       Var (Embed e) -> pureAST' s0 env (flattenExpr e)
       Var (EmbedEff e) -> effectfulAST' env s0 e
       Var s ->
         -- Tags and the unused-binder dummy are negative; map via `env`.
-        (s0, Code mempty (varStampJS env s))
+        (s0, Code mempty (varStampJS s0 env s))
       If c t e ->
         let
           (s1, Code cDecl cRef) = pureAST' s0 env c
@@ -635,7 +640,7 @@ pureAST' !sIn env expr =
           Var s ->
             let
               i = stampId s
-              optVar = nName i
+              optVar = identName s0 i
               (s2, Code noneDecl noneRef) = pureAST' s0 env none'
               (s3, Code someDecl someRef) = pureAST' s2 env (someF (Name i))
              in
@@ -650,13 +655,13 @@ pureAST' !sIn env expr =
             let
               (s1, Code optDecl optRef) = pureAST' s0 env opt
               (nBind, s2) = allocIdent s1
-              optVar = nName nBind
+              optVar = identName s2 nBind
               (s3, Code noneDecl noneRef) = pureAST' s2 env none'
               (s4, Code someDecl someRef) = pureAST' s3 env (someF (Name nBind))
              in
               ( s4
               , Code
-                  (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
+                  (optDecl $$ constBind s2 nBind optRef $$ noneDecl $$ someDecl)
                   ( parens
                       (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
                   )
@@ -674,11 +679,11 @@ pureAST' !sIn env expr =
       ResultCase res errF okF -> renderResultCase env s0 res errF okF
       Index arr idx ->
         let
-          s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
-          (s2, Code aDecl aRef) = pureAST' s1 env arr
-          (s3, Code iDecl iRef) = pureAST' s2 env idx
+          (s1, Code aDecl aRef) = pureAST' s0 env arr
+          (s2, Code iDecl iRef) = pureAST' s1 env idx
+          (s3, call) = emitCheckedIndex s2 aRef iRef
          in
-          (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+          (s3, Code (aDecl $$ iDecl) call)
       U8Index buf idx ->
         let
           (s1, Code bDecl bRef) = pureAST' s0 env buf
@@ -691,7 +696,7 @@ pureAST' !sIn env expr =
          in
           (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
       Std s -> renderStd env s0 s
-      FnLit body -> renderFn env s0 body
+      FnLit body -> renderFnBody env s0 body
       UnsafeNullable x -> pureAST' s0 env x
       FrozenLit fs -> renderObjectLit env s0 fs
       GetField @k o ->
@@ -841,12 +846,12 @@ renderObjectLit env s0 fs =
                 let
                   (s', Code d r) = pureAST' s env e
                  in
-                  (s', (d, (dquotes (jsText (fieldKey fl)) <> ":") <+> r))
+                  (s', (d, (jsPropKey (cgStyle s') (fieldKey fl) <> ":") <+> r))
               FieldLitExtra e ->
                 let
                   (s', Code d r) = pureAST' s env e
                  in
-                  (s', (d, (dquotes (jsText (fieldKey fl)) <> ":") <+> r))
+                  (s', (d, (jsPropKey (cgStyle s') (fieldKey fl) <> ":") <+> r))
               FieldLitEffect e ->
                 let
                   (s', MkCode d r _) = effectfulAST' env s e
@@ -854,7 +859,7 @@ renderObjectLit env s0 fs =
                   ( s'
                   ,
                     ( fromMaybe mempty d
-                    , (dquotes (jsText (fieldKey fl)) <> ":") <+> fromMaybe mempty r
+                    , (jsPropKey (cgStyle s') (fieldKey fl) <> ":") <+> fromMaybe mempty r
                     )
                   )
               FieldLitExtraEffect e ->
@@ -864,7 +869,7 @@ renderObjectLit env s0 fs =
                   ( s'
                   ,
                     ( fromMaybe mempty d
-                    , (dquotes (jsText (fieldKey fl)) <> ":") <+> fromMaybe mempty r
+                    , (jsPropKey (cgStyle s') (fieldKey fl) <> ":") <+> fromMaybe mempty r
                     )
                   )
         )
@@ -892,7 +897,7 @@ renderStringCaseE env s0 scrut arms def =
     (s1, Code oDecl oRef) = pureAST' s0 env scrut
     (resultN, s2) =
       if unit then (0, s1) else allocIdent s1
-    resultVar = nName resultN
+    resultVar = identName s2 resultN
     renderArm s e =
       let
         (s', MkCode mDecl mRef _) = effectfulAST' env s e
@@ -944,7 +949,7 @@ renderResultCaseE env s0 res errF okF =
         let
           (s3, prelude, obj, nUnw) = resultCasePrelude env s2 res
           (resultN, s4) = allocIdent s3
-          resultVar = nName resultN
+          resultVar = identName s4 resultN
           envE = IM.insert tagE nUnw env
           envO = IM.insert tagO nUnw envE
           (s5, MkCode eDecl eRef _) = effectfulAST' envE s4 errTagged
@@ -961,66 +966,159 @@ renderResultCaseE env s0 res errF okF =
          in
           (s6, Code stmt (jsText resultVar))
 
-shouldFlattenBinaryHoist :: (Stamp u -> Expr Stamp v) -> Bool
-shouldFlattenBinaryHoist f =
-  case f nestedDummy of
-    Lambda Nothing g ->
-      case g nestedDummy of
-        Lambda Nothing _ -> False
-        _ -> True
-    _ -> False
-
-emitBinaryHoistedLambda ::
-  Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, Code)
-emitBinaryHoistedLambda env s0 f =
-  let
-    go a b =
-      case f a of
-        Lambda Nothing g -> unsafeCoerce g b
-        _ -> error "JShark.emitBinaryHoistedLambda: expected inner lambda"
-    fnBody = JfCons (\a -> JfCons (\b -> JfNil (go a b)))
-    (s1, Code _ fnJs) = renderFn env s0 fnBody
-   in
-    (s1, Code mempty fnJs)
-
 emitHoistedLambdaValue ::
-  Env -> CG -> (Stamp u -> Expr Stamp v) -> (CG, JS)
-emitHoistedLambdaValue env s0 f =
-  if shouldFlattenBinaryHoist f
-    then
-      let
-        (s1, Code _ fnJs) = emitBinaryHoistedLambda env s0 f
-       in
-        (s1, fnJs)
-    else
-      let
-        (s1, Code _ fnJs) = emitExprLambda env s0 f
-       in
-        (s1, fnJs)
-
-renderFn :: forall us r. Env -> CG -> FnBody Stamp us r -> (CG, Code)
-renderFn env s0 body =
+  Env -> CG -> Maybe Text -> (Stamp u -> Expr Stamp v) -> (CG, JS)
+emitHoistedLambdaValue env s0 hint f =
   let
-    n = fnDepthStamp body
-    (ids, s1) = allocNIdents s0 n
+    (s1, Code _ fnJs) =
+      emitLambdaSpine True (\s e -> pureAST' s env e) s0 hint f
+   in
+    (s1, fnJs)
+
+renderFnBody :: forall us r. Env -> CG -> FnBody Stamp us r -> (CG, Code)
+renderFnBody env s0 body =
+  let
+    hints = fnBodyHints body
+    (ids, s1) = allocNIdentsHints s0 hints
     (s2, Code d r) = pureAST' s1 env (evalFnBody body ids)
    in
-    (s2, Code mempty (jsCallback (map nJS ids) d r))
+    (s2, Code mempty (jsCallback s2 (map (nJS s2) ids) d r))
 
-emitExprLambda env = emitLambdaWith (\s e -> pureAST' s env e)
+fnBodyHints :: FnBody Stamp us r -> [Maybe Text]
+fnBodyHints = \case
+  JfNil _ -> []
+  JfCons pn k -> pn : fnBodyHints (k nestedDummy)
 
-emitEffectLambda env = emitLambdaWith (effectfulAST' env)
+emitExprLambda env s0 hint f =
+  emitLambdaSpine False (\s e -> pureAST' s env e) s0 hint f
 
-emitLambdaWith walker s0 f =
+emitApply env s0 f0 x0 =
   let
-    (nParam, s1) = allocIdent s0
-    (s2, MkCode exprXDecl exprXRef _) = walker s1 (f (Name nParam))
+    (headE, args) = collectApply f0 [x0]
+    n = length args
    in
-    (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+    if n > 1 && exprCallArity headE == n
+      then
+        let
+          (s1, Code fDecl fRef) = pureAST' s0 env headE
+          (s2, argDecl, argRefs) = emitApplyArgs env s1 args
+         in
+          (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
+      else
+        let
+          (s1, Code fDecl fRef) = pureAST' s0 env f0
+          (s2, Code xDecl xRef) = pureAST' s1 env x0
+         in
+          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+
+emitApplyE env s0 f0 x0 =
+  let
+    (headE, args) = collectApplyE f0 [x0]
+    n = length args
+   in
+    if n > 1 && effectCallArity headE == n
+      then
+        let
+          (s1, Code fDecl fRef) = effectfulAST' env s0 headE
+          (s2, argDecl, argRefs) = emitApplyArgsE env s1 args
+         in
+          (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
+      else
+        let
+          (s1, Code fDecl fRef) = effectfulAST' env s0 f0
+          (s2, Code xDecl xRef) = effectfulAST' env s1 x0
+         in
+          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+
+collectApply :: Expr Stamp u -> [Expr Stamp v] -> (Expr Stamp w, [Expr Stamp v])
+collectApply f xs = case f of
+  Apply f' x' -> collectApply (unsafeCoerce f') (unsafeCoerce x' : xs)
+  _ -> (unsafeCoerce f, xs)
+
+collectApplyE ::
+  Effect Stamp u -> [Effect Stamp v] -> (Effect Stamp w, [Effect Stamp v])
+collectApplyE f xs = case f of
+  ApplyE f' x' -> collectApplyE (unsafeCoerce f') (unsafeCoerce x' : xs)
+  _ -> (unsafeCoerce f, xs)
+
+exprCallArity :: Expr Stamp u -> Int
+exprCallArity = \case
+  Lambda (LamInfo (Just _) _) f ->
+    1 + untaggedLambdaChain (unsafeCoerce (f nestedDummy))
+  _ -> 0
+
+untaggedLambdaChain :: Expr Stamp u -> Int
+untaggedLambdaChain = \case
+  Lambda (LamInfo Nothing _) g ->
+    1 + untaggedLambdaChain (unsafeCoerce (g nestedDummy))
+  _ -> 0
+
+effectCallArity :: Effect Stamp u -> Int
+effectCallArity = const 0
+
+emitApplyArgs env s0 xs =
+  foldl'
+    ( \(s, d, rs) x ->
+        let
+          (s', Code xd xr) = pureAST' s env x
+         in
+          (s', d $$ xd, rs ++ [xr])
+    )
+    (s0, mempty, [])
+    xs
+
+emitApplyArgsE env s0 xs =
+  foldl'
+    ( \(s, d, rs) x ->
+        let
+          (s', Code xd xr) = effectfulAST' env s x
+         in
+          (s', d $$ xd, rs ++ [xr])
+    )
+    (s0, mempty, [])
+    xs
+
+emitEffectLambda env s0 f =
+  let
+    (nParam, s1) = allocIdentHint s0 Nothing
+    body = f (Name nParam)
+    (s2, MkCode d r _) = effectfulAST' env s1 body
+   in
+    (s2, Code mempty (renderFn s2 [nJS s2 nParam] d r))
+
+emitLambdaSpine ::
+  Bool
+  -> (CG -> Expr Stamp u -> (CG, Code))
+  -> CG
+  -> Maybe Text
+  -> (Stamp a -> Expr Stamp u)
+  -> (CG, Code)
+emitLambdaSpine peelUntagged walker s0 hint f =
+  peel s0 hint f []
+ where
+  peel s h g acc =
+    let
+      (nParam, s1) = allocIdentHint s h
+      body = g (Name nParam)
+     in
+      case body of
+        Lambda (LamInfo Nothing p) g'
+          | peelUntagged ->
+              peel s1 p (unsafeCoerce g') (nParam : acc)
+        _ ->
+          let
+            ids = reverse (nParam : acc)
+            (s2, MkCode d r _) = walker s1 body
+           in
+            (s2, Code mempty (renderFn s2 (map (nJS s2) ids) d r))
 
 renderBinaryFn env s0 f =
   let
-    (s1, Code _ cb) = renderFn env s0 (JfCons $ \a -> JfCons $ \b -> JfNil (f a b))
+    (s1, Code _ cb) =
+      renderFnBody
+        env
+        s0
+        (JfCons (Just "a") (\a -> JfCons (Just "b") (\b -> JfNil (f a b))))
    in
     (s1, cb)
 
@@ -1072,12 +1170,12 @@ renderKernel env s0 = \case
   KOr x y -> renderBin env "||" s0 x y
   KEq structural x y
     | structural ->
-        renderBinApp env jsValueEq (useEqHelpers s0) x y
+        renderBinEmit env emitValueEq s0 x y
     | otherwise ->
         renderBin env "===" s0 x y
   KNEq structural x y
     | structural ->
-        renderBinApp env jsValueNEq (useEqHelpers s0) x y
+        renderBinEmit env emitValueNEq s0 x y
     | otherwise ->
         renderBin env "!==" s0 x y
   KGTh x y -> renderBin env ">" s0 x y
@@ -1103,7 +1201,7 @@ renderMethod env s0 = \case
       (nHole, s2) = allocIdent s1
       (nI, s3) = allocIdent s2
       (s4, Code exDecl exRef) = pureAST' s3 env (f (Name nI))
-      cb = jsCallback [nJS nHole, nJS nI] exDecl exRef
+      cb = jsCallback s4 [nJS s4 nHole, nJS s4 nI] exDecl exRef
      in
       (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
 
@@ -1119,13 +1217,13 @@ renderFold env method s0 recv z f =
 renderCallbackMethod env name s0 recv f =
   let
     (s1, Code rDecl rRef) = pureAST' s0 env recv
-    (nParam, s2) = allocIdent s1
+    (nParam, s2) = allocIdentHint s1 (Just "x")
     (s3, Code exDecl exRef) = pureAST' s2 env (f (Name nParam))
     call =
       wrapOperand recv rRef
         <> "."
         <> jsString name
-        <> parens (jsCallback [nJS nParam] exDecl exRef)
+        <> parens (jsCallback s3 [nJS s3 nParam] exDecl exRef)
    in
     (s3, Code rDecl call)
 
@@ -1151,6 +1249,21 @@ renderBinApp env join s0 x y =
     (s2, Code yDecl yRef) = pureAST' s1 env y
    in
     (s2, Code (xDecl $$ yDecl) (join xRef yRef))
+
+renderBinEmit ::
+  Env
+  -> (CG -> JS -> JS -> (CG, JS))
+  -> CG
+  -> Expr Stamp a
+  -> Expr Stamp b
+  -> (CG, Code)
+renderBinEmit env emit s0 x y =
+  let
+    (s1, Code xDecl xRef) = pureAST' s0 env x
+    (s2, Code yDecl yRef) = pureAST' s1 env y
+    (s3, js) = emit s2 xRef yRef
+   in
+    (s3, Code (xDecl $$ yDecl) js)
 
 argAST :: Env -> CG -> Arg Stamp u -> (CG, Code)
 argAST env s (ArgExpr e) = pureAST' s env e

@@ -90,6 +90,8 @@ module JShark.Api.Types
   , ReduceWith
   , ClosedExpr
   , ClosedEffect
+  , LamInfo (..)
+  , noLamInfo
   , Hvm2KernelEntry (..)
   , Comparable
   , KnownScalar
@@ -125,11 +127,6 @@ module JShark.Api.Types
   , fromSyntax
   , seqSyntax
   , (>>)
-  , jsHelperValueEq
-  , jsHelperArrayEq
-  , jsHelperDeepEqual
-  , jsHelperUint8ArrayEq
-  , jsEqHelpers
   )
 where
 
@@ -376,7 +373,21 @@ fieldKey (FieldLitExtraEffect @k _) = T.pack (symbolVal (Proxy :: Proxy k))
 -- | PHOAS spine for @'Fn'@: @JfCons@ binders, @JfNil@ body.
 data FnBody (f :: Universe -> Type) (us :: [Universe]) (r :: Universe) where
   JfNil :: Expr f r -> FnBody f '[] r
-  JfCons :: (f u -> FnBody f us r) -> FnBody f (u ': us) r
+  JfCons ::
+    !(Maybe Text)
+    -> (f u -> FnBody f us r)
+    -> FnBody f (u ': us) r
+
+-- | Codegen-only lambda metadata. 'lamTag' hoists a shared @$name@
+-- binding; 'lamParam' is the JS parameter name when known.
+data LamInfo = LamInfo
+  { lamTag :: !(Maybe Text)
+  , lamParam :: !(Maybe Text)
+  }
+  deriving (Eq, Show)
+
+noLamInfo :: LamInfo
+noLamInfo = LamInfo Nothing Nothing
 
 data Expr :: (Universe -> Type) -> Universe -> Type where
   -- Good Parts: values, arithmetic, strict equality, functions, @const@ lets
@@ -396,10 +407,11 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -- ^ Recursive let. The rhs must be productive; 'JShark.evaluate' ties
     --         the knot, so one that forces its own binder diverges.
   Lambda ::
-    Maybe Text
+    LamInfo
     -> (f u -> Expr f v)
     -> Expr f ('Function u v)
-    -- ^ PHOAS lambda. 'Just' name is codegen-only ('namedLambda').
+    -- ^ PHOAS lambda. 'lamTag' hoists a shared @$name@; 'lamParam'
+    --         is the JS parameter name when known.
   Apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
   Var ::
     f u
@@ -438,7 +450,7 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     Expr f 'Uint8Array
     -> Expr f 'Number
     -> Expr f 'Number
-    -- ^ JS @u8[i]@ without array bounds helper.
+    -- ^ JS @u8[i]@ without the bounds shim.
   Error ::
     Expr f 'String
     -> Expr f u
@@ -947,10 +959,10 @@ instance Semigroup (Expr f ('Result e a)) where
   l <> r = ResultCase l (\_ -> r) (\_ -> l)
 
 instance Semigroup (Expr f a) => Semigroup (Expr f ('Function r a)) where
-  g <> h = Lambda Nothing (\x -> Apply g (Var x) <> Apply h (Var x))
+  g <> h = Lambda noLamInfo (\x -> Apply g (Var x) <> Apply h (Var x))
 
 instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
-  mempty = Lambda Nothing (\_ -> mempty)
+  mempty = Lambda noLamInfo (\_ -> mempty)
 
 -- | 'Num' / 'Fractional' / 'Floating' for JS numbers:
 --
@@ -1240,38 +1252,3 @@ fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxThen m b) = ThenE m (fromSyntax b)
 fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
-
--- | Codegen helpers for the kernel 'Eq' operator. '$valueEq' dispatches;
--- '$arrayEq', '$deepEqual', and '$uint8ArrayEq' are the structural walks.
--- Not stdlib names on 'Expr'.
-jsHelperValueEq :: (Text, Text)
-jsHelperValueEq =
-  ( "$valueEq"
-  , "function(a,b){if(a===b)return true;if(a===null||b===null||typeof a!==\"object\"||typeof b!==\"object\")return false;if(Array.isArray(a)&&Array.isArray(b))return $arrayEq(a,b);if(a instanceof Uint8Array&&b instanceof Uint8Array)return $uint8ArrayEq(a,b);if(a.constructor===Object&&b.constructor===Object)return $deepEqual(a,b);return false}"
-  )
-
-jsHelperArrayEq :: (Text, Text)
-jsHelperArrayEq =
-  ( "$arrayEq"
-  , "function(a,b){if(a===b)return true;if(!Array.isArray(b))return false;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(!$valueEq(a[i],b[i]))return false;return true}"
-  )
-
-jsHelperDeepEqual :: (Text, Text)
-jsHelperDeepEqual =
-  ( "$deepEqual"
-  , "function(a,b){if(a===b)return true;if(a instanceof Date&&b instanceof Date)return a.getTime()===b.getTime();if(a instanceof RegExp&&b instanceof RegExp)return a.toString()===b.toString();var ka=Object.keys(a),kb=Object.keys(b);if(ka.length!==kb.length)return false;for(var i=0;i<ka.length;i++){var k=ka[i];if(!Object.prototype.hasOwnProperty.call(b,k))return false;var v1=a[k],v2=b[k],o=v1&&v2&&typeof v1==='object'&&typeof v2==='object';if(o){if(Array.isArray(v1)){if(!$arrayEq(v1,v2))return false}else if(v1 instanceof Uint8Array){if(!$uint8ArrayEq(v1,v2))return false}else if(!$deepEqual(v1,v2))return false}else if(v1!==v2&&!(Number.isNaN(v1)&&Number.isNaN(v2)))return false}return true}"
-  )
-
-jsHelperUint8ArrayEq :: (Text, Text)
-jsHelperUint8ArrayEq =
-  ( "$uint8ArrayEq"
-  , "function(a,b){if(a===b)return true;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true}"
-  )
-
-jsEqHelpers :: [(Text, Text)]
-jsEqHelpers =
-  [ jsHelperValueEq
-  , jsHelperArrayEq
-  , jsHelperDeepEqual
-  , jsHelperUint8ArrayEq
-  ]

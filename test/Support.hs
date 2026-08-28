@@ -29,6 +29,7 @@ module Support
 where
 
 import Control.Exception (evaluate, finally)
+import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -45,7 +46,7 @@ import System.IO
   , stderr
   )
 import System.Posix.IO (closeFd, createPipe, dup, dupTo, fdToHandle, stdError)
-import Test.Tasty.HUnit ((@?=))
+import Test.Tasty.HUnit (assertFailure)
 
 data LitRow
 
@@ -125,10 +126,11 @@ prettyIfLambda = fromSyntax $ do
       ApplyE
         ( lambdaE
             ( \x ->
-                ifE
-                  (ffi "Boolean" (arg (number 1) <: RecNil))
-                  x
-                  (expr (number 0))
+                Bind (expr (number 0)) $ \z ->
+                  ifE
+                    (ffi "Boolean" (arg (number 1) <: RecNil))
+                    x
+                    (Lift (Var z))
             )
         )
         (expr (number 6))
@@ -143,7 +145,12 @@ mulDiv = number 6 * number 7 / number 2
 -- | Assert emitted JS contains @needle@ (layout-independent smoke check).
 assertJSContains :: Text -> Text -> IO ()
 assertJSContains needle haystack =
-  T.isInfixOf needle haystack @?= True
+  unless (T.isInfixOf needle haystack)
+    $ assertFailure
+    $ "missing "
+      <> T.unpack needle
+      <> " in:\n"
+      <> T.unpack haystack
 
 -- | Run @io@ with stderr redirected to a string (restores stderr afterward).
 captureStderr :: IO a -> IO (a, String)

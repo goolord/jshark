@@ -2,6 +2,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -17,8 +18,9 @@ module JShark.Compiler.Codegen.Core where
 
 import qualified Data.Char as Char
 import qualified Data.IntMap.Strict as IM
-import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Set (Set)
+import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -53,11 +55,17 @@ import JShark.Compiler.CompileTiming
   )
 import JShark.Compiler.Emit
   ( JS
+  , blockBody
   , dquotes
+  , hcat
   , iifeBody
+  , jsDecimal
+  , jsDouble
   , jsText
   , nonEmpty
   , parens
+  , punctuate
+  , renderJS
   , renderJSCompact
   , semi
   , vcat
@@ -65,42 +73,48 @@ import JShark.Compiler.Emit
   , (<+>)
   )
 import qualified JShark.Compiler.FlatSoA as FlatSoA
-import JShark.Compiler.Hoist.Canonical (canonicalHoistSrc)
 import qualified JShark.Compiler.Ir as Ir
+import JShark.Compiler.JsShim
+  ( Builtin (CheckedIndex, ValueEq)
+  , Preamble
+  , emptyPreamble
+  , mergePreamble
+  , renderPreamble
+  , useShim
+  )
 import JShark.Compiler.Lower
   ( lowerEffectClosed
-  , lowerOptEffectIr
+  , lowerOptEffectIrWith
   , optEffectClosed
   )
 import JShark.Compiler.Optimize
   ( nodeCountExpr
-  , optimize
+  , optimizeWith
   )
 
 printComputation computation = T.putStrLn (renderJSCompact computation)
 
-helperDecls s =
-  vcat
-    [ ("const" <+> jsText name <+> "=" <+> jsText src) <> semi
-    | (name, src) <- M.toAscList (cgHelpers s)
-    ]
+preambleDecls s = renderPreamble (cgPreamble s)
 
-jsValueEq a b = "$valueEq" <> parens (a <> ("," <+> b))
+emitBuiltin :: CG -> Builtin -> [JS] -> (CG, JS)
+emitBuiltin s b args =
+  let
+    (p, js) = useShim b args (cgPreamble s)
+   in
+    (s {cgPreamble = p}, js)
 
-jsValueNEq a b = "!" <> parens (jsValueEq a b)
+emitCheckedIndex :: CG -> JS -> JS -> (CG, JS)
+emitCheckedIndex s arr idx = emitBuiltin s CheckedIndex [arr, idx]
 
-useEqHelpers s0 = foldr (uncurry useHelperSrc) s0 jsEqHelpers
+emitValueEq :: CG -> JS -> JS -> (CG, JS)
+emitValueEq s a b = emitBuiltin s ValueEq [a, b]
 
--- | Integer slot + throw on a hole. Raw @a[i]@ would use the string key
--- (@a[1.9]@ is @undefined@) and invent @undefined@ at an arbitrary @u@.
--- Emitted once as @$checkedIndex@; inlining the lambda at every index
--- site blows up Life-sized programs (materializing huge emit trees never finishes).
-jsCheckedIndexSrc :: Text
-jsCheckedIndexSrc =
-  "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
-
-jsCheckedIndex arr idx =
-  "$checkedIndex" <> parens (arr <> ("," <+> idx))
+emitValueNEq :: CG -> JS -> JS -> (CG, JS)
+emitValueNEq s a b =
+  let
+    (s', js) = emitValueEq s a b
+   in
+    (s', "!" <> parens js)
 
 -- | @o.foo@ when @foo@ is an identifier; @o.a.b@ for a dotted ident
 -- path ('location.hash'); @o["0"]@ otherwise. A single key that is
@@ -127,12 +141,55 @@ data Code = MkCode
   , codeRefFX :: !Bool
   }
 
+-- | Codegen presentation. Syntax flags are safe for minified output;
+-- structure flags are 'Readable' only (keep source names and lets).
+data EmitStyle = EmitStyle
+  { esArrowFns :: !Bool
+  , esIntLiterals :: !Bool
+  , esBareKeys :: !Bool
+  , esSourceNames :: !Bool
+  , esKeepLets :: !Bool
+  }
+  deriving (Eq, Show)
+
+minifiedStyle :: EmitStyle
+minifiedStyle =
+  EmitStyle
+    { esArrowFns = True
+    , esIntLiterals = True
+    , esBareKeys = True
+    , esSourceNames = False
+    , esKeepLets = False
+    }
+
+idiomaticStyle :: EmitStyle
+idiomaticStyle =
+  EmitStyle
+    { esArrowFns = True
+    , esIntLiterals = True
+    , esBareKeys = True
+    , esSourceNames = True
+    , esKeepLets = True
+    }
+
+legacyStyle :: EmitStyle
+legacyStyle =
+  EmitStyle
+    { esArrowFns = False
+    , esIntLiterals = False
+    , esBareKeys = False
+    , esSourceNames = False
+    , esKeepLets = False
+    }
+
 data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
-  , cgHelpers :: !(M.Map Text Text)
+  , cgPreamble :: !Preamble
   , cgEmit :: {-# UNPACK #-} !Int
   , cgEmitCtx :: !(Maybe EmitCtx)
+  , cgStyle :: !EmitStyle
+  , cgNames :: !(IM.IntMap Text)
   }
 
 type Env = IM.IntMap Int
@@ -156,19 +213,19 @@ instance Monoid Code where
 
 renderCode (MkCode a b _) = fromMaybe mempty a $$ fromMaybe mempty b
 
--- | Wrap helpers + generated decls + result in an IIFE so a minifier treats
+-- | Wrap preamble + generated decls + result in an IIFE so a minifier treats
 -- the result as live (plain expression statements get DCE'd).
 renderIIFE s (MkCode decls ref _) =
   let
-    stmts = helperDecls s $$ fromMaybe mempty decls
+    stmts = preambleDecls s $$ fromMaybe mempty decls
     body = case ref of
       Nothing -> stmts
       Just r -> stmts $$ (("return" <+> r) <> semi)
    in
     "(() => {" <> iifeBody body <> "})()"
 
--- | Helper definitions ahead of a snippet's own declarations.
-renderWithHelpers s code = helperDecls s $$ renderCode code
+-- | Preamble (shims + hoisted @$name@) ahead of a snippet's declarations.
+renderWithPreamble s code = preambleDecls s $$ renderCode code
 
 codesDecls cs = vcat (mapMaybe (\(MkCode a _ _) -> a) cs)
 
@@ -182,19 +239,25 @@ arrayElemRef = fromMaybe "undefined"
 -- Codegen counters: `cgIdent` is the next emitted JS name (`n0`, `n1`, …);
 -- `cgTag` is a decreasing negative id used only for use-counting/inlining
 -- so nested Lets/Binds cannot collide (tags are never valid JS idents).
--- `cgHelpers` is the set of runtime functions the program has called.
-startCG = CG 0 (-3) M.empty 0 Nothing
+-- `cgPreamble` is runtime shims + hoisted @$name@ bodies used by this program.
+startCG = startCGWith minifiedStyle
+
+startCGWith :: EmitStyle -> CG
+startCGWith style = CG 0 (-3) emptyPreamble 0 Nothing style IM.empty
 
 -- | Prepare optimized pure AST and wire batch progress (pack then emit).
 -- Requires 'withActiveJob' + 'configProgressSlot' when progress is enabled.
 preparePureProgram :: ClosedExpr u -> IO (CG, Expr Stamp u)
-preparePureProgram e = do
+preparePureProgram = preparePureProgramWith minifiedStyle
+
+preparePureProgramWith :: EmitStyle -> ClosedExpr u -> IO (CG, Expr Stamp u)
+preparePureProgramWith style e = do
   mCtx <- captureEmitCtx
   case mCtx of
     Nothing -> do
       t0 <- getMonotonicTime
       let
-        !expr = optimize e
+        !expr = optimizeWith (esKeepLets style) e
       t1 <- getMonotonicTime
       let
         timing =
@@ -204,12 +267,12 @@ preparePureProgram e = do
             }
       reportPhoasPrepareTiming timing
       recordJobPhoasPrepare timing
-      pure (startCG, expr)
+      pure (startCGWith style, expr)
     Just ctx -> do
       reportPackPhase ctx 0 1
       t0 <- getMonotonicTime
       let
-        !expr = optimize e
+        !expr = optimizeWith (esKeepLets style) e
       t1 <- getMonotonicTime
       let
         timing =
@@ -221,19 +284,23 @@ preparePureProgram e = do
       recordJobPhoasPrepare timing
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountExpr expr)
-      pure (startCG {cgEmitCtx = Just ctx}, expr)
-{-# NOINLINE preparePureProgram #-}
+      pure ((startCGWith style) {cgEmitCtx = Just ctx}, expr)
+{-# NOINLINE preparePureProgramWith #-}
 
 prepareFlatEffectProgram :: ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
-prepareFlatEffectProgram e = do
+prepareFlatEffectProgram = prepareFlatEffectProgramWith minifiedStyle
+
+prepareFlatEffectProgramWith ::
+  EmitStyle -> ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
+prepareFlatEffectProgramWith style e = do
   mCtx <- captureEmitCtx
-  (soa, _timing, _irNodes, _ir) <- flatPrepareCore e
+  (soa, _timing, _irNodes, _ir) <- flatPrepareCoreWith (esKeepLets style) e
   case mCtx of
-    Nothing -> pure (soa, startCG)
+    Nothing -> pure (soa, startCGWith style)
     Just ctx -> do
       initEmitCtxTotal ctx (flatSoaNodeCount soa)
-      pure (soa, startCG {cgEmitCtx = Just ctx})
-{-# NOINLINE prepareFlatEffectProgram #-}
+      pure (soa, (startCGWith style) {cgEmitCtx = Just ctx})
+{-# NOINLINE prepareFlatEffectProgramWith #-}
 
 flatPrepareFromIr :: Ir.IrEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
 flatPrepareFromIr irOpt = do
@@ -330,30 +397,34 @@ profileIrOptFromIr !irRaw = do
   tMetaRaw1 <- getMonotonicTime
   tOpt0 <- getMonotonicTime
   let
-    !(_, !irOpt, !mdOpt) = Ir.optIrEffect (-2) irRaw
-    !optNodes = Ir.irSize mdOpt
-  tOpt1 <- getMonotonicTime
-  tMetaOpt0 <- getMonotonicTime
-  let
-    !_ = Ir.metaIrEffect irOpt
-  tMetaOpt1 <- getMonotonicTime
-  _ <- GHCIO.evaluate irOpt
-  let
-    metaRawSec = seconds tMetaRaw0 tMetaRaw1
-    optSec = seconds tOpt0 tOpt1
-    metaOptSec = seconds tMetaOpt0 tMetaOpt1
+    ?keepLets = False
    in
-    pure
-      IrOptProfile
-        { iopRawNodes = rawNodes
-        , iopOptNodes = optNodes
-        , iopLowerSec = 0
-        , iopMetaRawSec = metaRawSec
-        , iopOptSec = optSec
-        , iopMetaOptSec = metaOptSec
-        , iopPrepareSec = 0
-        , iopTotalSec = metaRawSec + optSec + metaOptSec
-        }
+    do
+      let
+        !(_, !irOpt, !mdOpt) = Ir.optIrEffect (-2) irRaw
+        !optNodes = Ir.irSize mdOpt
+      tOpt1 <- getMonotonicTime
+      tMetaOpt0 <- getMonotonicTime
+      let
+        !_ = Ir.metaIrEffect irOpt
+      tMetaOpt1 <- getMonotonicTime
+      _ <- GHCIO.evaluate irOpt
+      let
+        metaRawSec = seconds tMetaRaw0 tMetaRaw1
+        optSec = seconds tOpt0 tOpt1
+        metaOptSec = seconds tMetaOpt0 tMetaOpt1
+       in
+        pure
+          IrOptProfile
+            { iopRawNodes = rawNodes
+            , iopOptNodes = optNodes
+            , iopLowerSec = 0
+            , iopMetaRawSec = metaRawSec
+            , iopOptSec = optSec
+            , iopMetaOptSec = metaOptSec
+            , iopPrepareSec = 0
+            , iopTotalSec = metaRawSec + optSec + metaOptSec
+            }
 {-# NOINLINE profileIrOptFromIr #-}
 
 profileIrOptFromClosed :: ClosedEffect u -> IO IrOptProfile
@@ -407,7 +478,13 @@ profileLowerFromClosed e = do
 
 flatPrepareCore ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)
-flatPrepareCore (e :: ClosedEffect u) = do
+flatPrepareCore = flatPrepareCoreWith False
+
+flatPrepareCoreWith ::
+  Bool
+  -> ClosedEffect u
+  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)
+flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
   case mCtx of
@@ -415,7 +492,7 @@ flatPrepareCore (e :: ClosedEffect u) = do
     Nothing -> pure ()
   t0 <- getMonotonicTime
   let
-    !(irOpt, irNodes) = lowerOptEffectIr e
+    !(irOpt, irNodes) = lowerOptEffectIrWith keepLets e
   t1 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportIrPreparePhase ctx 1 1
@@ -433,7 +510,7 @@ flatPrepareCore (e :: ClosedEffect u) = do
   reportFlatPrepareTiming timing
   recordJobFlatPrepare timing
   pure (soa, timing, irNodes, irOpt)
-{-# NOINLINE flatPrepareCore #-}
+{-# NOINLINE flatPrepareCoreWith #-}
 
 {-# NOINLINE tickEmitCtxUnit #-}
 tickEmitCtxUnit ctx tag = unsafePerformIO (tag `seq` tickEmitCtx ctx)
@@ -456,28 +533,159 @@ bumpEmitTick sIn =
 
 allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 
-allocIdent s = (cgIdent s, s {cgIdent = cgIdent s + 1})
+allocIdent s = allocIdentHint s Nothing
 
-useHelperSrc name src s = s {cgHelpers = M.insert name src (cgHelpers s)}
+allocIdentHint :: CG -> Maybe Text -> (Int, CG)
+allocIdentHint s hint =
+  let
+    n = cgIdent s
+    name = pickBinderName (cgStyle s) hint n
+    s' =
+      s
+        { cgIdent = n + 1
+        , cgNames = IM.insert n name (cgNames s)
+        }
+   in
+    (n, s')
+
+pickBinderName :: EmitStyle -> Maybe Text -> Int -> Text
+pickBinderName style hint n =
+  case hint of
+    Just t
+      | esSourceNames style
+      , jsSafeBinder t ->
+          t
+    _ -> nName n
+
+jsSafeBinder t = jsIdent t && t `S.notMember` jsReserved
+
+jsReserved :: Set Text
+jsReserved =
+  S.fromList
+    [ "break"
+    , "case"
+    , "catch"
+    , "class"
+    , "const"
+    , "continue"
+    , "debugger"
+    , "default"
+    , "delete"
+    , "do"
+    , "else"
+    , "export"
+    , "extends"
+    , "false"
+    , "finally"
+    , "for"
+    , "function"
+    , "if"
+    , "import"
+    , "in"
+    , "instanceof"
+    , "new"
+    , "null"
+    , "return"
+    , "super"
+    , "switch"
+    , "this"
+    , "throw"
+    , "true"
+    , "try"
+    , "typeof"
+    , "var"
+    , "void"
+    , "while"
+    , "with"
+    , "yield"
+    , "enum"
+    , "await"
+    , "let"
+    , "static"
+    , "implements"
+    , "interface"
+    , "package"
+    , "private"
+    , "protected"
+    , "public"
+    ]
 
 nName n = "n" <> T.pack (show n)
 
-nJS n = jsText (nName n)
+identName s n = fromMaybe (nName n) (IM.lookup n (cgNames s))
 
-constBind n ref = ("const" <+> nJS n <+> "=" <+> ref) <> semi
+nJS s n = jsText (identName s n)
+
+constBind s n ref = ("const" <+> nJS s n <+> "=" <+> ref) <> semi
 
 -- | Optimizer tags (negative) map to emitted `n*` ids during codegen.
-varStampJS env s =
+varStampJS cg env s =
   let
     i = stampId s
    in
     if i < 0
-      then maybe mempty nJS (IM.lookup i env)
-      else nJS i
+      then maybe mempty (nJS cg) (IM.lookup i env)
+      else nJS cg i
 
 -- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
 -- counter guess: only a binder that is already in the tree.
 jsCall f a = parens f <> parens a
+
+jsCallN f args = parens f <> parens (hcat (punctuate ", " args))
+
+jsNumber style d
+  | esIntLiterals style
+  , not (isNaN d || isInfinite d)
+  , let
+      n = round d :: Integer
+  , fromInteger n == d
+  , abs n <= 9007199254740991 =
+      jsDecimal n
+  | otherwise = jsDouble d
+
+jsPropKey style k
+  | esBareKeys style && jsIdent k = jsText k
+  | otherwise = dquotes (jsText k)
+
+-- | @function (n0) {…}@ or @n0 => …@ depending on 'esArrowFns'.
+renderFunction s nParam decl ref =
+  renderFn s [nJS s nParam] decl ref
+
+jsCallback s params decl ref = renderFn s params (nonEmpty decl) (Just ref)
+
+renderFn :: CG -> [JS] -> Maybe JS -> Maybe JS -> JS
+renderFn s params mDecl mRef
+  | esArrowFns (cgStyle s) = renderArrow params mDecl mRef
+  | otherwise = renderClassic params mDecl mRef
+
+renderClassic params mDecl mRef =
+  "function"
+    <+> parens (hcat (punctuate ", " params))
+    <+> blockBody (fromMaybe mempty mDecl $$ ret)
+ where
+  ret = case mRef of
+    Nothing -> "return"
+    Just r -> "return" <+> parens r
+
+renderArrow params mDecl mRef =
+  let
+    headJs = arrowParams params <+> "=>"
+   in
+    case (mDecl, mRef) of
+      (Nothing, Nothing) -> headJs <+> blockBody mempty
+      (Nothing, Just r) -> headJs <+> arrowExpr r
+      (Just d, Nothing) -> headJs <+> blockBody (d $$ "return")
+      (Just d, Just r) ->
+        headJs <+> blockBody (d $$ ("return" <+> parens r))
+
+arrowParams [p] = p
+arrowParams ps = parens (hcat (punctuate ", " ps))
+
+arrowExpr r =
+  let
+    t = T.strip (renderJS r)
+   in
+    if "{" `T.isPrefixOf` t then parens r else r
 
 -- | Needs no parentheses as an operand: already a primary JS expression.
 allocNIdents :: CG -> Int -> ([Int], CG)
@@ -489,22 +697,21 @@ allocNIdents s n =
    in
     (i : is, s2)
 
-mergeCgHelpers ::
-  M.Map Text Text -> M.Map Text Text -> M.Map Text Text
-mergeCgHelpers =
-  M.unionWith
-    ( \existing incoming ->
-        if existing == incoming || canonicalHoistSrc existing == canonicalHoistSrc incoming
-          then existing
-          else
-            error "JShark.mergeEmitCG: conflicting hoist helper definitions"
-    )
+allocNIdentsHints :: CG -> [Maybe Text] -> ([Int], CG)
+allocNIdentsHints s [] = ([], s)
+allocNIdentsHints s (h : hs) =
+  let
+    (i, s1) = allocIdentHint s h
+    (is, s2) = allocNIdentsHints s1 hs
+   in
+    (i : is, s2)
 
 mergeEmitCG a b =
   a
     { cgIdent = max (cgIdent a) (cgIdent b)
-    , cgHelpers = mergeCgHelpers (cgHelpers a) (cgHelpers b)
+    , cgPreamble = mergePreamble (cgPreamble a) (cgPreamble b)
     , cgEmit = max (cgEmit a) (cgEmit b)
+    , cgNames = cgNames a <> cgNames b
     }
 
 mergeEmitCGs :: CG -> [CG] -> CG

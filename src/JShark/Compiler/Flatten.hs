@@ -76,7 +76,7 @@ mapFnBody ::
   -> FnBody f us r
 mapFnBody ge = \case
   JfNil e -> JfNil (ge e)
-  JfCons k -> JfCons (\x -> mapFnBody ge (k x))
+  JfCons n k -> JfCons n (\x -> mapFnBody ge (k x))
 
 foldFnBody ::
   forall f us r m.
@@ -90,7 +90,7 @@ foldFnBody dummy le body =
 evalFnBodyWith :: forall f us r. (forall v. f v) -> FnBody f us r -> Expr f r
 evalFnBodyWith dummy = \case
   JfNil e -> e
-  JfCons k -> evalFnBodyWith dummy (k dummy)
+  JfCons _ k -> evalFnBodyWith dummy (k dummy)
 
 mapFieldLit ::
   (forall u. Expr f u -> Expr f u)

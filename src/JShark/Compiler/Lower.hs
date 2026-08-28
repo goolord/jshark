@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -16,6 +17,7 @@ module JShark.Compiler.Lower
   , lowerEffectClosed
   , optEffectClosed
   , lowerOptEffectIr
+  , lowerOptEffectIrWith
   , reifyEffect
   , irEffectFromClosed
   , irExprFromClosed
@@ -436,20 +438,10 @@ reifyFieldLit fl =
       Ir.IrFieldLitExtraEffect @k (e :: Ir.IrEffect u) ->
         reifyFieldLitExtraEffect @u @k @r e
 
-irFnTags :: Ir.IrFnBody us r -> [Int]
-irFnTags = \case
-  Ir.IrJfNil _ -> []
-  Ir.IrJfCons t k -> t : irFnTags k
-
-irFnBodyExpr :: Ir.IrFnBody us r -> Ir.IrExpr r
-irFnBodyExpr = \case
-  Ir.IrJfNil e -> e
-  Ir.IrJfCons _ k -> irFnBodyExpr k
-
 fnDepthStamp :: FnBody Stamp us r -> Int
 fnDepthStamp = \case
   JfNil _ -> 0
-  JfCons k -> 1 + fnDepthStamp (k (Stamp minBound))
+  JfCons _ k -> 1 + fnDepthStamp (k (Stamp minBound))
 
 allocFnTags :: Int -> FnBody Stamp us r -> ([Int], Int)
 allocFnTags t0 body =
@@ -465,14 +457,15 @@ evalFnBody body tags =
   unsafeCoerce (evalAny (unsafeCoerce body) tags :: Expr Stamp r)
  where
   evalAny (JfNil e) [] = e
-  evalAny (JfCons k) (t : ts) = evalAny (unsafeCoerce (k (Name t))) ts
+  evalAny (JfCons _ k) (t : ts) = evalAny (unsafeCoerce (k (Name t))) ts
   evalAny _ _ = error "JShark.evalFnBody: arity mismatch"
 
 rebindFn :: [Int] -> Expr Stamp v -> FnBody Stamp us v
 rebindFn tags expr = unsafeCoerce (rebindGo tags expr)
  where
   rebindGo [] e = JfNil e
-  rebindGo (t : ts) e = unsafeCoerce (JfCons $ \s -> rebindGo ts (rebindExpr t e s))
+  rebindGo (t : ts) e =
+    unsafeCoerce (JfCons Nothing $ \s -> rebindGo ts (rebindExpr t e s))
 
 lowerFnBodyAt :: Int -> FnBody Stamp us r -> (Int, Ir.IrFnBody us r)
 lowerFnBodyAt !t0 body =
@@ -484,14 +477,22 @@ lowerFnBodyAt !t0 body =
 lowerFnBodyTags :: [Int] -> FnBody Stamp us r -> Ir.IrFnBody us r
 lowerFnBodyTags tags b = case b of
   JfNil e -> Ir.IrJfNil (lowerExpr e)
-  JfCons k ->
+  JfCons pn k ->
     case tags of
-      t : ts -> Ir.IrJfCons t (lowerFnBodyTags ts (k (Name t)))
+      t : ts -> Ir.IrJfCons t pn (lowerFnBodyTags ts (k (Name t)))
       _ -> error "JShark.lowerFnBodyTags: arity mismatch"
 
 reifyFnBody :: Ir.IrFnBody us r -> FnBody Stamp us r
-reifyFnBody ir =
-  rebindFn (irFnTags ir) (reifyExpr (irFnBodyExpr ir))
+reifyFnBody = \case
+  Ir.IrJfNil e -> JfNil (reifyExpr e)
+  Ir.IrJfCons tag pn rest ->
+    JfCons pn $ \s -> rebindFnBody tag (reifyFnBody rest) s
+
+rebindFnBody ::
+  Int -> FnBody Stamp us r -> Stamp u -> FnBody Stamp us r
+rebindFnBody tag body s = case body of
+  JfNil e -> JfNil (rebindExpr tag e s)
+  JfCons pn k -> JfCons pn (\x -> rebindFnBody tag (k x) s)
 
 lowerExpr :: Expr Stamp u -> Ir.IrExpr u
 lowerExpr e =
@@ -829,7 +830,8 @@ lowerEffectAt !t0 eff = case eff of
      in
       (t1, Ir.IrArrayLit es')
 
-lowerOptExprAt :: Int -> Expr Stamp u -> (Int, Ir.IrExpr u, Ir.IrMeta)
+lowerOptExprAt ::
+  (?keepLets :: Bool) => Int -> Expr Stamp u -> (Int, Ir.IrExpr u, Ir.IrMeta)
 lowerOptExprAt !t0 expr =
   let
     (t1, ir) = lowerExprAt t0 expr
@@ -837,7 +839,8 @@ lowerOptExprAt !t0 expr =
    in
     (t2, ir', md)
 
-lowerOptArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u, Ir.IrMeta)
+lowerOptArgAt ::
+  (?keepLets :: Bool) => Int -> Arg Stamp u -> (Int, Ir.IrArg u, Ir.IrMeta)
 lowerOptArgAt !t0 a = case a of
   ArgExpr e ->
     let
@@ -851,6 +854,7 @@ lowerOptArgAt !t0 a = case a of
       (t1, Ir.IrArgEffect e', md)
 
 lowerOptArgsAt ::
+  (?keepLets :: Bool) =>
   Int -> Rec (Arg Stamp) us -> (Int, Rec (Ir.IrArg) us, Ir.IrMeta)
 lowerOptArgsAt !t0 args = case args of
   RecNil -> (t0, RecNil, mempty)
@@ -862,6 +866,7 @@ lowerOptArgsAt !t0 args = case args of
       (t2, RecCons x' xs', Ir.nodeMeta mdX mdXs)
 
 lowerOptFieldLitAt ::
+  (?keepLets :: Bool) =>
   Int -> FieldLit Stamp r -> (Int, Ir.IrFieldLit r, Ir.IrMeta)
 lowerOptFieldLitAt !t0 fl = case fl of
   FieldLit @k e ->
@@ -886,6 +891,7 @@ lowerOptFieldLitAt !t0 fl = case fl of
       (t1, Ir.IrFieldLitExtraEffect @k e', md)
 
 lowerOptFieldLitsAt ::
+  (?keepLets :: Bool) =>
   Int -> [FieldLit Stamp r] -> (Int, [Ir.IrFieldLit r], Ir.IrMeta)
 lowerOptFieldLitsAt !t0 fs =
   foldr
@@ -899,6 +905,7 @@ lowerOptFieldLitsAt !t0 fs =
     fs
 
 lowerOptEffectsAt ::
+  (?keepLets :: Bool) =>
   Int -> [Effect Stamp u] -> (Int, [Ir.IrEffect u], Ir.IrMeta)
 lowerOptEffectsAt !t0 es =
   foldr
@@ -912,6 +919,7 @@ lowerOptEffectsAt !t0 es =
     es
 
 lowerOptEffectArmsAt ::
+  (?keepLets :: Bool) =>
   Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Ir.IrEffect u)], Ir.IrMeta)
 lowerOptEffectArmsAt !t0 arms =
   foldr
@@ -924,7 +932,8 @@ lowerOptEffectArmsAt !t0 arms =
     (t0, [], mempty)
     arms
 
-lowerOptEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrEffect u, Ir.IrMeta)
+lowerOptEffectAt ::
+  (?keepLets :: Bool) => Int -> Effect Stamp u -> (Int, Ir.IrEffect u, Ir.IrMeta)
 lowerOptEffectAt !t0 eff = case eff of
   Lift x ->
     let
@@ -1154,19 +1163,28 @@ lowerEffectClosed (e :: ClosedEffect u) =
 optEffectClosed :: Ir.IrEffect u -> Ir.IrEffect u
 optEffectClosed ir =
   let
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+    ?keepLets = False
    in
-    irOpt
+    let
+      (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+     in
+      irOpt
 {-# NOINLINE optEffectClosed #-}
 
 lowerOptEffectIr :: ClosedEffect u -> (Ir.IrEffect u, Int)
-lowerOptEffectIr e =
+lowerOptEffectIr = lowerOptEffectIrWith False
+
+lowerOptEffectIrWith :: Bool -> ClosedEffect u -> (Ir.IrEffect u, Int)
+lowerOptEffectIrWith keepLets e =
   let
-    (!_, !irOpt, !mdOpt) = lowerOptEffectAt (-2) (flattenEff e)
-    !nodes = Ir.irSize mdOpt
+    ?keepLets = keepLets
    in
-    Ir.metaIrEffect irOpt `seq` (irOpt, nodes)
-{-# NOINLINE lowerOptEffectIr #-}
+    let
+      (!_, !irOpt, !mdOpt) = lowerOptEffectAt (-2) (flattenEff e)
+      !nodes = Ir.irSize mdOpt
+     in
+      Ir.metaIrEffect irOpt `seq` (irOpt, nodes)
+{-# NOINLINE lowerOptEffectIrWith #-}
 
 irEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
 irEffectFromClosed e = fst (lowerOptEffectIr e)
@@ -1175,8 +1193,11 @@ irEffectFromClosed e = fst (lowerOptEffectIr e)
 irExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
 irExprFromClosed (e :: ClosedExpr u) =
   let
-    (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
-    (!_, !irOpt, !_) = Ir.optIrExpr (-2) ir
+    ?keepLets = False
    in
-    irOpt
+    let
+      (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
+      (!_, !irOpt, !_) = Ir.optIrExpr (-2) ir
+     in
+      irOpt
 {-# NOINLINE irExprFromClosed #-}

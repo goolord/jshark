@@ -123,6 +123,7 @@ library
     JShark.Compiler.FlatView
     JShark.Compiler.Ir
     JShark.Compiler.JsNum
+    JShark.Compiler.JsShim
     JShark.Compiler.EmitBend
     JShark.Compiler.Evaluate
     JShark.Compiler.Metadata

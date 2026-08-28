@@ -2,7 +2,9 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -14,6 +16,7 @@
 -- | PHOAS optimizer and IR preparation.
 module JShark.Compiler.Optimize
   ( optimize
+  , optimizeWith
   , optimizeEffect
   , optimizeEffectFromIr
   , optimizeEffectIr
@@ -303,6 +306,7 @@ optIrLargeThreshold :: Int
 optIrLargeThreshold = 0
 
 keepExprCont ::
+  (?keepLets :: Bool) =>
   Int
   -> Int
   -> Expr Stamp v
@@ -315,6 +319,7 @@ keepExprCont t tag body _ f
   | otherwise = rebindExpr tag body
 
 keepEffCont ::
+  (?keepLets :: Bool) =>
   Int
   -> Int
   -> Effect Stamp v
@@ -338,19 +343,26 @@ keepExprCont2 ::
   -> Expr Stamp v
 keepExprCont2 _ tA tB body _ _ a b = rebindExpr2 tA tB body a b
 
-reoptExpr :: Int -> (Stamp u -> Expr Stamp v) -> Stamp u -> Expr Stamp v
+reoptExpr ::
+  (?keepLets :: Bool) =>
+  Int -> (Stamp u -> Expr Stamp v) -> Stamp u -> Expr Stamp v
 reoptExpr t f b = let (_, e, _) = optExpr t (flattenExpr (f b)) in e
 
-reoptEff :: Int -> (Stamp u -> Effect Stamp v) -> Stamp u -> Effect Stamp v
+reoptEff ::
+  (?keepLets :: Bool) =>
+  Int -> (Stamp u -> Effect Stamp v) -> Stamp u -> Effect Stamp v
 reoptEff t f b = let (_, e, _) = optEffect t (flattenEff (f b)) in e
 
 irOptimizedExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
 irOptimizedExprFromClosed (e :: ClosedExpr u) =
   let
-    (!_, !ir) = lowerExprAt (-2) (flattenExpr (optimize e))
-    (!_, !irOpt, !_) = Ir.optIrExpr (-2) ir
+    ?keepLets = False
    in
-    irOpt
+    let
+      (!_, !ir) = lowerExprAt (-2) (flattenExpr (optimize e))
+      (!_, !irOpt, !_) = Ir.optIrExpr (-2) ir
+     in
+      irOpt
 {-# NOINLINE irOptimizedExprFromClosed #-}
 
 irOptimizedEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
@@ -431,7 +443,7 @@ collectHvm2Kernels expr = collectAny (unsafeCoerce expr :: Expr Stamp u)
   collectFnBodyHvm2 :: FnBody Stamp us r -> [Hvm2KernelEntry]
   collectFnBodyHvm2 = \case
     JfNil e -> collectAny e
-    JfCons k -> collectFnBodyHvm2 (k nestedDummy)
+    JfCons _ k -> collectFnBodyHvm2 (k nestedDummy)
   collectFieldLitHvm2 = \case
     FieldLit e -> collectAny e
     FieldLitEffect e -> collectEffectAny e
@@ -484,29 +496,41 @@ collectHvm2Kernels expr = collectAny (unsafeCoerce expr :: Expr Stamp u)
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =
   let
-    (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
-    (!_, !_, !md) = Ir.optIrExpr (-2) ir
+    ?keepLets = False
    in
-    Ir.irSize md
+    let
+      (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
+      (!_, !_, !md) = Ir.optIrExpr (-2) ir
+     in
+      Ir.irSize md
 
 optimizedEffectSize :: ClosedEffect u -> Int
 optimizedEffectSize e = snd (lowerOptEffectIr e)
 
 optimize :: ClosedExpr u -> Expr Stamp u
-optimize (e :: ClosedExpr u) =
+optimize = optimizeWith False
+
+optimizeWith :: Bool -> ClosedExpr u -> Expr Stamp u
+optimizeWith keepLets (e :: ClosedExpr u) =
   let
-    (_, final, _) = optExpr (-2) (e :: Expr Stamp u)
+    ?keepLets = keepLets
    in
-    flattenExpr final
-{-# NOINLINE optimize #-}
+    let
+      (_, final, _) = optExpr (-2) (e :: Expr Stamp u)
+     in
+      flattenExpr final
+{-# NOINLINE optimizeWith #-}
 
 optimizeEffectIr :: Effect Stamp u -> Effect Stamp u
 optimizeEffectIr e =
   let
-    (!_, !ir) = lowerEffectAt (-2) (flattenEff e)
-    (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+    ?keepLets = False
    in
-    flattenEff (reifyEffect irOpt)
+    let
+      (!_, !ir) = lowerEffectAt (-2) (flattenEff e)
+      (!_, !irOpt, !_) = Ir.optIrEffect (-2) ir
+     in
+      flattenEff (reifyEffect irOpt)
 {-# NOINLINE optimizeEffectIr #-}
 
 optimizeEffectFromIr :: Ir.IrEffect u -> Effect Stamp u
@@ -522,6 +546,7 @@ optimizeEffect e = optimizeEffectFromIr (fst (lowerOptEffectIr e))
 {-# NOINLINE optimizeEffect #-}
 
 optUnder ::
+  (?keepLets :: Bool) =>
   Int -> (Stamp u -> Expr Stamp v) -> (Int, Int, Expr Stamp v, Metadata)
 optUnder t0 f =
   let
@@ -531,6 +556,7 @@ optUnder t0 f =
     (t1, tag, body, md)
 
 optUnderE ::
+  (?keepLets :: Bool) =>
   Int -> (Stamp u -> Effect Stamp v) -> (Int, Int, Effect Stamp v, Metadata)
 optUnderE t0 f =
   let
@@ -540,6 +566,7 @@ optUnderE t0 f =
     (t1, tag, body, md)
 
 optUnder2 ::
+  (?keepLets :: Bool) =>
   Int
   -> (Stamp a -> Stamp b -> Expr Stamp v)
   -> (Int, Int, Int, Expr Stamp v, Metadata)
@@ -551,7 +578,9 @@ optUnder2 t0 f =
    in
     (t1, tA, tB, body, md)
 
-optArgs :: Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us, Metadata)
+optArgs ::
+  (?keepLets :: Bool) =>
+  Int -> Rec (Arg Stamp) us -> (Int, Rec (Arg Stamp) us, Metadata)
 optArgs t0 RecNil = (t0, RecNil, mempty)
 optArgs t0 (RecCons x xs) =
   let
@@ -560,7 +589,8 @@ optArgs t0 (RecCons x xs) =
    in
     (t2, RecCons x' xs', mdX <> mdXS)
 
-optArg :: Int -> Arg Stamp u -> (Int, Arg Stamp u, Metadata)
+optArg ::
+  (?keepLets :: Bool) => Int -> Arg Stamp u -> (Int, Arg Stamp u, Metadata)
 optArg t (ArgExpr e) =
   let
     (t', e', md) = optExpr t e
@@ -750,6 +780,7 @@ foldBigNeg x = case x of
   _ -> Std (Kernel (KBigNeg x))
 
 optFixed ::
+  (?keepLets :: Bool) =>
   Int
   -> FixedOp a b c u
   -> FixedArgs Stamp a b c
@@ -826,6 +857,7 @@ optFixed t0 op args = case (op, args) of
       (t3, res, md)
 
 optLet ::
+  (?keepLets :: Bool) =>
   Int
   -> Expr Stamp u
   -> (Stamp u -> Expr Stamp v)
@@ -852,14 +884,16 @@ data ElimOps src body = ElimOps
   }
 
 elimFrom ::
-  ElimOps src body
+  (?keepLets :: Bool) =>
+  Bool
+  -> ElimOps src body
   -> Int
   -> Metadata
   -> Int
   -> body
   -> Metadata
   -> (Int, body, Metadata)
-elimFrom ops t mdX tag body mdBody =
+elimFrom preserveOnce ops t mdX tag body mdBody =
   let
     uses = elimCount ops tag body mdBody
     kept = elimRebuild ops body
@@ -874,11 +908,15 @@ elimFrom ops t mdX tag body mdBody =
         , not (elimOccurs ops tag body) ->
             (t, body, mdBody)
       0 -> (t, kept, mdBody)
+      1
+        | ?keepLets && preserveOnce ->
+            (t, kept, mdBody)
       1 -> inlined
       _ | elimCheap ops mdX -> inlined
       _ -> (t, kept, mdBody)
 
 elimLetFrom ::
+  (?keepLets :: Bool) =>
   Int
   -> Expr Stamp u
   -> Metadata
@@ -889,6 +927,7 @@ elimLetFrom ::
   -> (Int, Expr Stamp v, Metadata)
 elimLetFrom t x mdX f tag body mdBody =
   elimFrom
+    (not (isLambdaExpr x) && not (isIdentityExpr tag body))
     ElimOps
       { elimCount = elimExprUses
       , elimPure = mdIsPure
@@ -906,6 +945,7 @@ elimLetFrom t x mdX f tag body mdBody =
     mdBody
 
 optBind ::
+  (?keepLets :: Bool) =>
   Int
   -> Effect Stamp u
   -> (Stamp u -> Effect Stamp v)
@@ -918,6 +958,7 @@ optBind t0 x f =
     elimBindFrom t2 x' mdX f tag body mdBody
 
 elimBindFrom ::
+  (?keepLets :: Bool) =>
   Int
   -> Effect Stamp u
   -> Metadata
@@ -928,6 +969,10 @@ elimBindFrom ::
   -> (Int, Effect Stamp v, Metadata)
 elimBindFrom t x mdX f tag body mdBody =
   elimFrom
+    ( not (isLambdaEff x)
+        && not (isIdentityEff tag body)
+        && not (isAliasBind x)
+    )
     ElimOps
       { elimCount = elimEffUses
       , elimPure = const (pureEffect x)
@@ -945,6 +990,7 @@ elimBindFrom t x mdX f tag body mdBody =
     mdBody
 
 optBin ::
+  (?keepLets :: Bool) =>
   Int
   -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
   -> Expr Stamp u
@@ -958,6 +1004,7 @@ optBin t0 k x y =
     (t2, k x' y', Metadata 1 True False <> mdX <> mdY)
 
 optBinNum ::
+  (?keepLets :: Bool) =>
   Int
   -> (Double -> Double -> Double)
   -> (Expr Stamp 'Number -> Expr Stamp 'Number -> Expr Stamp 'Number)
@@ -973,6 +1020,7 @@ optBinNum t0 f k x y =
     (t2, res, Metadata 1 True (cheapExpr res) <> mdX <> mdY)
 
 optUnNum ::
+  (?keepLets :: Bool) =>
   Int
   -> (Double -> Double)
   -> (Expr Stamp 'Number -> Expr Stamp 'Number)
@@ -986,6 +1034,7 @@ optUnNum t0 f k x =
     (t1, res, Metadata 1 True (cheapExpr res) <> mdX)
 
 optUnderFn ::
+  (?keepLets :: Bool) =>
   Int
   -> FnBody Stamp us v
   -> (Int, [Int], Expr Stamp v, Metadata, FnBody Stamp us v)
@@ -1001,7 +1050,30 @@ keepFnCont ::
   [Int] -> Expr Stamp v -> FnBody Stamp us v -> FnBody Stamp us v
 keepFnCont tags expr' _body = rebindFn tags expr'
 
-optExpr :: Int -> Expr Stamp u -> (Int, Expr Stamp u, Metadata)
+isLambdaExpr :: Expr f u -> Bool
+isLambdaExpr = \case
+  Lambda {} -> True
+  _ -> False
+
+isLambdaEff :: Effect f u -> Bool
+isLambdaEff = \case
+  LambdaE {} -> True
+  _ -> False
+
+isIdentityExpr :: Int -> Expr Stamp u -> Bool
+isIdentityExpr tag = \case
+  Var (Stamp i) -> i == tag
+  Var (Embed e) -> isIdentityExpr tag e
+  Var (EmbedEff (Lift e)) -> isIdentityExpr tag e
+  _ -> False
+
+isIdentityEff :: Int -> Effect Stamp u -> Bool
+isIdentityEff tag = \case
+  Lift e -> isIdentityExpr tag e
+  _ -> False
+
+optExpr ::
+  (?keepLets :: Bool) => Int -> Expr Stamp u -> (Int, Expr Stamp u, Metadata)
 optExpr t0 expr = case expr of
   Literal v -> (t0, Literal v, Metadata 1 True (isCheapValue v))
   Var (Embed e) -> optExpr t0 (flattenExpr e)
@@ -1037,9 +1109,9 @@ optExpr t0 expr = case expr of
       (t2, x', mdX) = optExpr t1 x
      in
       case f' of
-        fn@(Lambda (Just _) _) ->
+        fn@(Lambda LamInfo {lamTag = Just _} _) ->
           (t2, Apply fn x', Metadata 1 True False <> mdF <> mdX)
-        Lambda Nothing g -> optLet t2 x' g
+        Lambda LamInfo {lamTag = Nothing} g -> optLet t2 x' g
         _ -> (t2, Apply f' x', Metadata 1 True False <> mdF <> mdX)
   If c t e ->
     let
@@ -1157,6 +1229,7 @@ optExpr t0 expr = case expr of
     (t0, Hvm2Kernel name k, Metadata 1 True False)
 
 optMapped ::
+  (?keepLets :: Bool) =>
   ( Expr Stamp ('Array u)
     -> (Stamp u -> Expr Stamp b)
     -> Expr Stamp c
@@ -1174,6 +1247,7 @@ optMapped k t0 x f =
     (t2, k x' (keepExprCont t2 tag body mdBody f), md)
 
 optReduced ::
+  (?keepLets :: Bool) =>
   ( Expr Stamp ('Array u)
     -> Expr Stamp v
     -> (Stamp v -> Stamp u -> Expr Stamp v)
@@ -1194,6 +1268,7 @@ optReduced k t0 x z f =
     (t3, k x' z' (keepExprCont2 t3 tA tB body mdBody f), md)
 
 optToSorted ::
+  (?keepLets :: Bool) =>
   ( Expr Stamp ('Array u)
     -> (Stamp u -> Stamp u -> Expr Stamp 'Number)
     -> Expr Stamp ('Array u)
@@ -1210,13 +1285,15 @@ optToSorted k t0 x f =
    in
     (t2, k x' (keepExprCont2 t2 tA tB body mdBody f), md)
 
-optStd :: Int -> Std Stamp u -> (Int, Expr Stamp u, Metadata)
+optStd ::
+  (?keepLets :: Bool) => Int -> Std Stamp u -> (Int, Expr Stamp u, Metadata)
 optStd t0 s = case s of
   Fixed op args -> optFixed t0 op args
   Method m -> optMethod t0 m
   Kernel k -> optKernel t0 k
 
-optKernel :: Int -> Kernel Stamp u -> (Int, Expr Stamp u, Metadata)
+optKernel ::
+  (?keepLets :: Bool) => Int -> Kernel Stamp u -> (Int, Expr Stamp u, Metadata)
 optKernel t0 k = case k of
   KPlus x y -> optBinNum t0 (+) Plus x y
   KTimes x y -> optBinNum t0 (*) Times x y
@@ -1311,7 +1388,8 @@ optKernel t0 k = case k of
   KGTEq x y -> optBin t0 (foldOrdNeq LT GTEq) x y
   KLTEq x y -> optBin t0 (foldOrdNeq GT LTEq) x y
 
-optMethod :: Int -> Method Stamp u -> (Int, Expr Stamp u, Metadata)
+optMethod ::
+  (?keepLets :: Bool) => Int -> Method Stamp u -> (Int, Expr Stamp u, Metadata)
 optMethod t0 m = case m of
   MethMap x f -> optMapped (\a g -> Std (Method (MethMap a g))) t0 x f
   MethFilter x f -> optMapped (\a g -> Std (Method (MethFilter a g))) t0 x f
@@ -1326,7 +1404,8 @@ optMethod t0 m = case m of
      in
       (t2, Std (Method (MethFrom n' (keepExprCont t2 tag body mdBody f))), md)
 
-optEffect :: Int -> Effect Stamp u -> (Int, Effect Stamp u, Metadata)
+optEffect ::
+  (?keepLets :: Bool) => Int -> Effect Stamp u -> (Int, Effect Stamp u, Metadata)
 optEffect t0 eff = case eff of
   Lift x ->
     let
@@ -1537,14 +1616,18 @@ optEffect t0 eff = case eff of
       (t1, ArrayLit es', Metadata 1 False False <> mdEs)
 
 mapAccumField ::
-  forall r. Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r], Metadata)
+  forall r.
+  (?keepLets :: Bool) =>
+  Int -> [FieldLit Stamp r] -> (Int, [FieldLit Stamp r], Metadata)
 mapAccumField t0 fs =
   let
     (t1, res) = mapAccumL step t0 fs
    in
     (t1, map fst res, mconcat (map snd res))
  where
-  step :: Int -> FieldLit Stamp r -> (Int, (FieldLit Stamp r, Metadata))
+  step ::
+    (?keepLets :: Bool) =>
+    Int -> FieldLit Stamp r -> (Int, (FieldLit Stamp r, Metadata))
   step t = \case
     FieldLit @k e ->
       let (t', e', md) = optExpr t e in (t', (FieldLit @k e', md))
@@ -1555,7 +1638,9 @@ mapAccumField t0 fs =
     FieldLitExtraEffect @k e ->
       let (t', e', md) = optEffect t e in (t', (FieldLitExtraEffect @k e', md))
 
-mapAccumEffs :: Int -> [Effect Stamp u] -> (Int, [Effect Stamp u], Metadata)
+mapAccumEffs ::
+  (?keepLets :: Bool) =>
+  Int -> [Effect Stamp u] -> (Int, [Effect Stamp u], Metadata)
 mapAccumEffs t0 es =
   let
     (t1, res) = mapAccumL step t0 es
@@ -1565,6 +1650,7 @@ mapAccumEffs t0 es =
   step t e = let (t', e', md) = optEffect t e in (t', (e', md))
 
 mapAccumArms ::
+  (?keepLets :: Bool) =>
   Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Effect Stamp u)], Metadata)
 mapAccumArms t0 arms =
   let

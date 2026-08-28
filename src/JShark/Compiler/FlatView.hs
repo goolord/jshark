@@ -14,6 +14,7 @@ module JShark.Compiler.FlatView
   , firArgGroup
   , firNodePackRefs
   , firHoistTag
+  , firParamName
   , firIdentBudget
   , firLayerBuckets
   , firNodeIsEffect
@@ -44,6 +45,7 @@ import JShark.Compiler.FlatSoA
   , flatSoaStrCases
   , flatSoaText
   , fsaHoistTags
+  , fsaParamNames
   , fsaRoot
   )
 
@@ -83,6 +85,12 @@ firHoistTag :: FlatIRView -> NodeId -> Maybe Text
 firHoistTag view i =
   if i >= 0 && i < V.length (fsaHoistTags view)
     then fsaHoistTags view V.! i
+    else Nothing
+
+firParamName :: FlatIRView -> NodeId -> Maybe Text
+firParamName view i =
+  if i >= 0 && i < V.length (fsaParamNames view)
+    then fsaParamNames view V.! i
     else Nothing
 
 firIdentBudget :: FlatIRView -> NodeId -> Int

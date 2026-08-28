@@ -24,7 +24,7 @@ module JShark.Compiler.Emit
   , blockBody
   , iifeBody
   , nonEmpty
-)
+  )
 where
 
 import Data.List (intersperse)

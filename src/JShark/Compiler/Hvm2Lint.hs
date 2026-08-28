@@ -224,7 +224,7 @@ data SomeIrExpr where
 scanIrFnBody :: Int -> Int -> Ir.IrFnBody us r -> [Hvm2Candidate]
 scanIrFnBody minSize n = \case
   Ir.IrJfNil x -> scanIrExprs minSize n x
-  Ir.IrJfCons _ b -> scanIrFnBody minSize n b
+  Ir.IrJfCons _ _ b -> scanIrFnBody minSize n b
 
 irFixedKids :: Ir.IrFixedArgs a b c -> [SomeIrExpr]
 irFixedKids = \case

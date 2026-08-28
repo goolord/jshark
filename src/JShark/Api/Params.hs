@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -38,13 +39,29 @@ module JShark.Api.Params
 where
 
 import Data.Kind (Constraint, Type)
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Records (HasField (..))
-import GHC.TypeLits (ErrorMessage (..), Symbol, TypeError)
-import JShark.Api.Types (Expr (..), FnBody (..), Universe (..))
+import GHC.TypeLits
+  ( ErrorMessage (..)
+  , KnownSymbol
+  , Symbol
+  , TypeError
+  , symbolVal
+  )
+import JShark.Api.Types
+  ( Expr (..)
+  , FnBody (..)
+  , LamInfo (..)
+  , Universe (..)
+  )
 
 -- | One named parameter slot (@'Param "a" 'Number@).
 data Param (sym :: Symbol) (u :: Universe)
+
+paramSymbol :: forall sym. KnownSymbol sym => Text
+paramSymbol = T.pack (symbolVal (Proxy @sym))
 
 type family RowUs (row :: [Type]) :: [Universe] where
   RowUs '[] = '[]
@@ -143,7 +160,7 @@ instance
 instance LambdaFromRow row r fn => NamedLambdaRow row r fn where
   namedLambdaFromRow name k =
     case lambdaFromRow k of
-      Lambda Nothing f -> Lambda (Just name) f
+      Lambda (LamInfo Nothing p) f -> Lambda (LamInfo (Just name) p) f
       _ ->
         error
           "JShark.namedLambdaRow: parameter row must produce a lambda spine"
@@ -156,11 +173,14 @@ instance UniqueRow '[] => FnFromRow '[] '[] where
   fnFromRow k = JfNil (k ParamRecNil)
 
 instance
-  (FnFromRow row us, UniqueRow (Param sym u ': row)) =>
+  ( KnownSymbol sym
+  , FnFromRow row us
+  , UniqueRow (Param sym u ': row)
+  ) =>
   FnFromRow (Param sym u ': row) (u ': us)
   where
   fnFromRow k =
-    JfCons $ \x ->
+    JfCons (Just (paramSymbol @sym)) $ \x ->
       fnFromRow @row (\rec -> k (ParamRecCons (Var x) rec))
 
 -- | Build curried @'Function@ spines from a parameter row.
@@ -171,11 +191,14 @@ instance UniqueRow '[] => LambdaFromRow '[] r r where
   lambdaFromRow k = k ParamRecNil
 
 instance
-  (LambdaFromRow row r fn, UniqueRow (Param sym u ': row)) =>
+  ( KnownSymbol sym
+  , LambdaFromRow row r fn
+  , UniqueRow (Param sym u ': row)
+  ) =>
   LambdaFromRow (Param sym u ': row) r ('Function u fn)
   where
   lambdaFromRow k =
-    Lambda Nothing $ \x ->
+    Lambda (LamInfo Nothing (Just (paramSymbol @sym))) $ \x ->
       lambdaFromRow @row (\rec -> k (ParamRecCons (Var x) rec))
 
 -- | Positional @function(a,b,…)@ from an explicit parameter row.

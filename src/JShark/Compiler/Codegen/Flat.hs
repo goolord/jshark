@@ -41,7 +41,6 @@ import JShark.Compiler.Codegen.Phoas
   , letResult
   , recBindStmt
   , renderFFIInvoke
-  , renderFunction
   , renderResultLit
   , resultObject
   , tryCatchStmt
@@ -52,9 +51,7 @@ import JShark.Compiler.Emit
   , braces
   , brackets
   , colon
-  , dquotes
   , hcat
-  , jsDouble
   , jsString
   , jsText
   , parens
@@ -79,7 +76,7 @@ import JShark.Compiler.Hoist (emitHoistedFnValue)
 flatRenderLiteral ::
   Env -> CG -> Value u -> (CG, Code)
 flatRenderLiteral env s0 = \case
-  ValueNumber d -> (s0, Code mempty (jsDouble d))
+  ValueNumber d -> (s0, Code mempty (jsNumber (cgStyle s0) d))
   ValueBigInt n -> (s0, Code mempty (jsBigIntLit n))
   ValueArray xs ->
     let
@@ -209,7 +206,7 @@ flatParEmitMinSiblings = 4
 flatParEmitMaxWorkers = 8
 
 -- | Higher than 'FlatSoA.flatSoaParallelThreshold': parallel emit keeps
---   sibling 'CG' helper maps until merge; stream-merge caps peak RAM.
+--   sibling 'CG' preambles until merge; stream-merge caps peak RAM.
 flatParEmitBudgetThreshold = 16384
 
 shouldParFlatSiblings view nids =
@@ -340,12 +337,12 @@ flatRenderField mode env view s = \case
     let
       (s', Code d r) = flatPureChild mode env s view eid
      in
-      (s', (d, (dquotes (jsText k) <> ":") <+> r))
+      (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
   Flat.FlatFieldExtra k eid ->
     let
       (s', Code d r) = flatPureChild mode env s view eid
      in
-      (s', (d, (dquotes (jsText k) <> ":") <+> r))
+      (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
   Flat.FlatFieldEff k eid ->
     let
       (s', MkCode d r _) = flatEffectChild mode env s view eid
@@ -353,7 +350,7 @@ flatRenderField mode env view s = \case
       ( s'
       ,
         ( fromMaybe mempty d
-        , (dquotes (jsText k) <> ":") <+> fromMaybe mempty r
+        , (jsPropKey (cgStyle s') k <> ":") <+> fromMaybe mempty r
         )
       )
   Flat.FlatFieldExtraEff k eid ->
@@ -363,7 +360,7 @@ flatRenderField mode env view s = \case
       ( s'
       ,
         ( fromMaybe mempty d
-        , (dquotes (jsText k) <> ":") <+> fromMaybe mempty r
+        , (jsPropKey (cgStyle s') k <> ":") <+> fromMaybe mempty r
         )
       )
 
@@ -477,29 +474,29 @@ flatRenderKernel mode env s0 view = \case
   Flat.FE_KEq structural x y
     | structural ->
         let
-          s1 = useEqHelpers s0
-          (s2, Code xDecl xRef) = flatPureChild mode env s1 view x
-          (s3, Code yDecl yRef) = flatPureChild mode env s2 view y
+          (s1, Code xDecl xRef) = flatPureChild mode env s0 view x
+          (s2, Code yDecl yRef) = flatPureChild mode env s1 view y
+          (s3, eqJs) =
+            emitValueEq
+              s2
+              (flatWrapOperand view x xRef)
+              (flatWrapOperand view y yRef)
          in
-          ( s3
-          , Code
-              (xDecl $$ yDecl)
-              (jsValueEq (flatWrapOperand view x xRef) (flatWrapOperand view y yRef))
-          )
+          (s3, Code (xDecl $$ yDecl) eqJs)
     | otherwise ->
         flatRenderBin mode env "===" s0 view x y
   Flat.FE_KNEq structural x y
     | structural ->
         let
-          s1 = useEqHelpers s0
-          (s2, Code xDecl xRef) = flatPureChild mode env s1 view x
-          (s3, Code yDecl yRef) = flatPureChild mode env s2 view y
+          (s1, Code xDecl xRef) = flatPureChild mode env s0 view x
+          (s2, Code yDecl yRef) = flatPureChild mode env s1 view y
+          (s3, neJs) =
+            emitValueNEq
+              s2
+              (flatWrapOperand view x xRef)
+              (flatWrapOperand view y yRef)
          in
-          ( s3
-          , Code
-              (xDecl $$ yDecl)
-              (jsValueNEq (flatWrapOperand view x xRef) (flatWrapOperand view y yRef))
-          )
+          (s3, Code (xDecl $$ yDecl) neJs)
     | otherwise ->
         flatRenderBin mode env "!==" s0 view x y
   Flat.FE_KGTh x y -> flatRenderBin mode env ">" s0 view x y
@@ -534,7 +531,7 @@ flatRenderCallbackMethod mode env name s0 view arrId tag bodyId =
       flatWrapOperand view arrId rRef
         <> "."
         <> jsString name
-        <> parens (jsCallback [nJS nParam] exDecl exRef)
+        <> parens (jsCallback s2 [nJS s2 nParam] exDecl exRef)
    in
     (s2, Code rDecl call)
 
@@ -562,7 +559,7 @@ flatRenderFold mode env method s0 view arrId zId tagA tagB bodyId =
             (s', Code d r) = flatPureChild mode env' sE view bodyId
            in
             (nA, nE, s', d, r)
-    cb = jsCallback [nJS nAcc, nJS nElem] exDecl exRef
+    cb = jsCallback s3 [nJS s3 nAcc, nJS s3 nElem] exDecl exRef
     call =
       flatWrapOperand view arrId rRef
         <> jsString method
@@ -587,7 +584,7 @@ flatRenderMethod mode env s0 view = \case
           nA = flatEnvTag env tagA
           nB = flatEnvTag env tagB
           (s2, Code exDecl exRef) = flatPureChild mode env s1 view body
-          cb = jsCallback [nJS nA, nJS nB] exDecl exRef
+          cb = jsCallback s2 [nJS s2 nA, nJS s2 nB] exDecl exRef
          in
           ( s2
           , Code rDecl (flatWrapOperand view arr rRef <> ".toSorted" <> parens cb)
@@ -599,7 +596,7 @@ flatRenderMethod mode env s0 view = \case
           (nB, s3) = allocIdent s2
           env' = IM.insert tagA nA $ IM.insert tagB nB env
           (s4, Code exDecl exRef) = flatPureChild mode env' s3 view body
-          cb = jsCallback [nJS nA, nJS nB] exDecl exRef
+          cb = jsCallback s4 [nJS s4 nA, nJS s4 nB] exDecl exRef
          in
           ( s4
           , Code rDecl (flatWrapOperand view arr rRef <> ".toSorted" <> parens cb)
@@ -611,7 +608,7 @@ flatRenderMethod mode env s0 view = \case
           (s1, Code nDecl nRef) = flatPureChild mode env s0 view n
           nI = flatEnvTag env tag
           (s2, Code exDecl exRef) = flatPureChild mode env s1 view body
-          cb = jsCallback ["_", nJS nI] exDecl exRef
+          cb = jsCallback s2 [jsText "_", nJS s2 nI] exDecl exRef
          in
           (s2, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
       DirectEmit ->
@@ -621,26 +618,27 @@ flatRenderMethod mode env s0 view = \case
           (nI, s3) = allocIdent s2
           env' = IM.insert tag nI env
           (s4, Code exDecl exRef) = flatPureChild mode env' s3 view body
-          cb = jsCallback [nJS nHole, nJS nI] exDecl exRef
+          cb = jsCallback s4 [nJS s4 nHole, nJS s4 nI] exDecl exRef
          in
           (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
   _ -> error "JShark.flatRenderMethod: unexpected node"
 
-flatRenderFnLit mode env s0 view tags bodyId =
+flatRenderFnLit mode env s0 view tags names bodyId =
   case mode of
     LayeredEmit {} ->
       let
         ids = map (flatEnvTag env) tags
         (s1, Code d r) = flatPureChild mode env s0 view bodyId
        in
-        (s1, Code mempty (jsCallback (map nJS ids) d r))
+        (s1, Code mempty (jsCallback s1 (map (nJS s1) ids) d r))
     DirectEmit ->
       let
-        (ids, s1) = allocNIdents s0 (length tags)
+        hints = names ++ repeat Nothing
+        (ids, s1) = allocNIdentsHints s0 (take (length tags) hints)
         env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
         (s2, Code d r) = flatPureChild mode env' s1 view bodyId
        in
-        (s2, Code mempty (jsCallback (map nJS ids) d r))
+        (s2, Code mempty (jsCallback s2 (map (nJS s2) ids) d r))
 
 flatResultUnwrapIdent mode env s tag =
   case mode of
@@ -656,11 +654,11 @@ flatRenderResultCase mode env s0 view resId tagE errId tagO okId =
     (s1, MkCode rDecl rRef _) = flatPureChild mode env s0 view resId
     (nObj, s2) = allocIdent s1
     (nUnw, s3) = flatResultUnwrapIdent mode env s2 tagE
-    obj = nName nObj
+    obj = identName s3 nObj
     prelude =
       fromMaybe mempty rDecl
-        $$ constBind nObj (fromMaybe mempty rRef)
-        $$ constBind nUnw (jsText obj <> ".value")
+        $$ constBind s3 nObj (fromMaybe mempty rRef)
+        $$ constBind s3 nUnw (jsText obj <> ".value")
     envE = IM.insert tagE nUnw env
     envO = IM.insert tagO nUnw envE
     (s4, Code eDecl eRef) = flatPureChild mode envE s3 view errId
@@ -702,7 +700,7 @@ flatBindEffect mode env s0 view nid tag xId bodyId =
         , MkCode
             ( Just
                 ( fromMaybe mempty xDecl
-                    $$ constBind nBind (fromMaybe mempty xRef)
+                    $$ constBind s3 nBind (fromMaybe mempty xRef)
                     $$ fromMaybe mempty yDecl
                 )
             )
@@ -717,11 +715,11 @@ flatRenderResultCaseE mode env s0 view nid resId tagE errId tagO okId =
         (s1, MkCode rDecl rRef _) = flatPureChild mode env s0 view resId
         (nObj, s2) = allocIdent s1
         (nUnw, s3) = flatResultUnwrapIdent mode env s2 tagE
-        obj = nName nObj
+        obj = identName s3 nObj
         prelude =
           fromMaybe mempty rDecl
-            $$ constBind nObj (fromMaybe mempty rRef)
-            $$ constBind nUnw (jsText obj <> ".value")
+            $$ constBind s3 nObj (fromMaybe mempty rRef)
+            $$ constBind s3 nUnw (jsText obj <> ".value")
         envE = IM.insert tagE nUnw env
         envO = IM.insert tagO nUnw envE
         (s4, MkCode eDecl eRef _) = flatEffectChild mode envE s3 view errId
@@ -737,13 +735,13 @@ flatRenderResultCaseE mode env s0 view nid resId tagE errId tagO okId =
         (s1, MkCode rDecl rRef _) = flatPureChild mode env s0 view resId
         (nObj, s2) = allocIdent s1
         (nUnw, s3) = flatResultUnwrapIdent mode env s2 tagE
-        obj = nName nObj
+        obj = identName s3 nObj
         prelude =
           fromMaybe mempty rDecl
-            $$ constBind nObj (fromMaybe mempty rRef)
-            $$ constBind nUnw (jsText obj <> ".value")
+            $$ constBind s3 nObj (fromMaybe mempty rRef)
+            $$ constBind s3 nUnw (jsText obj <> ".value")
         (resultN, s4) = flatPlanIdent mode s3 nid
-        resultVar = nName resultN
+        resultVar = identName s4 resultN
         envE = IM.insert tagE nUnw env
         envO = IM.insert tagO nUnw envE
         (s5, MkCode eDecl eRef _) = flatEffectChild mode envE s4 view errId
@@ -769,7 +767,7 @@ flatRenderStringCaseE mode env s0 view nid scrutId ai defId =
     (s1, Code oDecl oRef) = flatPureChild mode env s0 view scrutId
     (resultN, s2) =
       if unit then (0, s1) else flatPlanIdent mode s1 nid
-    resultVar = nName resultN
+    resultVar = identName s2 resultN
     renderArm s e =
       let
         (s', MkCode mDecl mRef _) = flatEffectChild mode env s view e
@@ -836,23 +834,147 @@ flatPlanEnv plan nid =
     Just (Just env) -> env
     _ -> error ("JShark.flatPlanEnv: missing env for node " ++ show nid)
 
-jsCallback :: [JS] -> JS -> JS -> JS
-jsCallback params decl ref =
-  "function"
-    <+> parens (hcat (punctuate ", " params))
-    <+> blockBody (decl $$ "return" <+> ref)
+flatPlanIdentHint mode s nid hint =
+  case mode of
+    DirectEmit -> allocIdentHint s hint
+    LayeredEmit {} -> flatPlanIdent mode s nid
 
-jsBinaryCallback ids decl ref =
-  jsCallback (map nJS ids) decl ref
+flatEmitLambdaSpine mode env0 s0 view nid0 tag0 bodyId0 =
+  go s0 env0 nid0 tag0 bodyId0 []
+ where
+  go s env nid tag bodyId acc =
+    let
+      hint = FlatView.firParamName view nid
+      (nParam, s1) = flatPlanIdentHint mode s nid hint
+      env' = IM.insert tag nParam env
+     in
+      case FlatView.firNode view bodyId of
+        Flat.FE_Lambda tag2 body2
+          | isNothing (FlatView.firHoistTag view bodyId) ->
+              go s1 env' bodyId tag2 body2 (nParam : acc)
+        _ ->
+          let
+            (s2, MkCode d r _) = flatPureChild mode env' s1 view bodyId
+            ids = reverse (nParam : acc)
+           in
+            (s2, renderFn s2 (map (nJS s2) ids) d r)
 
-flatRenderBinaryHoistedLambda mode env s0 view nidOuter tagA nidInner tagB bodyId =
+flatEmitLambdaESpine mode env0 s0 view nid0 tag0 bodyId0 =
+  go s0 env0 nid0 tag0 bodyId0 []
+ where
+  go s env nid tag bodyId acc =
+    let
+      hint = FlatView.firParamName view nid
+      (nParam, s1) = flatPlanIdentHint mode s nid hint
+      env' = IM.insert tag nParam env
+     in
+      case FlatView.firNode view bodyId of
+        Flat.FX_LambdaE tag2 body2
+          | isNothing (FlatView.firHoistTag view bodyId) ->
+              go s1 env' bodyId tag2 body2 (nParam : acc)
+        _ ->
+          let
+            (s2, MkCode d r _) = flatEffectChild mode env' s1 view bodyId
+            ids = reverse (nParam : acc)
+           in
+            (s2, renderFn s2 (map (nJS s2) ids) d r)
+
+-- | Apply-spine length that matches a hoisted peeled lambda. Opaque
+-- heads (params, @id@, FFI) stay curried: @f(a)(b)@, not @f(a, b)@.
+flatCallArity view nid = case FlatView.firNode view nid of
+  Flat.FE_Lambda _ bodyId
+    | isJust (FlatView.firHoistTag view nid) ->
+        1 + flatUntaggedLambdaChain view bodyId
+  Flat.FX_LambdaE _ bodyId
+    | isJust (FlatView.firHoistTag view nid) ->
+        1 + flatUntaggedLambdaEChain view bodyId
+  _ -> 0
+
+flatUntaggedLambdaChain view nid = case FlatView.firNode view nid of
+  Flat.FE_Lambda _ bodyId
+    | isNothing (FlatView.firHoistTag view nid) ->
+        1 + flatUntaggedLambdaChain view bodyId
+  _ -> 0
+
+flatUntaggedLambdaEChain view nid = case FlatView.firNode view nid of
+  Flat.FX_LambdaE _ bodyId
+    | isNothing (FlatView.firHoistTag view nid) ->
+        1 + flatUntaggedLambdaEChain view bodyId
+  _ -> 0
+
+flatCollectApply view fId argIds = case FlatView.firNode view fId of
+  Flat.FE_Apply f2 x2 -> flatCollectApply view f2 (x2 : argIds)
+  _ -> (fId, argIds)
+
+flatCollectApplyE view fId argIds = case FlatView.firNode view fId of
+  Flat.FX_ApplyE f2 x2 -> flatCollectApplyE view f2 (x2 : argIds)
+  _ -> (fId, argIds)
+
+flatEmitApply mode env s0 view fId argIds =
   let
-    (nA, s1) = flatPlanIdent mode s0 nidOuter
-    (nB, s2) = flatPlanIdent mode s1 nidInner
-    env' = IM.insert tagA nA $ IM.insert tagB nB env
-    (s3, Code d r) = flatPureChild mode env' s2 view bodyId
+    (headId, args) = flatCollectApply view fId argIds
+    n = length args
    in
-    (s3, jsBinaryCallback [nA, nB] d r)
+    if n > 1 && flatCallArity view headId == n
+      then
+        let
+          (s1, Code fDecl fRef) = flatPureChild mode env s0 view headId
+          (s2, argDecl, argRefs) = flatEmitApplyArgs mode env s1 view args
+         in
+          (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
+      else
+        let
+          xId = case argIds of
+            (x : _) -> x
+            [] -> error "JShark.flatEmitApply: missing argument"
+          (s1, Code fDecl fRef) = flatPureChild mode env s0 view fId
+          (s2, Code xDecl xRef) = flatPureChild mode env s1 view xId
+         in
+          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+
+flatEmitApplyE mode env s0 view fId argIds =
+  let
+    (headId, args) = flatCollectApplyE view fId argIds
+    n = length args
+   in
+    if n > 1 && flatCallArity view headId == n
+      then
+        let
+          (s1, Code fDecl fRef) = flatEffectChild mode env s0 view headId
+          (s2, argDecl, argRefs) = flatEmitApplyArgsE mode env s1 view args
+         in
+          (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
+      else
+        let
+          xId = case argIds of
+            (x : _) -> x
+            [] -> error "JShark.flatEmitApplyE: missing argument"
+          (s1, Code fDecl fRef) = flatEffectChild mode env s0 view fId
+          (s2, Code xDecl xRef) = flatEffectChild mode env s1 view xId
+         in
+          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+
+flatEmitApplyArgs mode env s0 view xs =
+  foldl'
+    ( \(s, d, rs) xId ->
+        let
+          (s', Code xd xr) = flatPureChild mode env s view xId
+         in
+          (s', d $$ xd, rs ++ [xr])
+    )
+    (s0, mempty, [])
+    xs
+
+flatEmitApplyArgsE mode env s0 view xs =
+  foldl'
+    ( \(s, d, rs) xId ->
+        let
+          (s', Code xd xr) = flatEffectChild mode env s view xId
+         in
+          (s', d $$ xd, rs ++ [xr])
+    )
+    (s0, mempty, [])
+    xs
 
 flatPureChild mode env s view cId =
   case mode of
@@ -927,7 +1049,7 @@ buildFlatEmitPlan view root s0 =
                   writeEnv nid envO
                   planGo envE errId
                   planGo envO okId
-                Flat.FE_FnLit tags bodyId -> do
+                Flat.FE_FnLit tags _names bodyId -> do
                   s <- readSTRef sRef
                   let
                     (ids, s') = allocNIdents s (length tags)
@@ -1109,7 +1231,7 @@ flatPureASTGo !mode !env !sIn view nid =
       Flat.FE_Literal li ->
         flatRenderLiteral env s0 (FlatView.firLitValue view li)
       Flat.FE_Var i ->
-        (s0, Code mempty (varStampJS env (Name i)))
+        (s0, Code mempty (varStampJS s0 env (Name i)))
       Flat.FE_Let tag xId bodyId ->
         let
           (nBind, s1) = flatPlanIdent mode s0 nid
@@ -1120,7 +1242,7 @@ flatPureASTGo !mode !env !sIn view nid =
           ( s3
           , keepRef
               ( fromMaybe mempty xDecl
-                  $$ constBind nBind (fromMaybe mempty xRef)
+                  $$ constBind s3 nBind (fromMaybe mempty xRef)
                   $$ fromMaybe mempty (codeDecl yCode)
               )
               yCode
@@ -1128,7 +1250,7 @@ flatPureASTGo !mode !env !sIn view nid =
       Flat.FE_LetRec tag rId bId ->
         let
           (nBind, s1) = flatPlanIdent mode s0 nid
-          n = nJS nBind
+          n = nJS s1 nBind
           env' = IM.insert tag nBind env
           (s2, MkCode rDecl rRef _) = flatPureChild mode env' s1 view rId
           (s3, bCode) = flatPureChild mode env' s2 view bId
@@ -1137,49 +1259,23 @@ flatPureASTGo !mode !env !sIn view nid =
           , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
           )
       Flat.FE_Lambda tag bodyId ->
-        case (FlatView.firHoistTag view nid, FlatView.firNode view bodyId) of
-          (Just _, Flat.FE_Lambda tag2 body2Id) ->
+        case FlatView.firHoistTag view nid of
+          Just _ ->
             let
-              (s1, fnJs) =
-                flatRenderBinaryHoistedLambda
-                  mode
-                  env
-                  s0
-                  view
-                  nid
-                  tag
-                  bodyId
-                  tag2
-                  body2Id
+              (s1, fnJs) = flatEmitLambdaSpine mode env s0 view nid tag bodyId
               (s2, hoisted) = emitHoistedFnValue s1 view nid fnJs
              in
               (s2, Code mempty hoisted)
-          (Just _, _) ->
+          Nothing ->
             let
-              (nParam, s1) = flatPlanIdent mode s0 nid
+              hint = FlatView.firParamName view nid
+              (nParam, s1) = flatPlanIdentHint mode s0 nid hint
               env' = IM.insert tag nParam env
-              (s2, MkCode exprXDecl exprXRef _) = flatPureChild mode env' s1 view bodyId
-              (s3, fnJs) =
-                emitHoistedFnValue
-                  s2
-                  view
-                  nid
-                  (renderFunction nParam exprXDecl exprXRef)
+              (s2, MkCode d r _) = flatPureChild mode env' s1 view bodyId
              in
-              (s3, Code mempty fnJs)
-          (Nothing, _) ->
-            let
-              (nParam, s1) = flatPlanIdent mode s0 nid
-              env' = IM.insert tag nParam env
-              (s2, MkCode exprXDecl exprXRef _) = flatPureChild mode env' s1 view bodyId
-             in
-              (s2, Code mempty (renderFunction nParam exprXDecl exprXRef))
+              (s2, Code mempty (renderFunction s2 nParam d r))
       Flat.FE_Apply fId xId ->
-        let
-          (s1, Code fDecl fRef) = flatPureChild mode env s0 view fId
-          (s2, Code xDecl xRef) = flatPureChild mode env s1 view xId
-         in
-          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+        flatEmitApply mode env s0 view fId [xId]
       Flat.FE_EmbedEff eId -> flatEffectChild mode env s0 view eId
       Flat.FE_If cId tId eId ->
         let
@@ -1196,14 +1292,14 @@ flatPureASTGo !mode !env !sIn view nid =
         let
           (s1, Code optDecl optRef) = flatPureChild mode env s0 view oId
           (nBind, s2) = flatPlanIdent mode s1 nid
-          optVar = nName nBind
+          optVar = identName s2 nBind
           env' = IM.insert tag nBind env
           (s3, Code noneDecl noneRef) = flatPureChild mode env s2 view nId
           (s4, Code someDecl someRef) = flatPureChild mode env' s3 view sId
          in
           ( s4
           , Code
-              (optDecl $$ constBind nBind optRef $$ noneDecl $$ someDecl)
+              (optDecl $$ constBind s2 nBind optRef $$ noneDecl $$ someDecl)
               ( parens
                   (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
               )
@@ -1222,11 +1318,11 @@ flatPureASTGo !mode !env !sIn view nid =
         flatRenderResultCase mode env s0 view resId tagE errId tagO okId
       Flat.FE_Index arrId idxId ->
         let
-          s1 = useHelperSrc "$checkedIndex" jsCheckedIndexSrc s0
-          (s2, Code aDecl aRef) = flatPureChild mode env s1 view arrId
-          (s3, Code iDecl iRef) = flatPureChild mode env s2 view idxId
+          (s1, Code aDecl aRef) = flatPureChild mode env s0 view arrId
+          (s2, Code iDecl iRef) = flatPureChild mode env s1 view idxId
+          (s3, call) = emitCheckedIndex s2 aRef iRef
          in
-          (s3, Code (aDecl $$ iDecl) (jsCheckedIndex aRef iRef))
+          (s3, Code (aDecl $$ iDecl) call)
       Flat.FE_U8Index bufId idxId ->
         let
           (s1, Code bDecl bRef) = flatPureChild mode env s0 view bufId
@@ -1239,7 +1335,8 @@ flatPureASTGo !mode !env !sIn view nid =
          in
           (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
       Flat.FE_Fixed fixed -> flatRenderFixed mode env s0 view fixed
-      Flat.FE_FnLit tags bodyId -> flatRenderFnLit mode env s0 view tags bodyId
+      Flat.FE_FnLit tags names bodyId ->
+        flatRenderFnLit mode env s0 view tags names bodyId
       Flat.FE_UnsafeNullable xId -> flatPureChild mode env s0 view xId
       Flat.FE_FrozenLit gi -> flatRenderObjectLit mode env s0 view gi
       Flat.FE_GetField ti oId ->
@@ -1331,7 +1428,7 @@ flatEffectfulASTGo !mode !env !sIn view nid =
       Flat.FX_BindRec tag rId bId ->
         let
           (nBind, s1) = flatPlanIdent mode s0 nid
-          n = nJS nBind
+          n = nJS s1 nBind
           env' = IM.insert tag nBind env
           (s2, MkCode rDecl rRef _) = flatEffectChild mode env' s1 view rId
           (s3, MkCode bDecl bRef bFX) = flatEffectChild mode env' s2 view bId
@@ -1340,39 +1437,77 @@ flatEffectfulASTGo !mode !env !sIn view nid =
           , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
           )
       Flat.FX_LambdaE tag bodyId ->
-        let
-          (nParam, s1) = flatPlanIdent mode s0 nid
-          env' = IM.insert tag nParam env
-          (s2, MkCode exprXDecl exprXRef _) = flatEffectChild mode env' s1 view bodyId
-          (s3, fnJs) =
-            emitHoistedFnValue s2 view nid (renderFunction nParam exprXDecl exprXRef)
-         in
-          (s3, Code mempty fnJs)
+        case FlatView.firHoistTag view nid of
+          Just _ ->
+            let
+              (s1, fnJs) = flatEmitLambdaESpine mode env s0 view nid tag bodyId
+              (s2, hoisted) = emitHoistedFnValue s1 view nid fnJs
+             in
+              (s2, Code mempty hoisted)
+          Nothing ->
+            let
+              (nParam, s1) = flatPlanIdent mode s0 nid
+              env' = IM.insert tag nParam env
+              (s2, MkCode exprXDecl exprXRef _) =
+                flatEffectChild mode env' s1 view bodyId
+              (s3, fnJs) =
+                emitHoistedFnValue
+                  s2
+                  view
+                  nid
+                  (renderFunction s2 nParam exprXDecl exprXRef)
+             in
+              (s3, Code mempty fnJs)
       Flat.FX_ApplyE fId xId ->
-        let
-          (s1, Code fDecl fRef) = flatEffectChild mode env s0 view fId
-          (s2, Code xDecl xRef) = flatEffectChild mode env s1 view xId
-         in
-          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+        flatEmitApplyE mode env s0 view fId [xId]
       Flat.FX_IfE cId tId eId ->
-        emitBranching
-          ( flatIsUnitEffect view tId
-              && flatIsUnitEffect view eId
-          )
-          s0
-          ( \s ->
-              let
-                (s1, Code cDecl cRef) = flatEffectChild mode env s view cId
-               in
-                (s1, cDecl, cRef)
-          )
-          ( \mRes cRef s ->
-              let
-                (s1, MkCode tDecl tRef _) = flatEffectChild mode env s view tId
-                (s2, MkCode eDecl eRef _) = flatEffectChild mode env s1 view eId
-               in
-                (s2, ifAssignOrStmt mRes cRef tDecl tRef eDecl eRef)
-          )
+        let
+          unit =
+            flatIsUnitEffect view tId && flatIsUnitEffect view eId
+          (s1, MkCode cDecl cRef _) = flatEffectChild mode env s0 view cId
+          (s2, MkCode tDecl tRef tFX) = flatEffectChild mode env s1 view tId
+          (s3, MkCode eDecl eRef eFX) = flatEffectChild mode env s2 view eId
+          cJs = fromMaybe mempty cRef
+         in
+          if unit
+            then
+              ( s3
+              , MkCode
+                  (Just (fromMaybe mempty cDecl $$ ifElseStmt cJs tDecl tRef eDecl eRef))
+                  Nothing
+                  False
+              )
+            else
+              if isNothing tDecl && isNothing eDecl && not tFX && not eFX
+                then
+                  ( s3
+                  , Code
+                      (fromMaybe mempty cDecl)
+                      ( parens
+                          ( cJs
+                              <+> "?"
+                              <+> fromMaybe "undefined" tRef
+                              <+> ":"
+                              <+> fromMaybe "undefined" eRef
+                          )
+                      )
+                  )
+                else
+                  let
+                    (n, s4) = allocIdent s3
+                    rv = identName s4 n
+                   in
+                    ( s4
+                    , MkCode
+                        ( Just
+                            ( fromMaybe mempty cDecl
+                                $$ letResult rv
+                                $$ ifAssignOrStmt (Just rv) cJs tDecl tRef eDecl eRef
+                            )
+                        )
+                        (Just (jsText rv))
+                        False
+                    )
       Flat.FX_While cId bId ->
         let
           (s1, MkCode condDecl condRef _) = flatEffectChild mode env s0 view cId
@@ -1388,8 +1523,8 @@ flatEffectfulASTGo !mode !env !sIn view nid =
         let
           (s1, MkCode startDecl startRef _) = flatPureChild mode env s0 view startId
           (s2, MkCode endDecl endRef _) = flatPureChild mode env s1 view endId
-          (loopN, s3) = flatPlanIdent mode s2 nid
-          loopVar = nJS loopN
+          (loopN, s3) = flatPlanIdentHint mode s2 nid (Just "i")
+          loopVar = nJS s3 loopN
           env' = IM.insert tag loopN env
           (s4, MkCode bodyDecl bodyRef _) = flatEffectChild mode env' s3 view bodyId
           bodyStmt = asStmt bodyDecl bodyRef
@@ -1444,14 +1579,14 @@ flatEffectfulASTGo !mode !env !sIn view nid =
                 (s1, Code oDecl oRef) = flatPureChild mode env s view oId
                 (nBind, s2) = flatPlanIdent mode s1 nid
                in
-                (s2, oDecl $$ constBind nBind oRef, nBind)
+                (s2, oDecl $$ constBind s2 nBind oRef, nBind)
           )
           ( \mRes nBind s ->
               let
                 env' = IM.insert tag nBind env
                 (s1, MkCode nDecl nRef _) = flatEffectChild mode env s view nId
                 (s2, MkCode sDecl sRef _) = flatEffectChild mode env' s1 view sId
-                cond = nJS nBind <+> "===" <+> "null"
+                cond = nJS s nBind <+> "===" <+> "null"
                in
                 (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
           )
@@ -1476,7 +1611,7 @@ flatEffectfulASTGo !mode !env !sIn view nid =
                 env' = IM.insert tag catchN env
                 (s3, MkCode bDecl bRef _) = flatEffectChild mode env' s2 view kId
                in
-                (s3, tryCatchStmt mRes catchN aDecl aRef bDecl bRef)
+                (s3, tryCatchStmt mRes (nJS s3 catchN) aDecl aRef bDecl bRef)
           )
       Flat.FX_ObjectLit gi -> flatRenderObjectLit mode env s0 view gi
       Flat.FX_DeleteProp oId kId ->
@@ -1489,6 +1624,9 @@ flatEffectfulASTGo !mode !env !sIn view nid =
       _ -> error "JShark.flatEffectfulAST': unexpected node"
 
 flatEffectfulCodegenFromView soa =
+  flatEffectfulCodegenFromViewWith startCG soa
+
+flatEffectfulCodegenFromViewWith sStart soa =
   let
     root = FlatView.firRoot soa
     total = FlatView.firNodeCount soa
@@ -1497,29 +1635,37 @@ flatEffectfulCodegenFromView soa =
       then error "JShark.flatEffectfulCodegen: invalid root node"
       else
         let
-          (plan, s1) = buildFlatEmitPlan soa root startCG
+          (plan, s1) = buildFlatEmitPlan soa root sStart
          in
           flatEmitLayered soa root plan s1
-{-# NOINLINE flatEffectfulCodegenFromView #-}
+{-# NOINLINE flatEffectfulCodegenFromViewWith #-}
 
 flatEffectfulCodegen ::
   ClosedEffect u -> (CG, Code)
-flatEffectfulCodegen (e :: ClosedEffect u) =
+flatEffectfulCodegen = flatEffectfulCodegenWith minifiedStyle
+
+flatEffectfulCodegenWith ::
+  EmitStyle -> ClosedEffect u -> (CG, Code)
+flatEffectfulCodegenWith style (e :: ClosedEffect u) =
   let
-    !(soa, _s0) = unsafePerformIO (prepareFlatEffectProgram e)
+    !(soa, s0) = unsafePerformIO (prepareFlatEffectProgramWith style e)
    in
-    flatEffectfulCodegenFromView soa
-{-# NOINLINE flatEffectfulCodegen #-}
+    flatEffectfulCodegenFromViewWith s0 soa
+{-# NOINLINE flatEffectfulCodegenWith #-}
 
 effectfulASTFromFlat :: ClosedEffect u -> JS
-effectfulASTFromFlat e = uncurry renderWithHelpers (flatEffectfulCodegen e)
+effectfulASTFromFlat e = uncurry renderWithPreamble (flatEffectfulCodegen e)
 
 effectfulASTFromSoA :: FlatSoA.FlatSoA -> JS
 effectfulASTFromSoA soa =
-  uncurry renderWithHelpers (flatEffectfulCodegenFromView soa)
+  uncurry renderWithPreamble (flatEffectfulCodegenFromView soa)
 
 effectfulAST :: ClosedEffect u -> JS
-effectfulAST = effectfulASTFromFlat
+effectfulAST = effectfulASTWith idiomaticStyle
+
+effectfulASTWith :: EmitStyle -> ClosedEffect u -> JS
+effectfulASTWith style e =
+  uncurry renderWithPreamble (flatEffectfulCodegenWith style e)
 
 effectfulASTIr = effectfulASTFromFlat
 

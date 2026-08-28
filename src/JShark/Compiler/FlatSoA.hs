@@ -63,6 +63,7 @@ import JShark.Compiler.Flat
   , packStateEncs
   , packStateHoistTags
   , packStateNodeCount
+  , packStateParamNames
   , packStateSideTables
   , packStateSoaSide
   , sideAccToVectors
@@ -159,7 +160,7 @@ data FlatSoA = FlatSoA
   , fsaE :: !(VU.Vector Int32)
   , fsaPure :: !(VU.Vector Word8)
   , fsaFixed :: !(V.Vector FlatFixed)
-  , fsaFnLit :: !(V.Vector ([Int], NodeId))
+  , fsaFnLit :: !(V.Vector ([Int], [Maybe Text]))
   , fsaArrayGroups :: !(V.Vector (V.Vector NodeId))
   , fsaLits :: !(V.Vector FlatLit)
   , fsaTexts :: !(V.Vector Text)
@@ -168,6 +169,7 @@ data FlatSoA = FlatSoA
   , fsaFieldGroups :: !(V.Vector [FlatField])
   , fsaArgGroups :: !(V.Vector [FlatArg])
   , fsaHoistTags :: !(V.Vector (Maybe Text))
+  , fsaParamNames :: !(V.Vector (Maybe Text))
   , fsaRoot :: !NodeId
   , fsaSubtreeSizes :: !(V.Vector Int)
   }
@@ -187,6 +189,9 @@ freezeSoaFromPackState root st =
     hoistMap = packStateHoistTags st
     hoistTags =
       V.generate n (\i -> Map.lookup i hoistMap)
+    paramMap = packStateParamNames st
+    paramNames =
+      V.generate n (\i -> Map.lookup i paramMap)
     soa0 =
       FlatSoA
         { fsaOpcodes = opF
@@ -206,6 +211,7 @@ freezeSoaFromPackState root st =
         , fsaFieldGroups = fieldGroups
         , fsaArgGroups = argGroups
         , fsaHoistTags = hoistTags
+        , fsaParamNames = paramNames
         , fsaRoot = root
         , fsaSubtreeSizes = V.empty
         }
@@ -254,7 +260,11 @@ decodeOp soa op ix iy iz iw iv
   | op == oFE_U8INDEX = FE_U8Index ix iy
   | op == oFE_ERROR = FE_Error ix
   | op == oFE_FIXED = FE_Fixed (fsaFixed soa V.! ix)
-  | op == oFE_FNLIT = FE_FnLit (fst (fsaFnLit soa V.! ix)) iy
+  | op == oFE_FNLIT =
+      let
+        (tags, names) = fsaFnLit soa V.! ix
+       in
+        FE_FnLit tags names iy
   | op == oFE_UNSAFENULL = FE_UnsafeNullable ix
   | op == oFE_FROZEN = FE_FrozenLit ix
   | op == oFE_GETFIELD = FE_GetField ix iy
@@ -376,7 +386,7 @@ flatSoaArgGroup soa i = fsaArgGroups soa V.! i
 flatSoaNodeSideRefs :: FlatSoA -> FlatNode -> [NodeId]
 flatSoaNodeSideRefs soa = \case
   FE_Fixed _ -> []
-  FE_FnLit _ _ -> []
+  FE_FnLit _ _ _ -> []
   FE_FrozenLit gi -> map flatFieldRef (flatSoaFieldGroup soa gi)
   FX_FFI _ ai -> map flatArgRef (flatSoaArgGroup soa ai)
   FX_CallMethod _ _ ai -> map flatArgRef (flatSoaArgGroup soa ai)
@@ -888,8 +898,10 @@ propagatePureFlagsPar soa0 =
 -- Sequential 'runST' scan. A parallel IO-per-node walk was ~100s on Life.
 optConstantFoldNumWithChanged :: FlatSoA -> (FlatSoA, Bool)
 optConstantFoldNumWithChanged soa =
-  let (soa', _, folded) = constantFoldWithStats soa
-   in (soa', folded)
+  let
+    (soa', _, folded) = constantFoldWithStats soa
+   in
+    (soa', folded)
 {-# NOINLINE optConstantFoldNumWithChanged #-}
 
 constantFoldWithStats :: FlatSoA -> (FlatSoA, Int, Bool)
