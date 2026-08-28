@@ -78,8 +78,8 @@ import Types
   , lifeSettingsCollapseId
   , lifeSettingsGridId
   , lifeSettingsId
-  , lifeSettingsResetId
   , lifeSettingsPurgeId
+  , lifeSettingsResetId
   , lifeSettingsTickId
   , lifeSettingsTickValId
   , lifeSettingsZoomId
@@ -102,9 +102,9 @@ import Types
   , seedW
   , tickMaxMs
   , tickMinMs
-  , zoomLevels
-  , zoomLevelLabels
   , wheelZoomRate
+  , zoomLevelLabels
+  , zoomLevels
   )
 
 data Fps = Fps
@@ -1606,20 +1606,20 @@ wirePurgeDiscoveries
   listEl
   totalEl
   purgeBtn = do
-  addEventListener "click" purgeBtn $ \_ ->
-    stmts $ do
-      now <- performanceNow
-      purgeEmergentDiscoveries
-        state
-        viewport
-        registry
-        tracker
-        seen
-        listEl
-        totalEl
-        now
-      done
-  done
+    addEventListener "click" purgeBtn $ \_ ->
+      stmts $ do
+        now <- performanceNow
+        purgeEmergentDiscoveries
+          state
+          viewport
+          registry
+          tracker
+          seen
+          listEl
+          totalEl
+          now
+        done
+    done
 
 wireSimSettings ::
   Effect f (MutableObjectOf LifeState)

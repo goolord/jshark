@@ -1,4 +1,7 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 -- | Pattern catalog for the life demo. Palette lives in 'Palette'.
 --
@@ -25,14 +28,21 @@ module Patterns
 where
 
 import Control.Monad (forM_, replicateM_, when)
-import Control.Monad.ST (ST, runST)
-import Data.Array.Byte (ByteArray)
+import Data.Array.Byte (ByteArray (..))
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
 import Data.Word (Word8)
-import JShark (packUint8)
+import GHC.Exts
+  ( Int (..)
+  , newByteArray#
+  , unsafeFreezeByteArray#
+  , writeWord8Array#
+  , (+#)
+  )
+import GHC.ST (ST (..), runST)
+import GHC.Word (Word8 (..))
 import Palette (speciesColor)
 import Types
   ( discoverMax
@@ -793,6 +803,21 @@ lcgRange s n =
     (s', v) = lcg01 s
    in
     (s', floor (v * fromIntegral n))
+
+packUint8 :: [Word8] -> ByteArray
+packUint8 xs = runST go
+ where
+  !(I# n#) = length xs
+  go :: ST s ByteArray
+  go = ST $ \s0 ->
+    case newByteArray# n# s0 of
+      (# s1, mba #) ->
+        case write 0# xs mba s1 of
+          s2 -> case unsafeFreezeByteArray# mba s2 of
+            (# s3, ba #) -> (# s3, ByteArray ba #)
+  write _ [] _ s = s
+  write i# (W8# w : rest) mba s =
+    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
 
 paletteBytes :: ByteArray
 paletteBytes =
