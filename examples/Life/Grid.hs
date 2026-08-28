@@ -29,6 +29,8 @@ module Grid
   , packedIsAlive
   , bumpPackedNeighbors
   , setPackedAlive
+  , newUint16Array
+  , newSpeciesArray
   , writeCellState
   , stampPatternCells
   , eraseCircleCells
@@ -50,6 +52,7 @@ import qualified JShark.Dom as Dom
 import qualified JShark.Math as Math
 import LutBoot (lifeLutGlobalJs)
 import qualified Pixi
+import Types (speciesCount)
 
 data StepScratch = StepScratch
   { pop :: Double
@@ -92,6 +95,16 @@ data StepCtx = StepCtx
   , n :: Double
   }
   deriving Generic
+
+-- | Element-addressed @Uint16Array@. 'u8Index' / 'u8Set' / 'u8Fill' emit
+-- @buf[i]@ / @buf.fill@ (element ops). Never treat @.length@ as a byte
+-- count or copy into a @Uint8Array@.
+newUint16Array :: Expr f 'Number -> Effect f 'Uint8Array
+newUint16Array cellsN =
+  ffi "(n)=>new Uint16Array(n|0)" (arg cellsN <: RecNil)
+
+newSpeciesArray :: Expr f 'Number -> Effect f 'Uint8Array
+newSpeciesArray = newUint16Array
 
 u8Get ::
   Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
@@ -299,9 +312,9 @@ refreshPackedRegion grid w h x0 y0 x1 y1 = do
 initPaletteRgba ::
   Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)
 initPaletteRgba pal = do
-  rgba <- bindExpr (newByteArray (number 1024))
+  rgba <- bindExpr (newByteArray (number (fromIntegral (speciesCount * 4))))
   _ <-
-    forRange_ (number 0) (number 256) $ \s -> do
+    forRange_ (number 0) (number (fromIntegral speciesCount)) $ \s -> do
       let
         base = s * number 3
         px = s * number 4

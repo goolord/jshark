@@ -35,6 +35,8 @@ import Grid
   , eraseCircleCells
   , hideFallback2d
   , initPaletteRgba
+  , newSpeciesArray
+  , newUint16Array
   , rebuildLiveList
   , rebuildPackedCounts
   , refreshPackedRegion
@@ -76,6 +78,7 @@ import Types
   , seedOy
   , seedW
   , soupRngSeed
+  , speciesCount
   , texH
   , texW
   , tickDefaultMs
@@ -93,7 +96,7 @@ initLife app viewport = do
   set @"worldH" state (fromIntegral gridH)
   set @"tickMs" state (fromIntegral tickDefaultMs)
   alive <- bindExpr (newByteArray (number (fromIntegral gridN)))
-  species <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  species <- bindExpr (newSpeciesArray (number (fromIntegral gridN)))
   toSyntax_ $
     seedSoupRegion
       alive
@@ -113,7 +116,7 @@ initLife app viewport = do
   set @"alive" state alive
   set @"species" state species
   nextAlive <- bindExpr (newByteArray (number (fromIntegral gridN)))
-  nextSpecies <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  nextSpecies <- bindExpr (newSpeciesArray (number (fromIntegral gridN)))
   set @"nextAlive" state nextAlive
   set @"nextSpecies" state nextSpecies
   set @"palette" state (uint8Array paletteBytes)
@@ -140,8 +143,8 @@ initLife app viewport = do
   set @"boundX1" state (fromIntegral initialBoundX1)
   set @"boundY1" state (fromIntegral initialBoundY1)
   discoverVisited <- bindExpr (newByteArray (number (fromIntegral gridN)))
-  discoverStackX <- bindExpr (newByteArray (number (fromIntegral gridN)))
-  discoverStackY <- bindExpr (newByteArray (number (fromIntegral gridN)))
+  discoverStackX <- bindExpr (newUint16Array (number (fromIntegral gridN)))
+  discoverStackY <- bindExpr (newUint16Array (number (fromIntegral gridN)))
   set @"discoverVisited" state discoverVisited
   set @"discoverStackX" state discoverStackX
   set @"discoverStackY" state discoverStackY
@@ -155,7 +158,7 @@ initLife app viewport = do
   set @"changedList" state changedList
   set @"nextChangedList" state nextChangedList
   set @"stepStamp" state stepStamp
-  birthCounts <- bindExpr (newByteArray (number 256))
+  birthCounts <- bindExpr (newByteArray (number (fromIntegral speciesCount)))
   birthTouched <- bindExpr (newByteArray (number 8))
   set @"birthCounts" state birthCounts
   set @"birthTouched" state birthTouched
@@ -233,6 +236,7 @@ maybeDiscover state registry = do
     set @"nextDiscover" state (Math.floor nextOut)
     _ <- refreshTakenNames registry
     paletteRgba <- state.paletteRgba
+    whenS (Array.length mintedArr .> 0) (set @"sceneDirty" state true_)
     forRange_ (number 0) (Array.length mintedArr) $ \i -> do
       sid <- pure (Array.index mintedArr i)
       nm <- uniqueNameSid sid registry
@@ -495,7 +499,7 @@ resizeWorld state viewport w h = do
     ox = Math.floor ((w - seedW') / number 2)
     oy = Math.floor ((h - seedH') / number 2)
   alive <- bindExpr (newByteArray cellsN)
-  species <- bindExpr (newByteArray cellsN)
+  species <- bindExpr (newSpeciesArray cellsN)
   toSyntax_ $ u8Fill species (number 0)
   toSyntax_ $
     seedSoupRegion
@@ -508,10 +512,10 @@ resizeWorld state viewport w h = do
       (number (fromIntegral soupRngSeed))
   rebuildPackedCounts alive w h
   nextAlive <- bindExpr (newByteArray cellsN)
-  nextSpecies <- bindExpr (newByteArray cellsN)
+  nextSpecies <- bindExpr (newSpeciesArray cellsN)
   visited <- bindExpr (newByteArray cellsN)
-  stackX <- bindExpr (newByteArray cellsN)
-  stackY <- bindExpr (newByteArray cellsN)
+  stackX <- bindExpr (newUint16Array cellsN)
+  stackY <- bindExpr (newUint16Array cellsN)
   stepStamp <- bindExpr (newByteArray cellsN)
   pixels <- bindExpr (newByteArray (cellsN * number 4))
   set @"alive" state alive

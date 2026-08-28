@@ -19,6 +19,7 @@ import Discover
   , initIndexTracker
   , initRegistry
   , initSeenSpecies
+  , purgeEmergentDiscoveries
   , stepIndexTracker
   )
 import Engine
@@ -79,6 +80,7 @@ import Types
   , lifeSettingsGridId
   , lifeSettingsId
   , lifeSettingsResetId
+  , lifeSettingsPurgeId
   , lifeSettingsTickId
   , lifeSettingsTickValId
   , lifeSettingsZoomId
@@ -197,6 +199,7 @@ bootLoaded canvas app appH viewport renderDirty = do
   settingsZoomIn <- Dom.lookupId (string lifeSettingsZoomInId)
   settingsZoomOut <- Dom.lookupId (string lifeSettingsZoomOutId)
   settingsReset <- Dom.lookupId (string lifeSettingsResetId)
+  settingsPurge <- Dom.lookupId (string lifeSettingsPurgeId)
   settingsGrid <- Dom.lookupId (string lifeSettingsGridId)
   settingsTick <- Dom.lookupId (string lifeSettingsTickId)
   settingsTickVal <- Dom.lookupId (string lifeSettingsTickValId)
@@ -232,6 +235,15 @@ bootLoaded canvas app appH viewport renderDirty = do
     "−"
     "Settings"
   wireSettings viewport settingsZoomIn settingsZoomOut settingsReset
+  wirePurgeDiscoveries
+    state
+    viewport
+    registry
+    indexTracker
+    seenSpecies
+    typesList
+    indexTotal
+    settingsPurge
   wireSimSettings state viewport settingsGrid settingsTick settingsTickVal
   renderLife viewport renderDirty state fallback2d
   Timers.foreverFrame $ \now -> do
@@ -1573,6 +1585,40 @@ wireSettings viewport zoomInBtn zoomOutBtn resetBtn = do
   addEventListener "click" resetBtn $ \_ ->
     stmts $ do
       resetViewport viewport
+      done
+  done
+
+wirePurgeDiscoveries ::
+  Effect f (MutableObjectOf LifeState)
+  -> Effect f ('MutableObject ())
+  -> Effect f ('MutableObject Registry)
+  -> Effect f ('MutableObject IndexTracker)
+  -> Effect f ('Set Number)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> Effect f ('MutableObject Dom.DomElement)
+  -> EffectSyntax f (f 'Unit)
+wirePurgeDiscoveries
+  state
+  viewport
+  registry
+  tracker
+  seen
+  listEl
+  totalEl
+  purgeBtn = do
+  addEventListener "click" purgeBtn $ \_ ->
+    stmts $ do
+      now <- performanceNow
+      purgeEmergentDiscoveries
+        state
+        viewport
+        registry
+        tracker
+        seen
+        listEl
+        totalEl
+        now
       done
   done
 

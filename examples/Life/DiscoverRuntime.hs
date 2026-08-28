@@ -6,7 +6,6 @@
 module DiscoverRuntime (classifyAndResolveEffect, collectPhaseKey) where
 
 import Data.Text (Text)
-import DiscoverCore (discoverRgb)
 import Grid (setU8)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
@@ -15,7 +14,8 @@ import qualified JShark.Array as Array
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Set as Set
-import Types (discoverMax, discoverMin)
+import Patterns (paletteBytes)
+import Types (methuselahMax, methuselahMin)
 
 classifyAndResolveEffect ::
   Effect f ('MutableObject scratch)
@@ -26,14 +26,15 @@ classifyAndResolveEffect ::
   -> EffectSyntax f (Effect f ('MutableObject a))
 classifyAndResolveEffect scratch w cells nextId0 maxSid0 = do
   registry <- getProp scratch "registry"
-  rgbTable <- bindExpr discoverRgbTable
   coords <- extractCoords w cells
-  (key, hashes) <- collectPhaseKey coords
+  (phaseKey, hashes) <- collectPhaseKey coords
+  snap <- canonicalHashFromCoords coords
   res <- hold newObject
   ifS
-    (key .== string "")
-    (fillDefault res)
-    (fillResolve res registry key hashes nextId0 maxSid0 rgbTable)
+    (phaseKey .== string "")
+    (fillResolve res registry snap snap hashes nextId0 maxSid0 false_)
+    (fillResolve res registry phaseKey snap hashes nextId0 maxSid0 true_)
+  _ <- setProp res "hashes" hashes
   pure res
 
 registryField ::
@@ -50,6 +51,8 @@ fillDefault res = do
   _ <- setProp res "action" (number 0)
   _ <- setProp res "sid" (number 0)
   _ <- setProp res "key" (string "")
+  emptyHashes <- bindExpr $ Array.fromEffects []
+  _ <- setProp res "hashes" emptyHashes
   done
 
 coordPair :: Expr f 'Number -> Expr f 'Number -> Effect f ('Array 'Number)
@@ -390,6 +393,8 @@ collectPhaseKeyBody outSt coords = do
   _ <- setProp loopSt "grid" grid0
   _ <- setProp loopSt "step" (number 0)
   _ <- setProp loopSt "done" false_
+  _ <- setProp loopSt "cycled" false_
+  _ <- setProp loopSt "driftStop" false_
   history <- hold Set.new
   hashes <- bindExpr $ Array.fromEffects []
   forRange_ (number 0) (number 32) $ \_ -> do
@@ -405,7 +410,10 @@ collectPhaseKeyBody outSt coords = do
             dup <- Set.member history exact
             ifS
               dup
-              (setProp loopSt "done" true_)
+              ( do
+                  _ <- setProp loopSt "cycled" true_
+                  setProp loopSt "done" true_
+              )
               ( do
                   _ <- Set.insert history exact
                   _ <- Array.push_ hashes exact
@@ -425,7 +433,10 @@ collectPhaseKeyBody outSt coords = do
                         (cx, cy) <- centroidCoords absCoords
                         whenS
                           (abs (cx - c0x) + abs (cy - c0y) .> number 0.75)
-                          (setProp loopSt "done" true_)
+                          ( do
+                              _ <- setProp loopSt "driftStop" true_
+                              setProp loopSt "done" true_
+                          )
                     )
                   stillOpen <- getProp loopSt "done"
                   whenS
@@ -441,21 +452,34 @@ collectPhaseKeyBody outSt coords = do
     done
   let
     hLen = Array.length hashes
+  cycled <- getProp loopSt "cycled"
+  driftStop <- getProp loopSt "driftStop"
+  let
+    driftOk =
+      driftStop .&& hLen .>= number 2 .&& hLen .<= number 8
+    structured = cycled .|| driftOk
   ifS
-    (hLen .> 1)
+    (not_ structured)
     ( do
-        toSyntax_
-          ( Array.sort hashes $ \a b ->
-              if_ (a .< b) (number (-1)) (if_ (a .> b) (number 1) (number 0))
-          )
-        key <- joinSorted hashes
-        _ <- setProp outSt "key" key
+        _ <- setProp outSt "key" (string "")
         setProp outSt "hashes" hashes
     )
-    ( do
-        key <- canonicalHashFromCoords coords
-        _ <- setProp outSt "key" key
-        setProp outSt "hashes" hashes
+    ( ifS
+        (hLen .> 1)
+        ( do
+            toSyntax_
+              ( Array.sort hashes $ \a b ->
+                  if_ (a .< b) (number (-1)) (if_ (a .> b) (number 1) (number 0))
+              )
+            key <- joinSorted hashes
+            _ <- setProp outSt "key" key
+            setProp outSt "hashes" hashes
+        )
+        ( do
+            key <- canonicalHashFromCoords coords
+            _ <- setProp outSt "key" key
+            setProp outSt "hashes" hashes
+        )
     )
 
 joinSorted :: Expr f ('Array 'String) -> EffectSyntax f (Expr f 'String)
@@ -480,30 +504,18 @@ joinSorted sorted = do
     )
   getProp st "out"
 
-discoverRgbTable :: Effect f ('Array ('Array 'Number))
-discoverRgbTable =
-  Array.fromEffects
-    [ Array.fromEffects
-        [ expr (number (fromIntegral r))
-        , expr (number (fromIntegral g))
-        , expr (number (fromIntegral b))
-        ]
-    | sid <- [0 .. 255]
-    , let
-        (r, g, b) =
-          if sid >= discoverMin && sid <= discoverMax
-            then discoverRgb sid
-            else (0, 0, 0)
-    ]
-
 rgbForSid ::
-  Expr f ('Array ('Array 'Number))
-  -> Expr f 'Number
+  Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f 'Number, Expr f 'Number)
-rgbForSid table sid = do
+rgbForSid sid = do
   let
-    rgb = Array.index table sid
-  pure (Array.index rgb 0, Array.index rgb 1, Array.index rgb 2)
+    pal = uint8Array paletteBytes
+    base = sid * number 3
+  pure
+    ( u8Index pal base
+    , u8Index pal (base + number 1)
+    , u8Index pal (base + number 2)
+    )
 
 registerAliases ::
   Effect f ('Map 'String 'Number)
@@ -559,13 +571,12 @@ fillPending ::
   Effect f ('MutableObject a)
   -> Effect f ('Map 'String 'Number)
   -> Effect f ('Map 'String 'Number)
-  -> Expr f ('Array ('Array 'Number))
   -> Expr f 'String
   -> Expr f ('Array 'String)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-fillPending res seen pending rgbTable key hashes nextId0 maxSid0 = do
+fillPending res seen pending key hashes nextId0 maxSid0 = do
   cntHit <- Map.lookup pending key
   let
     cnt0 = orElse cntHit (number 0)
@@ -582,13 +593,13 @@ fillPending res seen pending rgbTable key hashes nextId0 maxSid0 = do
     ( ifS
         (nextId0 .> maxSid0)
         ( do
-            _ <- setProp res "action" (number 0)
+            _ <- setProp res "action" (number 3)
             _ <- setProp res "sid" (number 0)
             _ <- setProp res "key" key
             done
         )
         ( do
-            (r, g, b) <- rgbForSid rgbTable nextId0
+            (r, g, b) <- rgbForSid nextId0
             _ <- Map.insert seen key nextId0
             _ <- registerAliases seen hashes nextId0
             _ <- Map.delete pending key
@@ -602,16 +613,37 @@ fillPending res seen pending rgbTable key hashes nextId0 maxSid0 = do
         )
     )
 
+isMethuselah :: Expr f 'Number -> Expr f 'Bool
+isMethuselah sid =
+  sid
+    .>= number (fromIntegral methuselahMin)
+    .&& sid
+    .<= number (fromIntegral methuselahMax)
+
+acceptSid ::
+  Effect f ('MutableObject a)
+  -> Effect f ('Map 'String 'Number)
+  -> Effect f ('MutableObject b)
+  -> Expr f 'String
+  -> Expr f ('Array 'String)
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+acceptSid res seen st key hashes sid =
+  whenS (not_ (isMethuselah sid)) $ do
+    markKnown res seen key hashes sid
+    setProp st "resolved" true_
+
 fillResolve ::
   Effect f ('MutableObject a)
   -> Expr f u
   -> Expr f 'String
+  -> Expr f 'String
   -> Expr f ('Array 'String)
   -> Expr f 'Number
   -> Expr f 'Number
-  -> Expr f ('Array ('Array 'Number))
+  -> Expr f 'Bool
   -> EffectSyntax f (f 'Unit)
-fillResolve res registry key hashes nextId0 maxSid0 rgbTable = do
+fillResolve res registry key snap hashes nextId0 maxSid0 allowMint = do
   known <- registryField registry "known"
   seen <- registryField registry "seen"
   pending <- registryField registry "pending"
@@ -622,23 +654,36 @@ fillResolve res registry key hashes nextId0 maxSid0 rgbTable = do
   st <- hold newObject
   _ <- setProp st "resolved" false_
   knownHit <- Map.lookup knownM key
-  whenSomeS knownHit $ \sid -> do
-    markKnown res seenM key hashes sid
-    setProp st "resolved" true_
+  whenSomeS knownHit $ \sid -> acceptSid res seenM st key hashes sid
   stillOpen <- getProp st "resolved"
   whenS (not_ stillOpen) $ do
+    snapHit <- Map.lookup knownM snap
+    whenSomeS snapHit $ \sid -> acceptSid res seenM st snap hashes sid
+  stillOpen1 <- getProp st "resolved"
+  whenS (not_ stillOpen1) $ do
+    knownHash <- findSidByHashes knownM hashes
+    whenSomeS knownHash $ \sid -> acceptSid res seenM st key hashes sid
+  stillOpen2 <- getProp st "resolved"
+  whenS (not_ stillOpen2) $ do
     seenHit <- Map.lookup seenM key
     whenSomeS seenHit $ \sid -> do
       markKnown res seenM key hashes sid
       setProp st "resolved" true_
-  stillOpen2 <- getProp st "resolved"
-  whenS (not_ stillOpen2) $ do
+  stillOpen3 <- getProp st "resolved"
+  whenS (not_ stillOpen3) $ do
+    snapSeen <- Map.lookup seenM snap
+    whenSomeS snapSeen $ \sid -> do
+      markKnown res seenM snap hashes sid
+      setProp st "resolved" true_
+  stillOpen4 <- getProp st "resolved"
+  whenS (not_ stillOpen4) $ do
     hashHit <- findSidByHashes seenM hashes
     whenSomeS hashHit $ \sid -> do
       _ <- Map.insert seenM key sid
       markKnown res seenM key hashes sid
       setProp st "resolved" true_
-  stillOpen3 <- getProp st "resolved"
-  whenS
-    (not_ stillOpen3)
-    (fillPending res seenM pendingM rgbTable key hashes nextId0 maxSid0)
+  stillOpen5 <- getProp st "resolved"
+  ifS
+    (not_ stillOpen5 .&& allowMint)
+    (fillPending res seenM pendingM key hashes nextId0 maxSid0)
+    (whenS (not_ stillOpen5) (fillDefault res))

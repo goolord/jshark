@@ -12,6 +12,8 @@ module LutBoot
 where
 
 import Data.Text (Text)
+import qualified Data.Text as T
+import Types (speciesCount)
 
 lifeLutGlobalJs :: Text
 lifeLutGlobalJs =
@@ -165,7 +167,9 @@ lifeLutPickBirthJs =
 
 lifeLutFinishStepJs :: Text
 lifeLutFinishStepJs =
-  "var _speciesCounts=new Uint16Array(256);"
+  "var _speciesCounts=new Uint16Array("
+    <> T.pack (show speciesCount)
+    <> ");"
     <> "var _speciesTouched=new Uint16Array(256);"
     <> "function finishStep("
     <> "alive,species,nextAlive,nextSpecies,gridA,gridB,lut,w,h,x0,y0,x1,y1,"

@@ -230,7 +230,8 @@ main {
   border-color: var(--faint);
 }
 
-.life-settings-reset {
+.life-settings-reset,
+.life-settings-purge {
   width: 100%;
 }
 

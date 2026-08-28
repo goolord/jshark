@@ -11,6 +11,7 @@ module DiscoverCore
 where
 
 import Catalog (canonicalShapeHash, shapeHash)
+import Types (methuselahMax, methuselahMin)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -69,6 +70,14 @@ extractCoords w cells =
   | i <- cells
   ]
 
+data StopReason = Cycle | Drift | Extinct | MaxSteps
+
+phaseStructured :: StopReason -> Int -> Bool
+phaseStructured Cycle _ = True
+phaseStructured Drift hLen = hLen >= 2 && hLen <= 8
+phaseStructured Extinct _ = False
+phaseStructured MaxSteps _ = False
+
 collectPhaseKey :: [(Int, Int)] -> (Text, [Text])
 collectPhaseKey [] = ("", [])
 collectPhaseKey coords =
@@ -81,7 +90,8 @@ collectPhaseKey coords =
     gh = maxY - minY + 1 + 2 * pad
     grid0 = stamp coords ox oy gw gh
     (c0x, c0y) = centroid coords
-    (key, hashes) = go grid0 gw gh ox oy coords c0x c0y Set.empty [] (0 :: Int)
+    (key, hashes) =
+      go grid0 gw gh ox oy coords c0x c0y Set.empty [] (0 :: Int)
    in
     (key, hashes)
  where
@@ -99,7 +109,7 @@ collectPhaseKey coords =
     -> Int
     -> (Text, [Text])
   go grid gw gh ox oy origCoords c0x c0y history acc step
-    | step >= 32 = finish acc origCoords
+    | step >= 32 = finish MaxSteps acc origCoords
     | otherwise =
         let
           liveLocal =
@@ -110,13 +120,13 @@ collectPhaseKey coords =
             ]
          in
           if null liveLocal
-            then finish acc origCoords
+            then finish Extinct acc origCoords
             else
               let
                 exact = shapeHash liveLocal
                in
                 if exact `Set.member` history
-                  then finish acc origCoords
+                  then finish Cycle acc origCoords
                   else
                     let
                       history' = Set.insert exact history
@@ -129,7 +139,7 @@ collectPhaseKey coords =
                             (cx, cy) = centroid absCoords
                            in
                             if abs (cx - c0x) + abs (cy - c0y) > (0.75 :: Double)
-                              then finish acc' origCoords
+                              then finish Drift acc' origCoords
                               else
                                 go
                                   (stepGrid grid gw gh)
@@ -157,13 +167,17 @@ collectPhaseKey coords =
                             acc'
                             (step + 1)
 
-  finish acc originCells =
+  finish reason acc originCells =
     let
       hashes = reverse acc
+      hLen = length hashes
      in
-      if length hashes > 1
-        then (T.intercalate "|" (sort hashes), hashes)
-        else (canonicalShapeHash originCells, hashes)
+      if not (phaseStructured reason hLen)
+        then ("", hashes)
+        else
+          if hLen > 1
+            then (T.intercalate "|" (sort hashes), hashes)
+            else (canonicalShapeHash originCells, hashes)
 
   bounds cs =
     ( minimum (map fst cs)
@@ -228,38 +242,78 @@ classifyAndResolve known seen0 pending0 _nextId maxSid w cells =
   let
     coords = extractCoords w cells
     (key, hashes) = collectPhaseKey coords
+    snap = canonicalShapeHash coords
+    lookupKey = if T.null key then snap else key
    in
-    if T.null key
-      then defaultResolve
-      else
-        resolveSpecies' known seen0 pending0 _nextId maxSid key hashes
+    resolveSpecies'
+      known
+      seen0
+      pending0
+      _nextId
+      maxSid
+      lookupKey
+      snap
+      hashes
+      (not (T.null key))
  where
-  resolveSpecies' knownMap seen pending nextId maxSidLimit key hashes =
-    case Map.lookup key knownMap of
+  isMethuselah sid = sid >= methuselahMin && sid <= methuselahMax
+
+  catalogHit m k =
+    case Map.lookup k m of
+      Just sid | not (isMethuselah sid) -> Just sid
+      _ -> Nothing
+
+  resolveSpecies'
+    knownMap
+    seen
+    pending
+    nextId
+    maxSidLimit
+    key
+    snap
+    hashes
+    allowMint =
+    case catalogHit knownMap key of
       Just sid ->
         ResolveResult 1 sid 0 0 0 key
       Nothing ->
-        case Map.lookup key seen of
+        case catalogHit knownMap snap of
           Just sid ->
-            ResolveResult 1 sid 0 0 0 key
+            ResolveResult 1 sid 0 0 0 snap
           Nothing ->
-            case lookupHash seen hashes of
-              Just sid ->
+            case lookupHash knownMap hashes of
+              Just sid | not (isMethuselah sid) ->
                 ResolveResult 1 sid 0 0 0 key
-              Nothing ->
-                let
-                  cnt = Map.findWithDefault 0 key pending + 1
-                 in
-                  if cnt < 2
-                    then defaultResolve {rrKey = key}
-                    else
-                      if nextId > maxSidLimit
-                        then defaultResolve {rrKey = key}
-                        else
-                          let
-                            (r, g, b) = discoverRgb nextId
-                           in
-                            ResolveResult 2 nextId r g b key
+              _ ->
+                case Map.lookup key seen of
+                  Just sid ->
+                    ResolveResult 1 sid 0 0 0 key
+                  Nothing ->
+                    case Map.lookup snap seen of
+                      Just sid ->
+                        ResolveResult 1 sid 0 0 0 snap
+                      Nothing ->
+                        case lookupHash seen hashes of
+                          Just sid ->
+                            ResolveResult 1 sid 0 0 0 key
+                          Nothing ->
+                            if not allowMint
+                              then defaultResolve
+                              else
+                                let
+                                  cnt = Map.findWithDefault 0 key pending + 1
+                                 in
+                                  if cnt < 2
+                                    then defaultResolve {rrKey = key}
+                                    else
+                                      if nextId > maxSidLimit
+                                        then
+                                          ResolveResult 3 0 0 0 0 key
+                                        else
+                                          let
+                                            (r, g, b) = discoverRgb nextId
+                                           in
+                                            ResolveResult 2 nextId r g b key
 
   lookupHash _ [] = Nothing
   lookupHash seen (h : hs) =

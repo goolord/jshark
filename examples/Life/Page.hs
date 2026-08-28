@@ -39,6 +39,7 @@ import Types
   , lifeSettingsGridId
   , lifeSettingsId
   , lifeSettingsResetId
+  , lifeSettingsPurgeId
   , lifeSettingsTickId
   , lifeSettingsTickValId
   , lifeSettingsZoomId
@@ -345,6 +346,13 @@ settingsMenu =
           , class_ "life-settings-btn life-settings-reset"
           ]
           "Reset view"
+        button_
+          [ id_ lifeSettingsPurgeId
+          , type_ "button"
+          , class_ "life-settings-btn life-settings-purge"
+          , makeAttribute "aria-label" "Reset all species labels except manual stamps"
+          ]
+          "Reset all labels"
         label_ [class_ "life-settings-row", for_ lifeSettingsGridId] $ do
           span_ [class_ "life-settings-label"] "Grid"
           select_

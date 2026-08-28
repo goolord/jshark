@@ -36,6 +36,7 @@ module Types
   , manualSpecies
   , discoverMin
   , discoverMax
+  , speciesCount
   , discoverEvery
   , indexRefreshMs
   , hudRefreshMs
@@ -57,6 +58,7 @@ module Types
   , lifeSettingsZoomInId
   , lifeSettingsZoomOutId
   , lifeSettingsResetId
+  , lifeSettingsPurgeId
   , lifeSettingsGridId
   , lifeSettingsTickId
   , lifeSettingsTickValId
@@ -197,10 +199,14 @@ manualSpecies = 90
 
 discoverMin, discoverMax :: Int
 discoverMin = 91
-discoverMax = 255
+discoverMax = 1023
+
+-- | Inclusive palette / birth-count slots: soup through 'discoverMax'.
+speciesCount :: Int
+speciesCount = discoverMax + 1
 
 discoverEvery :: Int
-discoverEvery = 45
+discoverEvery = 15
 
 indexRefreshMs :: Int
 indexRefreshMs = 2000
@@ -262,6 +268,9 @@ lifeSettingsZoomOutId = "life-settings-zoom-out"
 
 lifeSettingsResetId :: Text
 lifeSettingsResetId = "life-settings-reset"
+
+lifeSettingsPurgeId :: Text
+lifeSettingsPurgeId = "life-settings-purge"
 
 lifeSettingsGridId :: Text
 lifeSettingsGridId = "life-settings-grid"

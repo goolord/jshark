@@ -40,6 +40,10 @@ catalogTests =
         phaseKey toadCells @?= phaseKey (stepPattern toadCells)
     , testCase "block stays single-phase" $
         length (phaseHashes block) @?= 1
+    , testCase "glider classifies via drift stop" $
+        not (T.null (phaseKey glider)) @?= True
+    , testCase "unstable pattern rejects without stable phase" $
+        T.null (phaseKey cross) @?= True
     , testCase "shapeHash normalizes and sorts coords" $
         shapeHash block @?= "0,0;0,1;1,0;1,1"
     , testCase "discoverRgb matches speciesColor golden angle" $ do
@@ -67,6 +71,40 @@ catalogTests =
         rrAction second @?= 2
         rrSid second @?= 100
         discoverRgb 100 @?= (rrR second, rrG second, rrB second)
+    , testCase "classifyAndResolve at cap asks to steal a slot" $ do
+        let
+          w = 10
+          cells = [0, 1, w, w + 1]
+          key = fst (collectPhaseKey (extractCoords w cells))
+          res =
+            classifyAndResolve
+              Map.empty
+              Map.empty
+              (Map.singleton key 1)
+              256
+              255
+              w
+              cells
+        rrAction res @?= 3
+        rrKey res @?= key
+    , testCase "glider is one 8-connected component" $
+        eightComponentSize glider @?= 5
+    , testCase "classifyAndResolve blinker hits catalog on first sight" $ do
+        let
+          w = 10
+          cells = [0, 1, 2]
+          key = canonicalShapeHash [(0, 0), (1, 0), (2, 0)]
+          res =
+            classifyAndResolve
+              (Map.singleton key 25)
+              Map.empty
+              Map.empty
+              100
+              255
+              w
+              cells
+        rrAction res @?= 1
+        rrSid res @?= 25
     , testCase "classifyAndResolve known catalog hits on first sight" $ do
         let
           w = 10
@@ -114,6 +152,7 @@ catalogTests =
     ]
  where
   block = [(0, 0), (0, 1), (1, 0), (1, 1)]
+  cross = [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
   gliderUpPat =
     case find ((== 57) . patId) allPatterns of
       Just p -> p
@@ -126,6 +165,24 @@ catalogTests =
   phaseKey coords = fst (collectPhaseKey coords)
 
   phaseHashes coords = snd (collectPhaseKey coords)
+
+  eightComponentSize [] = 0
+  eightComponentSize (s : rest) = length (flood [s] [s])
+   where
+    live = s : rest
+    nbrs (x, y) =
+      [ (x + dx, y + dy)
+      | dx <- [-1 .. 1]
+      , dy <- [-1 .. 1]
+      , not (dx == 0 && dy == 0)
+      , (x + dx, y + dy) `elem` live
+      ]
+    flood [] seen = seen
+    flood (p : ps) seen =
+      let
+        new = [q | q <- nbrs p, q `notElem` seen]
+       in
+        flood (new ++ ps) (new ++ seen)
 
   jsonString :: T.Text -> T.Text
   jsonString t =

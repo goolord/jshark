@@ -9,7 +9,7 @@
 --
 -- Species @0@ soup; @1–24@ still lifes; @25–44@ oscillators; @45–59@ spaceships;
 -- @60–69@ methuselah seeds; @70–79@ eaters; @80–89@ misc; @90@ manual;
--- @91–255@ runtime discoveries.
+-- @91–1023@ runtime discoveries.
 module Patterns
   ( PatternSpec (..)
   , allPatterns
@@ -47,7 +47,8 @@ import GHC.Exts
 import GHC.ST (ST (..))
 import GHC.Word (Word8 (W8#))
 import Types
-  ( discoverMin
+  ( discoverMax
+  , discoverMin
   , eaterMax
   , eaterMin
   , gridH
@@ -835,7 +836,7 @@ paletteBytes :: ByteArray
 paletteBytes =
   packBytes
     [ w
-    | i <- [0 .. 255]
+    | i <- [0 .. discoverMax]
     , (r, g, b) <- [speciesColor i]
     , w <- [fromIntegral r, fromIntegral g, fromIntegral b]
     ]
