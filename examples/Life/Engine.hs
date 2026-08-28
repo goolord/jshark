@@ -367,7 +367,7 @@ stepGeneration state stepCtx = do
         set @"pop" state (Math.floor p)
     )
   swapLiveLists state
-  swapChangedLists state
+  flushChangedList state
   swapBuffers state
   set @"gen" state (gen + 1)
 
@@ -396,13 +396,16 @@ swapLiveLists state = do
   set @"liveList" state next
   set @"nextLiveList" state live
 
-swapChangedLists ::
+-- | Append this step's dirty cells onto the atlas dirty list. A swap
+-- would drop earlier deaths when 'stepLifeBudget' runs more than one
+-- step before paint (small grids), leaving live texels behind movers.
+flushChangedList ::
   Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
-swapChangedLists state = do
+flushChangedList state = do
   cur <- state.changedList
   next <- state.nextChangedList
-  set @"changedList" state next
-  set @"nextChangedList" state cur
+  forRange_ (number 0) (Array.length next) $ \k ->
+    Array.push_ cur (Array.index next k)
 
 swapBuffers :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 swapBuffers state = do
