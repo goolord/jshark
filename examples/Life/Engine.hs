@@ -33,7 +33,6 @@ import Grid
   , drawGridFallback
   , drawGridViewport
   , eraseCircleCells
-  , expandBoundsForLive
   , hideFallback2d
   , initPaletteRgba
   , rebuildLiveList
@@ -271,22 +270,6 @@ stepGeneration state stepCtx = do
     stepTagVal = rem_ gen (number 2) + number 1
   Array.clear_ nextLiveList
   Array.clear_ nextChangedList
-  _ <-
-    expandBoundsForLive
-      alive
-      w
-      h
-      x0
-      y0
-      x1
-      y1
-      prevLiveList
-      prevPop
-      stepCtx
-  x0e <- stepCtx.bx0
-  y0e <- stepCtx.by0
-  x1e <- stepCtx.bx1
-  y1e <- stepCtx.by1
   ifS
     (x1 .< x0)
     ( do
@@ -314,10 +297,10 @@ stepGeneration state stepCtx = do
             engineLut
             w
             h
-            x0e
-            y0e
-            x1e
-            y1e
+            x0
+            y0
+            x1
+            y1
             nextLiveList
             nextChangedList
             stepCtx
@@ -331,10 +314,10 @@ stepGeneration state stepCtx = do
                 nextSpecies
                 w
                 h
-                x0e
-                y0e
-                x1e
-                y1e
+                x0
+                y0
+                x1
+                y1
                 prevLiveList
                 nextLiveList
                 nextChangedList

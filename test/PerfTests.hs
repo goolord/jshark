@@ -27,13 +27,14 @@ import System.Mem (getAllocationCounter)
 import Test.Tasty
 import Test.Tasty.HUnit
 
--- Measured on GHC 9.14.1 / -O2 after lazy LUT ensure + native finishStep (2026-08-27):
--- raw/opt from @exe:jshark-life-metrics@ (rawNodes=89721, optNodes=130167).
+-- Measured on GHC 9.14.1 / -O2 after Index-only Array.index + dropped
+-- expandBounds walk (2026-08-27): raw/opt from @exe:jshark-life-metrics@
+-- (rawNodes=62574, optNodes=95752).
 maxLifeRawNodes :: Int
-maxLifeRawNodes = 95000
+maxLifeRawNodes = 70000
 
 maxLifeOptNodes :: Int
-maxLifeOptNodes = 140000
+maxLifeOptNodes = 110000
 
 -- Process-wide Life metrics run allocated ~7.01 GB. Cap optimize
 -- alone at 8 GB so a 9 GB+ walk (strict-child / empty-map-merge

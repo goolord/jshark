@@ -818,7 +818,7 @@ optIrExpr !t0 expr = case expr of
        in
         (t2, e', md')
   -- Named hoists (@Just@ tag) always stay as calls so codegen can emit one
-  -- shared helper (e.g. @$arrayIndex@). Literal partial application would
+  -- shared helper (e.g. @$groupBy@). Literal partial application would
   -- beta into an untagged inner lambda and duplicate the body at each site.
   IrApply (IrLambda bindTag (Just hoistTag) g) x ->
     let

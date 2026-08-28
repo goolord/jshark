@@ -19,7 +19,6 @@ module Grid
   , setU8
   , stepGrid
   , processCell
-  , expandBoundsForLive
   , drawGridViewport
   , drawGridFallback
   , hideFallback2d
@@ -700,52 +699,6 @@ bumpPop :: Effect f (MutableObjectOf StepCtx) -> EffectSyntax f (f 'Unit)
 bumpPop scratch = do
   p <- scratch.pop
   set @"pop" scratch (p + 1)
-
-expandBoundsForLive ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f ('Array 'Number)
-  -> Expr f 'Number
-  -> Effect f (MutableObjectOf StepCtx)
-  -> EffectSyntax f (f 'Unit)
-expandBoundsForLive alive w h x0 y0 x1 y1 liveList prevPop stepCtx = do
-  set @"bx0" stepCtx x0
-  set @"by0" stepCtx y0
-  set @"bx1" stepCtx x1
-  set @"by1" stepCtx y1
-  let
-    xa = Math.max (number 0) (x0 - number 1)
-    ya = Math.max (number 0) (y0 - number 1)
-    xb = Math.min (w - number 1) (x1 + number 1)
-    yb = Math.min (h - number 1) (y1 + number 1)
-    regionCells = (xb - xa + number 1) * (yb - ya + number 1)
-  ifS
-    ( prevPop
-        .> 0
-        .&& Array.length liveList
-        .> 0
-        .&& Array.length liveList
-        .< regionCells
-        / number 4
-    )
-    ( forRange_ (number 0) (Array.length liveList) $ \k -> do
-        let
-          i = Array.index liveList k
-          x = rem_ i w
-          y = Math.floor (i / w)
-        whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
-    )
-    ( forRange2_ ya (yb + number 1) xa (xb + number 1) $ \y x -> do
-        let
-          i = cellIdx w x y
-        whenS (packedIsAlive alive i) (bumpBounds stepCtx x y)
-    )
-  done
 
 -- | Grid-resolution atlas + GPU sprite scale: 1 texel/cell, pan/zoom on GPU.
 drawGridViewport ::

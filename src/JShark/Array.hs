@@ -7,9 +7,9 @@
 
 -- | JS @Array.prototype@ and small array algorithms.
 --
--- Most reads compile to 'Std' / kernel 'Index'. Mutations ('push', 'clear',
--- 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers (@$arrayIndex@,
--- @$groupBy@) come from 'namedLambdaRow' and are called with 'applyNamed2'.
+-- Most reads compile to kernel 'Index' (codegen @$checkedIndex@). Mutations
+-- ('push', 'clear', 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers
+-- (@$groupBy@) come from 'namedLambdaRow' and are called with 'applyNamed2'.
 --
 -- Import qualified; names clash with 'Prelude'.
 module JShark.Array
@@ -50,12 +50,12 @@ import JShark.Api.Types
 import qualified JShark.Math as Math
 import Prelude hiding (concat, filter, length, map, zipWith)
 
--- | @arr[i]@ after 'Math.trunc'. Out of range is 'Error'.
+-- | @arr[i]@ after 'Math.trunc'. Out of range throws via @$checkedIndex@.
 index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
 index arr i =
   case foldArrayIndex arr i of
     Just e -> e
-    Nothing -> applyNamed2 indexChecked arr i
+    Nothing -> Index arr i
 
 foldArrayIndex ::
   Expr f ('Array u) -> Expr f 'Number -> Maybe (Expr f u)
@@ -71,21 +71,6 @@ foldArrayIndex arr i = case (arr, i) of
 
 finiteDouble :: Double -> Bool
 finiteDouble d = not (isNaN d) && not (isInfinite d)
-
--- | Hoisted @$arrayIndex@ helper (bounds-checked 'Index').
-indexChecked ::
-  forall f u.
-  Expr f ('Function ('Array u) ('Function 'Number u))
-indexChecked =
-  namedLambdaRow
-    @('[Param "arr" ('Array u), Param "i" 'Number])
-    "arrayIndex"
-    $ \p ->
-      let_ (Math.trunc p.i) $ \n ->
-        if_
-          (And (GTEq n 0) (LTh n (length p.arr)))
-          (Index p.arr n)
-          (Error (Literal (ValueString "array index out of bounds")))
 
 -- | @arr.length@
 length :: Expr f ('Array u) -> Expr f 'Number

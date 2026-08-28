@@ -783,7 +783,7 @@ stdlibTests =
         let
           js =
             renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
-        T.isInfixOf "$arrayIndex" js @?= True
+        T.isInfixOf "$checkedIndex" js @?= True
         T.isInfixOf "throw" js @?= True
     , testCase "Array.map evaluates" $
         case evaluate
@@ -838,11 +838,11 @@ stdlibTests =
                   (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index)
               )
         T.isInfixOf "function (n" pureJs @?= True
-        T.isInfixOf "function (n" effJs @?= True
         T.isInfixOf ", n" pureJs @?= True
-        T.isInfixOf ", n" effJs @?= True
         T.isInfixOf "($groupBy)(n0)(n1)" pureJs @?= False
-        T.isInfixOf "(($arrayIndex)(n0)(n1)" effJs @?= False
+        T.isInfixOf "const $checkedIndex =" effJs @?= True
+        T.isInfixOf "$checkedIndex(" effJs @?= True
+        T.isInfixOf "(($checkedIndex)(n0)(n1)" effJs @?= False
     , testCase "Array.zipWith hoists $zipWith helper" $ do
         let
           js = renderJS (pureAST (Array.zipWith (+) numArray numArray))
@@ -2043,17 +2043,13 @@ optimizeTests =
         -- the first coordinate); column index 0 is expected to stay literal.
         T.isInfixOf "sink(" js @?= True
         T.isInfixOf "sink(1.0)" js @?= False
-        T.isInfixOf "$arrayIndex" js @?= True
-        T.isInfixOf "function (n" js @?= True
-        T.isInfixOf ", n" js @?= True
-        T.isInfixOf "(n0, n1)" js @?= True
-        T.isInfixOf "(($arrayIndex)(n0)(n1)" js @?= False
-    , testCase "Life hoists arrayIndex once" $ do
+        T.isInfixOf "$checkedIndex" js @?= True
+        T.isInfixOf "(($checkedIndex)(n0)(n1)" js @?= False
+    , testCase "Life hoists checkedIndex once" $ do
         let
           js = renderJS (effectfulAST (fromSyntax mainJS))
-          boundsMsg = "array index out of bounds"
-        T.count boundsMsg js @?= 1
-        T.count "const $arrayIndex =" js @?= 1
+        T.count "jshark: index" js @?= 1
+        T.count "const $checkedIndex =" js @?= 1
     ]
 
 -- | The IR optimizer runs instead of the PHOAS one now that
