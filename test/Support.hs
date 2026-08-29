@@ -29,7 +29,7 @@ module Support
   )
 where
 
-import Control.Exception (evaluate, finally)
+import CaptureStderr (captureStderr)
 import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
@@ -39,15 +39,6 @@ import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Compiler (biomeAvailable)
-import System.IO
-  ( BufferMode (..)
-  , hClose
-  , hFlush
-  , hGetContents
-  , hSetBuffering
-  , stderr
-  )
-import System.Posix.IO (closeFd, createPipe, dup, dupTo, fdToHandle, stdError)
 import Test.Tasty.HUnit (assertFailure)
 
 data LitRow
@@ -153,26 +144,6 @@ assertJSContains needle haystack =
       <> T.unpack needle
       <> " in:\n"
       <> T.unpack haystack
-
--- | Run @io@ with stderr redirected to a string (restores stderr afterward).
-captureStderr :: IO a -> IO (a, String)
-captureStderr io = do
-  (readFd, writeFd) <- createPipe
-  backup <- dup stdError
-  _ <- dupTo writeFd stdError
-  closeFd writeFd
-  result <-
-    io `finally` do
-      hFlush stderr
-      _ <- dupTo backup stdError
-      closeFd backup
-      pure ()
-  readH <- fdToHandle readFd
-  hSetBuffering readH NoBuffering
-  msg <- hGetContents readH
-  _ <- evaluate (length msg)
-  hClose readH
-  pure (result, msg)
 
 requireBiome :: IO ()
 requireBiome = do

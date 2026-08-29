@@ -19,8 +19,8 @@ module JShark.Compiler.CompileTerminal
   )
 where
 
-import Data.Char (chr)
-import Data.List (intercalate, sortBy)
+import Data.Char (toLower)
+import Data.List (intercalate, isInfixOf, sortBy)
 import Data.Ord (comparing)
 import qualified Data.Text as T
 import JShark.Compiler.CompileTiming (CompileForm (..), CompileJobStats (..))
@@ -38,15 +38,28 @@ import System.Console.ANSI.Codes
   , cursorUpCode
   , setSGRCode
   )
-import System.IO (stderr)
+import GHC.IO.Encoding (TextEncoding, textEncodingName)
+import System.IO (hGetEncoding, stderr)
 
 data TerminalStyle = TerminalPlain | TerminalTTY
   deriving (Eq, Show)
 
+encodingSupportsUnicode :: Maybe TextEncoding -> Bool
+encodingSupportsUnicode Nothing = False
+encodingSupportsUnicode (Just enc) =
+  let name = map toLower (textEncodingName enc)
+   in "utf-8" `isInfixOf` name || "utf8" `isInfixOf` name
+
+stderrSupportsUnicode :: IO Bool
+stderrSupportsUnicode = do
+  mEnc <- hGetEncoding stderr
+  pure (encodingSupportsUnicode mEnc)
+
 terminalStyleIO :: IO TerminalStyle
 terminalStyleIO = do
-  ok <- hSupportsANSI stderr
-  pure (if ok then TerminalTTY else TerminalPlain)
+  ansi <- hSupportsANSI stderr
+  unicode <- stderrSupportsUnicode
+  pure (if ansi && unicode then TerminalTTY else TerminalPlain)
 
 boldSGR, dimSGR, cyanSGR, greenSGR :: [SGR]
 boldSGR = [SetConsoleIntensity BoldIntensity]
@@ -79,7 +92,7 @@ renderSingleDone style secs =
       TerminalPlain ->
         "JShark.Compiler: compiled in " ++ dur
       TerminalTTY ->
-        styled style greenSGR [chr 0x2713]
+        styled style greenSGR "✅"
           ++ " "
           ++ "JShark compiled in "
           ++ styled style cyanSGR dur
@@ -96,7 +109,7 @@ renderBatchDone style total secs =
           ++ " programs in "
           ++ dur
       TerminalTTY ->
-        styled style greenSGR [chr 0x2713]
+        styled style greenSGR "✅"
           ++ " "
           ++ "JShark compiled "
           ++ styled style boldSGR (show total)

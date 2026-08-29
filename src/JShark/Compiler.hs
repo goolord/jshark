@@ -712,29 +712,24 @@ batchProgressCore ::
 batchProgressCore total jobs = do
   start <- getCPUTime
   board <- CP.newProgressBoard total
-  CP.setProgressBoardHandle board
   styleIO <- CR.progressStyleIO
   lineCount <- newCounter 0
   let
     refresh = do
-      fdMode <- CP.progressFdActive
       b <- CP.readProgressBoard board
-      if fdMode
-        then CP.emitProgressBoard b
-        else do
-          prev <- readCounter lineCount
-          let
-            block = CP.renderBatchProgress styleIO b prev
-            lineCount' =
-              1
-                + length
-                  [ ()
-                  | j <- V.toList (CP.pbJobs b)
-                  , not (CP.jpDone j)
-                  , not (T.null (CP.jpLabel j))
-                  ]
-          writeCounter lineCount lineCount'
-          CR.writeProgressLine block
+      prev <- readCounter lineCount
+      let
+        block = CP.renderBatchProgress styleIO b prev
+        lineCount' =
+          1
+            + length
+              [ ()
+              | j <- V.toList (CP.pbJobs b)
+              , not (CP.jpDone j)
+              , not (T.null (CP.jpLabel j))
+              ]
+      writeCounter lineCount lineCount'
+      CR.writeProgressLine block
   CP.setProgressRedraw refresh
   indexed <-
     ( mapConcurrently
@@ -754,7 +749,6 @@ batchProgressCore total jobs = do
     )
       `finally` do
         CP.clearProgressRedraw
-        CP.clearProgressBoardHandle
   end <- getCPUTime
   let
     sorted = sortOn (\(s, _, _) -> s) indexed

@@ -91,12 +91,14 @@ common warnings
     -Wredundant-constraints
 
 common llvm
-  ghc-options:
-    -fllvm
-    -pgmlo
-    opt-20
-    -pgmlc
-    llc-20
+  if os(windows)
+  else
+    ghc-options:
+      -fllvm
+      -pgmlo
+      opt-20
+      -pgmlc
+      llc-20
 
 library
   import: warnings, llvm
@@ -132,7 +134,6 @@ library
     JShark.Bun.Internal
     JShark.FlatTest
     JShark.Compiler.CompileTiming
-    JShark.Compiler.CompileProgressProtocol
   other-modules:
     JShark.Compiler.Binder
     JShark.Compiler.Emit
@@ -154,6 +155,10 @@ library
     JShark.Compiler.Flatten
     JShark.Compiler.Lower
     JShark.Compiler.Optimize
+    JShark.Compiler.Optimize.Analysis
+    JShark.Compiler.Optimize.Elim
+    JShark.Compiler.Optimize.Fold
+    JShark.Compiler.Optimize.Hvm2
     JShark.Compiler.Hoist
     JShark.Compiler.Hoist.Canonical
     JShark.Compiler.Codegen.Core
@@ -179,7 +184,6 @@ library
     , process
     , typed-process >= 0.2.11 && < 0.3
     , streaming-bytestring >= 0.3.0 && < 0.4
-    , unix >= 2.7 && < 2.9
   hs-source-dirs:
     src
   default-language:
@@ -409,6 +413,7 @@ test-suite jshark-test
   main-is:
     Main.hs
   other-modules:
+    CaptureStderr
     Support
     BunTests
     CatalogTests
@@ -441,7 +446,6 @@ test-suite jshark-test
     , filepath
     , containers
     , process
-    , unix
   default-language:
     Haskell2010
   ghc-options:

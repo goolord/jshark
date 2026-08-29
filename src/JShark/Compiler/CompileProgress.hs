@@ -42,10 +42,6 @@ module JShark.Compiler.CompileProgress
   , recordJobPhoasPrepare
   , recordJobForm
   , snapshotJobStatsFromSlot
-  , setProgressBoardHandle
-  , clearProgressBoardHandle
-  , emitProgressBoard
-  , progressFdActive
   )
 where
 
@@ -60,7 +56,6 @@ import Data.Atomics.Counter
   , readCounter
   , writeCounter
   )
-import qualified Data.ByteString.Char8 as BC
 import Data.Char (chr)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import qualified Data.Map.Strict as Map
@@ -68,15 +63,7 @@ import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import Data.Word (Word32)
 import GHC.IO.Unsafe (unsafePerformIO)
-import JShark.Compiler.CompileProgressProtocol
-  ( ProgressNode (..)
-  , ProgressParent (..)
-  , maxProgressNodes
-  , progressFdFromEnv
-  , writeProgressMessage
-  )
 import JShark.Compiler.CompileTerminal
   ( TerminalStyle (..)
   , boldSGR
@@ -412,10 +399,6 @@ progressRedraw = unsafePerformIO (newIORef Nothing)
 pendingRedraw :: IORef Bool
 pendingRedraw = unsafePerformIO (newIORef False)
 
-{-# NOINLINE progressBoardRef #-}
-progressBoardRef :: IORef (Maybe ProgressBoardHandle)
-progressBoardRef = unsafePerformIO (newIORef Nothing)
-
 gateSpinMicros :: Int
 gateSpinMicros = 1000
 
@@ -468,42 +451,15 @@ setProgressRedraw io = writeIORef progressRedraw (Just io)
 clearProgressRedraw :: IO ()
 clearProgressRedraw = writeIORef progressRedraw Nothing
 
-setProgressBoardHandle :: ProgressBoardHandle -> IO ()
-setProgressBoardHandle h = writeIORef progressBoardRef (Just h)
-
-clearProgressBoardHandle :: IO ()
-clearProgressBoardHandle = writeIORef progressBoardRef Nothing
-
-emitProgressBoard :: ProgressBoard -> IO ()
-emitProgressBoard board =
-  writeProgressMessage (progressBoardToNodes board)
-
-progressUsesFd :: IO Bool
-progressUsesFd =
-  isJust <$> progressFdFromEnv
-
-progressFdActive :: IO Bool
-progressFdActive = progressUsesFd
-
 maybeRedraw :: IO ()
 maybeRedraw = do
-  fdMode <- progressFdActive
-  if fdMode
-    then do
-      mBoard <- readIORef progressBoardRef
-      case mBoard of
-        Nothing -> pure ()
-        Just handle -> do
-          board <- readProgressBoard handle
-          emitProgressBoard board
-    else do
-      m <- readIORef progressRedraw
-      case m of
-        Nothing -> pure ()
-        Just io ->
-          tryProgressIO io >>= \case
-            Nothing -> writeIORef pendingRedraw True
-            Just {} -> pure ()
+  m <- readIORef progressRedraw
+  case m of
+    Nothing -> pure ()
+    Just io ->
+      tryProgressIO io >>= \case
+        Nothing -> writeIORef pendingRedraw True
+        Just {} -> pure ()
 
 lookupActiveJob :: IO (Maybe ActiveJobState)
 lookupActiveJob = do
@@ -805,19 +761,17 @@ renderSubLine style j =
 
 renderBar :: TerminalStyle -> Int -> Int -> String
 renderBar style filled empty =
-  let
-    body =
-      replicate filled (chr 9608)
-        ++ replicate empty (chr 9617)
-   in
-    case style of
-      TerminalPlain ->
-        "[" ++ body ++ "]"
-      TerminalTTY ->
-        "["
-          ++ styled style cyanSGR (replicate filled (chr 9608))
-          ++ styled style dimSGR (replicate empty (chr 9617))
-          ++ "]"
+  case style of
+    TerminalPlain ->
+      "["
+        ++ replicate filled '='
+        ++ replicate empty '-'
+        ++ "]"
+    TerminalTTY ->
+      "["
+        ++ styled style cyanSGR (replicate filled (chr 9608))
+        ++ styled style dimSGR (replicate empty (chr 9617))
+        ++ "]"
 
 truncateLabel :: Int -> String -> String
 truncateLabel n s
@@ -832,66 +786,6 @@ phaseUsesIndex = \case
   PhaseFlatOpt -> True
   PhaseEmit -> True
   _ -> False
-
-progressBoardToNodes :: ProgressBoard -> [ProgressNode]
-progressBoardToNodes board =
-  let
-    done = pbDone board
-    total = max 1 (pbTotal board)
-    root =
-      ProgressNode
-        { pnCompleted = fromIntegral done
-        , pnEstimatedTotal = fromIntegral total
-        , pnName = BC.pack "compile"
-        , pnParent = ProgressRoot
-        }
-    active =
-      take (maxProgressNodes - 1) $
-        filter
-          (\j -> not (jpDone j) && not (T.null (jpLabel j)))
-          (V.toList (pbJobs board))
-    jobNodes =
-      map
-        ( \j ->
-            let
-              pct = jobProgressPct j
-              (completed, estimated) = jobCounts j pct
-              name = progressJobName j
-             in
-              ProgressNode
-                { pnCompleted = completed
-                , pnEstimatedTotal = estimated
-                , pnName = BC.take 40 name
-                , pnParent = ProgressChild 0
-                }
-        )
-        active
-   in
-    root : jobNodes
-
-jobCounts :: JobProgress -> Double -> (Word32, Word32)
-jobCounts JobProgress {jpPhase, jpIndex, jpTotal} pct =
-  if jpTotal > 0 && phaseUsesIndex jpPhase
-    then
-      ( fromIntegral (min jpIndex jpTotal)
-      , fromIntegral jpTotal
-      )
-    else
-      ( fromIntegral (floor (pct * 100 :: Double) :: Int)
-      , 100
-      )
-
-progressJobName :: JobProgress -> BC.ByteString
-progressJobName JobProgress {jpLabel, jpPhase} =
-  let
-    lbl = T.unpack jpLabel
-    ph = phaseLabel jpPhase
-    combined =
-      if null lbl
-        then ph
-        else ph ++ " " ++ truncateLabel 28 lbl
-   in
-    BC.pack combined
 
 padLeft :: Int -> String -> String
 padLeft w s =

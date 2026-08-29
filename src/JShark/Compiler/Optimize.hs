@@ -39,9 +39,7 @@ where
 import Data.Bits (xor, (.&.), (.|.))
 import Data.List (mapAccumL)
 import Data.Maybe (fromMaybe)
-import Data.Monoid (All (..), Sum (..))
 import Data.Text (Text)
-import qualified Data.Text as T
 import JShark.Api.Prim
   ( MathBinary (..)
   , MathUnary (..)
@@ -49,7 +47,6 @@ import JShark.Api.Prim
   , matchMathBinary
   , matchMathUnary
   )
-import qualified JShark.Api.Prim as Prim
 import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
@@ -60,31 +57,13 @@ import JShark.Compiler.Binder
   , peelResult
   , peelString
   )
-import JShark.Compiler.Evaluate
-  ( eqFoldableValue
-  , isCheapValue
-  , isFiniteDouble
-  , isOrderableValue
-  , jsShow
-  , parseBigIntString
-  , tryEvalBigBin
-  , typeOfValue
-  , valueCompare
-  , valueEq
-  )
+import JShark.Compiler.Evaluate (isCheapValue, valueEq)
 import JShark.Compiler.Flatten
   ( PhoasDummy (..)
   , fieldsPure
   , flattenEff
   , flattenExpr
-  , foldEff
-  , foldExpr
   , foldGetField
-  , inlineEff
-  , inlineExpr
-  , isPureExpr_
-  , occursVarInEff
-  , occursVarInExpr
   , rebindEff
   , rebindExpr
   , rebindExpr2
@@ -101,97 +80,41 @@ import JShark.Compiler.Lower
   , reifyEffect
   )
 import JShark.Compiler.Metadata (Metadata (..), optSmall, optStep)
-import Unsafe.Coerce (unsafeCoerce)
+import JShark.Compiler.Optimize.Analysis
+  ( bindProbeTag
+  , cheapExpr
+  , letProbeTag
+  , nodeCountEff
+  , nodeCountExpr
+  , pureExpr
+  )
+import JShark.Compiler.Optimize.Elim (elimBindFrom, elimLetFrom)
+import JShark.Compiler.Optimize.Fold
+  ( foldAnd
+  , foldArrLen
+  , foldBig
+  , foldBigNeg
+  , foldConcat
+  , foldFixedBinary
+  , foldFixedUnary
+  , foldFromBigInt
+  , foldFrozenEq
+  , foldIndex
+  , foldNum1
+  , foldNum2
+  , foldOr
+  , foldOrd
+  , foldOrdNeq
+  , foldParseBigInt
+  , foldShow
+  , foldToBigInt
+  , foldTypeOf
+  )
+import JShark.Compiler.Optimize.Hvm2 (collectHvm2Kernels)
 
 instance PhoasDummy Stamp where
   phoasDummy = nestedDummy
   isPureExpr_ = pureExpr
-
-countLazyExpr :: Int -> Expr Stamp u -> Int
-countLazyExpr t e = if occursVarInExpr t e then 2 else 0
-{-# NOINLINE countLazyExpr #-}
-
-countLazyEffect :: Int -> Effect Stamp u -> Int
-countLazyEffect t e = if occursVarInEff t e then 2 else 0
-{-# NOINLINE countLazyEffect #-}
-
-countExpr :: Int -> Expr Stamp u -> Int
-countExpr t e = case e of
-  Var (Stamp i) -> if i == t then 1 else 0
-  Var (Embed e') -> countExpr t e'
-  Var (EmbedEff e') -> countEffect t e'
-  _ ->
-    getSum
-      ( foldExpr
-          nestedDummy
-          (Sum . countExpr t)
-          (Sum . countLazyExpr t)
-          (Sum . countEffect t)
-          e
-      )
-
-countEffect :: Int -> Effect Stamp u -> Int
-countEffect t e =
-  getSum
-    ( foldEff
-        nestedDummy
-        (Sum . countExpr t)
-        (Sum . countEffect t)
-        (Sum . countLazyEffect t)
-        e
-    )
-
-effectBindUses :: Int -> Effect Stamp u -> Int
-effectBindUses tag e =
-  let
-    n = countEffect tag e
-   in
-    if n == 0 && occursVarInEff tag e then 2 else n
-
-bindProbeTag :: Int -> Effect Stamp u -> (Int, Bool)
-bindProbeTag probeTag tagged =
-  (probeTag, occursVarInEff probeTag tagged)
-
-letProbeTag :: Int -> Expr Stamp u -> (Int, Int)
-letProbeTag probeTag tagged =
-  (probeTag, elimExprUses probeTag tagged mempty)
-
-elimExprUses :: Int -> Expr Stamp v -> Metadata -> Int
-elimExprUses tag body _ =
-  let
-    n = countExpr tag body
-   in
-    if n == 0 && occursVarInExpr tag body then 1 else n
-
-elimEffUses :: Int -> Effect Stamp v -> Metadata -> Int
-elimEffUses tag body _ = effectBindUses tag body
-
-nodeCountExpr :: Expr Stamp u -> Int
-nodeCountExpr expr = case expr of
-  Var (Embed e') -> nodeCountExpr e'
-  Var (EmbedEff e') -> nodeCountEff e'
-  e ->
-    1
-      + getSum
-        ( foldExpr
-            nestedDummy
-            (Sum . nodeCountExpr)
-            (Sum . nodeCountExpr)
-            (Sum . nodeCountEff)
-            e
-        )
-
-nodeCountEff :: Effect Stamp u -> Int
-nodeCountEff e =
-  1
-    + getSum
-      ( foldEff
-          nestedDummy
-          (Sum . nodeCountExpr)
-          (Sum . nodeCountEff)
-          (Sum . nodeCountEff)
-          e
-      )
 
 closedEffectNodes :: ClosedEffect u -> Int
 closedEffectNodes e = snd (lowerOptEffectIr e)
@@ -204,102 +127,6 @@ closedExprNodes (e :: ClosedExpr u) =
    in
     Ir.irSize (Ir.metaIrExpr ir)
 {-# NOINLINE closedExprNodes #-}
-
-cheapExpr :: Expr Stamp u -> Bool
-cheapExpr = \case
-  Literal v -> isCheapValue v
-  Var (Embed e') -> cheapExpr e'
-  Var (EmbedEff e') -> cheapEffect e'
-  Var _ -> True
-  e ->
-    let
-      here = case e of
-        UnsafeNullable {} -> True
-        GetField {} -> True
-        _ -> False
-     in
-      here
-        && getAll
-          ( foldExpr
-              nestedDummy
-              (All . cheapExpr)
-              (const mempty)
-              (All . cheapEffect)
-              e
-          )
-
-cheapEffect :: Effect Stamp u -> Bool
-cheapEffect e =
-  let
-    here = case e of
-      Lift {} -> True
-      _ -> False
-   in
-    here
-      && getAll
-        ( foldEff
-            nestedDummy
-            (All . cheapExpr)
-            (All . cheapEffect)
-            (const mempty)
-            e
-        )
-
-pureExpr :: Expr Stamp u -> Bool
-pureExpr = \case
-  Literal _ -> True
-  Var (Embed e') -> pureExpr e'
-  Var (EmbedEff e') -> pureEffect e'
-  Var _ -> True
-  e ->
-    let
-      here = case e of
-        Std (Fixed op _) -> Prim.isPureFixed op
-        _ -> True
-     in
-      here
-        && getAll
-          ( foldExpr
-              nestedDummy
-              (All . pureExpr)
-              (const mempty)
-              (All . pureEffect)
-              e
-          )
-
-isAliasBind :: Effect Stamp u -> Bool
-isAliasBind (Lift (Var (EmbedEff e))) = isAliasBind e
-isAliasBind (Lift (Var _)) = True
-isAliasBind (Lift (UnsafeNullable (Var _))) = True
-isAliasBind _ = False
-
-pureEffect :: Effect Stamp u -> Bool
-pureEffect e =
-  let
-    here = case e of
-      FFI {} -> False
-      UnsafeObjectGet {} -> False
-      UnsafeObjectAssign {} -> False
-      CallMethod {} -> False
-      ApplyE {} -> False
-      While {} -> False
-      ForRange {} -> False
-      U8Set {} -> False
-      U8Fill {} -> False
-      Throw {} -> False
-      Try {} -> False
-      DeleteProp {} -> False
-      _ -> True
-   in
-    here
-      && getAll
-        ( foldEff
-            nestedDummy
-            (All . pureExpr)
-            (All . pureEffect)
-            (const mempty)
-            e
-        )
 
 -- | PHOAS 'optEffect' is quadratic on long bind chains; IR opt for huge ASTs.
 optIrLargeThreshold :: Int
@@ -368,130 +195,6 @@ irOptimizedExprFromClosed (e :: ClosedExpr u) =
 irOptimizedEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
 irOptimizedEffectFromClosed e = fst (lowerOptEffectIr e)
 {-# NOINLINE irOptimizedEffectFromClosed #-}
-
-collectHvm2Kernels :: Expr f u -> [Hvm2KernelEntry]
-collectHvm2Kernels expr = collectAny (unsafeCoerce expr :: Expr Stamp u)
- where
-  collectAny :: Expr Stamp v -> [Hvm2KernelEntry]
-  collectAny = \case
-    Hvm2Kernel name k -> [Hvm2KernelEntry name k]
-    Literal _ -> []
-    Var _ -> []
-    Let x g -> collectAny x <> collectAny (g nestedDummy)
-    LetRec r b ->
-      collectAny (r nestedDummy) <> collectAny (b nestedDummy)
-    Lambda _ g -> collectAny (g nestedDummy)
-    Apply f x -> collectAny f <> collectAny x
-    If c t eF -> collectAny c <> collectAny t <> collectAny eF
-    OptionCase o n s ->
-      collectAny o <> collectAny n <> collectAny (s nestedDummy)
-    ResultOk x -> collectAny x
-    ResultErr x -> collectAny x
-    ResultCase o er ok ->
-      collectAny o
-        <> collectAny (er nestedDummy)
-        <> collectAny (ok nestedDummy)
-    Index x i -> collectAny x <> collectAny i
-    U8Index x i -> collectAny x <> collectAny i
-    Error x -> collectAny x
-    Std s -> collectStdHvm2 s
-    FnLit body -> collectFnBodyHvm2 body
-    UnsafeNullable x -> collectAny x
-    FrozenLit fs -> concatMap collectFieldLitHvm2 fs
-    GetField o -> collectAny o
-  collectStdHvm2 = \case
-    Fixed _ args -> collectFixedArgsHvm2 args
-    Method m -> collectMethodHvm2 m
-    Kernel k -> collectKernelHvm2 k
-  collectFixedArgsHvm2 = \case
-    ArgsU x -> collectAny x
-    ArgsB x y -> collectAny x <> collectAny y
-    ArgsT x y z -> collectAny x <> collectAny y <> collectAny z
-  collectMethodHvm2 = \case
-    MethMap x f -> collectAny x <> collectAny (f nestedDummy)
-    MethFilter x f -> collectAny x <> collectAny (f nestedDummy)
-    MethReduce x z _ -> collectAny x <> collectAny z
-    MethReduceRight x z _ -> collectAny x <> collectAny z
-    MethToSorted x _ -> collectAny x
-    MethFrom n f -> collectAny n <> collectAny (f nestedDummy)
-  collectKernelHvm2 = \case
-    KPlus x y -> collectAny x <> collectAny y
-    KTimes x y -> collectAny x <> collectAny y
-    KMinus x y -> collectAny x <> collectAny y
-    KNegate x -> collectAny x
-    KFracDiv x y -> collectAny x <> collectAny y
-    KRem x y -> collectAny x <> collectAny y
-    KBitAnd x y -> collectAny x <> collectAny y
-    KBitOr x y -> collectAny x <> collectAny y
-    KBitXor x y -> collectAny x <> collectAny y
-    KShl x y -> collectAny x <> collectAny y
-    KShr x y -> collectAny x <> collectAny y
-    KUShr x y -> collectAny x <> collectAny y
-    KBig _ x y -> collectAny x <> collectAny y
-    KBigNeg x -> collectAny x
-    KConcat x y -> collectAny x <> collectAny y
-    KShow x -> collectAny x
-    KTypeOf x -> collectAny x
-    KAnd x y -> collectAny x <> collectAny y
-    KOr x y -> collectAny x <> collectAny y
-    KEq _ x y -> collectAny x <> collectAny y
-    KNEq _ x y -> collectAny x <> collectAny y
-    KGTh x y -> collectAny x <> collectAny y
-    KLTh x y -> collectAny x <> collectAny y
-    KGTEq x y -> collectAny x <> collectAny y
-    KLTEq x y -> collectAny x <> collectAny y
-  collectFnBodyHvm2 :: FnBody Stamp us r -> [Hvm2KernelEntry]
-  collectFnBodyHvm2 = \case
-    JfNil e -> collectAny e
-    JfCons _ k -> collectFnBodyHvm2 (k nestedDummy)
-  collectFieldLitHvm2 = \case
-    FieldLit e -> collectAny e
-    FieldLitEffect e -> collectEffectAny e
-    FieldLitExtra e -> collectAny e
-    FieldLitExtraEffect e -> collectEffectAny e
-  collectEffectAny :: Effect Stamp v -> [Hvm2KernelEntry]
-  collectEffectAny = \case
-    Lift x -> collectAny x
-    FFI _ args -> collectRecArgs args
-    Bind x f -> collectEffectAny x <> collectEffectAny (f nestedDummy)
-    ThenE x y -> collectEffectAny x <> collectEffectAny y
-    BindRec r b ->
-      collectEffectAny (r nestedDummy) <> collectEffectAny (b nestedDummy)
-    LambdaE f -> collectEffectAny (f nestedDummy)
-    ApplyE f x -> collectEffectAny f <> collectEffectAny x
-    IfE c u v -> collectEffectAny c <> collectEffectAny u <> collectEffectAny v
-    While c b -> collectEffectAny c <> collectEffectAny b
-    ForRange s e b ->
-      collectAny s <> collectAny e <> collectEffectAny (b nestedDummy)
-    U8Set b i v -> collectAny b <> collectAny i <> collectAny v
-    U8Fill b v -> collectAny b <> collectAny v
-    OptionCaseE o n s ->
-      collectAny o <> collectEffectAny n <> collectEffectAny (s nestedDummy)
-    ResultCaseE o er ok ->
-      collectAny o
-        <> collectEffectAny (er nestedDummy)
-        <> collectEffectAny (ok nestedDummy)
-    StringCaseE o arms d ->
-      collectAny o
-        <> concatMap (collectEffectAny . snd) arms
-        <> collectEffectAny d
-    Throw x -> collectAny x
-    Try a k -> collectEffectAny a <> collectEffectAny (k nestedDummy)
-    ObjectLit fs -> concatMap collectFieldLitHvm2 fs
-    DeleteProp o k -> collectEffectAny o <> collectAny k
-    ArrayLit es -> concatMap collectEffectAny es
-    UnsafeObject {} -> []
-    UnsafeObjectGet x _ -> collectEffectAny x
-    UnsafeObjectAssign x y -> collectEffectAny x <> collectEffectAny y
-    CallMethod x _ args -> collectEffectAny x <> collectRecArgs args
-  collectRecArgs :: Rec (Arg Stamp) us -> [Hvm2KernelEntry]
-  collectRecArgs = \case
-    RecNil -> []
-    RecCons a rest -> collectArgAny a <> collectRecArgs rest
-  collectArgAny :: Arg Stamp v -> [Hvm2KernelEntry]
-  collectArgAny = \case
-    ArgExpr e -> collectAny (unsafeCoerce e :: Expr Stamp v)
-    ArgEffect e -> collectEffectAny (unsafeCoerce e :: Effect Stamp v)
 
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize (e :: ClosedExpr u) =
@@ -602,183 +305,6 @@ optArg t (ArgEffect e) =
    in
     (t', ArgEffect e', md)
 
-foldNum1 ::
-  (Double -> Double)
-  -> (Expr Stamp 'Number -> Expr Stamp 'Number)
-  -> Expr Stamp 'Number
-  -> Expr Stamp 'Number
-foldNum1 f k = \case
-  Literal (ValueNumber a) -> Literal (ValueNumber (f a))
-  x -> k x
-
-foldNum2 ::
-  (Double -> Double -> Double)
-  -> (Expr Stamp 'Number -> Expr Stamp 'Number -> Expr Stamp 'Number)
-  -> Expr Stamp 'Number
-  -> Expr Stamp 'Number
-  -> Expr Stamp 'Number
-foldNum2 f k x y = case (x, y) of
-  (Literal (ValueNumber a), Literal (ValueNumber b)) -> Literal (ValueNumber (f a b))
-  _ -> k x y
-
-foldConcat :: Expr Stamp 'String -> Expr Stamp 'String -> Expr Stamp 'String
-foldConcat x y = case (x, y) of
-  (Literal (ValueString a), Literal (ValueString b)) -> Literal (ValueString (a <> b))
-  _ -> Concat x y
-
-foldAnd :: Expr Stamp 'Bool -> Expr Stamp 'Bool -> Expr Stamp 'Bool
-foldAnd x y = case (x, y) of
-  (Literal (ValueBool False), _) -> Literal (ValueBool False)
-  (Literal (ValueBool True), y') -> y'
-  (_, Literal (ValueBool True)) -> x
-  (x', Literal (ValueBool False)) | isPureExpr_ x' -> Literal (ValueBool False)
-  _ -> Std (Kernel (KAnd x y))
-
-foldOr :: Expr Stamp 'Bool -> Expr Stamp 'Bool -> Expr Stamp 'Bool
-foldOr x y = case (x, y) of
-  (Literal (ValueBool True), _) -> Literal (ValueBool True)
-  (Literal (ValueBool False), y') -> y'
-  (_, Literal (ValueBool False)) -> x
-  (x', Literal (ValueBool True)) | isPureExpr_ x' -> Literal (ValueBool True)
-  _ -> Std (Kernel (KOr x y))
-
-foldCmp ::
-  (Value u -> Value u -> Bool)
-  -> (Value u -> Bool)
-  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
-  -> Expr Stamp u
-  -> Expr Stamp u
-  -> Expr Stamp 'Bool
-foldCmp cmp ok k x y = case (x, y) of
-  (Literal a, Literal b) | ok a && ok b -> Literal (ValueBool (cmp a b))
-  _ -> k x y
-
-foldFrozenEq ::
-  (forall a. Value a -> Value a -> Bool)
-  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
-  -> Expr Stamp u
-  -> Expr Stamp u
-  -> Expr Stamp 'Bool
-foldFrozenEq cmp k x y = case (x, y) of
-  (Literal a, Literal b)
-    | eqFoldableValue a && eqFoldableValue b ->
-        Literal (ValueBool (cmp a b))
-  (FrozenLit as, FrozenLit bs)
-    | Just as' <- peelFrozen as
-    , Just bs' <- peelFrozen bs ->
-        Literal (ValueBool (cmp (ValueFrozen as') (ValueFrozen bs')))
-  _ -> k x y
-
-peelFrozen :: [FieldLit Stamp r] -> Maybe [FieldLit Value r]
-peelFrozen = traverse $ \case
-  FieldLit @k e -> case e of
-    Literal v -> Just (FieldLit @k (Literal v))
-    _ -> Nothing
-  FieldLitExtra @k e -> case e of
-    Literal v -> Just (FieldLitExtra @k (Literal v))
-    _ -> Nothing
-  FieldLitEffect {} -> Nothing
-  FieldLitExtraEffect {} -> Nothing
-
-foldOrd ::
-  Ordering
-  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
-  -> Expr Stamp u
-  -> Expr Stamp u
-  -> Expr Stamp 'Bool
-foldOrd ord = foldCmp (\a b -> valueCompare a b == ord) isOrderableValue
-
-foldOrdNeq ::
-  Ordering
-  -> (Expr Stamp u -> Expr Stamp u -> Expr Stamp 'Bool)
-  -> Expr Stamp u
-  -> Expr Stamp u
-  -> Expr Stamp 'Bool
-foldOrdNeq ord = foldCmp (\a b -> valueCompare a b /= ord) isOrderableValue
-
-foldShow :: Expr Stamp u -> Expr Stamp 'String
-foldShow x = case x of
-  Literal (ValueFunction _) -> Show x
-  Literal v -> Literal (ValueString (jsShow v))
-  _ -> Show x
-
-foldTypeOf :: Expr Stamp u -> Expr Stamp 'String
-foldTypeOf x = case x of
-  Literal v -> Literal (ValueString (typeOfValue v))
-  _ -> TypeOf x
-
-foldIndex :: Expr Stamp ('Array u) -> Expr Stamp 'Number -> Expr Stamp u
-foldIndex arr idx = case (arr, idx) of
-  (Index {}, _) -> Index arr idx
-  (Literal (ValueArray vs), Literal (ValueNumber d))
-    | isFiniteDouble d
-    , let
-        i = truncate d :: Int
-    , i >= 0 && i < length vs ->
-        Literal (vs !! i)
-  _ -> Index arr idx
-
-foldFixedUnary ::
-  FixedOp Number 'Unit 'Unit Number -> Expr Stamp 'Number -> Expr Stamp 'Number
-foldFixedUnary n x = case x of
-  Literal (ValueNumber a)
-    | Just r <- Prim.exactMathUnary n a -> Literal (ValueNumber r)
-  _ -> expr1 n x
-
-foldFixedBinary ::
-  FixedOp 'Number 'Number 'Unit 'Number
-  -> Expr Stamp 'Number
-  -> Expr Stamp 'Number
-  -> Expr Stamp 'Number
-foldFixedBinary n x y = case (x, y) of
-  (Literal (ValueNumber a), Literal (ValueNumber b))
-    | Just r <- Prim.exactMathBinary n a b -> Literal (ValueNumber r)
-  _ -> expr2 n x y
-
-foldArrLen :: Expr Stamp ('Array u) -> Expr Stamp 'Number
-foldArrLen x = case x of
-  Literal (ValueArray vs) ->
-    Literal (ValueNumber (fromIntegral (Prelude.length vs)))
-  _ -> expr1 FixArrLen x
-
-foldToBigInt :: Expr Stamp 'Number -> Expr Stamp 'BigInt
-foldToBigInt x = case x of
-  Literal (ValueNumber d)
-    | isFiniteDouble d
-    , let
-        n = truncate d
-    , d == fromInteger n ->
-        Literal (ValueBigInt n)
-  _ -> expr1 FixToBigInt x
-
-foldFromBigInt :: Expr Stamp 'BigInt -> Expr Stamp 'Number
-foldFromBigInt x = case x of
-  Literal (ValueBigInt n) -> Literal (ValueNumber (fromInteger n))
-  _ -> expr1 FixFromBigInt x
-
-foldParseBigInt :: Expr Stamp 'String -> Expr Stamp 'BigInt
-foldParseBigInt x = case x of
-  Literal (ValueString s)
-    | Just n <- parseBigIntString (T.unpack s) ->
-        Literal (ValueBigInt n)
-  _ -> expr1 FixParseBigInt x
-
-foldBig ::
-  BigBinOp
-  -> Expr Stamp 'BigInt
-  -> Expr Stamp 'BigInt
-  -> Expr Stamp 'BigInt
-foldBig op x y = case (x, y) of
-  (Literal (ValueBigInt a), Literal (ValueBigInt b))
-    | Just r <- tryEvalBigBin op a b ->
-        Literal (ValueBigInt r)
-  _ -> Std (Kernel (KBig op x y))
-
-foldBigNeg :: Expr Stamp 'BigInt -> Expr Stamp 'BigInt
-foldBigNeg x = case x of
-  Literal (ValueBigInt n) -> Literal (ValueBigInt (negate n))
-  _ -> Std (Kernel (KBigNeg x))
-
 optFixed ::
   (?keepLets :: Bool) =>
   Int
@@ -867,82 +393,7 @@ optLet t0 x f =
     (t1, x', mdX) = optExpr t0 x
     (t2, tag, body, mdBody) = optUnder t1 f
    in
-    elimLetFrom t2 x' mdX f tag body mdBody
-
--- Count uses on the already-optimized body. Large tails keep that
--- body (rename-only reopen). Small @f@ may still be applied once more
--- so nested lets / optionCase peel fold.
-data ElimOps src body = ElimOps
-  { elimCount :: Int -> body -> Metadata -> Int
-  , elimPure :: Metadata -> Bool
-  , elimCheap :: Metadata -> Bool
-  , elimSize :: Metadata -> Int
-  , elimRebuild :: body -> body
-  , elimSplice :: Int -> (Int, body, Metadata)
-  , elimDropUnused :: Metadata -> Bool
-  , elimOccurs :: Int -> body -> Bool
-  }
-
-elimFrom ::
-  (?keepLets :: Bool) =>
-  Bool
-  -> ElimOps src body
-  -> Int
-  -> Metadata
-  -> Int
-  -> body
-  -> Metadata
-  -> (Int, body, Metadata)
-elimFrom preserveOnce ops t mdX tag body mdBody =
-  let
-    uses = elimCount ops tag body mdBody
-    kept = elimRebuild ops body
-    inlined
-      | elimSize ops mdBody > optSmall = (t, kept, mdBody)
-      | otherwise = elimSplice ops t
-   in
-    case uses of
-      0
-        | elimPure ops mdX
-        , elimDropUnused ops mdX
-        , not (elimOccurs ops tag body) ->
-            (t, body, mdBody)
-      0 -> (t, kept, mdBody)
-      1
-        | ?keepLets && preserveOnce ->
-            (t, kept, mdBody)
-      1 -> inlined
-      _ | elimCheap ops mdX -> inlined
-      _ -> (t, kept, mdBody)
-
-elimLetFrom ::
-  (?keepLets :: Bool) =>
-  Int
-  -> Expr Stamp u
-  -> Metadata
-  -> (Stamp u -> Expr Stamp v)
-  -> Int
-  -> Expr Stamp v
-  -> Metadata
-  -> (Int, Expr Stamp v, Metadata)
-elimLetFrom t x mdX f tag body mdBody =
-  elimFrom
-    (not (isLambdaExpr x) && not (isIdentityExpr tag body))
-    ElimOps
-      { elimCount = elimExprUses
-      , elimPure = mdIsPure
-      , elimCheap = mdIsCheap
-      , elimSize = \_ -> nodeCountExpr body
-      , elimRebuild = Let x . rebindExpr tag
-      , elimSplice = \t' -> optExpr t' (inlineExpr f x)
-      , elimDropUnused = const True
-      , elimOccurs = occursVarInExpr
-      }
-    t
-    mdX
-    tag
-    body
-    mdBody
+    elimLetFrom optExpr t2 x' mdX f tag body mdBody
 
 optBind ::
   (?keepLets :: Bool) =>
@@ -955,39 +406,7 @@ optBind t0 x f =
     (t1, x', mdX) = optEffect t0 x
     (t2, tag, body, mdBody) = optUnderE t1 f
    in
-    elimBindFrom t2 x' mdX f tag body mdBody
-
-elimBindFrom ::
-  (?keepLets :: Bool) =>
-  Int
-  -> Effect Stamp u
-  -> Metadata
-  -> (Stamp u -> Effect Stamp v)
-  -> Int
-  -> Effect Stamp v
-  -> Metadata
-  -> (Int, Effect Stamp v, Metadata)
-elimBindFrom t x mdX f tag body mdBody =
-  elimFrom
-    ( not (isLambdaEff x)
-        && not (isIdentityEff tag body)
-        && not (isAliasBind x)
-    )
-    ElimOps
-      { elimCount = elimEffUses
-      , elimPure = const (pureEffect x)
-      , elimCheap = mdIsCheap
-      , elimSize = \_ -> nodeCountEff body
-      , elimRebuild = Bind x . rebindEff tag
-      , elimSplice = \t' -> optEffect t' (inlineEff f x)
-      , elimDropUnused = \_ -> not (isAliasBind x)
-      , elimOccurs = occursVarInEff
-      }
-    t
-    mdX
-    tag
-    body
-    mdBody
+    elimBindFrom optEffect t2 x' mdX f tag body mdBody
 
 optBin ::
   (?keepLets :: Bool) =>
@@ -1049,28 +468,6 @@ optUnderFn t0 body =
 keepFnCont ::
   [Int] -> Expr Stamp v -> FnBody Stamp us v -> FnBody Stamp us v
 keepFnCont tags expr' _body = rebindFn tags expr'
-
-isLambdaExpr :: Expr f u -> Bool
-isLambdaExpr = \case
-  Lambda {} -> True
-  _ -> False
-
-isLambdaEff :: Effect f u -> Bool
-isLambdaEff = \case
-  LambdaE {} -> True
-  _ -> False
-
-isIdentityExpr :: Int -> Expr Stamp u -> Bool
-isIdentityExpr tag = \case
-  Var (Stamp i) -> i == tag
-  Var (Embed e) -> isIdentityExpr tag e
-  Var (EmbedEff (Lift e)) -> isIdentityExpr tag e
-  _ -> False
-
-isIdentityEff :: Int -> Effect Stamp u -> Bool
-isIdentityEff tag = \case
-  Lift e -> isIdentityExpr tag e
-  _ -> False
 
 optExpr ::
   (?keepLets :: Bool) => Int -> Expr Stamp u -> (Int, Expr Stamp u, Metadata)
@@ -1137,7 +534,7 @@ optExpr t0 expr = case expr of
           let
             (t2, tag, body, mdBody) = optUnder t1 s
            in
-            elimLetFrom t2 x mdO s tag body mdBody
+            elimLetFrom optExpr t2 x mdO s tag body mdBody
         Nothing ->
           let
             (t2, n', mdN) = optExpr t1 n
@@ -1164,12 +561,12 @@ optExpr t0 expr = case expr of
           let
             (t2, tag, body, mdBody) = optUnder t1 e
            in
-            elimLetFrom t2 x mdO e tag body mdBody
+            elimLetFrom optExpr t2 x mdO e tag body mdBody
         Just (Right x) ->
           let
             (t2, tag, body, mdBody) = optUnder t1 s
            in
-            elimLetFrom t2 x mdO s tag body mdBody
+            elimLetFrom optExpr t2 x mdO s tag body mdBody
         Nothing ->
           let
             (t2, tE, e', mdE) = optUnder t1 e
@@ -1531,7 +928,7 @@ optEffect t0 eff = case eff of
           let
             (t2, tag, body, mdBody) = optUnderE t1 s
            in
-            elimBindFrom t2 (Lift x) mdO s tag body mdBody
+            elimBindFrom optEffect t2 (Lift x) mdO s tag body mdBody
         Nothing ->
           let
             (t2, n', mdN) = optEffect t1 n
@@ -1552,12 +949,12 @@ optEffect t0 eff = case eff of
           let
             (t2, tag, body, mdBody) = optUnderE t1 e
            in
-            elimBindFrom t2 (Lift x) mdO e tag body mdBody
+            elimBindFrom optEffect t2 (Lift x) mdO e tag body mdBody
         Just (Right x) ->
           let
             (t2, tag, body, mdBody) = optUnderE t1 s
            in
-            elimBindFrom t2 (Lift x) mdO s tag body mdBody
+            elimBindFrom optEffect t2 (Lift x) mdO s tag body mdBody
         Nothing ->
           let
             (t2, tE, e', mdE) = optUnderE t1 e

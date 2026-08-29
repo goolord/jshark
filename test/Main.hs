@@ -28,12 +28,6 @@ import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import JShark.Compiler
-import JShark.Compiler.CompileProgressProtocol
-  ( ProgressNode (..)
-  , ProgressParent (..)
-  , decodeProgressMessage
-  , encodeProgressMessage
-  )
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.FlatTest
@@ -2326,22 +2320,6 @@ compilerTests =
           "effect timing line"
           (T.isInfixOf "compiled in" (T.pack capturedEffect))
         assertBool "pure silent" (not (T.isInfixOf "compiled in" (T.pack capturedPure)))
-    , testCase "progress protocol encode/decode roundtrip" $ do
-        let
-          nodes =
-            [ ProgressNode
-                2
-                5
-                "compile"
-                ProgressRoot
-            , ProgressNode
-                50
-                100
-                "life [min] emit"
-                (ProgressChild 0)
-            ]
-          enc = encodeProgressMessage nodes
-        decodeProgressMessage enc @?= Just nodes
     , testCase "batch job slot timing survives post-job snapshot" $
         batchJobSlotTimingOk >>= (@?= True)
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do

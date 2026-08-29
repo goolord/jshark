@@ -393,9 +393,14 @@ walkStaticTree dir routePrefix = do
     forM entries $ \entry -> do
       let
         path = dir </> entry
-        route = routePrefix </> entry
+        route = urlRoute (routePrefix </> entry)
       isDir <- doesDirectoryExist path
       if isDir then walkStaticTree path route else pure [(route, path)]
+
+-- | Scotty routes and browser URLs always use @/@; 'System.FilePath' uses
+-- backslashes on Windows.
+urlRoute :: FilePath -> FilePath
+urlRoute = map (\c -> if c == '\\' || c == '/' then '/' else c)
 
 copySpeedHighlight :: FilePath -> IO ()
 copySpeedHighlight dest = do
