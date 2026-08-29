@@ -33,7 +33,7 @@ import JShark.Api.Types
   , Expr
   , Hvm2KernelEntry (..)
   )
-import JShark.Compiler.Flatten (PhoasDummy (..))
+import JShark.Compiler.Binder (Stamp)
 import JShark.Compiler.EmitBend
   ( Hvm2Error (..)
   , bendDefExports
@@ -79,7 +79,7 @@ bendModule entries = do
   emitEntry (Hvm2KernelEntry name k) =
     emitBendKernel name (irExprFromClosed k)
 
-bendModuleFromTree :: PhoasDummy f => Expr f u -> Either Hvm2Error Text
+bendModuleFromTree :: Expr Stamp u -> Either Hvm2Error Text
 bendModuleFromTree e = bendModule (collectHvm2Kernels e)
 
 -- | Bend → HVM2 C. Writes @kernel.bend@, @kernel.c@, and @kernel_exports.c@

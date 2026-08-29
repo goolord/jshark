@@ -73,7 +73,7 @@ import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Compiler.Lower
   ( allocFnTags
   , evalFnBody
-  , replaceFnNil
+  , rebindFn
   , lowerEffectAt
   , lowerExprAt
   , lowerOptEffectIr
@@ -467,7 +467,7 @@ optUnderFn t0 body =
 
 keepFnCont ::
   [Int] -> Expr Stamp v -> FnBody Stamp us v -> FnBody Stamp us v
-keepFnCont tags expr' body = replaceFnNil body tags expr'
+keepFnCont tags expr' body = rebindFn tags expr' body
 
 optExpr ::
   (?keepLets :: Bool) => Int -> Expr Stamp u -> (Int, Expr Stamp u, Metadata)

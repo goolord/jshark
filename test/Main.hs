@@ -1659,6 +1659,16 @@ goodPartsTests =
               )
           )
           @?= "f((n0, n1) => n0 + n1)"
+    , testCase "optimized toFn keeps param name hints" $
+        renderJS
+          ( pureAST
+              ( toFn
+                  (\(a :: Expr f 'Number) (b :: Expr f 'Number) ->
+                    let_ (number 1) (\_ -> a + b)
+                  )
+              )
+          )
+          @?= "(a, b) => a + b"
     , testCase "toFn emits a ternary function value" $
         renderJS
           ( effectfulAST

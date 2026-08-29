@@ -23,7 +23,7 @@ module JShark.Compiler.Lower
   , irExprFromClosed
   , allocFnTags
   , evalFnBody
-  , replaceFnNil
+  , rebindFn
   , fnDepthStamp
   )
 where
@@ -33,8 +33,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api.Rec
 import JShark.Api.Types
+import Unsafe.Coerce (unsafeCoerce)
 import JShark.Compiler.Binder
   ( Stamp (..)
+  , nestedDummy
   , pattern Name
   )
 import JShark.Compiler.Flatten
@@ -450,17 +452,21 @@ evalFnBody body tags = case body of
       t : ts -> evalFnBody (k (Name t)) ts
       _ -> error "JShark.evalFnBody: arity mismatch"
 
-replaceFnNil ::
-  FnBody Stamp us r -> [Int] -> Expr Stamp r -> FnBody Stamp us r
-replaceFnNil body tags expr' = case body of
-  JfNil _ ->
-    case tags of
-      [] -> JfNil expr'
-      _ -> error "JShark.replaceFnNil: arity mismatch"
-  JfCons pn k ->
-    case tags of
-      _ : ts -> JfCons pn (\s -> replaceFnNil (k s) ts expr')
-      _ -> error "JShark.replaceFnNil: arity mismatch"
+rebindFn ::
+  [Int] -> Expr Stamp r -> FnBody Stamp us r -> FnBody Stamp us r
+rebindFn tags expr' body0 =
+  unsafeCoerce (go tags expr' (fnParamHints body0))
+ where
+  fnParamHints :: FnBody Stamp us r -> [Maybe Text]
+  fnParamHints = \case
+    JfCons pn k -> pn : fnParamHints (k nestedDummy)
+    JfNil _ -> []
+
+  go [] e _ = JfNil e
+  go (t : ts) e (pn : pns) =
+    unsafeCoerce
+      (JfCons pn (\s -> unsafeCoerce (go ts (rebindExpr t e s) pns)))
+  go _ _ _ = error "JShark.rebindFn: arity mismatch"
 
 lowerFnBodyAt :: Int -> FnBody Stamp us r -> (Int, Ir.IrFnBody us r)
 lowerFnBodyAt !t0 body =

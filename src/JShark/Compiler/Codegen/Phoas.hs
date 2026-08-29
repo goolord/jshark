@@ -1102,7 +1102,15 @@ untaggedLambdaChainBody f =
     _ -> 0
 
 effectCallArity :: Effect Stamp u -> Int
-effectCallArity = const 0
+effectCallArity = \case
+  LambdaE f -> 1 + untaggedEffectLambdaChainBody f
+  _ -> 0
+
+untaggedEffectLambdaChainBody :: (Stamp a -> Effect Stamp b) -> Int
+untaggedEffectLambdaChainBody f =
+  case f nestedDummy of
+    LambdaE g -> 1 + untaggedEffectLambdaChainBody g
+    _ -> 0
 
 emitApplyArgs env s0 xs =
   foldl'
