@@ -44,6 +44,13 @@ pnpm-lock.yaml
 # === Agent skills (not project source) ===
 .agents/
 
+# === Docs & benchmarks (on-demand only) ===
+docs/
+bench/
+
+# === Test fixtures (large generated JS/TS) ===
+test/fixtures/
+
 # === Vendored / minified front-end ===
 **/*.min.js
 **/*.min.css

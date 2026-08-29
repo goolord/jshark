@@ -281,4 +281,4 @@ EXE=$(cabal list-bin jshark-compiler)
 | `bench/Examples.hs` | `jshark-compiler-examples` |
 | `jshark.cabal` | RTS defaults for `jshark-test` and benches |
 | `profile/` | gitignored `.prof` / bench logs from manual runs |
-| `.cursorrules` | `cabal test`, Fourmolu, architecture notes |
+| `.cursor/rules/` | `cabal test`, Fourmolu, architecture notes |

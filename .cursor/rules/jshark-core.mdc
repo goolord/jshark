@@ -1,0 +1,30 @@
+---
+description: JShark stack, PHOAS architecture, module layout
+alwaysApply: true
+---
+
+# JShark
+
+## Stack
+- Haskell GHC 9.14+, Cabal 3.x, optional Nix (`flake.nix`)
+- Typed JS EDSL → JavaScript codegen; dev server Scotty (`cabal run examples`)
+- Lucid DOM: `jshark-lucid`; tests need Bun on PATH
+- Ancillary: JS in `examples/Life/js/`, Zig WASM in `examples/Life/wasm/`
+
+## Architecture
+- PHOAS EDSL: closed terms `forall f`; substitution = Haskell function application
+- `Expr` = pure kernel + `Std`; `Effect` = statements, FFI, DOM, mutation, I/O
+- `Arg`/`Rec` join Expr and Effect at FFI; emit via `JShark.Compiler`
+- Pure optimizer/codegen; push IO (filesystem, network, Scotty) to edges
+- `newtype` wrappers for domain primitives; no `head`/`tail`/`fromJust`/`read` in prod
+- Recoverable errors: `Either`/`ExceptT`; `error` only for impossible invariants
+
+## Layout
+- `src/JShark/Api/` — PHOAS AST (`Types`), params, `Prim`, `Rec`, `Classes`, `Generic`
+- `src/JShark/Api.hs` — smart constructors and syntax helpers
+- `src/JShark/Compiler/` — Flatten, Lower, Optimize, Codegen, Emit, …
+- `src/JShark/Compiler.hs` — compile driver (`compileEffect`, minify config)
+- `src/JShark/` — JS API bridgers (`Array`, `Dom`, `Ajax`, `Timers`, …)
+- `src/JShark.hs` — public facade (`pureProgram`, `effectfulProgram`)
+- `jshark-lucid/` — Lucid integration
+- `examples/{Breakout,Life,Synth,TodoMvc,server,static}/`, `test/`, `bench/`
