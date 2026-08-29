@@ -18,6 +18,10 @@
   `parseBigInt_` (sign and `0x`/`0b`/`0o`). Number `Num` instances
   are `INCOHERENT` so `seqN + 1` still defaults to `'Number`.
 
+* Life grid/canvas helpers (`seedSoupRegion`, `paintGridCells`, `u8CopyRegion`,
+  `u8FillRegion`, `forRange2`, …) moved from `JShark.Api` to `GridApi` in the
+  Life example library (breaking change for external callers of those names).
+
 * `fillRgbaImageData` replaces `clearRgbaImageData` (parameterized RGBA fill for
   `ImageData.data` buffers). `u8FillRegion` clears a rectangular slice of a
   row-major `Uint8Array` via `forRange` + `u8Set`.

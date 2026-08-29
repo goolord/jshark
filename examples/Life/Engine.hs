@@ -45,6 +45,7 @@ import Grid
   , u8Get
   , writeCellState
   )
+import GridApi (seedSoupRegion)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Array as Array

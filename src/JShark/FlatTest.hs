@@ -3,6 +3,7 @@
 {-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Flat / SoA test helpers (not part of the main codegen API).
@@ -12,6 +13,7 @@ module JShark.FlatTest
   , flatDirectPackForRangeOk
   , flatDirectPackOptimizeStable
   , freezeEncColumnsOrderOk
+  , lowerOptEffectRegressionOk
   , optIrEffectForRangeImpure
   , batchJobSlotTimingOk
   )
@@ -20,8 +22,17 @@ where
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8)
-import JShark (ClosedEffect, irEffectFromClosed)
-import JShark.Api.Types (Universe (Unit), Value (..))
+import JShark (irEffectFromClosed)
+import JShark.Api.Types
+  ( ClosedEffect
+  , Universe (Unit)
+  , Value (..)
+  )
+import JShark.Compiler.Lower
+  ( lowerEffectAt
+  , lowerOptEffectAt
+  , reifyEffect
+  )
 import JShark.Compiler.CompileProgress
   ( newProgressBoard
   , recordJobFlatPrepare
@@ -57,6 +68,23 @@ flatDirectPackForRangeOk =
     soa2 = FlatSoA.packEffectProgramDirect forRangeU8SetLoop
    in
     FlatSoA.soaColumnsEqual soa1 soa2
+
+-- | Composed 'lowerOptEffectAt' must match 'lowerEffectAt' then 'optIrEffect'.
+lowerOptEffectRegressionOk :: Bool
+lowerOptEffectRegressionOk =
+  let
+    ?keepLets = False
+   in
+    let
+      probe = reifyEffect forRangeU8SetLoop
+      (tLower, irLower) = lowerEffectAt (-2) probe
+      (_, irOpt, mdOpt) = lowerOptEffectAt (-2) probe
+      (_, irManual, mdManual) = Ir.optIrEffect tLower irLower
+      nOpt = Ir.irSize mdOpt
+      soaOpt = FlatSoA.packEffectProgramDirect irOpt
+      soaManual = FlatSoA.packEffectProgramDirect irManual
+     in
+      FlatSoA.soaColumnsEqual soaOpt soaManual && nOpt == Ir.irSize mdManual
 
 flatDirectPackOptimizeStable :: ClosedEffect u -> Bool
 flatDirectPackOptimizeStable e =

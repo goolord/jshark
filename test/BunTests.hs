@@ -37,6 +37,7 @@ import qualified JShark.Object as Object
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Life (initialCatalogCells, initialPop, soupSeedPop)
+import GridApi (seedLiveCells, seedSoupRegion)
 import Support
 import System.Directory (findExecutable)
 import Test.Tasty

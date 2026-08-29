@@ -322,6 +322,7 @@ library life
   exposed-modules:
     Life
     Grid
+    GridApi
     LifeTestSupport
     Engine
     Patterns

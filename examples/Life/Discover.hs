@@ -43,6 +43,7 @@ import Grid
   , syncPaletteRgbaSid
   , u8Get
   )
+import GridApi (forRange2_)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, newRecord)
 import JShark.Api.Rec (Rec (..), (<:))

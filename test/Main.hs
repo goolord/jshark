@@ -18,6 +18,7 @@ import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Hvm2Tests (hvm2Tests)
+import GridApi (paintGridCellsJs, seedLiveCells)
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
@@ -37,6 +38,7 @@ import JShark.FlatTest
   , flatDirectPackOptimizeStable
   , flatSoaPureNodeCount
   , freezeEncColumnsOrderOk
+  , lowerOptEffectRegressionOk
   , optIrEffectForRangeImpure
   )
 import qualified JShark.Json as Json
@@ -2089,6 +2091,16 @@ optimizeTests =
           js = renderJS (effectfulAST (fromSyntax mainJS))
         T.count "jshark: index" js @?= 1
         T.count "const $checkedIndex =" js @?= 1
+    , testCase "Life paintGridCells dirty-rect reset (GridApi port)" $ do
+        T.isInfixOf "out.dirtyCx0=0;out.dirtyCy0=0" paintGridCellsJs @?= True
+        T.isInfixOf "out.dirtyCx1=0;out.dirtyCy1=0" paintGridCellsJs @?= True
+        T.isInfixOf "out.dirtyCy1=0;out.dirtyCy1=0" paintGridCellsJs @?= False
+    , testCase "Life flat prepare size guards IR inline regression" $ do
+        let life = stmts mainJS
+        (soa, _, irNodes, _) <- flatPrepareCore life
+        js <- Ex.evaluate $ renderJSCompact (effectfulASTFromSoA soa)
+        irNodes @?= 60420
+        T.length js @?= 1005377
     ]
 
 flatSoATests :: TestTree
@@ -2106,6 +2118,8 @@ flatSoATests =
         flatDirectPackDeterministic kernelAndLambdaUse @?= True
     , testCase "direct pack is deterministic (forRange u8set)" $
         flatDirectPackForRangeOk @?= True
+    , testCase "lowerOptEffectIr matches lower-then-opt on bind/forRange probe" $
+        lowerOptEffectRegressionOk @?= True
     , testCase "optimize is stable on second pass" $
         flatDirectPackOptimizeStable kernelAndLambdaUse @?= True
     ]

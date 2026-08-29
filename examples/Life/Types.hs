@@ -343,7 +343,7 @@ zoomLevelLabels = map snd zoomSteps
 wheelZoomRate :: Double
 wheelZoomRate = 0.003
 
--- | Shared with 'JShark.Api.seedSoupRegion' and 'Patterns.seedCell'.
+-- | Shared with 'GridApi.seedSoupRegion' and 'Patterns.seedCell'.
 soupRngSeed :: Int
 soupRngSeed = 42
 

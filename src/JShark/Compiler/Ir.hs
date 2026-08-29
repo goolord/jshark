@@ -56,6 +56,7 @@ import JShark.Api.Types
 import JShark.Compiler.Binder (strictFoldMap)
 import JShark.Compiler.Evaluate (isCheapValue)
 import JShark.Compiler.Metadata (optSmall, optStep)
+import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (Bool)
 import qualified Prelude as P
 
@@ -642,17 +643,46 @@ substIrEffect !old !new !e
   | not (occursIrEffect old e) = e
   | otherwise = mapIrEff (substIrExpr old new) (substIrEffect old new) e
 
--- | Rename only. Splicing a typed payload into a rank-2 IR walk needs a
--- universe proof the GADT does not carry; callers keep the binding.
-inlineIrExpr :: Int -> IrExpr u -> IrExpr v -> Maybe (IrExpr v)
+-- | Replace the binder with the bound term itself. A variable-to-variable
+-- bound term is a plain rename; anything else has to be spliced in, and
+-- treating it as a rename would drop the binding while leaving the uses
+-- pointing at a tag nothing binds.
+inlineIrExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
 inlineIrExpr !tag !bound !body = case bound of
-  IrVar i -> Just (substIrExpr tag i body)
-  _ -> Nothing
+  IrVar i -> substIrExpr tag i body
+  _ -> replaceIrVarExpr tag bound body
 
-inlineIrEffect :: Int -> IrEffect u -> IrEffect v -> Maybe (IrEffect v)
+replaceIrVarExpr :: Int -> IrExpr u -> IrExpr v -> IrExpr v
+replaceIrVarExpr !tag bound expr = case expr of
+  IrVar i | i == tag -> unsafeCoerce bound
+  e -> mapIrExpr (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound) e
+
+replaceIrVarEff :: Int -> IrExpr u -> IrEffect v -> IrEffect v
+replaceIrVarEff !tag bound =
+  mapIrEff (replaceIrVarExpr tag bound) (replaceIrVarEff tag bound)
+
+inlineIrEffect :: Int -> IrEffect u -> IrEffect v -> IrEffect v
 inlineIrEffect !tag !bound !body = case bound of
-  IrLift (IrVar i) -> Just (substIrEffect tag i body)
-  _ -> Nothing
+  IrLift (IrVar i) -> substIrEffect tag i body
+  _
+    | not (occursIrEffect tag body) -> body
+    | otherwise ->
+        mapIrEff (inlineIrExprInEff tag bound) (inlineIrEffect tag bound) body
+
+inlineIrEffectInExpr :: Int -> IrEffect u -> IrEffect v -> IrEffect v
+inlineIrEffectInExpr !tag bound expr = case expr of
+  IrLift e -> IrLift (inlineIrExprInEff tag bound e)
+  e -> inlineIrEffect tag bound e
+
+inlineIrExprInEff :: Int -> IrEffect u -> IrExpr v -> IrExpr v
+inlineIrExprInEff !tag bound expr = case expr of
+  IrVar i | i == tag -> unsafeCoerce (inlineEffAsExpr bound)
+  e -> mapIrExpr (inlineIrExprInEff tag bound) (inlineIrEffectInExpr tag bound) e
+ where
+  inlineEffAsExpr :: IrEffect u -> IrExpr u
+  inlineEffAsExpr = \case
+    IrLift e -> e
+    eff -> IrEmbedEff eff
 
 isAliasIrEffect :: IrEffect u -> P.Bool
 isAliasIrEffect = \case
@@ -685,14 +715,12 @@ elimIrLet !mdX !tag !x !body !mdBody =
             (IrLet tag x body, nodeMeta mdX closed)
       1
         | irSize mdBody <= optSmall
-        , once
-        , Just inlined <- inlineIrExpr tag x body ->
-            (inlined, spliced)
+        , once ->
+            (inlineIrExpr tag x body, spliced)
       _
         | irCheap mdX
-        , irSize mdBody <= optSmall
-        , Just inlined <- inlineIrExpr tag x body ->
-            (inlined, spliced)
+        , irSize mdBody <= optSmall ->
+            (inlineIrExpr tag x body, spliced)
       _ -> (IrLet tag x body, nodeMeta mdX closed)
 
 isIrLambda :: IrExpr u -> P.Bool
@@ -745,14 +773,12 @@ elimIrBind !mdX !tag !x !body !mdBody =
             (IrBind tag x body, nodeMeta mdX closed)
       1
         | irSize mdBody <= optSmall
-        , once
-        , Just inlined <- inlineIrEffect tag x body ->
-            (inlined, spliced)
+        , once ->
+            (inlineIrEffect tag x body, spliced)
       _
         | irCheap mdX
-        , irSize mdBody <= optSmall
-        , Just inlined <- inlineIrEffect tag x body ->
-            (inlined, spliced)
+        , irSize mdBody <= optSmall ->
+            (inlineIrEffect tag x body, spliced)
       _ -> (IrBind tag x body, nodeMeta mdX closed)
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta

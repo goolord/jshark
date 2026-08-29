@@ -7,6 +7,7 @@ module DiscoverRuntime (classifyAndResolveEffect, collectPhaseKey) where
 
 import Data.Text (Text)
 import Grid (setU8)
+import GridApi (forRange2_)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types (Effect (Lift))

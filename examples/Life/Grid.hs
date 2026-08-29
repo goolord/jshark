@@ -42,6 +42,12 @@ where
 
 import qualified Data.Text as T
 import GHC.Generics (Generic)
+import GridApi
+  ( forRange2_
+  , paintGridCells
+  , u8CopyRegion
+  , u8FillRegion
+  )
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
 import JShark.Api.Rec (Rec (..), (<:))
