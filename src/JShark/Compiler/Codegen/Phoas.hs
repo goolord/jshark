@@ -535,6 +535,13 @@ effectfulAST' !env !sIn eff =
       LambdaE f -> emitEffectLambda env s0 f
       ApplyE fex ex -> emitApplyE env s0 fex ex
 
+isIdentityTagged :: Int -> Expr Stamp u -> Bool
+isIdentityTagged tag = \case
+  Var (Stamp i) -> i == tag
+  Var (Embed e) -> isIdentityTagged tag e
+  Var (EmbedEff (Lift e)) -> isIdentityTagged tag e
+  _ -> False
+
 letCode env s0 x g =
   let
     (sProbe, tagged, probeTag) = probeContExpr s0 g
@@ -550,6 +557,9 @@ letCode env s0 x g =
             | otherwise = fromMaybe mempty xDecl
          in
           (s2, keepRef (stmt $$ fromMaybe mempty (codeDecl y)) y)
+      1
+        | isIdentityTagged binderTag tagged ->
+            (s1, MkCode xDecl xRef False)
       _ ->
         let
           (nBind, s2) = allocIdent s1
@@ -1008,7 +1018,7 @@ emitApply env s0 f0 x0 =
   let
     (spineHead, args) = collectApply (SomeExpr f0) [SomeExpr x0]
     n = length args
-  in
+   in
     withSomeExpr spineHead $ \fn ->
       if n > 1 && exprCallArity fn == n
         then
@@ -1028,7 +1038,7 @@ emitApplyE env s0 f0 x0 =
   let
     (spineHead, args) = collectApplyE (SomeEffect f0) [SomeEffect x0]
     n = length args
-  in
+   in
     withSomeEffect spineHead $ \fn ->
       if n > 1 && effectCallArity fn == n
         then

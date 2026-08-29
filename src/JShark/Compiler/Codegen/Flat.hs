@@ -682,6 +682,15 @@ flatSeqEffect mode env s0 view xId yId =
     (s2, MkCode (Just (stmt $$ fromMaybe mempty yDecl)) yRef yFX)
 
 flatBindEffect mode env s0 view nid tag xId bodyId =
+  case FlatView.firNode view bodyId of
+    Flat.FX_Lift eId
+      | Flat.FE_Var i <- FlatView.firNode view eId
+      , i == tag ->
+          flatEffectChild mode env s0 view xId
+    _ ->
+      flatBindEffectKeep mode env s0 view nid tag xId bodyId
+
+flatBindEffectKeep mode env s0 view nid tag xId bodyId =
   let
     (s1, MkCode xDecl xRef xFX) = flatEffectChild mode env s0 view xId
     (nBind, s2) = flatPlanIdent mode s1 nid
@@ -1233,20 +1242,25 @@ flatPureASTGo !mode !env !sIn view nid =
       Flat.FE_Var i ->
         (s0, Code mempty (varStampJS s0 env (Name i)))
       Flat.FE_Let tag xId bodyId ->
-        let
-          (nBind, s1) = flatPlanIdent mode s0 nid
-          (s2, MkCode xDecl xRef _) = flatPureChild mode env s1 view xId
-          env' = IM.insert tag nBind env
-          (s3, yCode) = flatPureChild mode env' s2 view bodyId
-         in
-          ( s3
-          , keepRef
-              ( fromMaybe mempty xDecl
-                  $$ constBind s3 nBind (fromMaybe mempty xRef)
-                  $$ fromMaybe mempty (codeDecl yCode)
+        case FlatView.firNode view bodyId of
+          Flat.FE_Var i
+            | i == tag ->
+                flatPureChild mode env s0 view xId
+          _ ->
+            let
+              (nBind, s1) = flatPlanIdent mode s0 nid
+              (s2, MkCode xDecl xRef _) = flatPureChild mode env s1 view xId
+              env' = IM.insert tag nBind env
+              (s3, yCode) = flatPureChild mode env' s2 view bodyId
+             in
+              ( s3
+              , keepRef
+                  ( fromMaybe mempty xDecl
+                      $$ constBind s3 nBind (fromMaybe mempty xRef)
+                      $$ fromMaybe mempty (codeDecl yCode)
+                  )
+                  yCode
               )
-              yCode
-          )
       Flat.FE_LetRec tag rId bId ->
         let
           (nBind, s1) = flatPlanIdent mode s0 nid
