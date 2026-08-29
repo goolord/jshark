@@ -23,7 +23,7 @@ module JShark.Compiler.Lower
   , irExprFromClosed
   , allocFnTags
   , evalFnBody
-  , rebindFn
+  , replaceFnNil
   , fnDepthStamp
   )
 where
@@ -31,7 +31,6 @@ where
 import qualified Data.IntMap.Strict as IM
 import Data.Text (Text)
 import qualified Data.Text as T
-import Unsafe.Coerce (unsafeCoerce)
 import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
@@ -440,20 +439,28 @@ allocFnTags t0 body =
    in
     (tags, tEnd)
 
-evalFnBody :: forall us r. FnBody Stamp us r -> [Int] -> Expr Stamp r
-evalFnBody body tags =
-  unsafeCoerce (evalAny (unsafeCoerce body) tags :: Expr Stamp r)
- where
-  evalAny (JfNil e) [] = e
-  evalAny (JfCons _ k) (t : ts) = evalAny (unsafeCoerce (k (Name t))) ts
-  evalAny _ _ = error "JShark.evalFnBody: arity mismatch"
+evalFnBody :: FnBody Stamp us r -> [Int] -> Expr Stamp r
+evalFnBody body tags = case body of
+  JfNil e ->
+    case tags of
+      [] -> e
+      _ -> error "JShark.evalFnBody: arity mismatch"
+  JfCons _ k ->
+    case tags of
+      t : ts -> evalFnBody (k (Name t)) ts
+      _ -> error "JShark.evalFnBody: arity mismatch"
 
-rebindFn :: [Int] -> Expr Stamp v -> FnBody Stamp us v
-rebindFn tags expr = unsafeCoerce (rebindGo tags expr)
- where
-  rebindGo [] e = JfNil e
-  rebindGo (t : ts) e =
-    unsafeCoerce (JfCons Nothing $ \s -> rebindGo ts (rebindExpr t e s))
+replaceFnNil ::
+  FnBody Stamp us r -> [Int] -> Expr Stamp r -> FnBody Stamp us r
+replaceFnNil body tags expr' = case body of
+  JfNil _ ->
+    case tags of
+      [] -> JfNil expr'
+      _ -> error "JShark.replaceFnNil: arity mismatch"
+  JfCons pn k ->
+    case tags of
+      _ : ts -> JfCons pn (\s -> replaceFnNil (k s) ts expr')
+      _ -> error "JShark.replaceFnNil: arity mismatch"
 
 lowerFnBodyAt :: Int -> FnBody Stamp us r -> (Int, Ir.IrFnBody us r)
 lowerFnBodyAt !t0 body =
