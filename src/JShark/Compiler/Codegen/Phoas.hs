@@ -73,12 +73,6 @@ data SomeExpr where
 data SomeEffect where
   SomeEffect :: Effect Stamp u -> SomeEffect
 
-withSomeExpr :: SomeExpr -> (forall u. Expr Stamp u -> r) -> r
-withSomeExpr (SomeExpr e) k = k e
-
-withSomeEffect :: SomeEffect -> (forall u. Effect Stamp u -> r) -> r
-withSomeEffect (SomeEffect e) k = k e
-
 probeContEff ::
   CG -> (Stamp u -> Effect Stamp v) -> (CG, Effect Stamp v, Int)
 probeContEff s f =
@@ -1019,61 +1013,59 @@ emitApply env s0 f0 x0 =
     (spineHead, args) = collectApply (SomeExpr f0) [SomeExpr x0]
     n = length args
    in
-    withSomeExpr spineHead $ \fn ->
-      if n > 1 && exprCallArity fn == n
-        then
-          let
-            (s1, Code fDecl fRef) = pureAST' s0 env fn
-            (s2, argDecl, argRefs) = emitApplyArgsSome env s1 args
-           in
-            (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
-        else
-          let
-            (s1, Code fDecl fRef) = pureAST' s0 env f0
-            (s2, Code xDecl xRef) = pureAST' s1 env x0
-           in
-            (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+    case spineHead of
+      SomeExpr fn
+        | n > 1 && exprCallArity fn == n ->
+            let
+              (s1, Code fDecl fRef) = pureAST' s0 env fn
+              (s2, argDecl, argRefs) = emitApplyArgsSome env s1 args
+             in
+              (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
+      _ ->
+        let
+          (s1, Code fDecl fRef) = pureAST' s0 env f0
+          (s2, Code xDecl xRef) = pureAST' s1 env x0
+         in
+          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
 
 emitApplyE env s0 f0 x0 =
   let
     (spineHead, args) = collectApplyE (SomeEffect f0) [SomeEffect x0]
     n = length args
    in
-    withSomeEffect spineHead $ \fn ->
-      if n > 1 && effectCallArity fn == n
-        then
-          let
-            (s1, Code fDecl fRef) = effectfulAST' env s0 fn
-            (s2, argDecl, argRefs) = emitApplyArgsSomeE env s1 args
-           in
-            (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
-        else
-          let
-            (s1, Code fDecl fRef) = effectfulAST' env s0 f0
-            (s2, Code xDecl xRef) = effectfulAST' env s1 x0
-           in
-            (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+    case spineHead of
+      SomeEffect fn
+        | n > 1 && effectCallArity fn == n ->
+            let
+              (s1, Code fDecl fRef) = effectfulAST' env s0 fn
+              (s2, argDecl, argRefs) = emitApplyArgsSomeE env s1 args
+             in
+              (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
+      _ ->
+        let
+          (s1, Code fDecl fRef) = effectfulAST' env s0 f0
+          (s2, Code xDecl xRef) = effectfulAST' env s1 x0
+         in
+          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
 
 emitApplyArgsSome env s0 xs =
   foldl'
-    ( \(s, d, rs) arg ->
-        withSomeExpr arg $ \x ->
-          let
-            (s', Code xd xr) = pureAST' s env x
-           in
-            (s', d $$ xd, rs ++ [xr])
+    ( \(s, d, rs) (SomeExpr x) ->
+        let
+          (s', Code xd xr) = pureAST' s env x
+         in
+          (s', d $$ xd, rs ++ [xr])
     )
     (s0, mempty, [])
     xs
 
 emitApplyArgsSomeE env s0 xs =
   foldl'
-    ( \(s, d, rs) arg ->
-        withSomeEffect arg $ \x ->
-          let
-            (s', Code xd xr) = effectfulAST' env s x
-           in
-            (s', d $$ xd, rs ++ [xr])
+    ( \(s, d, rs) (SomeEffect x) ->
+        let
+          (s', Code xd xr) = effectfulAST' env s x
+         in
+          (s', d $$ xd, rs ++ [xr])
     )
     (s0, mempty, [])
     xs
