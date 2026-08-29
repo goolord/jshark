@@ -23,15 +23,26 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark.Api.Types (Universe (Bool), Value (..))
+import JShark.Api.Types (Universe (..), Value (..))
 import JShark.Compiler.Ir
   ( IrExpr (..)
   , IrKernel (..)
   , irPure
   , metaIrExpr
   )
-import Unsafe.Coerce (unsafeCoerce)
 import Prelude
+
+data SomeIrExpr where
+  SomeIrExpr :: IrExpr u -> SomeIrExpr
+
+emitSomeIrExpr :: IntMap Text -> SomeIrExpr -> Either Hvm2Error Text
+emitSomeIrExpr env (SomeIrExpr e) = emitIrExpr env e
+
+inferTypeSome :: SomeIrExpr -> BendType
+inferTypeSome (SomeIrExpr e) = inferType e
+
+inferParamTypesSome :: [Int] -> SomeIrExpr -> [BendType]
+inferParamTypesSome tags (SomeIrExpr body) = inferParamTypes tags body
 
 data BendType
   = BendU24
@@ -117,16 +128,19 @@ emitBendModuleFromDefs defs =
         , "  return sum_tree(acc)"
         ]
 
+emitBodySome :: IntMap Text -> SomeIrExpr -> Either Hvm2Error [Text]
+emitBodySome env (SomeIrExpr e) = emitBody env e
+
 emitBendKernel :: Text -> IrExpr u -> Either Hvm2Error Text
 emitBendKernel name ir = do
   guardPure ir
   let
     (paramTags, body) = peelLambdas ir
     paramNames = zipWith paramName paramTags [0 ..]
-    paramTypes = inferParamTypes paramTags body
+    paramTypes = inferParamTypesSome paramTags body
     env = IM.fromList (zip paramTags paramNames)
-    retTy = bendTypeName (inferType body)
-  bodyLines <- emitBody env body
+    retTy = bendTypeName (inferTypeSome body)
+  bodyLines <- emitBodySome env body
   pure $
     T.unlines
       ( ( "def "
@@ -189,14 +203,14 @@ emitLetRec env tag r b = do
   (fnTags, fnBody) <- peelRecFn tag r
   let
     fnNames = zipWith paramName fnTags [0 ..]
-    fnTypes = inferParamTypes fnTags fnBody
+    fnTypes = inferParamTypesSome fnTags fnBody
     envFn =
       foldl
         (\e (t, n) -> IM.insert t n e)
         envRec
         (zip fnTags fnNames)
-    retTy = bendTypeName (inferType fnBody)
-  fnBodyLines <- indentLines 2 <$> emitBody envFn fnBody
+    retTy = bendTypeName (inferTypeSome fnBody)
+  fnBodyLines <- indentLines 2 <$> emitBodySome envFn fnBody
   callLines <- emitBody envRec b
   pure $
     ( "  def "
@@ -209,7 +223,7 @@ emitLetRec env tag r b = do
     )
       ++ callLines
 
-peelRecFn :: Int -> IrExpr u -> Either Hvm2Error ([Int], IrExpr u)
+peelRecFn :: Int -> IrExpr u -> Either Hvm2Error ([Int], SomeIrExpr)
 peelRecFn _ r =
   case r of
     IrLambda {} ->
@@ -225,7 +239,7 @@ emitIrExpr env e =
       case IM.lookup i env of
         Just n -> pure n
         Nothing -> Left (Hvm2Unsupported ("free variable " <> T.pack (show i)))
-    IrApply f x -> emitApplyCall env (unsafeCoerce f) (unsafeCoerce x)
+    IrApply f x -> emitApplyCall env f x
     IrIf c t eF -> do
       cTxt <- emitIrExpr env c
       tTxt <- emitIrExpr env t
@@ -269,24 +283,25 @@ emitIrExpr env e =
     IrHvm2Ref {} ->
       Left (Hvm2Unsupported "nested Hvm2Kernel")
 
-emitApplyCall :: IntMap Text -> IrExpr u -> IrExpr u -> Either Hvm2Error Text
+emitApplyCall :: IntMap Text -> IrExpr ('Function u v) -> IrExpr u -> Either Hvm2Error Text
 emitApplyCall env f x = do
   let
     (fn, args) = collectApplySpine f x
-  fnTxt <- emitIrExpr env fn
-  argTxts <- traverse (emitIrExpr env) args
+  fnTxt <- emitSomeIrExpr env fn
+  argTxts <- traverse (emitSomeIrExpr env) args
   pure (fnTxt <> "(" <> T.intercalate ", " argTxts <> ")")
 
-collectApplySpine :: IrExpr u -> IrExpr u -> (IrExpr u, [IrExpr u])
+collectApplySpine ::
+  IrExpr ('Function u v) -> IrExpr u -> (SomeIrExpr, [SomeIrExpr])
 collectApplySpine f x =
   case f of
     IrApply f' x' ->
       let
-        (fn, args) = collectApplySpine (unsafeCoerce f' :: IrExpr u) (unsafeCoerce x' :: IrExpr u)
+        (fn, args) = collectApplySpine f' x'
        in
-        (fn, args ++ [x])
+        (fn, args ++ [SomeIrExpr x])
     _ ->
-      (f, [x])
+      (SomeIrExpr f, [SomeIrExpr x])
 
 emitKernel :: IntMap Text -> IrKernel u -> Either Hvm2Error Text
 emitKernel env = \case
@@ -368,24 +383,27 @@ emitLiteral = \case
   ValueFrozen {} ->
     Left (Hvm2Unsupported "object")
 
-peelLambdasFn' :: IrExpr v -> ([Int], IrExpr v)
-peelLambdasFn' = \case
-  IrLambda tag _ body ->
-    let
-      (tags, inner) = peelLambdasFn' (unsafeCoerce body)
-     in
-      (tag : tags, inner)
-  e -> ([], e)
+peelLambdasFn :: IrExpr v -> ([Int], SomeIrExpr)
+peelLambdasFn ir =
+  case ir of
+    IrLambda tag _ body ->
+      let
+        (tags, inner) = peelLambdasFn body
+       in
+        (tag : tags, inner)
+    e ->
+      ([], SomeIrExpr e)
 
-peelLambdas :: IrExpr u -> ([Int], IrExpr u)
+peelLambdas :: IrExpr u -> ([Int], SomeIrExpr)
 peelLambdas ir =
   case ir of
     IrLambda tag _ body ->
       let
-        (rest, inner) = peelLambdasFn' body
+        (rest, inner) = peelLambdasFn body
        in
-        (tag : rest, unsafeCoerce inner)
-    _ -> ([], ir)
+        (tag : rest, inner)
+    _ ->
+      ([], SomeIrExpr ir)
 
 paramName :: Int -> Int -> Text
 paramName tag _ = "a" <> T.pack (show (abs tag))

@@ -31,8 +31,7 @@ where
 import qualified Data.IntMap.Strict as IM
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Typeable (Typeable)
-import GHC.TypeLits (KnownSymbol)
+import Unsafe.Coerce (unsafeCoerce)
 import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
@@ -48,7 +47,6 @@ import JShark.Compiler.Flatten
   )
 import qualified JShark.Compiler.Ir as Ir
 import JShark.Compiler.Metadata (optStep)
-import Unsafe.Coerce (unsafeCoerce)
 
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
 lowerArgAt !t0 a = case a of
@@ -417,26 +415,16 @@ lowerEffectArmsAt !t0 arms = goArms t0 arms []
      in
       goArms t1 rest ((k, e') : acc)
 
-reifyFieldLitExtra ::
-  forall u k r. (KnownSymbol k, Typeable u) => Ir.IrExpr u -> FieldLit Stamp r
-reifyFieldLitExtra e = FieldLitExtra @k (reifyExpr e)
-
-reifyFieldLitExtraEffect ::
-  forall u k r. (KnownSymbol k, Typeable u) => Ir.IrEffect u -> FieldLit Stamp r
-reifyFieldLitExtraEffect e = FieldLitExtraEffect @k (reifyEffect e)
-
 reifyFieldLit :: forall r. Ir.IrFieldLit r -> FieldLit Stamp r
-reifyFieldLit fl =
-  unsafeCoerce $
-    case fl of
-      Ir.IrFieldLit @k e ->
-        FieldLit @k (reifyExpr (unsafeCoerce e))
-      Ir.IrFieldLitEffect @k e ->
-        FieldLitEffect @k (reifyEffect (unsafeCoerce e))
-      Ir.IrFieldLitExtra @k (e :: Ir.IrExpr u) ->
-        reifyFieldLitExtra @u @k @r e
-      Ir.IrFieldLitExtraEffect @k (e :: Ir.IrEffect u) ->
-        reifyFieldLitExtraEffect @u @k @r e
+reifyFieldLit = \case
+  Ir.IrFieldLit @k e ->
+    FieldLit @k (reifyExpr e)
+  Ir.IrFieldLitEffect @k e ->
+    FieldLitEffect @k (reifyEffect e)
+  Ir.IrFieldLitExtra @k e ->
+    FieldLitExtra @k (reifyExpr e)
+  Ir.IrFieldLitExtraEffect @k e ->
+    FieldLitExtraEffect @k (reifyEffect e)
 
 fnDepthStamp :: FnBody Stamp us r -> Int
 fnDepthStamp = \case

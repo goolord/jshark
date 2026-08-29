@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Emit-time view over packed flat SoA (on-demand node decode).
 module JShark.Compiler.FlatView
@@ -6,7 +7,7 @@ module JShark.Compiler.FlatView
   , firRoot
   , firNodeCount
   , firNode
-  , firLitValue
+  , withLitValue
   , firText
   , firFFI
   , firStrCases
@@ -38,7 +39,6 @@ import JShark.Compiler.FlatSoA
   , flatSoaFieldGroup
   , flatSoaIdentBudget
   , flatSoaLayerBuckets
-  , flatSoaLitValue
   , flatSoaNode
   , flatSoaNodeCount
   , flatSoaNodePackRefs
@@ -47,6 +47,7 @@ import JShark.Compiler.FlatSoA
   , fsaHoistTags
   , fsaParamNames
   , fsaRoot
+  , withFlatLitValue
   )
 
 type FlatIRView = FlatSoA
@@ -60,8 +61,8 @@ firNodeCount = flatSoaNodeCount
 firNode :: FlatIRView -> NodeId -> FlatNode
 firNode = flatSoaNode
 
-firLitValue :: FlatIRView -> Int -> Value u
-firLitValue = flatSoaLitValue
+withLitValue :: FlatIRView -> Int -> (forall u. Value u -> r) -> r
+withLitValue = withFlatLitValue
 
 firText :: FlatIRView -> Int -> Text
 firText = flatSoaText

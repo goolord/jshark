@@ -66,7 +66,18 @@ import JShark.Compiler.Optimize
   , letProbeTag
   , optimizeWith
   )
-import Unsafe.Coerce (unsafeCoerce)
+
+data SomeExpr where
+  SomeExpr :: Expr Stamp u -> SomeExpr
+
+data SomeEffect where
+  SomeEffect :: Effect Stamp u -> SomeEffect
+
+withSomeExpr :: SomeExpr -> (forall u. Expr Stamp u -> r) -> r
+withSomeExpr (SomeExpr e) k = k e
+
+withSomeEffect :: SomeEffect -> (forall u. Effect Stamp u -> r) -> r
+withSomeEffect (SomeEffect e) k = k e
 
 probeContEff ::
   CG -> (Stamp u -> Effect Stamp v) -> (CG, Effect Stamp v, Int)
@@ -995,64 +1006,100 @@ emitExprLambda env s0 hint f =
 
 emitApply env s0 f0 x0 =
   let
-    (headE, args) = collectApply f0 [x0]
+    (spineHead, args) = collectApply (SomeExpr f0) [SomeExpr x0]
     n = length args
-   in
-    if n > 1 && exprCallArity headE == n
-      then
-        let
-          (s1, Code fDecl fRef) = pureAST' s0 env headE
-          (s2, argDecl, argRefs) = emitApplyArgs env s1 args
-         in
-          (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
-      else
-        let
-          (s1, Code fDecl fRef) = pureAST' s0 env f0
-          (s2, Code xDecl xRef) = pureAST' s1 env x0
-         in
-          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+  in
+    withSomeExpr spineHead $ \fn ->
+      if n > 1 && exprCallArity fn == n
+        then
+          let
+            (s1, Code fDecl fRef) = pureAST' s0 env fn
+            (s2, argDecl, argRefs) = emitApplyArgsSome env s1 args
+           in
+            (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
+        else
+          let
+            (s1, Code fDecl fRef) = pureAST' s0 env f0
+            (s2, Code xDecl xRef) = pureAST' s1 env x0
+           in
+            (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
 
 emitApplyE env s0 f0 x0 =
   let
-    (headE, args) = collectApplyE f0 [x0]
+    (spineHead, args) = collectApplyE (SomeEffect f0) [SomeEffect x0]
     n = length args
-   in
-    if n > 1 && effectCallArity headE == n
-      then
-        let
-          (s1, Code fDecl fRef) = effectfulAST' env s0 headE
-          (s2, argDecl, argRefs) = emitApplyArgsE env s1 args
-         in
-          (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
-      else
-        let
-          (s1, Code fDecl fRef) = effectfulAST' env s0 f0
-          (s2, Code xDecl xRef) = effectfulAST' env s1 x0
-         in
-          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+  in
+    withSomeEffect spineHead $ \fn ->
+      if n > 1 && effectCallArity fn == n
+        then
+          let
+            (s1, Code fDecl fRef) = effectfulAST' env s0 fn
+            (s2, argDecl, argRefs) = emitApplyArgsSomeE env s1 args
+           in
+            (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
+        else
+          let
+            (s1, Code fDecl fRef) = effectfulAST' env s0 f0
+            (s2, Code xDecl xRef) = effectfulAST' env s1 x0
+           in
+            (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
 
-collectApply :: Expr Stamp u -> [Expr Stamp v] -> (Expr Stamp w, [Expr Stamp v])
+emitApplyArgsSome env s0 xs =
+  foldl'
+    ( \(s, d, rs) arg ->
+        withSomeExpr arg $ \x ->
+          let
+            (s', Code xd xr) = pureAST' s env x
+           in
+            (s', d $$ xd, rs ++ [xr])
+    )
+    (s0, mempty, [])
+    xs
+
+emitApplyArgsSomeE env s0 xs =
+  foldl'
+    ( \(s, d, rs) arg ->
+        withSomeEffect arg $ \x ->
+          let
+            (s', Code xd xr) = effectfulAST' env s x
+           in
+            (s', d $$ xd, rs ++ [xr])
+    )
+    (s0, mempty, [])
+    xs
+
+collectApply :: SomeExpr -> [SomeExpr] -> (SomeExpr, [SomeExpr])
 collectApply f xs = case f of
-  Apply f' x' -> collectApply (unsafeCoerce f') (unsafeCoerce x' : xs)
-  _ -> (unsafeCoerce f, xs)
+  SomeExpr (Apply f' x') ->
+    let
+      (fn, args) = collectApply (SomeExpr f') (SomeExpr x' : xs)
+     in
+      (fn, args)
+  _ ->
+    (f, xs)
 
-collectApplyE ::
-  Effect Stamp u -> [Effect Stamp v] -> (Effect Stamp w, [Effect Stamp v])
+collectApplyE :: SomeEffect -> [SomeEffect] -> (SomeEffect, [SomeEffect])
 collectApplyE f xs = case f of
-  ApplyE f' x' -> collectApplyE (unsafeCoerce f') (unsafeCoerce x' : xs)
-  _ -> (unsafeCoerce f, xs)
+  SomeEffect (ApplyE f' x') ->
+    let
+      (fn, args) = collectApplyE (SomeEffect f') (SomeEffect x' : xs)
+     in
+      (fn, args)
+  _ ->
+    (f, xs)
 
 exprCallArity :: Expr Stamp u -> Int
 exprCallArity = \case
   Lambda (LamInfo (Just _) _) f ->
-    1 + untaggedLambdaChain (unsafeCoerce (f nestedDummy))
+    1 + untaggedLambdaChainBody f
   _ -> 0
 
-untaggedLambdaChain :: Expr Stamp u -> Int
-untaggedLambdaChain = \case
-  Lambda (LamInfo Nothing _) g ->
-    1 + untaggedLambdaChain (unsafeCoerce (g nestedDummy))
-  _ -> 0
+untaggedLambdaChainBody :: (Stamp a -> Expr Stamp b) -> Int
+untaggedLambdaChainBody f =
+  case f nestedDummy of
+    Lambda (LamInfo Nothing _) g ->
+      1 + untaggedLambdaChainBody g
+    _ -> 0
 
 effectCallArity :: Effect Stamp u -> Int
 effectCallArity = const 0
@@ -1089,7 +1136,7 @@ emitEffectLambda env s0 f =
 
 emitLambdaSpine ::
   Bool
-  -> (CG -> Expr Stamp u -> (CG, Code))
+  -> (forall v. CG -> Expr Stamp v -> (CG, Code))
   -> CG
   -> Maybe Text
   -> (Stamp a -> Expr Stamp u)
@@ -1102,16 +1149,23 @@ emitLambdaSpine peelUntagged walker s0 hint f =
       (nParam, s1) = allocIdentHint s h
       body = g (Name nParam)
      in
-      case body of
-        Lambda (LamInfo Nothing p) g'
-          | peelUntagged ->
-              peel s1 p (unsafeCoerce g') (nParam : acc)
-        _ ->
-          let
-            ids = reverse (nParam : acc)
-            (s2, MkCode d r _) = walker s1 body
-           in
-            (s2, Code mempty (renderFn s2 (map (nJS s2) ids) d r))
+      peelBody s1 body (nParam : acc)
+
+  peelBody :: forall v. CG -> Expr Stamp v -> [Int] -> (CG, Code)
+  peelBody s body acc =
+    case body of
+      Lambda (LamInfo Nothing p) g
+        | peelUntagged ->
+            let
+              (nParam, s1) = allocIdentHint s p
+             in
+              peelBody s1 (g (Name nParam)) (nParam : acc)
+      _ ->
+        let
+          ids = reverse acc
+          (s2, MkCode d r _) = walker s body
+         in
+          (s2, Code mempty (renderFn s2 (map (nJS s2) ids) d r))
 
 renderBinaryFn env s0 f =
   let

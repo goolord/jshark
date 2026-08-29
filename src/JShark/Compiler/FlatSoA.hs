@@ -1,7 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Struct-of-arrays flat IR and bulk-friendly optimizer passes.
 module JShark.Compiler.FlatSoA
@@ -11,7 +11,8 @@ module JShark.Compiler.FlatSoA
   , optimizeFlatPack
   , flatSoaNodeCount
   , flatSoaNode
-  , flatSoaLitValue
+  , flatSoaLit
+  , withFlatLitValue
   , flatSoaText
   , flatSoaFFI
   , flatSoaStrCases
@@ -149,7 +150,6 @@ import JShark.Compiler.FlatEnc
   , oFX_WHILE
   )
 import JShark.Compiler.Ir (IrEffect)
-import Unsafe.Coerce (unsafeCoerce)
 
 data FlatSoA = FlatSoA
   { fsaOpcodes :: !(VU.Vector Op)
@@ -364,9 +364,9 @@ flatSoaNode soa idx =
 flatSoaLit :: FlatSoA -> Int -> FlatLit
 flatSoaLit soa i = fsaLits soa V.! i
 
-flatSoaLitValue :: FlatSoA -> Int -> Value u
-flatSoaLitValue soa i = case flatSoaLit soa i of
-  FLit v -> unsafeCoerce v
+withFlatLitValue :: FlatSoA -> Int -> (forall u. Value u -> r) -> r
+withFlatLitValue soa i k = case flatSoaLit soa i of
+  FLit v -> k v
 
 flatSoaText :: FlatSoA -> Int -> Text
 flatSoaText soa i = fsaTexts soa V.! i

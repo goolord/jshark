@@ -104,7 +104,7 @@ flatRenderLiteral env s0 = \case
 
 flatIsUnitExpr view nid = case FlatView.firNode view nid of
   Flat.FE_Literal li ->
-    case FlatView.firLitValue view li of
+    FlatView.withLitValue view li $ \case
       ValueUnit -> True
       _ -> False
   Flat.FE_Var {} -> False
@@ -1229,7 +1229,7 @@ flatPureASTGo !mode !env !sIn view nid =
    in
     case FlatView.firNode view nid of
       Flat.FE_Literal li ->
-        flatRenderLiteral env s0 (FlatView.firLitValue view li)
+        FlatView.withLitValue view li (flatRenderLiteral env s0)
       Flat.FE_Var i ->
         (s0, Code mempty (varStampJS s0 env (Name i)))
       Flat.FE_Let tag xId bodyId ->
