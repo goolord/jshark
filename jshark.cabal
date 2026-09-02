@@ -105,6 +105,7 @@ library
   exposed-modules:
     JShark
     JShark.Api
+    JShark.Api.Caller
     JShark.Array
     JShark.Api.Types
     JShark.Api.Params

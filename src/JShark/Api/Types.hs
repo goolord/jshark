@@ -139,11 +139,13 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Typeable (Typeable)
 import qualified GHC.Exts as Exts
+import GHC.Stack (HasCallStack)
 import GHC.TypeLits
   ( KnownSymbol
   , Symbol
   , symbolVal
   )
+import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Rec
 import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import Prelude hiding ((>>))
@@ -229,10 +231,12 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -> Effect f u
     -- ^ @recv.method(args…)@
   Bind ::
-    Effect f u
+    Maybe Text
+    -> Effect f u
     -> (f u -> Effect f v)
     -> Effect f v
-    -- ^ PHOAS bind (@const n = e@)
+    -- ^ PHOAS bind (@const n = e@). The hint names the binder in readable
+    --         output; 'EffectSyntax' @>>=@ captures it from 'HasCallStack'.
   ThenE ::
     Effect f u
     -> Effect f v
@@ -398,10 +402,13 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f u
     -- ^ A literal value. eg. 1, "foo", etc
   Let ::
-    Expr f u
+    Maybe Text
+    -> Expr f u
     -> (f u -> Expr f v)
     -> Expr f v
-    -- ^ PHOAS let; codegen emits @const@
+    -- ^ PHOAS let; codegen emits @const@. The hint names the binder in
+    --         readable output ('esSourceNames'); 'JShark.Api.let_' sets it
+    --         from 'HasCallStack'.
   LetRec ::
     (f u -> Expr f u)
     -> (f u -> Expr f v)
@@ -949,7 +956,7 @@ instance Monoid (Expr f ('Array u)) where
 -- The right argument is needed in both arms, so it is bound once with 'Let'.
 instance Semigroup (Expr f u) => Semigroup (Expr f ('Option u)) where
   o <> d =
-    Let d $ \dv ->
+    Let Nothing d $ \dv ->
       OptionCase o (Var dv) $ \x ->
         OptionCase (Var dv) (UnsafeNullable (Var x)) $ \y ->
           UnsafeNullable (Var x <> Var y)
@@ -1205,7 +1212,8 @@ instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) wh
 data EffectSyntax :: (Universe -> Type) -> Type -> Type where
   EffectSyntaxPure :: a -> EffectSyntax v a
   EffectSyntaxUnpure ::
-    Effect v a
+    Maybe Text
+    -> Effect v a
     -> (v a -> EffectSyntax v b)
     -> EffectSyntax v b
   EffectSyntaxThen ::
@@ -1220,16 +1228,24 @@ instance Applicative (EffectSyntax v) where
   pure = EffectSyntaxPure
   (<*>) = ap
   EffectSyntaxPure _ *> b = b
-  EffectSyntaxUnpure m _ *> b = EffectSyntaxThen m b
+  EffectSyntaxUnpure _ m _ *> b = EffectSyntaxThen m b
   EffectSyntaxThen m g *> b = EffectSyntaxThen m (g *> b)
 
 -- Analogous to the Monad instance for RelativeMSyntax in section 3.3.
 -- GHC 9.14 dropped `Monad.(>>)`; do-notation sequences with `Applicative.(*>)`,
 -- which is ThenE here. The exported `(>>)` is the same operator.
 instance Monad (EffectSyntax f) where
-  EffectSyntaxPure x >>= g = g x
-  EffectSyntaxUnpure m g >>= h = EffectSyntaxUnpure m (\x -> g x >>= h)
-  EffectSyntaxThen m g >>= h = EffectSyntaxThen m (g >>= h)
+  (>>=) = bindEffectSyntax
+
+bindEffectSyntax ::
+  HasCallStack =>
+  EffectSyntax f a
+  -> (a -> EffectSyntax f b)
+  -> EffectSyntax f b
+bindEffectSyntax (EffectSyntaxPure x) g = g x
+bindEffectSyntax (EffectSyntaxUnpure hint m g) h =
+  EffectSyntaxUnpure (maybe callerBinderHint Just hint) m (\x -> g x >>= h)
+bindEffectSyntax (EffectSyntaxThen m g) h = EffectSyntaxThen m (g >>= h)
 
 -- | Sequence effects without bind codegen ('*>' / '>>').
 seqSyntax :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
@@ -1240,17 +1256,17 @@ infixr 1 >>
 (>>) :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
 (>>) = (*>)
 
-toSyntax :: Effect f v -> EffectSyntax f (f v)
-toSyntax m = EffectSyntaxUnpure m EffectSyntaxPure
+toSyntax :: HasCallStack => Effect f v -> EffectSyntax f (f v)
+toSyntax m = EffectSyntaxUnpure callerBinderHint m EffectSyntaxPure
 
-toSyntax_ :: Effect f v -> EffectSyntax f ()
-toSyntax_ m = EffectSyntaxUnpure m (const (EffectSyntaxPure ()))
+toSyntax_ :: HasCallStack => Effect f v -> EffectSyntax f ()
+toSyntax_ m = EffectSyntaxUnpure callerBinderHint m (const (EffectSyntaxPure ()))
 
 -- | Bind an effect and reify the result as an 'Expr'.
-bindExpr :: Effect f u -> EffectSyntax f (Expr f u)
-bindExpr m = EffectSyntaxUnpure m (EffectSyntaxPure . Var)
+bindExpr :: HasCallStack => Effect f u -> EffectSyntax f (Expr f u)
+bindExpr m = EffectSyntaxUnpure callerBinderHint m (EffectSyntaxPure . Var)
 
 fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxThen m b) = ThenE m (fromSyntax b)
-fromSyntax (EffectSyntaxUnpure m g) = Bind m (fromSyntax . g)
+fromSyntax (EffectSyntaxUnpure hint m g) = Bind hint m (fromSyntax . g)

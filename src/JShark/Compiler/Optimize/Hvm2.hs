@@ -17,7 +17,7 @@ collectAny = \case
   Hvm2Kernel name k -> [Hvm2KernelEntry name k]
   Literal _ -> []
   Var _ -> []
-  Let x g -> collectAny x <> collectAny (g nestedDummy)
+  Let _ x g -> collectAny x <> collectAny (g nestedDummy)
   LetRec r b ->
     collectAny (r nestedDummy) <> collectAny (b nestedDummy)
   Lambda _ g -> collectAny (g nestedDummy)
@@ -105,7 +105,7 @@ collectEffectAny :: Effect Stamp v -> [Hvm2KernelEntry]
 collectEffectAny = \case
   Lift x -> collectAny x
   FFI _ args -> collectRecArgs args
-  Bind x f -> collectEffectAny x <> collectEffectAny (f nestedDummy)
+  Bind _ x f -> collectEffectAny x <> collectEffectAny (f nestedDummy)
   ThenE x y -> collectEffectAny x <> collectEffectAny y
   BindRec r b ->
     collectEffectAny (r nestedDummy) <> collectEffectAny (b nestedDummy)

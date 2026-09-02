@@ -203,7 +203,7 @@ data IrEffect :: Universe -> Type where
   IrUnsafeObjectGet :: IrEffect object -> Text -> IrEffect u
   IrUnsafeObjectAssign :: IrEffect object -> IrEffect assignment -> IrEffect u
   IrCallMethod :: IrEffect object -> Text -> Rec (IrArg) us -> IrEffect u
-  IrBind :: !Int -> IrEffect u -> IrEffect v -> IrEffect v
+  IrBind :: !Int -> Maybe Text -> IrEffect u -> IrEffect v -> IrEffect v
   IrThenE :: IrEffect u -> IrEffect v -> IrEffect v
   IrBindRec :: !Int -> IrEffect u -> IrEffect v -> IrEffect v
   IrLambdaE :: !Int -> IrEffect v -> IrEffect ('Function u v)
@@ -447,7 +447,7 @@ foldIrEff se sf lf eff = case eff of
   IrUnsafeObjectGet x _ -> sf x
   IrUnsafeObjectAssign x y -> sf x <> sf y
   IrCallMethod x _ args -> sf x <> recFoldIrArg se sf args
-  IrBind _ x g -> sf x <> sf g
+  IrBind _ _ x g -> sf x <> sf g
   IrThenE x y -> sf x <> sf y
   IrBindRec _ r b -> sf r <> sf b
   IrLambdaE _ g -> lf g
@@ -598,7 +598,7 @@ mapIrEff ge gf eff = case eff of
   IrUnsafeObjectGet x s -> IrUnsafeObjectGet (gf x) s
   IrUnsafeObjectAssign x y -> IrUnsafeObjectAssign (gf x) (gf y)
   IrCallMethod x n args -> IrCallMethod (gf x) n (mapIrArgs gf ge args)
-  IrBind tag x g -> IrBind tag (gf x) (gf g)
+  IrBind tag hint x g -> IrBind tag hint (gf x) (gf g)
   IrThenE x y -> IrThenE (gf x) (gf y)
   IrBindRec tag r b -> IrBindRec tag (gf r) (gf b)
   IrLambdaE tag g -> IrLambdaE tag (gf g)
@@ -746,12 +746,13 @@ isIdentityIrEffect tag = \case
 elimIrBind ::
   (?keepLets :: P.Bool) =>
   IrMeta
+  -> Maybe Text
   -> Int
   -> IrEffect u
   -> IrEffect v
   -> IrMeta
   -> (IrEffect v, IrMeta)
-elimIrBind !mdX !tag !x !body !mdBody =
+elimIrBind !mdX !hint !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -770,7 +771,7 @@ elimIrBind !mdX !tag !x !body !mdBody =
       0 -> (IrThenE x body, nodeMeta mdX closed)
       1
         | ?keepLets && preserve ->
-            (IrBind tag x body, nodeMeta mdX closed)
+            (IrBind tag hint x body, nodeMeta mdX closed)
       1
         | irSize mdBody <= optSmall
         , once ->
@@ -779,7 +780,7 @@ elimIrBind !mdX !tag !x !body !mdBody =
         | irCheap mdX
         , irSize mdBody <= optSmall ->
             (inlineIrEffect tag x body, spliced)
-      _ -> (IrBind tag x body, nodeMeta mdX closed)
+      _ -> (IrBind tag hint x body, nodeMeta mdX closed)
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta
 nodeMeta !mdX !mdY =
@@ -1157,13 +1158,13 @@ optIrEffect !t0 eff = case eff of
       (t1, x', md) = optIrExpr t0 x
      in
       (t1, IrLift x', md)
-  IrBind tag x body ->
+  IrBind tag hint x body ->
     let
       (t1, x', mdX) = optIrEffect t0 x
       (t2, body', mdBody) = optIrEffect t1 body
      in
       let
-        (e', md') = elimIrBind mdX tag x' body' mdBody
+        (e', md') = elimIrBind mdX hint tag x' body' mdBody
        in
         (t2, e', md')
   IrThenE x y ->

@@ -10,6 +10,7 @@ module JShark.Compiler.Optimize.Elim
   )
 where
 
+import Data.Text (Text)
 import JShark.Api.Types
 import JShark.Compiler.Binder (Stamp (..))
 import JShark.Compiler.Flatten
@@ -99,6 +100,7 @@ elimLetFrom ::
   (?keepLets :: Bool) =>
   (Int -> Expr Stamp v -> (Int, Expr Stamp v, Metadata))
   -> Int
+  -> Maybe Text
   -> Expr Stamp u
   -> Metadata
   -> (Stamp u -> Expr Stamp v)
@@ -106,7 +108,7 @@ elimLetFrom ::
   -> Expr Stamp v
   -> Metadata
   -> (Int, Expr Stamp v, Metadata)
-elimLetFrom optExpr t x mdX f tag body mdBody =
+elimLetFrom optExpr t hint x mdX f tag body mdBody =
   elimFrom
     (not (isLambdaExpr x) && not (isIdentityExpr tag body))
     ElimOps
@@ -114,7 +116,7 @@ elimLetFrom optExpr t x mdX f tag body mdBody =
       , elimPure = mdIsPure
       , elimCheap = mdIsCheap
       , elimSize = \_ -> nodeCountExpr body
-      , elimRebuild = Let x . rebindExpr tag
+      , elimRebuild = Let hint x . rebindExpr tag
       , elimSplice = \t' -> optExpr t' (inlineExpr f x)
       , elimDropUnused = const True
       , elimOccurs = occursVarInExpr
@@ -129,6 +131,7 @@ elimBindFrom ::
   (?keepLets :: Bool) =>
   (Int -> Effect Stamp v -> (Int, Effect Stamp v, Metadata))
   -> Int
+  -> Maybe Text
   -> Effect Stamp u
   -> Metadata
   -> (Stamp u -> Effect Stamp v)
@@ -136,7 +139,7 @@ elimBindFrom ::
   -> Effect Stamp v
   -> Metadata
   -> (Int, Effect Stamp v, Metadata)
-elimBindFrom optEffect t x mdX f tag body mdBody =
+elimBindFrom optEffect t hint x mdX f tag body mdBody =
   elimFrom
     ( not (isLambdaEff x)
         && not (isIdentityEff tag body)
@@ -147,7 +150,7 @@ elimBindFrom optEffect t x mdX f tag body mdBody =
       , elimPure = const (pureEffect x)
       , elimCheap = mdIsCheap
       , elimSize = \_ -> nodeCountEff body
-      , elimRebuild = Bind x . rebindEff tag
+      , elimRebuild = Bind hint x . rebindEff tag
       , elimSplice = \t' -> optEffect t' (inlineEff f x)
       , elimDropUnused = \_ -> not (isAliasBind x)
       , elimOccurs = occursVarInEff

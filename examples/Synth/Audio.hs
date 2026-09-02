@@ -430,7 +430,7 @@ meanByte buf =
 dictGet ::
   Effect f ('MutableObject r) -> Expr f 'String -> Effect f ('Option u)
 dictGet o k =
-  Bind
+  Bind Nothing
     (ffi "((o, k) => o[k] ?? null)" (ArgEffect o <: arg k <: RecNil))
     (\x -> Lift (unsafeNullable (Var x)))
 

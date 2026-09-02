@@ -123,8 +123,8 @@ seqEffectCode env s0 x y =
 -- Apply `f` once at the optimizer tag; map that tag to the emitted ident
 -- via `env` instead of `renameEff` (which copied the whole continuation).
 bindEffectCode ::
-  Env -> CG -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code)
-bindEffectCode env s0 x f =
+  Env -> CG -> Maybe Text -> Effect Stamp u -> (Stamp u -> Effect Stamp v) -> (CG, Code)
+bindEffectCode env s0 hint x f =
   let
     (sProbe, tagged, probeTag) = probeContEff s0 f
     (bTag, used) = bindProbeTag probeTag tagged
@@ -152,7 +152,7 @@ bindEffectCode env s0 x f =
                   then (insertBinder env n, s1, mempty)
                   else
                     let
-                      (nBind, s2) = allocIdent s1
+                      (nBind, s2) = allocIdentHint s1 hint
                      in
                       (insertBinder env nBind, s2, mempty)
               (s3, MkCode yDecl yRef yFX) = effectfulAST' env' sBind tagged
@@ -169,7 +169,7 @@ bindEffectCode env s0 x f =
               (s2, MkCode (Just (stmtX $$ fromMaybe mempty yDecl)) yRef yFX)
           else
             let
-              (nBind, s2) = allocIdent s1
+              (nBind, s2) = allocIdentHint s1 hint
               env' = insertBinder env nBind
               (s3, MkCode yDecl yRef yFX) = effectfulAST' env' s2 tagged
              in
@@ -192,7 +192,7 @@ isUnitWitness = \case
   Lift _ -> False
   While _ b -> isUnitWitness b
   ForRange _ _ b -> isUnitWitness (b nestedDummy)
-  Bind _ f -> isUnitWitness (f nestedDummy)
+  Bind _ _ f -> isUnitWitness (f nestedDummy)
   ThenE _ y -> isUnitWitness y
   BindRec _ f -> isUnitWitness (f nestedDummy)
   IfE _ t e -> isUnitWitness t && isUnitWitness e
@@ -481,7 +481,7 @@ effectfulAST' !env !sIn eff =
                  in
                   (s3, tryCatchStmt mRes (nJS s3 catchN) aDecl aRef bDecl bRef)
             )
-      Bind x f -> bindEffectCode env s0 x f
+      Bind hint x f -> bindEffectCode env s0 hint x f
       ThenE x y -> seqEffectCode env s0 x y
       BindRec r b ->
         let
@@ -536,7 +536,7 @@ isIdentityTagged tag = \case
   Var (EmbedEff (Lift e)) -> isIdentityTagged tag e
   _ -> False
 
-letCode env s0 x g =
+letCode env s0 hint x g =
   let
     (sProbe, tagged, probeTag) = probeContExpr s0 g
     (binderTag, uses) = letProbeTag probeTag tagged
@@ -556,7 +556,7 @@ letCode env s0 x g =
             (s1, MkCode xDecl xRef False)
       _ ->
         let
-          (nBind, s2) = allocIdent s1
+          (nBind, s2) = allocIdentHint s1 hint
           env' = IM.insert binderTag nBind env
           (s3, y) = pureAST' s2 env' tagged
          in
@@ -622,7 +622,7 @@ pureAST' !sIn env expr =
           (s2, Code mempty (jsText name))
       Lambda (LamInfo Nothing p) f -> emitExprLambda env s0 p f
       -- `const` when shared or used under a lambda/loop/short-circuit.
-      Let x g -> letCode env s0 x g
+      Let hint x g -> letCode env s0 hint x g
       LetRec r b ->
         let
           (nBind, s1) = allocIdent s0
@@ -993,12 +993,13 @@ emitHoistedLambdaValue env s0 hint f =
 
 renderFnBody :: forall us r. Env -> CG -> FnBody Stamp us r -> (CG, Code)
 renderFnBody env s0 body =
-  let
-    hints = fnBodyHints body
-    (ids, s1) = allocNIdentsHints s0 hints
-    (s2, Code d r) = pureAST' s1 env (evalFnBody body ids)
-   in
-    (s2, Code mempty (jsCallback s2 (map (nJS s2) ids) d r))
+  withHintScope s0 $ \sScoped ->
+    let
+      hints = fnBodyHints body
+      (ids, s1) = allocNIdentsHints sScoped hints
+      (s2, Code d r) = pureAST' s1 env (evalFnBody body ids)
+     in
+      (s2, Code mempty (jsCallback s2 (map (nJS s2) ids) d r))
 
 fnBodyHints :: FnBody Stamp us r -> [Maybe Text]
 fnBodyHints = \case
@@ -1137,12 +1138,13 @@ emitApplyArgsE env s0 xs =
     xs
 
 emitEffectLambda env s0 f =
-  let
-    (nParam, s1) = allocIdentHint s0 Nothing
-    body = f (Name nParam)
-    (s2, MkCode d r _) = effectfulAST' env s1 body
-   in
-    (s2, Code mempty (renderFn s2 [nJS s2 nParam] d r))
+  withHintScope s0 $ \sScoped ->
+    let
+      (nParam, s1) = allocIdentHint sScoped Nothing
+      body = f (Name nParam)
+      (s2, MkCode d r _) = effectfulAST' env s1 body
+     in
+      (s2, Code mempty (renderFn s2 [nJS s2 nParam] d r))
 
 emitLambdaSpine ::
   Bool
@@ -1152,7 +1154,7 @@ emitLambdaSpine ::
   -> (Stamp a -> Expr Stamp u)
   -> (CG, Code)
 emitLambdaSpine peelUntagged walker s0 hint f =
-  peel s0 hint f []
+  withHintScope s0 $ \sScoped -> peel sScoped hint f []
  where
   peel s h g acc =
     let
@@ -1263,10 +1265,14 @@ renderMethod env s0 = \case
   MethFrom n f ->
     let
       (s1, Code nDecl nRef) = pureAST' s0 env n
-      (nHole, s2) = allocIdent s1
-      (nI, s3) = allocIdent s2
-      (s4, Code exDecl exRef) = pureAST' s3 env (f (Name nI))
-      cb = jsCallback s4 [nJS s4 nHole, nJS s4 nI] exDecl exRef
+      (s4, cb) =
+        withHintScope s1 $ \sScoped ->
+          let
+            (nHole, s2) = allocIdent sScoped
+            (nI, s3) = allocIdent s2
+            (sBody, Code exDecl exRef) = pureAST' s3 env (f (Name nI))
+           in
+            (sBody, jsCallback sBody [nJS sBody nHole, nJS sBody nI] exDecl exRef)
      in
       (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
 
@@ -1282,13 +1288,19 @@ renderFold env method s0 recv z f =
 renderCallbackMethod env name s0 recv f =
   let
     (s1, Code rDecl rRef) = pureAST' s0 env recv
-    (nParam, s2) = allocIdentHint s1 (Just "x")
-    (s3, Code exDecl exRef) = pureAST' s2 env (f (Name nParam))
-    call =
-      wrapOperand recv rRef
-        <> "."
-        <> jsString name
-        <> parens (jsCallback s3 [nJS s3 nParam] exDecl exRef)
+    (s3, call) =
+      withHintScope s1 $ \sScoped ->
+        let
+          (nParam, s2) = allocIdentHint sScoped (Just "x")
+          (sBody, Code exDecl exRef) = pureAST' s2 env (f (Name nParam))
+          cb = jsCallback sBody [nJS sBody nParam] exDecl exRef
+         in
+          ( sBody
+          , wrapOperand recv rRef
+              <> "."
+              <> jsString name
+              <> parens cb
+          )
    in
     (s3, Code rDecl call)
 

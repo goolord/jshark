@@ -511,7 +511,7 @@ lowerExprAt !t0 expr = case expr of
       (t1, e') = lowerEffectAt t0 (flattenEff e)
      in
       (t1, Ir.IrEmbedEff e')
-  Let x g ->
+  Let _ x g ->
     let
       tag = t0
       tUnder = t0 - optStep
@@ -638,7 +638,7 @@ reifyExpr = \case
   Ir.IrVar i -> Var (Name i)
   Ir.IrEmbedEff e -> Var (EmbedEff (reifyEffect e))
   Ir.IrLet tag x body ->
-    Let (reifyExpr x) (\s -> rebindExpr tag (reifyExpr body) s)
+    Let Nothing (reifyExpr x) (\s -> rebindExpr tag (reifyExpr body) s)
   Ir.IrLetRec tag r b ->
     LetRec
       (\s -> rebindExpr tag (reifyExpr r) s)
@@ -699,14 +699,14 @@ lowerEffectAt !t0 eff = case eff of
       (t2, args') = lowerRecArgsAt t1 args
      in
       (t2, Ir.IrCallMethod x' n args')
-  Bind x f ->
+  Bind hint x f ->
     let
       tag = t0
       tUnder = t0 - optStep
       (_, x') = lowerEffectAt tUnder x
       (t2, body') = lowerEffectAt tUnder (f (Name tag))
      in
-      (t2, Ir.IrBind tag x' body')
+      (t2, Ir.IrBind tag hint x' body')
   ThenE x y ->
     let
       (t1, x') = lowerEffectAt t0 x
@@ -845,8 +845,8 @@ reifyEffect = \case
   Ir.IrUnsafeObjectGet x s -> UnsafeObjectGet (reifyEffect x) s
   Ir.IrUnsafeObjectAssign x y -> UnsafeObjectAssign (reifyEffect x) (reifyEffect y)
   Ir.IrCallMethod x n args -> CallMethod (reifyEffect x) n (mapRec reifyArg args)
-  Ir.IrBind tag x body ->
-    Bind (reifyEffect x) (\s -> rebindEff tag (reifyEffect body) s)
+  Ir.IrBind tag hint x body ->
+    Bind hint (reifyEffect x) (\s -> rebindEff tag (reifyEffect body) s)
   Ir.IrThenE x y -> ThenE (reifyEffect x) (reifyEffect y)
   Ir.IrBindRec tag r b ->
     BindRec

@@ -385,28 +385,30 @@ optFixed t0 op args = case (op, args) of
 optLet ::
   (?keepLets :: Bool) =>
   Int
+  -> Maybe Text
   -> Expr Stamp u
   -> (Stamp u -> Expr Stamp v)
   -> (Int, Expr Stamp v, Metadata)
-optLet t0 x f =
+optLet t0 hint x f =
   let
     (t1, x', mdX) = optExpr t0 x
     (t2, tag, body, mdBody) = optUnder t1 f
    in
-    elimLetFrom optExpr t2 x' mdX f tag body mdBody
+    elimLetFrom optExpr t2 hint x' mdX f tag body mdBody
 
 optBind ::
   (?keepLets :: Bool) =>
   Int
+  -> Maybe Text
   -> Effect Stamp u
   -> (Stamp u -> Effect Stamp v)
   -> (Int, Effect Stamp v, Metadata)
-optBind t0 x f =
+optBind t0 hint x f =
   let
     (t1, x', mdX) = optEffect t0 x
     (t2, tag, body, mdBody) = optUnderE t1 f
    in
-    elimBindFrom optEffect t2 x' mdX f tag body mdBody
+    elimBindFrom optEffect t2 hint x' mdX f tag body mdBody
 
 optBin ::
   (?keepLets :: Bool) =>
@@ -483,7 +485,7 @@ optExpr t0 expr = case expr of
         Lift x -> (t1, x, md)
         _ -> (t1, Var (EmbedEff e'), md)
   Var (Stamp i) -> (t0, Var (Stamp i), Metadata 1 True False)
-  Let x f -> optLet t0 x f
+  Let hint x f -> optLet t0 hint x f
   LetRec r b ->
     let
       tag = t0
@@ -508,7 +510,7 @@ optExpr t0 expr = case expr of
       case f' of
         fn@(Lambda LamInfo {lamTag = Just _} _) ->
           (t2, Apply fn x', Metadata 1 True False <> mdF <> mdX)
-        Lambda LamInfo {lamTag = Nothing} g -> optLet t2 x' g
+        Lambda LamInfo {lamTag = Nothing} g -> optLet t2 Nothing x' g
         _ -> (t2, Apply f' x', Metadata 1 True False <> mdF <> mdX)
   If c t e ->
     let
@@ -534,7 +536,7 @@ optExpr t0 expr = case expr of
           let
             (t2, tag, body, mdBody) = optUnder t1 s
            in
-            elimLetFrom optExpr t2 x mdO s tag body mdBody
+            elimLetFrom optExpr t2 Nothing x mdO s tag body mdBody
         Nothing ->
           let
             (t2, n', mdN) = optExpr t1 n
@@ -561,12 +563,12 @@ optExpr t0 expr = case expr of
           let
             (t2, tag, body, mdBody) = optUnder t1 e
            in
-            elimLetFrom optExpr t2 x mdO e tag body mdBody
+            elimLetFrom optExpr t2 Nothing x mdO e tag body mdBody
         Just (Right x) ->
           let
             (t2, tag, body, mdBody) = optUnder t1 s
            in
-            elimLetFrom optExpr t2 x mdO s tag body mdBody
+            elimLetFrom optExpr t2 Nothing x mdO s tag body mdBody
         Nothing ->
           let
             (t2, tE, e', mdE) = optUnder t1 e
@@ -834,7 +836,7 @@ optEffect t0 eff = case eff of
       (t2, args', mdA) = optArgs t1 args
      in
       (t2, CallMethod x' n args', Metadata 1 False False <> mdX <> mdA)
-  Bind x f -> optBind t0 x f
+  Bind hint x f -> optBind t0 hint x f
   ThenE x y ->
     let
       (t1, x', mdX) = optEffect t0 x
@@ -863,7 +865,7 @@ optEffect t0 eff = case eff of
       (t2, x', mdX) = optEffect t1 x
      in
       case f' of
-        LambdaE g -> optBind t2 x' g
+        LambdaE g -> optBind t2 Nothing x' g
         _ -> (t2, ApplyE f' x', Metadata 1 False False <> mdF <> mdX)
   IfE c t e ->
     let
@@ -928,7 +930,7 @@ optEffect t0 eff = case eff of
           let
             (t2, tag, body, mdBody) = optUnderE t1 s
            in
-            elimBindFrom optEffect t2 (Lift x) mdO s tag body mdBody
+            elimBindFrom optEffect t2 Nothing (Lift x) mdO s tag body mdBody
         Nothing ->
           let
             (t2, n', mdN) = optEffect t1 n
@@ -949,12 +951,12 @@ optEffect t0 eff = case eff of
           let
             (t2, tag, body, mdBody) = optUnderE t1 e
            in
-            elimBindFrom optEffect t2 (Lift x) mdO e tag body mdBody
+            elimBindFrom optEffect t2 Nothing (Lift x) mdO e tag body mdBody
         Just (Right x) ->
           let
             (t2, tag, body, mdBody) = optUnderE t1 s
            in
-            elimBindFrom optEffect t2 (Lift x) mdO s tag body mdBody
+            elimBindFrom optEffect t2 Nothing (Lift x) mdO s tag body mdBody
         Nothing ->
           let
             (t2, tE, e', mdE) = optUnderE t1 e

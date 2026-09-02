@@ -927,10 +927,14 @@ packEffect = \case
     ti <- addText method
     ai <- packRecArgs args
     addNode (FX_CallMethod nx ti ai)
-  IrBind tag x body -> do
+  IrBind tag hint x body -> do
     nx <- packEffect x
     nb <- packEffect body
-    addNode (FX_Bind tag nx nb)
+    nid <- addNode (FX_Bind tag nx nb)
+    case hint of
+      Just name -> addParamName nid name
+      Nothing -> pure ()
+    pure nid
   IrThenE x y -> do
     nx <- packEffect x
     ny <- packEffect y

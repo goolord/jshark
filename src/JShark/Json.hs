@@ -27,5 +27,5 @@ unsafeParse x = ffi "JSON.parse" (arg x <: RecNil)
 tryParse :: Expr f 'String -> Effect f ('Option u)
 tryParse s =
   catch_
-    (Bind (unsafeParse s) (\x -> Lift (some (Var x))))
+    (Bind Nothing (unsafeParse s) (\x -> Lift (some (Var x))))
     (\_ -> expr none)

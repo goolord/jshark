@@ -2,7 +2,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -177,7 +176,9 @@ import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
+import GHC.Stack (HasCallStack)
 import GHC.TypeLits (KnownSymbol)
+import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Params
   ( NamedLambdaRow (..)
   , ParamRec
@@ -433,11 +434,11 @@ forEach_ arr f = toSyntax $ forEach arr (\x -> stmts (f x))
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
-let_ :: Expr f u -> (Expr f u -> Expr f v) -> Expr f v
+let_ :: HasCallStack => Expr f u -> (Expr f u -> Expr f v) -> Expr f v
 let_ (Literal v) f = f (Literal v)
 let_ (Var x) f = f (Var x)
-let_ e f = Let e (\x -> f (var x))
-{-# INLINE [1] let_ #-}
+let_ e f = Let (callerBinderHint) e (\x -> f (var x))
+{-# NOINLINE let_ #-}
 
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ (Literal (ValueBool True)) t _ = t

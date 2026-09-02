@@ -841,6 +841,8 @@ stdlibTests =
                   )
               )
         T.count "const $groupBy =" js @?= 1
+        T.isInfixOf "const $groupBy = (arr, keyFn) =>" js @?= True
+        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
     , testCase "binary hoists match in pureAST and effectfulAST" $ do
         let
           pureJs =
@@ -876,9 +878,31 @@ stdlibTests =
           js =
             renderJS
               (pureAST (Array.reduce numArray (number 0) (\acc x -> acc + x)))
-        T.isInfixOf "const $reduce =" js @?= True
-        T.isInfixOf "=>" js @?= True
+        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
         T.isInfixOf ".reduce" js @?= True
+    , testCase "Array.reduce hoists once when used twice" $ do
+        let
+          js =
+            renderJS
+              ( pureAST
+                  ( let_ (Array.reduce numArray (number 0) (\acc x -> acc + x)) $ \a ->
+                      let_ (Array.reduce numArray (number 1) (\acc x -> acc * x)) $ \b ->
+                        a + b
+                  )
+              )
+        T.count "const $reduce =" js @?= 1
+        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
+    , testCase "hoisted $reduce keeps seed/f after a seed binder" $ do
+        let
+          js =
+            renderJS
+              ( pureAST
+                  ( Let (Just "seed") (number 1) $ \s ->
+                      Array.reduce numArray (Var s) (\acc x -> acc + x)
+                  )
+              )
+        T.isInfixOf "const seed = 1" js @?= True
+        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
     , testCase "Classes.fmap Array" $
         case evaluate
           ( Eq
@@ -1124,7 +1148,7 @@ stdlibTests =
                       c <- Dom.lookupId (string "c")
                       ctx <- Canvas.getContext2d c
                       toSyntax
-                        (Bind ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok"))))
+                        (Bind Nothing ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok"))))
                   )
               )
           )
@@ -1137,7 +1161,7 @@ stdlibTests =
                       c <- Dom.lookupId (string "c")
                       ctx <- Canvas.getContext2dDesync c
                       toSyntax
-                        (Bind ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok"))))
+                        (Bind Nothing ctx (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok"))))
                   )
               )
           )
@@ -1154,7 +1178,7 @@ stdlibTests =
                         c <- Dom.lookupId (string "c")
                         ctx <- Canvas.getContext2d c
                         toSyntax $
-                          Bind ctx $ \o ->
+                          Bind Nothing ctx $ \o ->
                             optionCaseE (var o) noOp $ \_ ->
                               stmts $ do
                                 _ <- toSyntax (G.toObject (Group people))
@@ -1519,7 +1543,7 @@ goodPartsTests =
           js =
             renderJS
               ( effectfulAST
-                  (Bind getR (\r -> Lift (resultCase (var r) (\_ -> number 0) id)))
+                  (Bind Nothing getR (\r -> Lift (resultCase (var r) (\_ -> number 0) id)))
               )
          in
           do
@@ -1915,7 +1939,7 @@ optimizeTests =
     , testCase "dead pure let is dropped" $
         renderJS (pureAST (let_ (number 1) (\_ -> number 2))) @?= "2"
     , testCase "unused FFI let is kept as a statement" $
-        renderJS (effectfulAST (Bind fooE (\_ -> Lift (number 1)))) @?= "foo();\n1"
+        renderJS (effectfulAST (Bind Nothing fooE (\_ -> Lift (number 1)))) @?= "foo();\n1"
     , testCase "top-level do-notation bind chain compiles" $ do
         let
           chain =
@@ -2358,6 +2382,27 @@ compilerTests =
     , testCase "readableConfig keeps multi-use lets as const" $ do
         out <- compileEffect readableConfig (with1 fooE (\x -> x + x))
         out @?= "const n0 = foo();\nn0 + n0;"
+    , testCase "callerBinderHint returns enclosing function name" $
+        callerHintProbe () @?= Just "callerHintProbe"
+    , testCase "readableConfig uses explicit let binder hints" $ do
+        let prog :: Expr f 'Number
+            prog = Let (Just "hintProbe") (sin (number 1)) (\x -> Var x + Var x)
+        renderJS (pureAST prog)
+          @?= "const hintProbe = Math.sin(1);\nhintProbe + hintProbe"
+    , testCase "same-scope binder hints uniquify" $ do
+        let
+          prog :: Expr f 'Number
+          prog =
+            Let (Just "x") (number 1) $ \a ->
+              Let (Just "x") (number 2) $ \b ->
+                Var a + Var b
+        renderJS (pureAST prog) @?= "const x = 1;\nconst n1 = 2;\nx + n1"
+    , testCase "readableConfig names pure let binders from HasCallStack" $ do
+        renderJS (pureAST readableLetSample)
+          @?= "const readableLetSample = Math.sin(1);\nreadableLetSample + readableLetSample"
+    , testCase "readableConfig names effect binders from HasCallStack" $ do
+        out <- compileEffect readableConfig (fromSyntax readableBindSample)
+        out @?= "const readableBindSample = foo();\nreadableBindSample + readableBindSample;"
     , testCase "Readable style skips the minifier even when a backend is set" $ do
         out <-
           compileEffect

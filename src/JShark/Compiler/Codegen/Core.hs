@@ -191,6 +191,10 @@ data CG = CG
   , cgEmitCtx :: !(Maybe EmitCtx)
   , cgStyle :: !EmitStyle
   , cgNames :: !(IM.IntMap Text)
+  , -- | Used source/synthetic names in each JS function, innermost first.
+    -- Hoisted helpers push a fresh set so @$reduce@ params stay @seed@/@f@
+    -- across emit sites (global uniqueness broke hoist dedup).
+    cgScope :: ![Set Text]
   }
 
 type Env = IM.IntMap Int
@@ -244,7 +248,7 @@ arrayElemRef = fromMaybe "undefined"
 startCG = startCGWith minifiedStyle
 
 startCGWith :: EmitStyle -> CG
-startCGWith style = CG 0 (-3) emptyPreamble 0 Nothing style IM.empty
+startCGWith style = CG 0 (-3) emptyPreamble 0 Nothing style IM.empty [S.empty]
 
 -- | Prepare optimized pure AST and wire batch progress (pack then emit).
 -- Requires 'withActiveJob' + 'configProgressSlot' when progress is enabled.
@@ -536,18 +540,52 @@ allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 
 allocIdent s = allocIdentHint s Nothing
 
+-- | Fresh JS function scope. Params and inner @const@ uniquify only against
+-- names in this function, so a later @$reduce@ still gets @seed@/@f@.
+pushHintScope :: CG -> CG
+pushHintScope s = s {cgScope = S.empty : cgScope s}
+
+popHintScope :: CG -> CG
+popHintScope s = case cgScope s of
+  (_ : rest@(_ : _)) -> s {cgScope = rest}
+  _ -> s
+
+withHintScope :: CG -> (CG -> (CG, a)) -> (CG, a)
+withHintScope s f =
+  let
+    (s', a) = f (pushHintScope s)
+   in
+    (popHintScope s', a)
+
+hintScope :: CG -> Set Text
+hintScope s = case cgScope s of
+  (x : _) -> x
+  [] -> S.empty
+
+-- | Allocate a binder or param. Source hints uniquify within the current
+-- JS function only (see 'cgScope').
 allocIdentHint :: CG -> Maybe Text -> (Int, CG)
 allocIdentHint s hint =
   let
     n = cgIdent s
-    name = pickBinderName (cgStyle s) hint n
+    name = pickBinderName (cgStyle s) (uniqueBinderHint s hint) n
     s' =
       s
         { cgIdent = n + 1
         , cgNames = IM.insert n name (cgNames s)
+        , cgScope = case cgScope s of
+            (sc : rest) -> S.insert name sc : rest
+            [] -> [S.singleton name]
         }
    in
     (n, s')
+
+uniqueBinderHint :: CG -> Maybe Text -> Maybe Text
+uniqueBinderHint s = \case
+  Nothing -> Nothing
+  Just t
+    | t `S.member` hintScope s -> Nothing
+    | otherwise -> Just t
 
 pickBinderName :: EmitStyle -> Maybe Text -> Int -> Text
 pickBinderName style hint n =
@@ -723,7 +761,15 @@ mergeEmitCG a b =
     , cgPreamble = mergePreamble (cgPreamble a) (cgPreamble b)
     , cgEmit = max (cgEmit a) (cgEmit b)
     , cgNames = cgNames a <> cgNames b
+    , cgScope = mergeHintScopes (cgScope a) (cgScope b)
     }
+
+mergeHintScopes :: [Set Text] -> [Set Text] -> [Set Text]
+mergeHintScopes as bs
+  | length as < length bs =
+      zipWith S.union (as ++ replicate (length bs - length as) S.empty) bs
+  | otherwise =
+      zipWith S.union as (bs ++ replicate (length as - length bs) S.empty)
 
 mergeEmitCGs :: CG -> [CG] -> CG
 mergeEmitCGs = foldl (\acc cg -> mergeEmitCG acc cg `seq` mergeEmitCG acc cg)

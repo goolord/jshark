@@ -88,7 +88,7 @@ scanIrEffect minSize n = \case
     scanIrEffect minSize n x <> scanIrEffect minSize n y
   IrCallMethod x _ args ->
     scanIrEffect minSize n x <> scanIrArgs minSize n args
-  IrBind _ x y ->
+  IrBind _ _ x y ->
     scanIrEffect minSize n x <> scanIrEffect minSize n y
   IrThenE x y ->
     scanIrEffect minSize n x <> scanIrEffect minSize n y

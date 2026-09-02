@@ -119,7 +119,7 @@ mapExpr ::
 mapExpr ge gf expr = case expr of
   Literal x -> Literal x
   Var s -> Var s
-  Let x g -> Let (ge x) (ge . g)
+  Let hint x g -> Let hint (ge x) (ge . g)
   LetRec rhs body -> LetRec (ge . rhs) (ge . body)
   Lambda hoist g -> Lambda hoist (ge . g)
   Apply f x -> Apply (ge f) (ge x)
@@ -202,7 +202,7 @@ mapEff ge gf eff = case eff of
   UnsafeObjectGet x s -> UnsafeObjectGet (gf x) s
   UnsafeObjectAssign x y -> UnsafeObjectAssign (gf x) (gf y)
   CallMethod x n args -> CallMethod (gf x) n (mapRec (mapArg ge gf) args)
-  Bind x f -> Bind (gf x) (gf . f)
+  Bind hint x f -> Bind hint (gf x) (gf . f)
   ThenE x y -> ThenE (gf x) (gf y)
   BindRec rhs body -> BindRec (gf . rhs) (gf . body)
   LambdaE f -> LambdaE (gf . f)
@@ -237,7 +237,7 @@ foldExpr ::
 foldExpr dummy se le sf expr = case expr of
   Literal {} -> mempty
   Var {} -> mempty
-  Let x g -> se x <> se (g dummy)
+  Let _ x g -> se x <> se (g dummy)
   LetRec r b -> le (r dummy) <> se (b dummy)
   Lambda _ g -> le (g dummy)
   Apply f x -> se f <> se x
@@ -345,7 +345,7 @@ foldEff dummy se sf lf eff = case eff of
   UnsafeObjectGet x _ -> sf x
   UnsafeObjectAssign x y -> sf x <> sf y
   CallMethod x _ args -> sf x <> recFold (\n a -> n <> foldArg a) mempty args
-  Bind x f -> sf x <> sf (f dummy)
+  Bind _ x f -> sf x <> sf (f dummy)
   ThenE x y -> sf x <> sf y
   BindRec r b -> lf (r dummy) <> sf (b dummy)
   LambdaE f -> lf (f dummy)

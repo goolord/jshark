@@ -368,7 +368,7 @@ nullableObject ::
   -> FieldDispatch f ('Option ('MutableObject r))
 nullableObject _ Nothing = FDExpr none
 nullableObject toObj (Just x) =
-  FDEffect (Bind (toObj x) (\o -> Lift (unsafeNullable (var o))))
+  FDEffect (Bind Nothing (toObj x) (\o -> Lift (unsafeNullable (var o))))
 
 instance
   ( Generic a
@@ -682,7 +682,7 @@ instance Unpayload 'True 'Unit where
   runHit hit _ = hit (Literal ValueUnit)
 
 instance Unpayload 'False u where
-  runHit hit o = Bind (unsafeObjectGet o "payload") (\p -> hit (var p))
+  runHit hit o = Bind Nothing (unsafeObjectGet o "payload") (\p -> hit (var p))
 
 class GToSum a (r :: Type -> Type) where
   gtoSum :: r x -> Effect f (SumOf a)

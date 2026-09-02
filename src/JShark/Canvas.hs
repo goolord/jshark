@@ -87,7 +87,7 @@ getContext2dWith ::
   -> EffectSyntax f (Effect f ('Option ('MutableObject Context2D)))
 getContext2dWith el desync =
   hold $
-    Bind
+    Bind Nothing
       ( ffi
           ( "(el,d)=>el.getContext('2d',"
               <> "{desynchronized:!!d,alpha:false,willReadFrequently:false}"

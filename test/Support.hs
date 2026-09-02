@@ -3,6 +3,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Support
   ( LitRow
@@ -20,6 +21,9 @@ module Support
   , yieldString
   , with1
   , with2
+  , readableBindSample
+  , readableLetSample
+  , callerHintProbe
   , prettyIfLambda
   , numArray
   , mulDiv
@@ -35,7 +39,9 @@ import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
+import GHC.Stack (HasCallStack)
 import JShark.Api
+import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Compiler (biomeAvailable)
@@ -112,6 +118,22 @@ with2 e1 e2 k = fromSyntax $ do
   y <- toSyntax e2
   toSyntax (expr (k (Var x) (Var y)))
 
+-- | Pure let sample for readable 'HasCallStack' binder names.
+{-# NOINLINE readableLetSample #-}
+readableLetSample :: HasCallStack => Expr f 'Number
+readableLetSample = let_ (sin (number 1)) (\x -> x + x)
+
+-- | Effect bind sample for readable 'HasCallStack' binder names.
+{-# NOINLINE readableBindSample #-}
+readableBindSample :: HasCallStack => EffectSyntax f (f 'Number)
+readableBindSample = do
+  x <- toSyntax fooE
+  toSyntax (expr (Var x + Var x))
+
+{-# NOINLINE callerHintProbe #-}
+callerHintProbe :: HasCallStack => () -> Maybe Text
+callerHintProbe _ = callerBinderHint
+
 prettyIfLambda :: forall f. Effect f 'Number
 prettyIfLambda = fromSyntax $ do
   r <-
@@ -119,7 +141,7 @@ prettyIfLambda = fromSyntax $ do
       ApplyE
         ( lambdaE
             ( \x ->
-                Bind (expr (number 0)) $ \z ->
+                Bind Nothing (expr (number 0)) $ \z ->
                   ifE
                     (ffi "Boolean" (arg (number 1) <: RecNil))
                     x

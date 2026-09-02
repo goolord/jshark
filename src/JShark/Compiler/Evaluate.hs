@@ -511,7 +511,7 @@ evalAlg rec apply = \case
   Var x -> pure x
   Apply g x -> unFunction <$> rec g <*> rec x
   Lambda _ g -> pure (ValueFunction (apply g))
-  Let x g -> rec x >>= rec . g
+  Let _ x g -> rec x >>= rec . g
   LetRec r b ->
     let
       recV = apply r recV

@@ -21,7 +21,7 @@ import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import Data.Maybe (fromMaybe, isJust, isNothing)
-import Data.STRef (newSTRef, readSTRef, writeSTRef)
+import Data.STRef (modifySTRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import GHC.IO.Unsafe (unsafePerformIO)
@@ -521,12 +521,17 @@ flatRenderCallbackMethod mode env name s0 view arrId tag bodyId =
            in
             (flatEnvTag env tag, s', d, r)
         DirectEmit ->
-          let
-            (n, s') = allocIdent s1
-            env' = IM.insert tag n env
-            (s'', Code d r) = flatPureChild mode env' s' view bodyId
-           in
-            (n, s'', d, r)
+          case
+            withHintScope s1 $ \sScoped ->
+              let
+                (nBind, sAlloc) = allocIdent sScoped
+                env' = IM.insert tag nBind env
+                (sBody, Code d r) =
+                  flatPureChild mode env' sAlloc view bodyId
+               in
+                (sBody, (nBind, d, r))
+          of
+            (sDone, (nBind, d, r)) -> (nBind, sDone, d, r)
     call =
       flatWrapOperand view arrId rRef
         <> "."
@@ -552,13 +557,19 @@ flatRenderFold mode env method s0 view arrId zId tagA tagB bodyId =
             , r
             )
         DirectEmit ->
-          let
-            (nA, sA) = allocIdent s2
-            (nE, sE) = allocIdent sA
-            env' = IM.insert tagA nA $ IM.insert tagB nE env
-            (s', Code d r) = flatPureChild mode env' sE view bodyId
-           in
-            (nA, nE, s', d, r)
+          case
+            withHintScope s2 $ \sScoped ->
+              let
+                (nAcc', sA) = allocIdent sScoped
+                (nElem', sE) = allocIdent sA
+                env' = IM.insert tagA nAcc' $ IM.insert tagB nElem' env
+                (sBody, Code d r) =
+                  flatPureChild mode env' sE view bodyId
+               in
+                (sBody, (nAcc', nElem', d, r))
+          of
+            (sDone, (nAcc', nElem', d, r)) ->
+              (nAcc', nElem', sDone, d, r)
     cb = jsCallback s3 [nJS s3 nAcc, nJS s3 nElem] exDecl exRef
     call =
       flatWrapOperand view arrId rRef
@@ -592,11 +603,16 @@ flatRenderMethod mode env s0 view = \case
       DirectEmit ->
         let
           (s1, Code rDecl rRef) = flatPureChild mode env s0 view arr
-          (nA, s2) = allocIdent s1
-          (nB, s3) = allocIdent s2
-          env' = IM.insert tagA nA $ IM.insert tagB nB env
-          (s4, Code exDecl exRef) = flatPureChild mode env' s3 view body
-          cb = jsCallback s4 [nJS s4 nA, nJS s4 nB] exDecl exRef
+          (s4, cb) =
+            withHintScope s1 $ \sScoped ->
+              let
+                (nA, s2) = allocIdent sScoped
+                (nB, s3) = allocIdent s2
+                env' = IM.insert tagA nA $ IM.insert tagB nB env
+                (sBody, Code exDecl exRef) =
+                  flatPureChild mode env' s3 view body
+               in
+                (sBody, jsCallback sBody [nJS sBody nA, nJS sBody nB] exDecl exRef)
          in
           ( s4
           , Code rDecl (flatWrapOperand view arr rRef <> ".toSorted" <> parens cb)
@@ -614,11 +630,16 @@ flatRenderMethod mode env s0 view = \case
       DirectEmit ->
         let
           (s1, Code nDecl nRef) = flatPureChild mode env s0 view n
-          (nHole, s2) = allocIdent s1
-          (nI, s3) = allocIdent s2
-          env' = IM.insert tag nI env
-          (s4, Code exDecl exRef) = flatPureChild mode env' s3 view body
-          cb = jsCallback s4 [nJS s4 nHole, nJS s4 nI] exDecl exRef
+          (s4, cb) =
+            withHintScope s1 $ \sScoped ->
+              let
+                (nHole, s2) = allocIdent sScoped
+                (nI, s3) = allocIdent s2
+                env' = IM.insert tag nI env
+                (sBody, Code exDecl exRef) =
+                  flatPureChild mode env' s3 view body
+               in
+                (sBody, jsCallback sBody [nJS sBody nHole, nJS sBody nI] exDecl exRef)
          in
           (s4, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
   _ -> error "JShark.flatRenderMethod: unexpected node"
@@ -632,13 +653,14 @@ flatRenderFnLit mode env s0 view tags names bodyId =
        in
         (s1, Code mempty (jsCallback s1 (map (nJS s1) ids) d r))
     DirectEmit ->
-      let
-        hints = names ++ repeat Nothing
-        (ids, s1) = allocNIdentsHints s0 (take (length tags) hints)
-        env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
-        (s2, Code d r) = flatPureChild mode env' s1 view bodyId
-       in
-        (s2, Code mempty (jsCallback s2 (map (nJS s2) ids) d r))
+      withHintScope s0 $ \sScoped ->
+        let
+          hints = names ++ repeat Nothing
+          (ids, s1) = allocNIdentsHints sScoped (take (length tags) hints)
+          env' = foldr (\(tag, n) -> IM.insert tag n) env (zip tags ids)
+          (s2, Code d r) = flatPureChild mode env' s1 view bodyId
+         in
+          (s2, Code mempty (jsCallback s2 (map (nJS s2) ids) d r))
 
 flatResultUnwrapIdent mode env s tag =
   case mode of
@@ -693,7 +715,8 @@ flatBindEffect mode env s0 view nid tag xId bodyId =
 flatBindEffectKeep mode env s0 view nid tag xId bodyId =
   let
     (s1, MkCode xDecl xRef xFX) = flatEffectChild mode env s0 view xId
-    (nBind, s2) = flatPlanIdent mode s1 nid
+    hint = FlatView.firParamName view nid
+    (nBind, s2) = flatPlanIdentHint mode s1 nid hint
     env' = IM.insert tag nBind env
     (s3, MkCode yDecl yRef yFX) = flatEffectChild mode env' s2 view bodyId
     stmtX
@@ -843,13 +866,14 @@ flatPlanEnv plan nid =
     Just (Just env) -> env
     _ -> error ("JShark.flatPlanEnv: missing env for node " ++ show nid)
 
+-- | Direct emit allocates now; layered emit uses the planned id.
 flatPlanIdentHint mode s nid hint =
   case mode of
     DirectEmit -> allocIdentHint s hint
     LayeredEmit {} -> flatPlanIdent mode s nid
 
 flatEmitLambdaSpine mode env0 s0 view nid0 tag0 bodyId0 =
-  go s0 env0 nid0 tag0 bodyId0 []
+  withHintScope s0 $ \sScoped -> go sScoped env0 nid0 tag0 bodyId0 []
  where
   go s env nid tag bodyId acc =
     let
@@ -869,7 +893,7 @@ flatEmitLambdaSpine mode env0 s0 view nid0 tag0 bodyId0 =
             (s2, renderFn s2 (map (nJS s2) ids) d r)
 
 flatEmitLambdaESpine mode env0 s0 view nid0 tag0 bodyId0 =
-  go s0 env0 nid0 tag0 bodyId0 []
+  withHintScope s0 $ \sScoped -> go sScoped env0 nid0 tag0 bodyId0 []
  where
   go s env nid tag bodyId acc =
     let
@@ -1015,10 +1039,15 @@ buildFlatEmitPlan view root s0 =
         planAlloc i = do
           s <- readSTRef sRef
           let
-            (ident, s') = allocIdent s
+            hint = FlatView.firParamName view i
+            (ident, s') = allocIdentHint s hint
           writeSTRef sRef s'
           MV.write bindAt i (Just ident)
           pure ident
+        planInScope act = do
+          modifySTRef sRef pushHintScope
+          act
+          modifySTRef sRef popHintScope
         planGo env nid
           | nid < 0 || nid >= n = pure ()
           | otherwise = do
@@ -1035,9 +1064,10 @@ buildFlatEmitPlan view root s0 =
                     env' = IM.insert tag ident env
                   planGo env' rId
                   planGo env' bId
-                Flat.FE_Lambda tag bodyId -> do
-                  ident <- planAlloc nid
-                  planGo (IM.insert tag ident env) bodyId
+                Flat.FE_Lambda tag bodyId ->
+                  planInScope $ do
+                    ident <- planAlloc nid
+                    planGo (IM.insert tag ident env) bodyId
                 Flat.FE_OptionCase oId nId tag sId -> do
                   planGo env oId
                   ident <- planAlloc nid
@@ -1058,84 +1088,91 @@ buildFlatEmitPlan view root s0 =
                   writeEnv nid envO
                   planGo envE errId
                   planGo envO okId
-                Flat.FE_FnLit tags _names bodyId -> do
-                  s <- readSTRef sRef
-                  let
-                    (ids, s') = allocNIdents s (length tags)
-                  writeSTRef sRef s'
-                  let
-                    env' = foldr (\(tag, i) -> IM.insert tag i) env (zip tags ids)
-                  writeEnv nid env'
-                  planGo env' bodyId
+                Flat.FE_FnLit tags _names bodyId ->
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ids, s') = allocNIdents s (length tags)
+                    writeSTRef sRef s'
+                    let
+                      env' = foldr (\(tag, i) -> IM.insert tag i) env (zip tags ids)
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FE_MethMap arr tag bodyId -> do
                   planGo env arr
-                  s <- readSTRef sRef
-                  let
-                    (ident, s') = allocIdent s
-                  writeSTRef sRef s'
-                  let
-                    env' = IM.insert tag ident env
-                  writeEnv nid env'
-                  planGo env' bodyId
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ident, s') = allocIdent s
+                    writeSTRef sRef s'
+                    let
+                      env' = IM.insert tag ident env
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FE_MethFilter arr tag bodyId -> do
                   planGo env arr
-                  s <- readSTRef sRef
-                  let
-                    (ident, s') = allocIdent s
-                  writeSTRef sRef s'
-                  let
-                    env' = IM.insert tag ident env
-                  writeEnv nid env'
-                  planGo env' bodyId
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ident, s') = allocIdent s
+                    writeSTRef sRef s'
+                    let
+                      env' = IM.insert tag ident env
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FE_MethReduce arr z tagA tagB bodyId -> do
                   planGo env arr
                   planGo env z
-                  s <- readSTRef sRef
-                  let
-                    (ids, s') = allocNIdents s 2
-                  writeSTRef sRef s'
-                  let
-                    nAcc = ids !! 0
-                    nElem = ids !! 1
-                    env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
-                  writeEnv nid env'
-                  planGo env' bodyId
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ids, s') = allocNIdents s 2
+                    writeSTRef sRef s'
+                    let
+                      nAcc = ids !! 0
+                      nElem = ids !! 1
+                      env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FE_MethReduceRight arr z tagA tagB bodyId -> do
                   planGo env arr
                   planGo env z
-                  s <- readSTRef sRef
-                  let
-                    (ids, s') = allocNIdents s 2
-                  writeSTRef sRef s'
-                  let
-                    nAcc = ids !! 0
-                    nElem = ids !! 1
-                    env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
-                  writeEnv nid env'
-                  planGo env' bodyId
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ids, s') = allocNIdents s 2
+                    writeSTRef sRef s'
+                    let
+                      nAcc = ids !! 0
+                      nElem = ids !! 1
+                      env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FE_MethToSorted arr tagA tagB bodyId -> do
                   planGo env arr
-                  s <- readSTRef sRef
-                  let
-                    (ids, s') = allocNIdents s 2
-                  writeSTRef sRef s'
-                  let
-                    nA = ids !! 0
-                    nB = ids !! 1
-                    env' = IM.insert tagA nA $ IM.insert tagB nB env
-                  writeEnv nid env'
-                  planGo env' bodyId
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ids, s') = allocNIdents s 2
+                    writeSTRef sRef s'
+                    let
+                      nA = ids !! 0
+                      nB = ids !! 1
+                      env' = IM.insert tagA nA $ IM.insert tagB nB env
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FE_MethFrom lenId tag bodyId -> do
                   planGo env lenId
-                  s <- readSTRef sRef
-                  let
-                    (ids, s') = allocNIdents s 2
-                  writeSTRef sRef s'
-                  let
-                    nI = ids !! 1
-                    env' = IM.insert tag nI env
-                  writeEnv nid env'
-                  planGo env' bodyId
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ids, s') = allocNIdents s 2
+                    writeSTRef sRef s'
+                    let
+                      nI = ids !! 1
+                      env' = IM.insert tag nI env
+                    writeEnv nid env'
+                    planGo env' bodyId
                 Flat.FX_Bind tag xId bodyId -> do
                   planGo env xId
                   ident <- planAlloc nid
@@ -1146,9 +1183,10 @@ buildFlatEmitPlan view root s0 =
                     env' = IM.insert tag ident env
                   planGo env' rId
                   planGo env' bId
-                Flat.FX_LambdaE tag bodyId -> do
-                  ident <- planAlloc nid
-                  planGo (IM.insert tag ident env) bodyId
+                Flat.FX_LambdaE tag bodyId ->
+                  planInScope $ do
+                    ident <- planAlloc nid
+                    planGo (IM.insert tag ident env) bodyId
                 Flat.FX_ForRange startId endId tag bodyId -> do
                   planGo env startId
                   planGo env endId
@@ -1281,13 +1319,14 @@ flatPureASTGo !mode !env !sIn view nid =
              in
               (s2, Code mempty hoisted)
           Nothing ->
-            let
-              hint = FlatView.firParamName view nid
-              (nParam, s1) = flatPlanIdentHint mode s0 nid hint
-              env' = IM.insert tag nParam env
-              (s2, MkCode d r _) = flatPureChild mode env' s1 view bodyId
-             in
-              (s2, Code mempty (renderFunction s2 nParam d r))
+            withHintScope s0 $ \sScoped ->
+              let
+                hint = FlatView.firParamName view nid
+                (nParam, s1) = flatPlanIdentHint mode sScoped nid hint
+                env' = IM.insert tag nParam env
+                (s2, MkCode d r _) = flatPureChild mode env' s1 view bodyId
+               in
+                (s2, Code mempty (renderFunction s2 nParam d r))
       Flat.FE_Apply fId xId ->
         flatEmitApply mode env s0 view fId [xId]
       Flat.FE_EmbedEff eId -> flatEffectChild mode env s0 view eId
@@ -1459,19 +1498,21 @@ flatEffectfulASTGo !mode !env !sIn view nid =
              in
               (s2, Code mempty hoisted)
           Nothing ->
-            let
-              (nParam, s1) = flatPlanIdent mode s0 nid
-              env' = IM.insert tag nParam env
-              (s2, MkCode exprXDecl exprXRef _) =
-                flatEffectChild mode env' s1 view bodyId
-              (s3, fnJs) =
-                emitHoistedFnValue
-                  s2
-                  view
-                  nid
-                  (renderFunction s2 nParam exprXDecl exprXRef)
-             in
-              (s3, Code mempty fnJs)
+            withHintScope s0 $ \sScoped ->
+              let
+                hint = FlatView.firParamName view nid
+                (nParam, s1) = flatPlanIdentHint mode sScoped nid hint
+                env' = IM.insert tag nParam env
+                (s2, MkCode exprXDecl exprXRef _) =
+                  flatEffectChild mode env' s1 view bodyId
+                (s3, fnJs) =
+                  emitHoistedFnValue
+                    s2
+                    view
+                    nid
+                    (renderFunction s2 nParam exprXDecl exprXRef)
+               in
+                (s3, Code mempty fnJs)
       Flat.FX_ApplyE fId xId ->
         flatEmitApplyE mode env s0 view fId [xId]
       Flat.FX_IfE cId tId eId ->
