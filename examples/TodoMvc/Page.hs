@@ -5,6 +5,7 @@ module Page (page) where
 import qualified Data.Text as T
 import Ids
 import Lucid
+import ThemeHead (githubCorner)
 
 -- | TodoMVC shell.
 page :: T.Text -> Html () -> Html () -> T.Text -> Html ()
@@ -18,6 +19,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
     link_ [rel_ "stylesheet", href_ (staticRoot <> "/todo-mvc.css")]
     headExtra
   body_ $ do
+    githubCorner
     section_ [class_ "todoapp"] $ do
       header_ [class_ "header"] $ do
         h1_ "todos"

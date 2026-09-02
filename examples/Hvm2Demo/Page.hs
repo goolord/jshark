@@ -25,7 +25,7 @@ import qualified Data.Text as T
 import Kernels (blockPx, canvasH, canvasW, maxIter, resolutionPresets)
 import Lucid
 import Lucid.Base (makeAttribute)
-import ThemeHead (themeLinks)
+import ThemeHead (githubCorner, themeLinks)
 
 boardId
   , statusId
@@ -97,6 +97,7 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $
       link_ [rel_ "stylesheet", href_ (staticRoot <> "/hvm2-demo.css")]
       headExtra
     body_ $ do
+      githubCorner
       main_ [class_ "page hvm2"] $ do
         header_ [class_ "hvm2-header page-header"] $ do
           h1_ "Mandelbrot"

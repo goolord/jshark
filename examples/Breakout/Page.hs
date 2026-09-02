@@ -5,7 +5,7 @@ module Page (page) where
 import qualified Data.Text as T
 import Lucid
 import Lucid.Base (makeAttribute)
-import ThemeHead (themeLinks)
+import ThemeHead (githubCorner, themeLinks)
 import Types (boardId, canvasH, canvasW)
 
 -- | Breakout shell.
@@ -20,6 +20,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $
       link_ [rel_ "stylesheet", href_ (staticRoot <> "/breakout.css")]
       headExtra
     body_ $ do
+      githubCorner
       main_ [class_ "page"] $ do
         header_ [class_ "page-header"] $ do
           h1_ "Breakout"

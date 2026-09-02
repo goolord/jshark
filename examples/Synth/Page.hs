@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import Keys
 import Lucid
 import Lucid.Base (makeAttribute)
-import ThemeHead (themeLinks)
+import ThemeHead (githubCorner, themeLinks)
 
 idWaveLabel, idFilterLabel, idEnvelopeLabel :: T.Text
 idWaveLabel = "synth-wave-label"
@@ -26,6 +26,7 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $
       link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth-keys.css")]
       headExtra
     body_ $ do
+      githubCorner
       main_ [class_ "page synth"] $ do
         header_ [class_ "page-header"] $ do
           h1_ "Synth"

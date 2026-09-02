@@ -37,7 +37,7 @@ import System.Directory
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import System.IO.Error (isAlreadyInUseError)
-import ThemeHead (themeLinks)
+import ThemeHead (githubCorner, themeLinks)
 import Web.Scotty
 
 resolveDataFile :: FilePath -> IO FilePath
@@ -439,7 +439,8 @@ indexPage paths shots = doctypehtml_ $
       title_ "Examples"
       themeLinks (indexStatic paths)
       link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/index.css")]
-    body_ $
+    body_ $ do
+      githubCorner
       main_ [class_ "page examples-index"] $ do
         header_ [class_ "page-header"] $ do
           h1_ "Examples"

@@ -11,7 +11,7 @@ import Patterns
   , disturbPatterns
   , glider
   )
-import ThemeHead (sourceLinks, themeLinks)
+import ThemeHead (githubCorner, sourceLinks, themeLinks)
 import Types
   ( boardId
   , canvasH
@@ -135,6 +135,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
       link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-tool-preview.css")]
       sourceLinks staticRoot
     body_ $ do
+      githubCorner
       main_ $ do
         header_ [class_ "life-header"] $ do
           h1_ "Life"
