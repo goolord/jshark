@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Filesystem watcher that maps source/static edits to 'HotReloadEvent's.
@@ -12,13 +11,16 @@ module JShark.HotReload.Watcher
   )
 where
 
-import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar, threadDelay)
-import Control.Monad (forever, void)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (SomeException, try)
+import Control.Monad (forM, void)
+import Data.Bits (xor)
+import qualified Data.ByteString as BS
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Int (Int64)
-import Data.List (isInfixOf, isSuffixOf)
+import Data.List (isInfixOf)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import JShark.HotReload.Core
   ( HotReloadConfig (..)
@@ -26,10 +28,15 @@ import JShark.HotReload.Core
   , HotReloadHub
   , broadcastEvent
   , hotReloadConfig
-  , registerJs
   )
-import System.FilePath (takeExtension, takeFileName)
-import qualified System.FSNotify as FS
+import System.Directory
+  ( doesDirectoryExist
+  , doesFileExist
+  , listDirectory
+  )
+import System.FilePath (takeExtension, takeFileName, (</>))
+import System.IO (hPutStrLn, stderr)
+import System.Timeout (timeout)
 
 -- | Directories and URL mapping for watched assets.
 data WatchTargets = WatchTargets
@@ -37,8 +44,6 @@ data WatchTargets = WatchTargets
   -- ^ Roots to watch recursively.
   , cssUrlFor :: FilePath -> Maybe T.Text
   -- ^ Map a changed path to the browser CSS URL.
-  , cacheJsAppFor :: FilePath -> Maybe T.Text
-  -- ^ Map @.jshark-cache/<app>.js@ updates to an app name.
   , onHaskellSource :: FilePath -> IO ()
   -- ^ Fired for non-Page @.hs@ edits (Mode B recompiler hook).
   }
@@ -48,7 +53,6 @@ defaultWatchTargets dirs =
   WatchTargets
     { watchDirs = dirs
     , cssUrlFor = defaultCssUrl
-    , cacheJsAppFor = defaultCacheJs
     , onHaskellSource = \_ -> pure ()
     }
 
@@ -59,20 +63,6 @@ defaultCssUrl path
       Just (T.pack ("/static/" <> map slash (takeFileName path)))
  where
   slash c = if c == '\\' then '/' else c
-
-defaultCacheJs :: FilePath -> Maybe T.Text
-defaultCacheJs path
-  | not (".js" `isSuffixOf` path) = Nothing
-  | not (".jshark-cache" `isInfixOf` path) = Nothing
-  | otherwise =
-      let
-        base = takeFileName path
-       in
-        Just (T.pack (stripSuffix ".js" base))
- where
-  stripSuffix sfx s
-    | sfx `isSuffixOf` s = take (length s - length sfx) s
-    | otherwise = s
 
 -- | Map a changed @.hs@ path under @examples/@ to an example app name.
 exampleAppForHs :: FilePath -> Maybe T.Text
@@ -117,46 +107,123 @@ isLucidShellPath path =
     || "ThemeHead" `isInfixOf` path
     || takeExtension path == ".html"
 
--- | Start a debounced fsnotify loop. Returns an IO action that stops it.
+-- | Start a content-hash poll loop. Returns an IO action that stops it.
+--
+-- Native Windows watches omit LAST_WRITE, so a 1-character in-place
+-- save can keep size and mtime unchanged. Content hash sees every save.
 startWatcher :: HotReloadHub -> WatchTargets -> IO (IO ())
 startWatcher hub targets = do
   stop <- newEmptyMVar
-  pending <- newIORef ([] :: [FilePath])
+  snap <- newIORef Map.empty
   let
     cfg = hotReloadConfig hub
     debounceUs = max 1 (hrDebounceMs cfg) * 1000
   void $
-    forkIO $
-      FS.withManager $ \mgr -> do
-        stops <-
-          mapM
-            ( \dir ->
-                FS.watchTree mgr dir (const True) $ \ev ->
-                  case eventPath ev of
-                    Just p ->
-                      atomicModifyIORef' pending $ \ps -> (p : ps, ())
-                    Nothing -> pure ()
-            )
-            (watchDirs targets)
-        void $
-          forkIO $
-            forever $ do
-              threadDelay debounceUs
-              paths <- atomicModifyIORef' pending $ \ps -> ([], nubKeep (reverse ps))
-              mapM_ (handlePath hub targets) paths
-        takeMVar stop
-        sequence_ stops
+    forkIO $ do
+      seed <- snapshotDirs (watchDirs targets)
+      writeIORef snap seed
+      let
+        loop = do
+          m <- timeout debounceUs (takeMVar stop)
+          case m of
+            Just () -> pure ()
+            Nothing -> do
+              changed <- pollChanges snap (watchDirs targets)
+              mapM_ (handlePathSafe hub targets) changed
+              loop
+      loop
   pure (putMVar stop ())
 
-eventPath :: FS.Event -> Maybe FilePath
-eventPath = \case
-  FS.Added p _ _ -> Just p
-  FS.Modified p _ _ -> Just p
-  FS.Removed p _ _ -> Just p
-  FS.Unknown p _ _ _ -> Just p
-  FS.ModifiedAttributes p _ _ -> Just p
-  FS.WatchedDirectoryRemoved p _ _ -> Just p
-  FS.CloseWrite p _ _ -> Just p
+handlePathSafe :: HotReloadHub -> WatchTargets -> FilePath -> IO ()
+handlePathSafe hub targets path = do
+  result <- try (handlePath hub targets path) :: IO (Either SomeException ())
+  case result of
+    Left ex ->
+      hPutStrLn stderr ("hot-reload: watch path failed: " <> show ex)
+    Right () -> pure ()
+
+type FingerSnap = Map.Map FilePath Int
+
+pollChanges :: IORef FingerSnap -> [FilePath] -> IO [FilePath]
+pollChanges snap dirs = do
+  next <- snapshotDirs dirs
+  old <- readIORef snap
+  writeIORef snap next
+  pure
+    [ path
+    | (path, h) <- Map.toList next
+    , Map.lookup path old /= Just h
+    ]
+
+snapshotDirs :: [FilePath] -> IO FingerSnap
+snapshotDirs dirs = do
+  paths <- fmap concat (mapM listWatchedFiles dirs)
+  pairs <-
+    forM (nubKeep paths) $ \path -> do
+      mh <- fileFinger path
+      pure (path, mh)
+  pure $
+    Map.fromList
+      [(path, h) | (path, Just h) <- pairs]
+
+listWatchedFiles :: FilePath -> IO [FilePath]
+listWatchedFiles root = do
+  isDir <- doesDirectoryExist root
+  isFile <- doesFileExist root
+  if isDir
+    then walkDir root
+    else
+      if isFile && isWatchedFile root
+        then pure [root]
+        else pure []
+
+walkDir :: FilePath -> IO [FilePath]
+walkDir dir = do
+  names <- listDirectory dir
+  fmap concat $
+    forM names $ \name ->
+      if skipWatchName name
+        then pure []
+        else do
+          let
+            path = dir </> name
+          isDir <- doesDirectoryExist path
+          if isDir
+            then walkDir path
+            else
+              if isWatchedFile path
+                then pure [path]
+                else pure []
+
+skipWatchName :: FilePath -> Bool
+skipWatchName name =
+  name
+    `elem` [ ".git"
+           , "dist"
+           , "dist-newstyle"
+           , "node_modules"
+           , "speed-highlight"
+           , ".stack-work"
+           ]
+
+isWatchedFile :: FilePath -> Bool
+isWatchedFile path = takeExtension path `elem` [".hs", ".html", ".css"]
+
+fileFinger :: FilePath -> IO (Maybe Int)
+fileFinger path = do
+  result <- try (BS.readFile path) :: IO (Either SomeException BS.ByteString)
+  case result of
+    Left _ -> pure Nothing
+    Right bs -> pure (Just (fnv32 bs))
+
+fnv32 :: BS.ByteString -> Int
+fnv32 = BS.foldl' step 2166136261
+ where
+  step h b =
+    let
+      h' = h `xor` fromIntegral b
+     in
+      h' * 16777619
 
 nubKeep :: [FilePath] -> [FilePath]
 nubKeep = go []
@@ -177,10 +244,4 @@ handlePath hub targets path =
           -- Page.hs / ThemeHead / Client.hs all go through Mode B recompile.
           -- Bare .html (if any) still hits the hook; recompiler no-ops unknowns.
           onHaskellSource targets path
-      | otherwise ->
-          case cacheJsAppFor targets path of
-            Just app -> do
-              src <- T.readFile path
-              h <- registerJs hub app src
-              broadcastEvent hub (JsUpdate app ("/" <> app <> "/app.js") h)
-            Nothing -> pure ()
+      | otherwise -> pure ()

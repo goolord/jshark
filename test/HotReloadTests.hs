@@ -3,15 +3,26 @@
 
 module HotReloadTests (hotReloadTests) where
 
+import Control.Concurrent (threadDelay)
+import Control.Exception (bracket)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
+import JShark (escapeJsString)
+import JShark.Bun
+  ( HappyDomOptions (..)
+  , defaultHappyDomOptions
+  , domTimeoutMicroseconds
+  )
+import JShark.Bun.Internal (JSProgram (..), runProgram)
+import JShark.HotReload.Client (clientRuntimeText)
 import JShark.HotReload.Core
-  ( HotReloadEvent (..)
+  ( HotReloadConfig (..)
+  , HotReloadEvent (..)
   , broadcastEvent
   , defaultHotReloadConfig
   , encodeEvent
@@ -23,6 +34,14 @@ import JShark.HotReload.Wai
   ( handleClientScript
   , hotReloadMiddleware
   , injectScriptIntoHtml
+  )
+import JShark.HotReload.Watcher
+  ( WatchTargets (..)
+  , defaultWatchTargets
+  , exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
+  , startWatcher
   )
 import Network.HTTP.Types (HeaderName, statusCode)
 import Network.HTTP.Types.Method (methodGet)
@@ -37,13 +56,15 @@ import Network.Wai
   , responseStatus
   )
 import Network.Wai.Internal (Response (..), ResponseReceived (..))
-import JShark.HotReload.Watcher
-  ( exampleAppForHs
-  , exampleAppsForHs
-  , isLucidShellPath
+import System.Directory
+  ( createDirectoryIfMissing
+  , findExecutable
+  , getTemporaryDirectory
+  , removePathForcibly
   )
+import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
+import Test.Tasty.HUnit (assertBool, assertEqual, assertFailure, testCase)
 
 hotReloadTests :: TestTree
 hotReloadTests =
@@ -54,15 +75,23 @@ hotReloadTests =
     , testCase "middleware serves client.js" middlewareClientOk
     , testCase "SSE response is event-stream" eventsHeaderOk
     , testCase "broadcast reaches subscribers" sseBroadcastOk
-    , testCase "HTML inject inserts client script before </body>" injectOk
+    , testCase "HTML inject inserts client script before </head>" injectOk
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
     , testCase "exampleAppForHs maps Client.hs paths" exampleAppMapOk
+    , testCase "startWatcher sees a second same-size save" watcherSecondSaveOk
+    , testCase
+        "disposeTracked keeps EventSource and shell listeners"
+        hmrDisposeKeepsSse
+    , testCase
+        "disposeTracked stops setTimeout chains after module eval"
+        hmrTimeoutChainDies
     ]
 
 encodeShapes :: IO ()
 encodeShapes = do
   assertBool "css" $
-    "\"type\":\"css-update\"" `T.isInfixOf` encodeEvent (CssUpdate "/static/x.css" 1)
+    "\"type\":\"css-update\""
+      `T.isInfixOf` encodeEvent (CssUpdate "/static/x.css" 1)
   assertBool "js" $
     "\"type\":\"js-update\""
       `T.isInfixOf` encodeEvent (JsUpdate "todo-mvc" "/todo-mvc/app.js" "1-deadbeef")
@@ -72,6 +101,9 @@ encodeShapes = do
     "\"type\":\"build-error\"" `T.isInfixOf` encodeEvent (BuildError "boom")
   assertBool "hello" $
     "\"type\":\"hello\"" `T.isInfixOf` encodeEvent (Hello [("todo-mvc", "1-ab")])
+  assertBool "start" $
+    "\"type\":\"build-start\""
+      `T.isInfixOf` encodeEvent (BuildStart "breakout")
 
 baseApp :: Application
 baseApp _ respond =
@@ -88,6 +120,14 @@ clientJsOk = do
   assertEqual "status" 200 code
   assertBool "content-type" ("javascript" `BS.isInfixOf` contentType hdrs)
   assertBool "body" ("EventSource" `BS8.isInfixOf` LBS.toStrict body)
+  assertBool "debug panel" ("__jshark-hr-panel" `BS8.isInfixOf` LBS.toStrict body)
+  assertBool "build-start" ("build-start" `BS8.isInfixOf` LBS.toStrict body)
+  assertBool "blob script" ("createObjectURL" `BS8.isInfixOf` LBS.toStrict body)
+  assertBool "module tracking" ("tracking" `BS8.isInfixOf` LBS.toStrict body)
+  assertBool "host untracked" ("untracked" `BS8.isInfixOf` LBS.toStrict body)
+  assertBool
+    "keeps EventSource"
+    ("shouldTrackTarget" `BS8.isInfixOf` LBS.toStrict body)
 
 middlewareClientOk :: IO ()
 middlewareClientOk = do
@@ -133,12 +173,16 @@ sseBroadcastOk = do
 injectOk :: IO ()
 injectOk = do
   let
-    html = "<html><body><p>x</p></body></html>"
-    tag = "<script src=\"/__jshark/client.js\" defer></script>"
+    html =
+      "<html><head><title>x</title></head><body><script src=\"/b/app.js\"></script></body></html>"
+    tag = "<script src=\"/__jshark/client.js\"></script>"
     out = injectScriptIntoHtml tag html
   assertEqual
-    "before body close"
-    "<html><body><p>x</p><script src=\"/__jshark/client.js\" defer></script></body></html>"
+    "before head close, ahead of app.js"
+    ( "<html><head><title>x</title>"
+        <> "<script src=\"/__jshark/client.js\"></script>"
+        <> "</head><body><script src=\"/b/app.js\"></script></body></html>"
+    )
     out
 
 middlewareInjectOk :: IO ()
@@ -155,6 +199,7 @@ middlewareInjectOk = do
   let
     strict = LBS.toStrict body
   assertBool "client script" ("/__jshark/client.js" `BS8.isInfixOf` strict)
+  assertBool "no defer" (not ("defer" `BS8.isInfixOf` strict))
   assertBool "still has body close" ("</body>" `BS8.isInfixOf` strict)
 
 exampleAppMapOk :: IO ()
@@ -181,6 +226,169 @@ exampleAppMapOk = do
     (exampleAppsForHs "examples/ThemeHead.hs")
   assertBool "lucid shell" (isLucidShellPath "examples/Breakout/Page.hs")
   assertBool "not lucid" (not (isLucidShellPath "examples/Breakout/Client.hs"))
+
+-- | Same-length overwrite must still enqueue a second Haskell recompile.
+watcherSecondSaveOk :: IO ()
+watcherSecondSaveOk = do
+  tmp <- getTemporaryDirectory
+  let
+    dir = tmp </> "jshark-hr-watch-second-save"
+    hsDir = dir </> "Life"
+    hs = hsDir </> "Client.hs"
+  bracket (setup dir hsDir) (\_ -> removePathForcibly dir) $ \_ -> do
+    hits <- newIORef (0 :: Int)
+    hub <-
+      newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
+    let
+      targets =
+        (defaultWatchTargets [dir])
+          { onHaskellSource =
+              \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
+          }
+    stop <- startWatcher hub targets
+    -- Let the manager snapshot the empty tree before the first write.
+    threadDelay 250000
+    writeFile hs "module Client where\n-- a\n"
+    n1 <- waitHits hits 1
+    writeFile hs "module Client where\n-- b\n"
+    n2 <- waitHits hits 2
+    stop
+    assertBool ("first save seen, got " <> show n1) (n1 >= 1)
+    assertBool ("second save seen, got " <> show n2) (n2 >= 2)
+ where
+  setup dir hsDir = do
+    removePathForcibly dir
+    createDirectoryIfMissing True hsDir
+  waitHits ref want = go (0 :: Int)
+   where
+    go waited
+      | waited >= 4000000 = readIORef ref
+      | otherwise = do
+          n <- readIORef ref
+          if n >= want
+            then pure n
+            else threadDelay 50000 >> go (waited + 50000)
+
+jsLit :: String -> String
+jsLit s = '"' : escapeJsString s ++ "\""
+
+happyDomHmrProgram :: String -> JSProgram
+happyDomHmrProgram expr =
+  JSProgram
+    { jsFlags = ["--install=fallback"]
+    , jsPrelude =
+        unlines
+          [ "import { GlobalRegistrator } from \"@happy-dom/global-registrator\";"
+          , "GlobalRegistrator.register({ url: "
+              ++ jsLit (T.unpack (happyDomUrl defaultHappyDomOptions))
+              ++ " });"
+          ]
+    , jsExpression = expr
+    , jsEpilogue = "await GlobalRegistrator.unregister();"
+    }
+
+hmrDisposeKeepsSseExpr :: String
+hmrDisposeKeepsSseExpr =
+  unlines
+    [ "(async () => {"
+    , "  class FakeES extends EventTarget {"
+    , "    constructor(u) { super(); this.url = u; this.readyState = 1; }"
+    , "    close() { this.readyState = 2; }"
+    , "  }"
+    , "  globalThis.EventSource = FakeES;"
+    , "  window.EventSource = FakeES;"
+    , "  (0, eval)(" ++ jsLit (T.unpack clientRuntimeText) ++ ");"
+    , "  if (!document.getElementById('__jshark-hr-panel')) throw new Error('missing panel');"
+    , "  const api = window.__JSHARK_HR_API__;"
+    , "  if (!api) throw new Error('missing __JSHARK_HR_API__');"
+    , "  const es = api.eventSource();"
+    , "  if (!es) throw new Error('missing EventSource');"
+    , "  if (typeof es.onmessage !== 'function') throw new Error('onmessage missing');"
+    , "  let sseHits = 0;"
+    , "  es.addEventListener('message', function () { sseHits += 1; });"
+    , "  let shellHits = 0;"
+    , "  api.untracked(function () {"
+    , "    window.addEventListener('click', function () { shellHits += 1; });"
+    , "  });"
+    , "  let appHits = 0;"
+    , "  let boom = false;"
+    , "  api.withModule(function () {"
+    , "    window.addEventListener('click', function () { appHits += 1; });"
+    , "    es.addEventListener('message', function () { sseHits += 10; });"
+    , "    window.setTimeout(function () { boom = true; }, 0);"
+    , "  });"
+    , "  api.disposeTracked();"
+    , "  if (typeof es.onmessage !== 'function') throw new Error('onmessage gone');"
+    , "  await new Promise(function (r) { setTimeout(r, 30); });"
+    , "  if (boom) throw new Error('tracked timeout survived');"
+    , "  window.dispatchEvent(new Event('click'));"
+    , "  if (shellHits !== 1) throw new Error('shell listener died: ' + shellHits);"
+    , "  if (appHits !== 0) throw new Error('app listener survived: ' + appHits);"
+    , "  es.dispatchEvent(new MessageEvent('message', { data: '{\"type\":\"css-update\",\"url\":\"/x.css\",\"timestamp\":1}' }));"
+    , "  if (sseHits < 1) throw new Error('EventSource listener died: ' + sseHits);"
+    , "  es.onmessage({ data: '{\"type\":\"css-update\",\"url\":\"/x.css\",\"timestamp\":1}' });"
+    , "  return 'ok';"
+    , "})()"
+    ]
+
+hmrDisposeKeepsSse :: IO ()
+hmrDisposeKeepsSse = do
+  m <- findExecutable "bun"
+  case m of
+    Nothing ->
+      assertFailure "bun not found on PATH; install https://bun.sh"
+    Just _ -> do
+      got <-
+        T.unpack
+          <$> runProgram
+            domTimeoutMicroseconds
+            (happyDomHmrProgram hmrDisposeKeepsSseExpr)
+      assertEqual "disposeTracked keeps SSE + shell listeners" "\"ok\"" got
+
+hmrTimeoutChainExpr :: String
+hmrTimeoutChainExpr =
+  unlines
+    [ "(async () => {"
+    , "  class FakeES extends EventTarget {"
+    , "    constructor(u) { super(); this.url = u; this.readyState = 1; }"
+    , "    close() { this.readyState = 2; }"
+    , "  }"
+    , "  globalThis.EventSource = FakeES;"
+    , "  window.EventSource = FakeES;"
+    , "  (0, eval)(" ++ jsLit (T.unpack clientRuntimeText) ++ ");"
+    , "  const api = window.__JSHARK_HR_API__;"
+    , "  if (!api) throw new Error('missing __JSHARK_HR_API__');"
+    , "  let hops = 0;"
+    , "  api.withModule(function () {"
+    , "    function loop() {"
+    , "      hops += 1;"
+    , "      if (hops < 80) window.setTimeout(loop, 0);"
+    , "    }"
+    , "    window.setTimeout(loop, 0);"
+    , "  });"
+    , "  await new Promise(function (r) { setTimeout(r, 25); });"
+    , "  if (hops < 2) throw new Error('chain never ran: ' + hops);"
+    , "  const frozen = hops;"
+    , "  api.disposeTracked();"
+    , "  await new Promise(function (r) { setTimeout(r, 40); });"
+    , "  if (hops !== frozen) throw new Error('timeout chain survived: ' + hops + ' vs ' + frozen);"
+    , "  return 'ok';"
+    , "})()"
+    ]
+
+hmrTimeoutChainDies :: IO ()
+hmrTimeoutChainDies = do
+  m <- findExecutable "bun"
+  case m of
+    Nothing ->
+      assertFailure "bun not found on PATH; install https://bun.sh"
+    Just _ -> do
+      got <-
+        T.unpack
+          <$> runProgram
+            domTimeoutMicroseconds
+            (happyDomHmrProgram hmrTimeoutChainExpr)
+      assertEqual "disposeTracked stops timeout chain" "\"ok\"" got
 
 contentType :: [(HeaderName, BS.ByteString)] -> BS.ByteString
 contentType = fromMaybe "" . lookup "Content-Type"

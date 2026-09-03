@@ -22,6 +22,8 @@ module JShark.HotReload.Core
   , setBuildError
   , clearBuildError
   , lastBuildError
+  , setBuildStart
+  , lastCompiling
   )
 where
 
@@ -51,6 +53,8 @@ data HotReloadEvent
     PageReload Text
   | -- | message
     BuildError Text
+  | -- | appName currently compiling (Haskell rebuild started)
+    BuildStart Text
   | -- | Sent on SSE connect so Mode C (server restart) can detect bumps.
     Hello [(Text, Text)]
   deriving (Show, Eq)
@@ -80,6 +84,7 @@ data HotReloadHub = HotReloadHub
   , hubJs :: IORef (Map.Map Text (Text, Text))
   , hubHtml :: IORef (Map.Map Text (Text, Text))
   , hubError :: IORef (Maybe Text)
+  , hubCompiling :: IORef (Maybe Text)
   }
 
 hotReloadConfig :: HotReloadHub -> HotReloadConfig
@@ -91,6 +96,7 @@ newHotReloadHub cfg = do
   js <- newIORef Map.empty
   html <- newIORef Map.empty
   err <- newIORef Nothing
+  compiling <- newIORef Nothing
   pure
     HotReloadHub
       { hubConfig = cfg
@@ -98,13 +104,22 @@ newHotReloadHub cfg = do
       , hubJs = js
       , hubHtml = html
       , hubError = err
+      , hubCompiling = compiling
       }
 
 broadcastEvent :: HotReloadHub -> HotReloadEvent -> IO ()
 broadcastEvent hub ev = do
   case ev of
-    BuildError msg -> atomicModifyIORef' (hubError hub) (\_ -> (Just msg, ()))
-    JsUpdate {} -> clearBuildError hub
+    BuildError msg -> do
+      atomicModifyIORef' (hubError hub) (\_ -> (Just msg, ()))
+      clearCompiling hub
+    BuildStart app -> do
+      clearBuildError hub
+      atomicModifyIORef' (hubCompiling hub) (\_ -> (Just app, ()))
+    JsUpdate {} -> do
+      clearBuildError hub
+      clearCompiling hub
+    PageReload {} -> clearCompiling hub
     _ -> pure ()
   atomically $ writeTChan (hubChan hub) ev
 
@@ -139,6 +154,11 @@ encodeEvent = \case
     object
       [ ("type", str "build-error")
       , ("message", str msg)
+      ]
+  BuildStart app ->
+    object
+      [ ("type", str "build-start")
+      , ("appName", str app)
       ]
   Hello hashes ->
     object
@@ -225,3 +245,12 @@ clearBuildError hub = atomicModifyIORef' (hubError hub) (\_ -> (Nothing, ()))
 
 lastBuildError :: HotReloadHub -> IO (Maybe Text)
 lastBuildError = readIORef . hubError
+
+setBuildStart :: HotReloadHub -> Text -> IO ()
+setBuildStart hub app = broadcastEvent hub (BuildStart app)
+
+clearCompiling :: HotReloadHub -> IO ()
+clearCompiling hub = atomicModifyIORef' (hubCompiling hub) (\_ -> (Nothing, ()))
+
+lastCompiling :: HotReloadHub -> IO (Maybe Text)
+lastCompiling = readIORef . hubCompiling

@@ -11,7 +11,6 @@ where
 
 import Data.Text (Text)
 import Lucid
-import Lucid.Base (makeAttribute)
 
 data HotReloadClientConfig = HotReloadClientConfig
   { hrClientSrc :: Text
@@ -34,8 +33,7 @@ hotReloadClientWith :: HotReloadClientConfig -> Html ()
 hotReloadClientWith cfg
   | not (hrEnabled cfg) = mempty
   | otherwise =
+      -- No defer: must run before body @app.js@ so rAF patches apply.
       script_
-        [ src_ (hrClientSrc cfg)
-        , makeAttribute "defer" ""
-        ]
+        [src_ (hrClientSrc cfg)]
         ("" :: Html ())

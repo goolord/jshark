@@ -30,6 +30,7 @@ import JShark.HotReload.Core
   , currentJsHashes
   , encodeEvent
   , lastBuildError
+  , lastCompiling
   , subscribe
   )
 import Network.HTTP.Types
@@ -82,6 +83,7 @@ handleSseRequest hub _req respond = do
   next <- subscribe hub
   hashes <- currentJsHashes hub
   merr <- lastBuildError hub
+  compiling <- lastCompiling hub
   alive <- newTVarIO True
   respond $
     responseStream status200 headers $ \write flush ->
@@ -92,6 +94,9 @@ handleSseRequest hub _req respond = do
             writeEvent write flush (Hello hashes)
             case merr of
               Just msg -> writeEvent write flush (BuildError msg)
+              Nothing -> pure ()
+            case compiling of
+              Just app -> writeEvent write flush (BuildStart app)
               Nothing -> pure ()
             eventLoop alive write flush next
         )
@@ -157,8 +162,8 @@ handleClientScript respond =
       ]
       (LBS.fromStrict clientRuntimeScript)
 
--- | Inject @<script src=... defer></script>@ before @</body>@ when the
--- response is buffered HTML that does not already include the client.
+-- | Inject @<script src=...>@ into @<head>@ (no defer) so timer patches
+-- install before the page's @app.js@.
 injectHotReloadClient :: HotReloadConfig -> Response -> Response
 injectHotReloadClient cfg resp =
   case resp of
@@ -201,14 +206,25 @@ scriptTag cfg =
   LBS.fromStrict . TE.encodeUtf8 $
     "<script src=\""
       <> hrClientPath cfg
-      <> "\" defer></script>"
+      <> "\"></script>"
 
 -- | Pure HTML rewrite used by middleware and tests.
+-- Prefer @</head>@ so the client runs before body @app.js@.
 injectScriptIntoHtml :: LBS.ByteString -> LBS.ByteString -> LBS.ByteString
 injectScriptIntoHtml tag body =
-  case breakSubstringCI "</body>" body of
-    (_, rest) | LBS.null rest -> body <> tag
-    (before, after) -> before <> tag <> after
+  case splitBefore "</head>" body of
+    Just (before, after) -> before <> tag <> after
+    Nothing ->
+      case splitBefore "</body>" body of
+        Just (before, after) -> before <> tag <> after
+        Nothing -> body <> tag
+
+splitBefore ::
+  BS.ByteString -> LBS.ByteString -> Maybe (LBS.ByteString, LBS.ByteString)
+splitBefore needle body =
+  case breakSubstringCI needle body of
+    (_, rest) | LBS.null rest -> Nothing
+    pair -> Just pair
 
 breakSubstringCI ::
   BS.ByteString -> LBS.ByteString -> (LBS.ByteString, LBS.ByteString)
