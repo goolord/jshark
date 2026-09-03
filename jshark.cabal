@@ -423,7 +423,7 @@ executable examples
     -with-rtsopts=-N
 
 executable jshark-compile
-  import: warnings, llvm
+  import: warnings, lucid-dep, llvm
   main-is:
     Main.hs
   hs-source-dirs:

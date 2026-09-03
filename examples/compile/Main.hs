@@ -1,16 +1,17 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | One-shot compile of example JShark programs into
--- @.jshark-cache/<name>.js@. Used by @examples --hot@ to pick up
--- @Client.hs@ edits without restarting the HTTP server (Mode B).
+-- | One-shot compile of example JShark programs + Lucid shells into
+-- @.jshark-cache/<name>.{js,html}@. Used by @examples --hot@ (Mode B).
 module Main (main) where
 
 import qualified Breakout
 import Control.Monad (forM_, unless)
 import Data.List (partition)
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import qualified Data.Text.Lazy as TL
 import qualified Hvm2Demo
 import JShark.Api.Types (fromSyntax)
 import JShark.Compiler
@@ -21,6 +22,7 @@ import JShark.Compiler
   , isCompilerFlag
   )
 import qualified Life
+import Lucid (Html, renderText)
 import qualified Synth
 import System.Directory (createDirectoryIfMissing)
 import System.Environment (getArgs)
@@ -31,6 +33,9 @@ import qualified TodoMvc
 
 cacheDir :: FilePath
 cacheDir = ".jshark-cache"
+
+staticRoot :: Text
+staticRoot = "/static"
 
 allLabels :: [String]
 allLabels = ["breakout", "todo-mvc", "synth", "life", "hvm2-demo"]
@@ -55,9 +60,14 @@ main = do
   forM_ labels $ \lab -> do
     js <- compileLabel cfg lab
     let
-      out = cacheDir </> (lab <> ".js")
-    T.writeFile out js
-    putStrLn out
+      script = "/" <> T.pack lab <> "/app.js"
+      jsOut = cacheDir </> (lab <> ".js")
+      htmlOut = cacheDir </> (lab <> ".html")
+      html = TL.toStrict (renderText (pageLabel lab script))
+    T.writeFile jsOut js
+    T.writeFile htmlOut html
+    putStrLn jsOut
+    putStrLn htmlOut
     hFlush stdout
 
 compileLabel :: CompilerConfig -> String -> IO Text
@@ -68,3 +78,15 @@ compileLabel cfg = \case
   "life" -> compileEffect cfg (fromSyntax Life.mainJS)
   "hvm2-demo" -> compileEffect cfg (fromSyntax Hvm2Demo.mainJS)
   other -> die ("jshark-compile: unknown example " <> other)
+
+-- | Hot-reload shells use empty source-pane slots; the live app script URL
+-- still points at @/<name>/app.js@.
+pageLabel :: String -> Text -> Html ()
+pageLabel = \case
+  "breakout" -> \script -> Breakout.page staticRoot mempty mempty script
+  "todo-mvc" -> \script -> TodoMvc.page staticRoot mempty mempty script
+  "synth" -> \script -> Synth.page staticRoot mempty mempty script
+  "life" -> \script -> Life.page staticRoot (Life.frameSrcFor script)
+  "hvm2-demo" -> \script ->
+    Hvm2Demo.page staticRoot "/hvm2-demo" mempty mempty script
+  other -> \_ -> error ("jshark-compile: unknown page " <> other)

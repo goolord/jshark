@@ -37,7 +37,11 @@ import Network.Wai
   , responseStatus
   )
 import Network.Wai.Internal (Response (..), ResponseReceived (..))
-import JShark.HotReload.Watcher (exampleAppForHs)
+import JShark.HotReload.Watcher
+  ( exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
+  )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 
@@ -164,13 +168,19 @@ exampleAppMapOk = do
     (Just "breakout")
     (exampleAppForHs "examples\\Breakout\\Types.hs")
   assertEqual
-    "page skip"
-    Nothing
+    "page maps"
+    (Just "todo-mvc")
     (exampleAppForHs "examples/TodoMvc/Page.hs")
   assertEqual
     "server skip"
     Nothing
     (exampleAppForHs "examples/server/DevServer.hs")
+  assertEqual
+    "theme all"
+    ["breakout", "todo-mvc", "synth", "life", "hvm2-demo"]
+    (exampleAppsForHs "examples/ThemeHead.hs")
+  assertBool "lucid shell" (isLucidShellPath "examples/Breakout/Page.hs")
+  assertBool "not lucid" (not (isLucidShellPath "examples/Breakout/Client.hs"))
 
 contentType :: [(HeaderName, BS.ByteString)] -> BS.ByteString
 contentType = fromMaybe "" . lookup "Content-Type"

@@ -14,7 +14,7 @@ where
 
 import Control.Exception (IOException)
 import qualified Control.Exception as Exception
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, void, when)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -24,8 +24,10 @@ import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import JShark.HotReload.Core
   ( HotReloadConfig (..)
   , HotReloadHub
+  , lookupHtml
   , lookupJs
   , newHotReloadHub
+  , registerHtml
   , registerJs
   )
 import JShark.HotReload.Wai (hotReloadMiddleware)
@@ -179,8 +181,15 @@ serveExamples mode startPort examples = do
     StaticServe -> pure Nothing
     HotServe cfg -> do
       hub <- newHotReloadHub cfg
-      forM_ examples $ \ex ->
-        registerJs hub (exampleName ex) (exampleJs ex)
+      forM_ examples $ \ex -> do
+        void (registerJs hub (exampleName ex) (exampleJs ex))
+        let
+          script = srcScript serverPaths (exampleName ex)
+          static = srcStatic serverPaths
+          pageHtml =
+            TL.toStrict $
+              renderText (examplePage ex script static)
+        void (registerHtml hub (exampleName ex) pageHtml)
       compileBin <- locateJsharkCompile
       onHs <- startHsRecompiler hub compileBin
       let
@@ -273,11 +282,13 @@ exampleRoutes mHot shots assets lifeJs hvm2Js examples = do
     get (fromString base) $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
       when isHvm2 hvm2ThreadHeaders
-      html $ renderText page
+      htmlBody <- liftIO (resolveExampleHtml mHub ex page)
+      html htmlBody
     get (fromString (base <> "/")) $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
       when isHvm2 hvm2ThreadHeaders
-      html $ renderText page
+      htmlBody <- liftIO (resolveExampleHtml mHub ex page)
+      html htmlBody
     get (fromString (base <> "/app.js")) $ do
       setHeader "Content-Type" "application/javascript; charset=utf-8"
       setHeader "Cache-Control" "no-store"
@@ -530,6 +541,17 @@ resolveExampleJs mHub ex =
           case mCached of
             Just (src, _) -> pure src
             Nothing -> pure (exampleJs ex)
+
+resolveExampleHtml ::
+  Maybe HotReloadHub -> Example -> Html () -> IO TL.Text
+resolveExampleHtml mHub ex fallback =
+  case mHub of
+    Nothing -> pure (renderText fallback)
+    Just hub -> do
+      mCached <- lookupHtml hub (exampleName ex)
+      case mCached of
+        Just (src, _) -> pure (TL.fromStrict src)
+        Nothing -> pure (renderText fallback)
 
 -- | Prefer @cabal list-bin jshark-compile@ so hot reload invokes a rebuilt
 -- binary without nesting another @cabal run@.

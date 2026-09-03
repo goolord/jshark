@@ -7,6 +7,8 @@ module JShark.HotReload.Watcher
   , defaultWatchTargets
   , startWatcher
   , exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
   )
 where
 
@@ -74,21 +76,32 @@ defaultCacheJs path
 
 -- | Map a changed @.hs@ path under @examples/@ to an example app name.
 exampleAppForHs :: FilePath -> Maybe T.Text
-exampleAppForHs path
-  | takeExtension path /= ".hs" = Nothing
-  | takeFileName path == "Page.hs" = Nothing
-  | serverOrTheme path = Nothing
-  | otherwise = matchDir path
+exampleAppForHs path =
+  case exampleAppsForHs path of
+    [one] -> Just one
+    _ -> Nothing
+
+-- | Like 'exampleAppForHs', but @ThemeHead@ maps to every example.
+exampleAppsForHs :: FilePath -> [T.Text]
+exampleAppsForHs path
+  | takeExtension path /= ".hs" = []
+  | serverOrCompile path = []
+  | isThemeHead path =
+      ["breakout", "todo-mvc", "synth", "life", "hvm2-demo"]
+  | otherwise =
+      case matchDir path of
+        Just app -> [app]
+        Nothing -> []
  where
-  serverOrTheme p =
+  serverOrCompile p =
     any
       (`isInfixOf` p)
       [ "examples\\server"
       , "examples/server"
-      , "ThemeHead"
       , "examples\\compile"
       , "examples/compile"
       ]
+  isThemeHead p = "ThemeHead" `isInfixOf` p
   matchDir p
     | "TodoMvc" `isInfixOf` p = Just "todo-mvc"
     | "Breakout" `isInfixOf` p = Just "breakout"
@@ -96,6 +109,13 @@ exampleAppForHs path
     | "Hvm2Demo" `isInfixOf` p = Just "hvm2-demo"
     | "Life" `isInfixOf` p = Just "life"
     | otherwise = Nothing
+
+-- | Lucid shell / shared head — prefer full page reload after rebuild.
+isLucidShellPath :: FilePath -> Bool
+isLucidShellPath path =
+  takeFileName path == "Page.hs"
+    || "ThemeHead" `isInfixOf` path
+    || takeExtension path == ".html"
 
 -- | Start a debounced fsnotify loop. Returns an IO action that stops it.
 startWatcher :: HotReloadHub -> WatchTargets -> IO (IO ())
@@ -153,9 +173,9 @@ handlePath hub targets path =
       ts <- fmap floor getPOSIXTime :: IO Int64
       broadcastEvent hub (CssUpdate url ts)
     Nothing
-      | takeFileName path == "Page.hs" || takeExtension path == ".html" ->
-          broadcastEvent hub (PageReload (T.pack path))
-      | takeExtension path == ".hs" ->
+      | takeExtension path == ".hs" || takeExtension path == ".html" ->
+          -- Page.hs / ThemeHead / Client.hs all go through Mode B recompile.
+          -- Bare .html (if any) still hits the hook; recompiler no-ops unknowns.
           onHaskellSource targets path
       | otherwise ->
           case cacheJsAppFor targets path of

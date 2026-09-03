@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Spawn @jshark-compile@ after Haskell example sources change so the
--- hot-reload hub can broadcast fresh JS (Mode B).
+-- hot-reload hub can broadcast fresh JS / Lucid HTML (Mode B).
 module Recompile
   ( exampleAppForHs
   , startHsRecompiler
@@ -11,17 +11,22 @@ where
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM (atomically, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, forever, void)
+import Control.Monad (forM_, forever, void, when)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import JShark.HotReload.Core
   ( HotReloadEvent (..)
   , HotReloadHub
   , broadcastEvent
+  , registerHtml
   , registerJs
   , setBuildError
   )
-import JShark.HotReload.Watcher (exampleAppForHs)
+import JShark.HotReload.Watcher
+  ( exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
+  )
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -31,11 +36,18 @@ import System.Process (readProcessWithExitCode)
 cacheDir :: FilePath
 cacheDir = ".jshark-cache"
 
+data PendingApp = PendingApp
+  { pendingName :: T.Text
+  , pendingPage :: Bool
+  -- ^ True when a Lucid shell / ThemeHead edit forced a full page reload.
+  }
+  deriving (Eq)
+
 -- | Background worker: queue example names, rebuild @jshark-compile@, run it,
--- then register JS + broadcast @JsUpdate@ (or @BuildError@).
+-- then register JS+HTML and broadcast @JsUpdate@ or @PageReload@.
 startHsRecompiler :: HotReloadHub -> FilePath -> IO (FilePath -> IO ())
 startHsRecompiler hub compileBin = do
-  pending <- newTVarIO ([] :: [T.Text])
+  pending <- newTVarIO ([] :: [PendingApp])
   wake <- newEmptyMVar
   lock <- newEmptyMVar
   putMVar lock ()
@@ -46,10 +58,11 @@ startHsRecompiler hub compileBin = do
         apps <- atomically $ do
           xs <- readTVar pending
           writeTVar pending []
-          pure (nubKeep xs)
-        forM_ apps $ \app -> do
+          pure (mergePending xs)
+        forM_ apps $ \job -> do
           takeMVar lock
-          result <- try (recompileOne hub compileBin app) :: IO (Either SomeException ())
+          result <-
+            try (recompileOne hub compileBin job) :: IO (Either SomeException ())
           case result of
             Left ex -> do
               hPutStrLn stderr ("hot-reload: recompile crashed: " <> show ex)
@@ -57,27 +70,39 @@ startHsRecompiler hub compileBin = do
             Right () -> pure ()
           putMVar lock ()
   pure $ \path ->
-    case exampleAppForHs path of
-      Nothing -> pure ()
-      Just app -> do
+    case exampleAppsForHs path of
+      [] -> pure ()
+      names -> do
+        let
+          page = isLucidShellPath path
+          jobs = [PendingApp n page | n <- names]
         atomically $ do
           xs <- readTVar pending
-          writeTVar pending (app : xs)
+          writeTVar pending (jobs ++ xs)
         void (tryPutMVar wake ())
 
-nubKeep :: [T.Text] -> [T.Text]
-nubKeep = go []
+mergePending :: [PendingApp] -> [PendingApp]
+mergePending = foldr step []
  where
-  go acc [] = reverse acc
-  go acc (x : xs)
-    | x `elem` acc = go acc xs
-    | otherwise = go (x : acc) xs
+  step job acc =
+    case filter ((== pendingName job) . pendingName) acc of
+      [] -> job : acc
+      (old : _) ->
+        let
+          merged =
+            PendingApp
+              (pendingName job)
+              (pendingPage job || pendingPage old)
+          rest = filter ((/= pendingName job) . pendingName) acc
+         in
+          merged : rest
 
-recompileOne :: HotReloadHub -> FilePath -> T.Text -> IO ()
-recompileOne hub compileBin app = do
+recompileOne :: HotReloadHub -> FilePath -> PendingApp -> IO ()
+recompileOne hub compileBin job = do
+  let
+    app = pendingName job
   hPutStrLn stdout ("hot-reload: compiling " <> T.unpack app <> " …")
   hFlush stdout
-  -- Rebuild so Client.hs edits land in the compile binary's object code.
   (buildEc, buildOut, buildErr) <-
     readProcessWithExitCode
       "cabal"
@@ -113,20 +138,36 @@ recompileOne hub compileBin app = do
                   <> err
           hPutStrLn stderr (T.unpack msg)
           setBuildError hub msg
-        ExitSuccess -> do
-          let
-            cacheFile = cacheDir </> (T.unpack app <> ".js")
-          exists <- doesFileExist cacheFile
-          if not exists
-            then setBuildError hub ("missing " <> T.pack cacheFile)
-            else do
-              js <- T.readFile cacheFile
-              h <- registerJs hub app js
-              broadcastEvent hub (JsUpdate app ("/" <> app <> "/app.js") h)
-              hPutStrLn
-                stdout
-                ("hot-reload: " <> T.unpack app <> " ok (" <> T.unpack h <> ")")
-              hFlush stdout
+        ExitSuccess -> loadArtifacts hub job
+
+loadArtifacts :: HotReloadHub -> PendingApp -> IO ()
+loadArtifacts hub job = do
+  let
+    app = pendingName job
+    jsFile = cacheDir </> (T.unpack app <> ".js")
+    htmlFile = cacheDir </> (T.unpack app <> ".html")
+  jsOk <- doesFileExist jsFile
+  htmlOk <- doesFileExist htmlFile
+  if not jsOk
+    then setBuildError hub ("missing " <> T.pack jsFile)
+    else do
+      js <- T.readFile jsFile
+      hJs <- registerJs hub app js
+      when htmlOk $ do
+        html <- T.readFile htmlFile
+        void (registerHtml hub app html)
+      if pendingPage job
+        then do
+          broadcastEvent hub (PageReload ("lucid:" <> app))
+          hPutStrLn
+            stdout
+            ("hot-reload: " <> T.unpack app <> " page reload (" <> T.unpack hJs <> ")")
+        else do
+          broadcastEvent hub (JsUpdate app ("/" <> app <> "/app.js") hJs)
+          hPutStrLn
+            stdout
+            ("hot-reload: " <> T.unpack app <> " js ok (" <> T.unpack hJs <> ")")
+      hFlush stdout
 
 resolveCompileBin :: FilePath -> IO FilePath
 resolveCompileBin hint = do

@@ -15,6 +15,8 @@ module JShark.HotReload.Core
   , encodeEvent
   , registerJs
   , lookupJs
+  , registerHtml
+  , lookupHtml
   , jsHash
   , currentJsHashes
   , setBuildError
@@ -76,6 +78,7 @@ data HotReloadHub = HotReloadHub
   { hubConfig :: HotReloadConfig
   , hubChan :: TChan HotReloadEvent
   , hubJs :: IORef (Map.Map Text (Text, Text))
+  , hubHtml :: IORef (Map.Map Text (Text, Text))
   , hubError :: IORef (Maybe Text)
   }
 
@@ -86,12 +89,14 @@ newHotReloadHub :: HotReloadConfig -> IO HotReloadHub
 newHotReloadHub cfg = do
   chan <- newBroadcastTChanIO
   js <- newIORef Map.empty
+  html <- newIORef Map.empty
   err <- newIORef Nothing
   pure
     HotReloadHub
       { hubConfig = cfg
       , hubChan = chan
       , hubJs = js
+      , hubHtml = html
       , hubError = err
       }
 
@@ -174,6 +179,18 @@ registerJs hub name source = do
 
 lookupJs :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
 lookupJs hub name = Map.lookup name <$> readIORef (hubJs hub)
+
+-- | Cache rendered Lucid HTML and return its content hash.
+registerHtml :: HotReloadHub -> Text -> Text -> IO Text
+registerHtml hub name source = do
+  let
+    h = jsHash source
+  atomicModifyIORef' (hubHtml hub) $ \m ->
+    (Map.insert name (source, h) m, ())
+  pure h
+
+lookupHtml :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
+lookupHtml hub name = Map.lookup name <$> readIORef (hubHtml hub)
 
 jsHash :: Text -> Text
 jsHash t =
