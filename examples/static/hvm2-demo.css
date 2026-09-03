@@ -37,7 +37,7 @@
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
-  padding: 0.2rem 0.45rem;
+  padding: 5px 0.45rem;
 }
 
 .hvm2 button:hover {
@@ -46,6 +46,10 @@
 
 .hvm2 button.active {
   border-color: var(--accent);
+}
+
+.hvm2 button.mode {
+  margin: 0.7ch;
 }
 
 .hvm2 button.bench {

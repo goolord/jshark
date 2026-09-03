@@ -47,10 +47,12 @@
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 3px;
-  padding: 0.25rem 0.55rem;
+  padding: 5px;
   cursor: pointer;
   font: inherit;
   font-size: 0.8125rem;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 

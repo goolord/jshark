@@ -1,6 +1,7 @@
 /* tokens.css must load before this file (see ThemeHead.sourceLinksLite). */
 
 .source-stack {
+  box-sizing: border-box;
   max-width: var(--max-w);
   margin: 0 auto;
   padding: 2rem var(--pad-x) 2.5rem;
@@ -8,6 +9,9 @@
 
 .js-source,
 .life-source {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--muted);
@@ -41,9 +45,12 @@
   position: static;
   display: block;
   flex: 0 0 auto;
+  align-self: center;
   width: 1rem;
   height: 1rem;
   margin: 0;
+  background-position: center;
+  background-size: contain;
   transform: rotate(-90deg);
 }
 
@@ -92,18 +99,28 @@
 .js-source-copy,
 .life-source-copy {
   appearance: none;
+  -moz-appearance: none;
+  box-sizing: border-box;
   flex: 0 0 auto;
   align-self: center;
   margin: 0;
   cursor: pointer;
-  padding: 0.2rem 0.55rem;
+  padding: 5px;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--bg);
   color: var(--muted);
   font: inherit;
   font-size: 0.75rem;
-  line-height: 1.2;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+  white-space: nowrap;
+}
+
+.js-source-copy::-moz-focus-inner,
+.life-source-copy::-moz-focus-inner {
+  border: 0;
+  padding: 0;
 }
 
 .js-source-copy:hover:not(:disabled),
@@ -121,6 +138,9 @@
 
 .js-source pre,
 .life-source-pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
   margin: 0;
   max-height: 28rem;
   overflow: auto;
@@ -135,8 +155,10 @@
 .life-source-pre code,
 .life-source-pre [class*="shj-lang-"] {
   display: block;
-  margin: 0;
+  box-sizing: border-box;
+  min-width: max-content;
   max-width: none;
+  margin: 0;
   border: 0;
   border-radius: 0;
   padding: 0.85rem 1rem;
@@ -150,7 +172,7 @@
 .life-source pre [class*="shj-lang-"] > div,
 .life-source-pre [class*="shj-lang-"] > div {
   display: flex;
-  overflow-x: auto;
+  min-width: 0;
 }
 
 .js-source pre [class*="shj-lang-"] > div :last-child,

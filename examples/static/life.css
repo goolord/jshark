@@ -130,18 +130,13 @@ main {
 .life-tools-collapse {
   appearance: none;
   pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   min-width: 1.5rem;
-  height: 1.5rem;
-  padding: 0 0.35rem;
+  padding: 5px 0.35rem;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--muted);
   font: inherit;
   font-size: 0.75rem;
-  line-height: 1;
   cursor: pointer;
 }
 
@@ -222,7 +217,7 @@ main {
   color: var(--text);
   font: inherit;
   font-size: 0.75rem;
-  padding: 0.15rem 0.4rem;
+  padding: 5px 0.4rem;
   cursor: pointer;
 }
 
@@ -542,6 +537,8 @@ main {
   white-space: nowrap;
 }
 
-a {
+/* Link colors come from base.css's [data-theme="dark"] a rule; the
+   GitHub corner is fixed-positioned outside main and carries inline colors. */
+main a {
   color: var(--text);
 }

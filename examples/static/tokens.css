@@ -15,3 +15,9 @@
   --gap: 0.75rem;
   --max-w: 43rem;
 }
+
+/* Vertically center button labels by trimming the line-box leading. */
+button {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
