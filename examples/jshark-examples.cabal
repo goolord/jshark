@@ -1,0 +1,358 @@
+cabal-version: 2.4
+
+-- jshark-examples: the five showcase apps, dev server, offline compiler,
+-- tests, and benchmarks (see examples/)
+-- tests, and benchmarks (see examples/)
+name: jshark-examples
+version: 0.1
+synopsis: JShark example apps, dev server, and static exporter
+homepage: https://github.com/goolord/jshark
+bug-reports: https://github.com/goolord/jshark/issues
+license: BSD-3-Clause
+license-file: ../../LICENSE
+author: goolord
+maintainer: goolord <zacharyachurchill@gmail.com>
+category: Language
+build-type: Simple
+extra-source-files:
+  static/**/*.js
+  static/**/*.css
+  static/**/*.png
+  static/**/*.wasm
+  static/**/*.map
+  static/**/*.json
+  static/**/*.ts
+  static/pico/VERSION
+  src/JShark/Example/Life/js/*.js
+  src/JShark/Example/Life/shaders/*.glsl
+
+data-files:
+  static/**/*.js
+  static/**/*.css
+  static/**/*.png
+  static/**/*.wasm
+  static/**/*.map
+  static/**/*.json
+  static/**/*.ts
+  static/pico/VERSION
+  src/JShark/Example/Life/js/*.js
+  src/JShark/Example/Life/shaders/*.glsl
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+-- Lucid destructures Lucid.Base internals; see packages/jshark-lucid.
+common lucid-dep
+  build-depends:
+    lucid >= 2.11 && < 2.12
+
+library
+  import: warnings, lucid-dep
+  exposed-modules:
+    JShark.Example.Breakout
+    JShark.Example.Breakout.Client
+    JShark.Example.Breakout.Page
+    JShark.Example.Breakout.Types
+    JShark.Example.Hvm2Demo
+    JShark.Example.Hvm2Demo.Client
+    JShark.Example.Hvm2Demo.Kernels
+    JShark.Example.Hvm2Demo.Page
+    JShark.Example.Life
+    JShark.Example.Life.Catalog
+    JShark.Example.Life.Client
+    JShark.Example.Life.Discover
+    JShark.Example.Life.DiscoverCore
+    JShark.Example.Life.DiscoverRuntime
+    JShark.Example.Life.Engine
+    JShark.Example.Life.EngineFinish
+    JShark.Example.Life.EngineWorker
+    JShark.Example.Life.Grid
+    JShark.Example.Life.GridApi
+    JShark.Example.Life.LifeTestSupport
+    JShark.Example.Life.Lut
+    JShark.Example.Life.LutBoot
+    JShark.Example.Life.LutCore
+    JShark.Example.Life.Names
+    JShark.Example.Life.Page
+    JShark.Example.Life.Palette
+    JShark.Example.Life.Patterns
+    JShark.Example.Life.Pixi
+    JShark.Example.Life.Profile
+    JShark.Example.Life.Types
+    JShark.Example.Synth
+    JShark.Example.Synth.Audio
+    JShark.Example.Synth.Client
+    JShark.Example.Synth.Keys
+    JShark.Example.Synth.Page
+    JShark.Example.Theme
+    JShark.Example.TodoMvc
+    JShark.Example.TodoMvc.Client
+    JShark.Example.TodoMvc.Ids
+    JShark.Example.TodoMvc.Page
+  build-depends:
+    , array
+    , base
+    , containers
+    , jshark
+    , jshark-lucid
+    , text
+  hs-source-dirs: src
+  default-language: Haskell2010
+
+executable jshark-examples
+  import: warnings, lucid-dep
+  main-is: Main.hs
+  other-modules:
+    DevServer
+    Paths_jshark_examples
+    Recompile
+    SourcePane
+  autogen-modules:
+    Paths_jshark_examples
+  hs-source-dirs: app/server
+  build-depends:
+    , base
+    , directory
+    , filepath
+    , jshark
+    , jshark-examples
+    , jshark-hotreload
+    , lucid
+    , process
+    , scotty >= 0.20 && < 1
+    , stm
+    , text
+    , warp >= 3.3 && < 3.6
+  default-language: Haskell2010
+  ghc-options:
+    -threaded
+    -with-rtsopts=-N
+
+executable jshark-compile
+  import: warnings, lucid-dep
+  main-is: Main.hs
+  hs-source-dirs: app/compile
+  build-depends:
+    , base
+    , directory
+    , filepath
+    , jshark
+    , jshark-examples
+    , lucid
+    , text
+  default-language: Haskell2010
+  ghc-options:
+    -threaded
+    -with-rtsopts=-N
+
+executable build-hvm2-demo-wasm
+  import: warnings
+  main-is: Main.hs
+  hs-source-dirs: app/wasm
+  build-depends:
+    , base
+    , directory
+    , filepath
+    , jshark
+    , jshark-examples
+    , process
+  default-language: Haskell2010
+
+executable gen-life-catalog
+  import: warnings
+  main-is: GenCatalog.hs
+  hs-source-dirs: app/life-tools
+  build-depends:
+    , base
+    , jshark-examples
+    , text
+  default-language: Haskell2010
+
+executable gen-life-worker
+  import: warnings
+  main-is: GenLifeWorker.hs
+  hs-source-dirs: app/life-tools
+  build-depends:
+    , base
+    , jshark-examples
+    , text
+  default-language: Haskell2010
+
+-- Life compiler profiling tools (manual runs, not CI-gated).
+common bench
+  import: warnings
+  default-language: Haskell2010
+  ghc-options:
+    -O2
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+    -with-rtsopts=-M10G
+    -Wno-unused-do-bind
+
+executable jshark-life-phases
+  import: bench
+  main-is: LifePhases.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+    , text
+
+executable jshark-life-metrics
+  import: bench
+  main-is: LifeMetrics.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+    , text
+
+executable jshark-life-flatopt
+  import: bench
+  main-is: LifeFlatOpt.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+
+executable jshark-life-iropt
+  import: bench
+  main-is: LifeIrOpt.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+
+executable jshark-life-lower
+  import: bench
+  main-is: LifeLower.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+
+executable jshark-life-full-emit
+  import: bench
+  main-is: LifeFullEmit.hs
+  other-modules:
+    Stages
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , deepseq >= 1.4
+    , jshark
+    , jshark-examples
+    , tasty-bench >= 0.3.5
+    , text
+
+executable jshark-life-emit
+  import: bench
+  main-is: LifeEmit.hs
+  other-modules:
+    Stages
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , deepseq >= 1.4
+    , jshark
+    , jshark-examples
+    , tasty-bench >= 0.3.5
+    , text
+
+executable jshark-probe
+  import: bench
+  main-is: Probe.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+    , text
+
+executable print-size
+  import: bench
+  main-is: PrintSize.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+    , text
+
+benchmark jshark-examples-bench
+  import: bench
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+    Stages
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , deepseq >= 1.4
+    , jshark
+    , jshark-examples
+    , tasty-bench >= 0.3.5
+    , text
+
+benchmark jshark-forced
+  import: bench
+  type: exitcode-stdio-1.0
+  main-is: Forced.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+    , tasty-bench >= 0.3.5
+
+test-suite jshark-examples-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+    BunTests
+    CaptureStderr
+    CatalogTests
+    ExampleTests
+    Hvm2Tests
+    LifeTests
+    LifeWorkerTests
+    PerfTests
+    StaticCssTests
+    Support
+  hs-source-dirs: test
+  build-depends:
+    , base
+    , containers
+    , directory
+    , filepath
+    , jshark
+    , jshark-examples
+    , process
+    , tasty
+    , tasty-hunit
+    , text
+  default-language: Haskell2010
+  ghc-options:
+    -Wno-deprecations
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N1
+    -with-rtsopts=-M10G

@@ -19,15 +19,22 @@
           hlib = prev.haskell.lib;
           compose = f: g: x: f (g x);
           apply = prev.lib.foldl' compose prev.lib.id;
+          tune = [ hlib.dontHaddock hlib.dontCheck ]
+            ++ (if profiling
+              then [ hlib.enableLibraryProfiling hlib.enableExecutableProfiling ]
+              else [ hlib.disableLibraryProfiling hlib.disableExecutableProfiling ]);
         in {
-          haskellPackages = (prev.haskell.packages.ghc914.extend (hself: hsuper: {
-            jshark = apply (
-              [ hlib.dontHaddock hlib.dontCheck ]
-              ++ (if profiling
-                then [ hlib.enableLibraryProfiling hlib.enableExecutableProfiling ]
-                else [ hlib.disableLibraryProfiling hlib.disableExecutableProfiling ])
-            ) (hself.callCabal2nix "jshark" self { });
-          }));
+          haskellPackages = (prev.haskell.packages.ghc914.extend (hself: hsuper:
+            let
+              mkPkg = name: dir:
+                apply tune (hself.callCabal2nix name dir { });
+            in {
+              jshark = mkPkg "jshark" ./packages/jshark;
+              jshark-lucid = mkPkg "jshark-lucid" ./packages/jshark-lucid;
+              jshark-bindgen = mkPkg "jshark-bindgen" ./packages/jshark-bindgen;
+              jshark-hotreload = mkPkg "jshark-hotreload" ./packages/jshark-hotreload;
+              jshark-examples = mkPkg "jshark-examples" ./examples;
+            }));
         };
 
       pkgsFor = { system, profiling ? false }:
@@ -41,6 +48,10 @@
       packages = forAllSystems (system: rec {
         default = jshark;
         jshark = (pkgsFor { inherit system; }).haskellPackages.jshark;
+        jshark-lucid = (pkgsFor { inherit system; }).haskellPackages.jshark-lucid;
+        jshark-bindgen = (pkgsFor { inherit system; }).haskellPackages.jshark-bindgen;
+        jshark-hotreload = (pkgsFor { inherit system; }).haskellPackages.jshark-hotreload;
+        jshark-examples = (pkgsFor { inherit system; }).haskellPackages.jshark-examples;
         jshark-profiled = (pkgsFor { inherit system; profiling = true; }).haskellPackages.jshark;
       });
 
@@ -50,7 +61,13 @@
           llvm = pkgs.llvm_20;
         in {
           default = pkgs.haskellPackages.shellFor {
-            packages = p: [ p.jshark ];
+            packages = p: [
+              p.jshark
+              p.jshark-lucid
+              p.jshark-bindgen
+              p.jshark-hotreload
+              p.jshark-examples
+            ];
             nativeBuildInputs = with pkgs; [
               cabal-install
               esbuild

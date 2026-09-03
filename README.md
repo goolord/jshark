@@ -151,12 +151,14 @@ are the same idea, with an object handle in front:
 `el.setAttribute("k", v)`. An argument that is itself the result of an
 effectful call uses the `ArgEffect` constructor instead of `arg`.
 
-More working programs live in `examples/` (each is a named library) and in
-`test/Main.hs`, which shows a great deal of what compiles to what.
+More working programs live in the `examples` package (`examples/src/`, each app
+is a `JShark.Example.*` module) and in the package test suites, which show a
+great deal of what compiles to what.
 
 ## Example programs
 
-The `examples` executable compiles and serves five programs; `/` lists them:
+The `jshark-examples` executable (in the `examples` package) compiles and
+serves five programs; `/` lists them:
 
 - `breakout` - a Canvas Breakout clone
 - `todo-mvc` - the TodoMVC app, using `jshark-lucid`
@@ -189,8 +191,8 @@ cabal run jshark-bindgen -- lib.d.ts --module JShark.Lib
 ```
 
 Full TypeScript extraction uses `bun` and the `typescript` package (see
-`jshark-bindgen/package.json`); `--no-ts` falls back to a built-in Haskell
-`.d.ts` parser.
+`packages/jshark-bindgen/package.json`); `--no-ts` falls back to a built-in
+Haskell `.d.ts` parser.
 
 ## Building and installing
 
@@ -212,13 +214,14 @@ Requirements:
 Run the tests and the example server:
 
 ```
-cabal test          # JS-vs-interpreter checks need bun on PATH
-cabal run examples  # serves the examples at http://localhost:3000
+cabal test all       # JS-vs-interpreter checks need bun on PATH
+cabal run exe:jshark-examples  # serves the examples at http://localhost:3000
 ```
 
-`cabal run examples -- export DIR` writes a static copy of the site, which is
-how GitHub Pages is updated on `master`. `scripts/check-wasm.sh` rebuilds the
-vendored HVM2 WASM and compile-checks the Life example's Zig kernels.
+`cabal run exe:jshark-examples -- export DIR` writes a static copy of the site,
+which is how GitHub Pages is updated on `master`. `scripts/check-wasm.sh`
+rebuilds the vendored HVM2 WASM and compile-checks the Life example's Zig
+kernels.
 
 A Nix shell pins the whole toolchain (GHC, cabal, LLVM 20, bun, zig, Biome,
 Fourmolu, esbuild): `nix develop`.

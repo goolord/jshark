@@ -33,9 +33,15 @@ _site/
 tools/
 node_modules/
 bun.lock
-!/jshark-bindgen/bun.lock
+!/packages/jshark-bindgen/bun.lock
 .aider*
 *.csv
+
+# Scratch scripts, profiling dumps, and Windows junk
+nul
+tmp-*
+tmp_*
+_enc.*
 
 # GHC/tasty profile and bench captures (see docs/benchmarking-and-testing.md)
 profile/

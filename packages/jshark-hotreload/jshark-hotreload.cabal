@@ -1,0 +1,81 @@
+cabal-version: 2.4
+
+-- jshark-hotreload: SSE hub, WAI middleware, and file watcher for the
+-- example dev server (see packages/jshark-hotreload)
+name: jshark-hotreload
+version: 0.1
+synopsis: Hot-reload infrastructure for JShark apps
+homepage: https://github.com/goolord/jshark
+bug-reports: https://github.com/goolord/jshark/issues
+license: BSD-3-Clause
+license-file: ../../LICENSE
+author: goolord
+maintainer: goolord <zacharyachurchill@gmail.com>
+category: Language
+build-type: Simple
+extra-source-files:
+  assets/jshark-reload.js
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+library
+  import: warnings
+  exposed-modules:
+    JShark.HotReload.Core
+    JShark.HotReload.Client
+    JShark.HotReload.Wai
+    JShark.HotReload.Watcher
+  build-depends:
+    , base
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , fsnotify >= 0.4 && < 0.5
+    , http-types >= 0.8 && < 1
+    , jshark
+    , streaming-bytestring >= 0.3.0 && < 0.4
+    , stm >= 2.5 && < 2.6
+    , template-haskell >= 2.16
+    , text
+    , time >= 1.12 && < 1.16
+    , wai >= 3.2 && < 3.3
+  hs-source-dirs: src
+  default-language: Haskell2010
+
+test-suite jshark-hotreload-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: test
+  build-depends:
+    , base
+    , bytestring
+    , directory
+    , filepath
+    , http-types >= 0.8 && < 1
+    , jshark
+    , jshark-hotreload
+    , tasty
+    , tasty-hunit
+    , text
+    , wai >= 3.2 && < 3.3
+  default-language: Haskell2010
+  ghc-options:
+    -Wno-deprecations
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N1
+    -with-rtsopts=-M4G

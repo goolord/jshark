@@ -1,10 +1,117 @@
-packages: ./
+packages:
+  packages/jshark
+  packages/jshark-lucid
+  packages/jshark-bindgen
+  packages/jshark-hotreload
+  examples
 
-tests: true
-
--- Cabal's default profile is -O1. Package ghc-options pass -O2 -fllvm
--- on Unix (see common llvm in jshark.cabal). Windows skips -fllvm.
+tests: True
+benchmarks: True
 optimization: 2
+
+-- Project-wide warning flags (local packages only; third-party deps must
+-- build with their own options).
+package jshark
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+package jshark-lucid
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+package jshark-bindgen
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+package jshark-hotreload
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+package jshark-examples
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+-- Windows lacks the LLVM opt/llc-20 toolchain used elsewhere.
+if !os(windows)
+  package jshark
+    ghc-options:
+      -fllvm
+      -pgmlo opt-20
+      -pgmlc llc-20
+
+  package jshark-lucid
+    ghc-options:
+      -fllvm
+      -pgmlo opt-20
+      -pgmlc llc-20
+
+  package jshark-bindgen
+    ghc-options:
+      -fllvm
+      -pgmlo opt-20
+      -pgmlc llc-20
+
+  package jshark-hotreload
+    ghc-options:
+      -fllvm
+      -pgmlo opt-20
+      -pgmlc llc-20
+
+  package jshark-examples
+    ghc-options:
+      -fllvm
+      -pgmlo opt-20
+      -pgmlc llc-20
 
 -- Hackage scotty-0.30 still caps containers < 0.8 (blocks GHC 9.14 boot
 -- containers-0.8). Drop this pin once a release allows containers >= 0.8.

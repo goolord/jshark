@@ -1,0 +1,89 @@
+cabal-version: 2.4
+
+-- jshark-lucid: Lucid HTML DSL integration (see packages/jshark-lucid)
+-- jshark-lucid: Lucid HTML DSL integration (see packages/jshark-lucid)
+name: jshark-lucid
+version: 0.1
+synopsis: Lucid HTML templates that render to JShark DOM builders
+homepage: https://github.com/goolord/jshark
+bug-reports: https://github.com/goolord/jshark/issues
+license: BSD-3-Clause
+license-file: ../../LICENSE
+author: goolord
+maintainer: goolord <zacharyachurchill@gmail.com>
+category: Language
+build-type: Simple
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wextra
+    -Werror
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+-- JShark.Lucid destructures Lucid.Base's Attribute, which is not part of
+-- the public Lucid API, so the bound is the tested minor rather than the
+-- next major: a rename inside 2.x would break the build.
+common lucid-dep
+  build-depends:
+    lucid >= 2.11 && < 2.12
+
+library
+  import: warnings, lucid-dep
+  exposed-modules:
+    JShark.Lucid
+    JShark.Lucid.HotReload
+  build-depends:
+    , base
+    , jshark
+    , text
+  hs-source-dirs: src
+  default-language: Haskell2010
+
+test-suite jshark-lucid-test
+  import: warnings, lucid-dep
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: test
+  build-depends:
+    , base
+    , directory
+    , jshark
+    , jshark-lucid
+    , lucid
+    , tasty
+    , tasty-hunit
+    , text
+  default-language: Haskell2010
+  ghc-options:
+    -Wno-deprecations
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N1
+    -with-rtsopts=-M4G
+
+benchmark jshark-lucid-bench
+  import: warnings, lucid-dep
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-lucid
+    , lucid
+    , text
+  default-language: Haskell2010
+  ghc-options:
+    -O2
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+    -with-rtsopts=-M4G

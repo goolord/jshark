@@ -9,8 +9,8 @@ alwaysApply: false
 ## Formatting (Fourmolu — strict)
 - 2-space indent, 80 cols, leading commas & import/export style
 - Leading function arrows; `single-constraint-parens: never`; `unicode: never`
-- `scripts/format.sh` or `fourmolu -i ./src ./examples ./test ./jshark-lucid`
+- `scripts/format.sh` or `fourmolu -i ./packages ./examples`
 
 ## Build
-- `cabal build` | `cabal test` | `cabal run examples` (http://localhost:3000)
-- Library: `-Wall -Wextra -Werror`; match existing extensions and module conventions
+- `cabal build all` | `cabal test all` | `cabal run exe:jshark-examples` (http://localhost:3000)
+- Library: `-Wall -Wextra -Werror` (project-wide in `cabal.project`); match existing extensions and module conventions

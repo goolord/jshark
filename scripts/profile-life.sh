@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sample Life FPS / GL from a running examples server.
-# Usage: cabal run examples
+# Usage: cabal run exe:jshark-examples
 #        ./scripts/profile-life.sh
 # Env: LIFE_BASE   (default http://127.0.0.1:3000)
 #      LIFE_MS     (default 8000)  how long to collect
@@ -32,7 +32,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 if ! curl -fsS -o /dev/null "$base/"; then
   echo "profile-life: examples server not reachable at $base" >&2
-  echo "profile-life: start it with: cabal run examples" >&2
+  echo "profile-life: start it with: cabal run exe:jshark-examples" >&2
   exit 1
 fi
 

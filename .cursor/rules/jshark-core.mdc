@@ -7,9 +7,9 @@ alwaysApply: true
 
 ## Stack
 - Haskell GHC 9.14+, Cabal 3.x, optional Nix (`flake.nix`)
-- Typed JS EDSL → JavaScript codegen; dev server Scotty (`cabal run examples`)
-- Lucid DOM: `jshark-lucid`; tests need Bun on PATH
-- Ancillary: JS in `examples/Life/js/`, Zig WASM in `examples/Life/wasm/`
+- Typed JS EDSL → JavaScript codegen; dev server Scotty (`cabal run exe:jshark-examples`)
+- Lucid DOM: `packages/jshark-lucid`; tests need Bun on PATH
+- Ancillary: JS in `examples/src/JShark/Example/Life/js/`, Zig WASM in `examples/src/JShark/Example/Life/wasm/`
 
 ## Architecture
 - PHOAS EDSL: closed terms `forall f`; substitution = Haskell function application
@@ -20,11 +20,12 @@ alwaysApply: true
 - Recoverable errors: `Either`/`ExceptT`; `error` only for impossible invariants
 
 ## Layout
-- `src/JShark/Api/` — PHOAS AST (`Types`), params, `Prim`, `Rec`, `Classes`, `Generic`
-- `src/JShark/Api.hs` — smart constructors and syntax helpers
-- `src/JShark/Compiler/` — Flatten, Lower, Optimize, Codegen, Emit, …
-- `src/JShark/Compiler.hs` — compile driver (`compileEffect`, minify config)
-- `src/JShark/` — JS API bridgers (`Array`, `Dom`, `Ajax`, `Timers`, …)
-- `src/JShark.hs` — public facade (`pureProgram`, `effectfulProgram`)
-- `jshark-lucid/` — Lucid integration
-- `examples/{Breakout,Life,Synth,TodoMvc,server,static}/`, `test/`, `bench/`
+- `packages/jshark/src/JShark/Api/` — PHOAS AST (`Types`), params, `Prim`, `Rec`, `Classes`, `Generic`
+- `packages/jshark/src/JShark/Api.hs` — smart constructors and syntax helpers
+- `packages/jshark/src/JShark/Compiler/` — Flatten, Lower, Optimize, Codegen, Emit, …
+- `packages/jshark/src/JShark/Compiler.hs` — compile driver (`compileEffect`, minify config)
+- `packages/jshark/src/JShark/` — JS API bridgers (`Array`, `Dom`, `Ajax`, `Timers`, …)
+- `packages/jshark/src/JShark.hs` — public facade (`pureProgram`, `effectfulProgram`)
+- `packages/jshark-lucid/`, `packages/jshark-hotreload/`, `packages/jshark-bindgen/` — satellite packages
+- `examples/src/JShark/Example/{Breakout,Life,Synth,TodoMvc,Hvm2Demo,Theme}.hs`, `examples/app/server/`, `examples/static/` — apps, dev server, assets
+- Test suites live under each `packages/*/test/` and `examples/test/`

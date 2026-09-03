@@ -1,9 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
+
 module Main where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Keys (Key (..), black, blackLeft, blackWidth, keys, noteId)
+import JShark.Example.Synth.Keys
+  ( Key (..)
+  , black
+  , blackLeft
+  , blackWidth
+  , keys
+  , noteId
+  )
 import Numeric (showFFloat)
 
 noteIdStr :: Key -> String

@@ -14,7 +14,7 @@ cabal run build-hvm2-demo-wasm -v0
 
 if command -v zig >/dev/null 2>&1; then
   (
-    cd examples/Life/wasm
+    cd examples/src/JShark/Example/Life/wasm
     zig build -Doptimize=ReleaseFast
   )
 else
