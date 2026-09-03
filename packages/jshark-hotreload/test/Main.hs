@@ -61,6 +61,7 @@ import System.Directory
   , findExecutable
   , getTemporaryDirectory
   , removePathForcibly
+  , renameFile
   )
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, defaultMain, testGroup)
@@ -82,6 +83,7 @@ hotReloadTests =
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
     , testCase "exampleAppForHs maps Client.hs paths" exampleAppMapOk
     , testCase "startWatcher sees a second same-size save" watcherSecondSaveOk
+    , testCase "startWatcher sees an atomic-rename save" watcherRenameSaveOk
     , testCase
         "disposeTracked keeps EventSource and shell listeners"
         hmrDisposeKeepsSse
@@ -253,7 +255,7 @@ watcherSecondSaveOk = do
               \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
           }
     stop <- startWatcher hub targets
-    -- Let the manager snapshot the empty tree before the first write.
+    -- Let fsnotify register the watch before the first write.
     threadDelay 250000
     writeFile hs "module Client where\n-- a\n"
     n1 <- waitHits hits 1
@@ -270,6 +272,49 @@ watcherSecondSaveOk = do
    where
     go waited
       | waited >= 4000000 = readIORef ref
+      | otherwise = do
+          n <- readIORef ref
+          if n >= want
+            then pure n
+            else threadDelay 50000 >> go (waited + 50000)
+
+-- | An editor-style write-temp-then-rename save (over an existing file)
+-- must still reach the hook: GHC 'renameFile' is MoveFileEx REPLACE_EXISTING.
+watcherRenameSaveOk :: IO ()
+watcherRenameSaveOk = do
+  tmp <- getTemporaryDirectory
+  let
+    dir = tmp </> "jshark-hr-watch-rename"
+    hs = dir </> "Life" </> "Client.hs"
+    tmpHs = dir </> "Life" </> "Client.hs.tmp"
+  bracket (setup dir) (\_ -> removePathForcibly dir) $ \_ -> do
+    hits <- newIORef (0 :: Int)
+    hub <-
+      newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
+    let
+      targets =
+        (defaultWatchTargets [dir])
+          { onHaskellSource =
+              \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
+          }
+    stop <- startWatcher hub targets
+    threadDelay 250000
+    writeFile hs "module Client where\n-- a\n"
+    n1 <- waitRename hits 1
+    writeFile tmpHs "module Client where\n-- b\n"
+    renameFile tmpHs hs
+    n2 <- waitRename hits 2
+    stop
+    assertBool ("first save seen, got " <> show n1) (n1 >= 1)
+    assertBool ("rename save seen, got " <> show n2) (n2 >= 2)
+ where
+  setup d = do
+    removePathForcibly d
+    createDirectoryIfMissing True (d </> "Life")
+  waitRename ref want = go (0 :: Int)
+   where
+    go waited
+      | waited >= 8000000 = readIORef ref
       | otherwise = do
           n <- readIORef ref
           if n >= want

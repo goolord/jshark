@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Filesystem watcher that maps source/static edits to 'HotReloadEvent's.
+-- | Filesystem watcher that maps source/static edits to 'HotReloadEvent's,
+-- driven by @fsnotify@ instead of a content-hash poll loop.
 module JShark.HotReload.Watcher
   ( WatchTargets (..)
   , defaultWatchTargets
@@ -11,15 +12,14 @@ module JShark.HotReload.Watcher
   )
 where
 
-import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM, void)
-import Data.Bits (xor)
-import qualified Data.ByteString as BS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Control.Monad (filterM, forM, void)
+import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Int (Int64)
 import Data.List (isInfixOf)
-import qualified Data.Map.Strict as Map
+import Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import JShark.HotReload.Core
@@ -29,12 +29,21 @@ import JShark.HotReload.Core
   , broadcastEvent
   , hotReloadConfig
   )
-import System.Directory
-  ( doesDirectoryExist
-  , doesFileExist
-  , listDirectory
+import System.Directory (doesDirectoryExist)
+import System.FSNotify
+  ( Event (..)
+  , EventIsDirectory (..)
+  , defaultConfig
+  , startManagerConf
+  , stopManager
+  , watchTree
   )
-import System.FilePath (takeExtension, takeFileName, (</>))
+import System.FilePath
+  ( splitDirectories
+  , takeDirectory
+  , takeExtension
+  , takeFileName
+  )
 import System.IO (hPutStrLn, stderr)
 import System.Timeout (timeout)
 
@@ -109,32 +118,78 @@ isLucidShellPath path =
     || "Theme" `isInfixOf` path
     || takeExtension path == ".html"
 
--- | Start a content-hash poll loop. Returns an IO action that stops it.
---
--- Native Windows watches omit LAST_WRITE, so a 1-character in-place
--- save can keep size and mtime unchanged. Content hash sees every save.
+-- | Start an fsnotify watch over the configured roots. The manager uses
+-- fsnotify's OS watch wherever one exists; on Windows that native watch
+-- omits LAST_WRITE, so a save that rewrites a file in place without changing
+-- its size (no rename / truncate) can go unreported. Events are only queued
+-- in the callback thread; a drain loop flushes unique changed paths every
+-- @hrDebounceMs@, so a burst of writes to one file yields a single
+-- 'HotReloadEvent' / recompile hook and handlers never run on the fsnotify
+-- thread. Returns an IO action that stops the watcher.
 startWatcher :: HotReloadHub -> WatchTargets -> IO (IO ())
 startWatcher hub targets = do
-  stop <- newEmptyMVar
-  snap <- newIORef Map.empty
   let
     cfg = hotReloadConfig hub
     debounceUs = max 1 (hrDebounceMs cfg) * 1000
+  dirs <- filterM doesDirectoryExist (watchDirs targets)
+  mgr <- startManagerConf defaultConfig
+  pending <- newIORef Set.empty
+  stop <- newEmptyMVar
+  stopWatches <-
+    fmap catMaybes $
+      forM dirs $ \dir -> do
+        registered <-
+          try (watchTree mgr dir interestingEvent (queueEvent pending)) ::
+            IO (Either SomeException (IO ()))
+        case registered of
+          Right stopWatching -> pure (Just stopWatching)
+          Left ex -> do
+            hPutStrLn stderr ("hot-reload: cannot watch " <> dir <> ": " <> show ex)
+            pure Nothing
   void $
-    forkIO $ do
-      seed <- snapshotDirs (watchDirs targets)
-      writeIORef snap seed
-      let
-        loop = do
-          m <- timeout debounceUs (takeMVar stop)
-          case m of
-            Just () -> pure ()
-            Nothing -> do
-              changed <- pollChanges snap (watchDirs targets)
-              mapM_ (handlePathSafe hub targets) changed
-              loop
-      loop
-  pure (putMVar stop ())
+    forkIO (drainLoop hub targets debounceUs pending stop)
+  pure $ do
+    putMVar stop ()
+    mapM_ id stopWatches
+    stopManager mgr
+
+-- | Keep only file events for watched extensions outside ignored dirs.
+-- 'Removed', 'CloseWrite', and attribute churn are dropped; the drain loop
+-- deduplicates anything left over.
+interestingEvent :: Event -> Bool
+interestingEvent ev =
+  eventIsDirectory ev == IsFile
+    && isWatchedFile path
+    && not (underIgnoredDir path)
+    && actionable ev
+ where
+  path = eventPath ev
+  actionable (Added {}) = True
+  actionable (Modified {}) = True
+  actionable _ = False
+
+-- | fsnotify callback: remember the changed path, never do real work here.
+queueEvent :: IORef (Set.Set FilePath) -> Event -> IO ()
+queueEvent pending ev =
+  atomicModifyIORef' pending $ \paths ->
+    (Set.insert (eventPath ev) paths, ())
+
+-- | Flush pending paths once per debounce window until told to stop.
+drainLoop ::
+  HotReloadHub
+  -> WatchTargets
+  -> Int
+  -> IORef (Set.Set FilePath)
+  -> MVar ()
+  -> IO ()
+drainLoop hub targets debounceUs pending stop = do
+  m <- timeout debounceUs (takeMVar stop)
+  case m of
+    Just () -> pure ()
+    Nothing -> do
+      changed <- atomicModifyIORef' pending $ \paths -> (Set.empty, Set.toList paths)
+      mapM_ (handlePathSafe hub targets) changed
+      drainLoop hub targets debounceUs pending stop
 
 handlePathSafe :: HotReloadHub -> WatchTargets -> FilePath -> IO ()
 handlePathSafe hub targets path = do
@@ -144,58 +199,23 @@ handlePathSafe hub targets path = do
       hPutStrLn stderr ("hot-reload: watch path failed: " <> show ex)
     Right () -> pure ()
 
-type FingerSnap = Map.Map FilePath Int
+handlePath :: HotReloadHub -> WatchTargets -> FilePath -> IO ()
+handlePath hub targets path =
+  case cssUrlFor targets path of
+    Just url -> do
+      ts <- fmap floor getPOSIXTime :: IO Int64
+      broadcastEvent hub (CssUpdate url ts)
+    Nothing
+      | takeExtension path == ".hs" || takeExtension path == ".html" ->
+          -- Page.hs / ThemeHead / Client.hs all go through Mode B recompile.
+          -- Bare .html (if any) still hits the hook; recompiler no-ops unknowns.
+          onHaskellSource targets path
+      | otherwise -> pure ()
 
-pollChanges :: IORef FingerSnap -> [FilePath] -> IO [FilePath]
-pollChanges snap dirs = do
-  next <- snapshotDirs dirs
-  old <- readIORef snap
-  writeIORef snap next
-  pure
-    [ path
-    | (path, h) <- Map.toList next
-    , Map.lookup path old /= Just h
-    ]
-
-snapshotDirs :: [FilePath] -> IO FingerSnap
-snapshotDirs dirs = do
-  paths <- fmap concat (mapM listWatchedFiles dirs)
-  pairs <-
-    forM (nubKeep paths) $ \path -> do
-      mh <- fileFinger path
-      pure (path, mh)
-  pure $
-    Map.fromList
-      [(path, h) | (path, Just h) <- pairs]
-
-listWatchedFiles :: FilePath -> IO [FilePath]
-listWatchedFiles root = do
-  isDir <- doesDirectoryExist root
-  isFile <- doesFileExist root
-  if isDir
-    then walkDir root
-    else
-      if isFile && isWatchedFile root
-        then pure [root]
-        else pure []
-
-walkDir :: FilePath -> IO [FilePath]
-walkDir dir = do
-  names <- listDirectory dir
-  fmap concat $
-    forM names $ \name ->
-      if skipWatchName name
-        then pure []
-        else do
-          let
-            path = dir </> name
-          isDir <- doesDirectoryExist path
-          if isDir
-            then walkDir path
-            else
-              if isWatchedFile path
-                then pure [path]
-                else pure []
+-- | True when the file lives under a directory fsnotify reports but the
+-- hot-reload watcher ignores (@dist@, @node_modules@, ...).
+underIgnoredDir :: FilePath -> Bool
+underIgnoredDir = any skipWatchName . splitDirectories . takeDirectory
 
 skipWatchName :: FilePath -> Bool
 skipWatchName name =
@@ -210,40 +230,3 @@ skipWatchName name =
 
 isWatchedFile :: FilePath -> Bool
 isWatchedFile path = takeExtension path `elem` [".hs", ".html", ".css"]
-
-fileFinger :: FilePath -> IO (Maybe Int)
-fileFinger path = do
-  result <- try (BS.readFile path) :: IO (Either SomeException BS.ByteString)
-  case result of
-    Left _ -> pure Nothing
-    Right bs -> pure (Just (fnv32 bs))
-
-fnv32 :: BS.ByteString -> Int
-fnv32 = BS.foldl' step 2166136261
- where
-  step h b =
-    let
-      h' = h `xor` fromIntegral b
-     in
-      h' * 16777619
-
-nubKeep :: [FilePath] -> [FilePath]
-nubKeep = go []
- where
-  go acc [] = reverse acc
-  go acc (x : xs)
-    | x `elem` acc = go acc xs
-    | otherwise = go (x : acc) xs
-
-handlePath :: HotReloadHub -> WatchTargets -> FilePath -> IO ()
-handlePath hub targets path =
-  case cssUrlFor targets path of
-    Just url -> do
-      ts <- fmap floor getPOSIXTime :: IO Int64
-      broadcastEvent hub (CssUpdate url ts)
-    Nothing
-      | takeExtension path == ".hs" || takeExtension path == ".html" ->
-          -- Page.hs / ThemeHead / Client.hs all go through Mode B recompile.
-          -- Bare .html (if any) still hits the hook; recompiler no-ops unknowns.
-          onHaskellSource targets path
-      | otherwise -> pure ()

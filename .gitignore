@@ -48,3 +48,4 @@ profile/
 
 # Hot-reload Mode B JS cache
 .jshark-cache/
+.zed/settings.json
