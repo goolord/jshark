@@ -8,7 +8,7 @@ synopsis: Safe Javascript EDSL
 homepage: https://github.com/goolord/jshark
 bug-reports: https://github.com/goolord/jshark/issues
 license: BSD-3-Clause
-license-file: ../../LICENSE
+license-file: LICENSE
 author:
   goolord
   chessai
@@ -26,8 +26,8 @@ copyright:
 category: Language
 build-type: Simple
 extra-source-files:
-  ../../README.md
-  ../../CHANGELOG.md
+  README.md
+  CHANGELOG.md
 
 common warnings
   ghc-options:
