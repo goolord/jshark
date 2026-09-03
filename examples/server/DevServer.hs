@@ -3,6 +3,7 @@
 
 module DevServer
   ( Example (..)
+  , ServeMode (..)
   , SitePaths (..)
   , exportExamples
   , serveExamples
@@ -20,6 +21,15 @@ import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.IO as TL
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
+import JShark.HotReload.Core
+  ( HotReloadConfig (..)
+  , HotReloadHub
+  , lookupJs
+  , newHotReloadHub
+  , registerJs
+  )
+import JShark.HotReload.Wai (hotReloadMiddleware)
+import JShark.HotReload.Watcher (defaultWatchTargets, startWatcher)
 import qualified Life
 import Lucid
 import Lucid.Base (makeAttribute)
@@ -65,7 +75,15 @@ data Example = Example
   -- ^ Display JS for the collapsible source pane ('prettyJS' of compiled
   --   output when set). Life serves this at @source.js@; other examples
   --   embed it in the page.
+  , exampleJsAction :: Maybe (IO T.Text)
+  -- ^ Optional live JS provider (recompile on request).
   }
+
+-- | Static assets only, or hot-reload hub + filesystem watcher.
+data ServeMode
+  = StaticServe
+  | HotServe HotReloadConfig
+  deriving (Show, Eq)
 
 -- | URL prefixes so the same HTML works on Scotty (@/@) and GitHub Pages (@/jshark/@).
 data SitePaths = SitePaths
@@ -143,8 +161,8 @@ serverOpts port =
 
 -- | Serve every example and a screenshot directory at @/@.
 -- Tries @startPort@, then successive ports until warp binds.
-serveExamples :: Int -> [Example] -> IO ()
-serveExamples startPort examples = do
+serveExamples :: ServeMode -> Int -> [Example] -> IO ()
+serveExamples mode startPort examples = do
   shots <- traverse exampleShot examples
   assets <-
     fmap concat $
@@ -154,10 +172,22 @@ serveExamples startPort examples = do
     allAssets = assets ++ treeAssets
   lifeJs <- traverse demoAssetPath lifeEngineJs
   hvm2Js <- traverse demoAssetPath hvm2DemoAssets
+  mHot <- case mode of
+    StaticServe -> pure Nothing
+    HotServe cfg -> do
+      hub <- newHotReloadHub cfg
+      forM_ examples $ \ex ->
+        registerJs hub (exampleName ex) (exampleJs ex)
+      _ <-
+        startWatcher
+          hub
+          (defaultWatchTargets ["examples", "examples/static", ".jshark-cache"])
+      pure (Just (cfg, hub))
   tryServe
     startPort
     startPort
     (startPort + 100)
+    mHot
     shots
     allAssets
     lifeJs
@@ -168,13 +198,14 @@ tryServe ::
   Int
   -> Int
   -> Int
+  -> Maybe (HotReloadConfig, HotReloadHub)
   -> [(Example, Maybe FilePath)]
   -> [(String, FilePath)]
   -> [(FilePath, FilePath)]
   -> [(FilePath, FilePath)]
   -> [Example]
   -> IO ()
-tryServe startPort port maxPort shots assets lifeJs hvm2Js examples
+tryServe startPort port maxPort mHot shots assets lifeJs hvm2Js examples
   | port > maxPort =
       fail $
         "no free port in range "
@@ -185,24 +216,40 @@ tryServe startPort port maxPort shots assets lifeJs hvm2Js examples
       putStrLn ("Examples on http://" <> serverHost <> ":" <> show port)
       hFlush stdout
       Exception.catch
-        (scottyOpts (serverOpts port) (exampleRoutes shots assets lifeJs hvm2Js examples))
+        ( scottyOpts
+            (serverOpts port)
+            (exampleRoutes mHot shots assets lifeJs hvm2Js examples)
+        )
         $ \e ->
           if isAlreadyInUseError e
             then do
               hPutStrLn
                 stderr
                 ("port " <> show port <> " in use, trying " <> show (port + 1))
-              tryServe startPort (port + 1) maxPort shots assets lifeJs hvm2Js examples
+              tryServe
+                startPort
+                (port + 1)
+                maxPort
+                mHot
+                shots
+                assets
+                lifeJs
+                hvm2Js
+                examples
             else Exception.throwIO (e :: IOException)
 
 exampleRoutes ::
-  [(Example, Maybe FilePath)]
+  Maybe (HotReloadConfig, HotReloadHub)
+  -> [(Example, Maybe FilePath)]
   -> [(String, FilePath)]
   -> [(FilePath, FilePath)]
   -> [(FilePath, FilePath)]
   -> [Example]
   -> ScottyM ()
-exampleRoutes shots assets lifeJs hvm2Js examples = do
+exampleRoutes mHot shots assets lifeJs hvm2Js examples = do
+  case mHot of
+    Just (cfg, hub) -> middleware (hotReloadMiddleware cfg hub)
+    Nothing -> pure ()
   get "/" $ do
     setHeader "Content-Type" "text/html; charset=utf-8"
     html $ renderText (indexPage serverPaths shots)
@@ -213,6 +260,7 @@ exampleRoutes shots assets lifeJs hvm2Js examples = do
         examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
       isLife = exampleName ex == "life"
       isHvm2 = exampleName ex == "hvm2-demo"
+      mHub = fmap snd mHot
     get (fromString base) $ do
       setHeader "Content-Type" "text/html; charset=utf-8"
       when isHvm2 hvm2ThreadHeaders
@@ -226,7 +274,8 @@ exampleRoutes shots assets lifeJs hvm2Js examples = do
       setHeader "Cache-Control" "no-store"
       when isLife lifeAssetHeaders
       when isHvm2 hvm2ThreadHeaders
-      text (TL.fromStrict (exampleJs ex))
+      js <- liftIO (resolveExampleJs mHub ex)
+      text (TL.fromStrict js)
     forM_ (exampleSourceJs ex) $ \src ->
       get (fromString (base <> "/source.js")) $ do
         setHeader "Content-Type" "application/javascript; charset=utf-8"
@@ -460,9 +509,23 @@ exampleCard paths (ex, shot) =
             ]
       span_ (toHtml (exampleTitle ex))
 
+resolveExampleJs :: Maybe HotReloadHub -> Example -> IO T.Text
+resolveExampleJs mHub ex =
+  case exampleJsAction ex of
+    Just act -> act
+    Nothing ->
+      case mHub of
+        Nothing -> pure (exampleJs ex)
+        Just hub -> do
+          mCached <- lookupJs hub (exampleName ex)
+          case mCached of
+            Just (src, _) -> pure src
+            Nothing -> pure (exampleJs ex)
+
 staticFiles :: [FilePath]
 staticFiles =
   [ "source-pane.js"
+  , "jshark-reload.js"
   , "tokens.css"
   , "base.css"
   , "pico/pico.min.css"

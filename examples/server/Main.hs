@@ -6,7 +6,7 @@ import qualified Breakout
 import Data.List (partition)
 import qualified Data.List as List
 import qualified Data.Text as T
-import DevServer (Example (..), exportExamples, serveExamples)
+import DevServer (Example (..), ServeMode (..), exportExamples, serveExamples)
 import qualified Hvm2Demo
 import JShark.Api.Types (fromSyntax)
 import JShark.Compiler
@@ -18,6 +18,7 @@ import JShark.Compiler
   , isCompilerFlag
   , readableConfig
   )
+import JShark.HotReload.Core (defaultHotReloadConfig)
 import JShark.Hvm2 (bendModule)
 import Kernels (hvm2Entries, mandelJsSource)
 import qualified Life
@@ -31,7 +32,13 @@ main :: IO ()
 main = do
   args <- getArgs
   let
-    (flags, cmd) = partition isCompilerFlag args
+    (flags, rest) = partition isCompilerFlag args
+    (hotFlags, cmd) =
+      partition (\a -> a == "--hot" || a == "--watch") rest
+    mode =
+      if null hotFlags
+        then StaticServe
+        else HotServe defaultHotReloadConfig
     cfg =
       applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
     paneCfg = readableConfig {configProgress = configProgress cfg}
@@ -72,13 +79,13 @@ main = do
         Just js -> js
         Nothing ->
           error (T.unpack ("examples: missing compile output for " <> label))
-    lookupJs = lookupIn compiled
+    lookupCompiled = lookupIn compiled
     lookupPane = lookupIn paneCompiled
-    breakoutJs = lookupJs "breakout"
-    todoJs = lookupJs "todo-mvc"
-    synthJs = lookupJs "synth"
-    lifeJs = lookupJs "life"
-    hvm2Js = lookupJs "hvm2-demo"
+    breakoutJs = lookupCompiled "breakout"
+    todoJs = lookupCompiled "todo-mvc"
+    synthJs = lookupCompiled "synth"
+    lifeJs = lookupCompiled "life"
+    hvm2Js = lookupCompiled "hvm2-demo"
     breakoutSrc = lookupPane "breakout"
     todoSrc = lookupPane "todo-mvc"
     synthSrc = lookupPane "synth"
@@ -103,6 +110,7 @@ main = do
           )
           breakoutJs
           (Just breakoutSrc)
+          Nothing
       , Example
           "todo-mvc"
           "TodoMVC"
@@ -115,6 +123,7 @@ main = do
           )
           todoJs
           (Just todoSrc)
+          Nothing
       , Example
           "synth"
           "Synthesizer"
@@ -127,6 +136,7 @@ main = do
           )
           synthJs
           (Just synthSrc)
+          Nothing
       , Example
           "life"
           "Game of Life"
@@ -135,6 +145,7 @@ main = do
           )
           lifeJs
           (Just lifeSrc)
+          Nothing
       , Example
           "hvm2-demo"
           "HVM2 Lab"
@@ -152,11 +163,12 @@ main = do
           )
           hvm2Js
           (Just hvm2Src)
+          Nothing
       ]
   case cmd of
     [] ->
-      serveExamples 3000 examples
+      serveExamples mode 3000 examples
     ["export", dest] -> exportExamples dest examples
     _ ->
       die
-        "usage: examples [--progress] [--readable] [--warn-hvm2-candidates] | examples [--progress] [--readable] [--warn-hvm2-candidates] export DIR"
+        "usage: examples [--progress] [--readable] [--warn-hvm2-candidates] [--hot|--watch] | examples [--progress] [--readable] [--warn-hvm2-candidates] export DIR"

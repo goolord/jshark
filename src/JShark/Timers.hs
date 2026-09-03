@@ -10,6 +10,7 @@ module JShark.Timers
   , setInterval
   , clearTimeout
   , clearInterval
+  , cancelAnimationFrame
   , requestAnimationFrame
   , foreverFrame
   , foreverTick
@@ -56,6 +57,11 @@ clearTimeout timerId = toSyntax_ $ ffi "clearTimeout" (arg timerId <: RecNil)
 
 clearInterval :: Expr f 'Number -> EffectSyntax f ()
 clearInterval timerId = toSyntax_ $ ffi "clearInterval" (arg timerId <: RecNil)
+
+-- | @cancelAnimationFrame(id)@.
+cancelAnimationFrame :: Expr f 'Number -> EffectSyntax f ()
+cancelAnimationFrame frameId =
+  toSyntax_ $ ffi "cancelAnimationFrame" (arg frameId <: RecNil)
 
 -- | @requestAnimationFrame(function(t){...})@. Returns the frame id.
 requestAnimationFrame ::

@@ -6,10 +6,12 @@ module ThemeHead
   , sourceLinks
   , sourceLinksLite
   , githubCorner
+  , hotReloadClient
   )
 where
 
 import qualified Data.Text as T
+import JShark.Lucid.HotReload (hotReloadClient)
 import Lucid
 import Lucid.Base (makeAttribute)
 
