@@ -1,0 +1,216 @@
+/* tokens.css must load before this file (see ThemeHead.sourceLinksLite). */
+
+.source-stack {
+  box-sizing: border-box;
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 2rem var(--pad-x) 2.5rem;
+}
+
+.js-source,
+.life-source {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  text-align: left;
+}
+
+.source-stack .js-source + .js-source {
+  margin-top: -1px;
+}
+
+.js-source-summary,
+.life-source-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0 !important;
+  user-select: none;
+  list-style: none;
+}
+
+.js-source-summary::-webkit-details-marker,
+.life-source-summary::-webkit-details-marker {
+  display: none;
+}
+
+.js-source > .js-source-summary::after,
+.life-source > .life-source-summary::after {
+  float: none;
+  position: static;
+  display: block;
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  background-position: center;
+  background-size: contain;
+  transform: rotate(-90deg);
+}
+
+.js-source[open] > .js-source-summary::after,
+.life-source[open] > .life-source-summary::after {
+  transform: rotate(0);
+}
+
+.js-source[open] > .js-source-summary,
+.life-source[open] > .life-source-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.js-source-summary-inner,
+.life-source-summary-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.js-source-label,
+.life-source-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.js-source-expand-hint,
+.life-source-expand-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.js-source[open] .js-source-expand-hint,
+.life-source[open] .life-source-expand-hint {
+  display: none;
+}
+
+.js-source-copy,
+.life-source-copy {
+  appearance: none;
+  -moz-appearance: none;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0;
+  cursor: pointer;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+  white-space: nowrap;
+}
+
+.js-source-copy::-moz-focus-inner,
+.life-source-copy::-moz-focus-inner {
+  border: 0;
+  padding: 0;
+}
+
+.js-source-copy:hover:not(:disabled),
+.life-source-copy:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--faint);
+  background: #1a1a1a;
+}
+
+.js-source-copy:disabled,
+.life-source-copy:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.js-source pre,
+.life-source-pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  max-height: 28rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  contain: content;
+  content-visibility: auto;
+  background: #0a0a0a;
+}
+
+.js-source pre code,
+.js-source pre [class*="shj-lang-"],
+.life-source-pre code,
+.life-source-pre [class*="shj-lang-"] {
+  display: block;
+  box-sizing: border-box;
+  min-width: max-content;
+  max-width: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0.85rem 1rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  background: #0d1117;
+  color: var(--text);
+}
+
+.js-source pre [class*="shj-lang-"] > div,
+.life-source pre [class*="shj-lang-"] > div,
+.life-source-pre [class*="shj-lang-"] > div {
+  display: flex;
+  min-width: 0;
+}
+
+.js-source pre [class*="shj-lang-"] > div :last-child,
+.life-source pre [class*="shj-lang-"] > div :last-child,
+.life-source-pre [class*="shj-lang-"] > div :last-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.js-source .shj-numbers,
+.life-source .shj-numbers {
+  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  text-align: right;
+  margin: 0 0.75rem 0 0;
+  padding: 0 0.75rem 0 0;
+  user-select: none;
+  counter-reset: line;
+}
+
+.js-source .shj-numbers div::before,
+.life-source .shj-numbers div::before {
+  color: var(--faint);
+  opacity: 1;
+  content: counter(line);
+  counter-increment: line;
+  display: block;
+  min-width: 2.25em;
+  padding-right: 0.15em;
+}
+
+.js-source code:not([class*="shj-lang-"]),
+.life-source-code:not([class*="shj-lang-"]) {
+  color: var(--text);
+}
+
+/* Life frame: source sits inside main after the sim chrome. */
+main .life-source {
+  margin-top: 2rem;
+}

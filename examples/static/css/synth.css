@@ -1,0 +1,212 @@
+.synth {
+  max-width: 56rem;
+}
+
+.synth .controls {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin: 0.75rem 0 1rem;
+}
+
+.synth .control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 10rem;
+  min-width: 9rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.synth .control-label {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.synth .sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.synth .waves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.synth .wave {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.synth .wave:hover {
+  border-color: var(--faint);
+}
+
+.synth .wave.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #1a1a1a;
+}
+
+.synth .slider {
+  display: grid;
+  grid-template-columns: 3.75rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.synth .slider span {
+  min-width: 0;
+}
+
+.synth .slider input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  height: 1.125rem;
+  background: transparent;
+  cursor: pointer;
+  --range-fill: 0%;
+}
+
+.synth .slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 0.3rem;
+  border: 0;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--text) 0%,
+    var(--text) var(--range-fill),
+    var(--border) var(--range-fill),
+    var(--border) 100%
+  );
+}
+
+.synth .slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-top: -0.2875rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.synth .slider input[type="range"]::-moz-range-track {
+  height: 0.3rem;
+  border: 0;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.synth .slider input[type="range"]::-moz-range-progress {
+  height: 0.3rem;
+  border-radius: 2px;
+  background: var(--text);
+}
+
+.synth .slider input[type="range"]::-moz-range-thumb {
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  box-sizing: border-box;
+}
+
+.synth .meter {
+  height: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  margin-bottom: 0.75rem;
+}
+
+.synth .meter-bar {
+  height: 100%;
+  width: 0;
+  background: var(--text);
+  transition: width 60ms linear;
+}
+
+.synth .keyboard {
+  position: relative;
+  display: flex;
+  height: 10rem;
+  user-select: none;
+  touch-action: none;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.synth .key {
+  position: relative;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.25rem;
+  padding-bottom: 0.5rem;
+}
+
+.synth .key.white {
+  flex: 1 0 2.125rem;
+  min-width: 2.125rem;
+  background: #ddd;
+  color: #222;
+  border-right: 1px solid #bbb;
+}
+
+.synth .key.black {
+  position: absolute;
+  z-index: 2;
+  height: 62%;
+  background: #1a1a1a;
+  color: #ccc;
+  border: 1px solid var(--border);
+}
+
+.synth .key.held {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.synth .note {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.synth .kbd {
+  font-size: 0.625rem;
+  opacity: 0.55;
+  text-transform: uppercase;
+}
+
+.synth .status {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+}

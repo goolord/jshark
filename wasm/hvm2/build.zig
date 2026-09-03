@@ -2,7 +2,8 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
-    // TPC_L2=2 → 4 HVM2 worker threads inside the wasm module.
+    // TPC_L2=2 → 4 slots. G_RBAG_LEN is TPC*RLEN; 8 slots OOM weak tabs.
+    // Browser JS caps live_threads at hardwareConcurrency (≤ TPC).
     const tpc_l2 = b.option(u32, "tpc-l2", "log2 of HVM2 thread count (TPC = 2^tpc_l2)") orelse 2;
     const tpc_flag = b.fmt("-DTPC_L2={d}", .{tpc_l2});
 

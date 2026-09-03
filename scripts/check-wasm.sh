@@ -14,7 +14,7 @@ cabal run build-hvm2-demo-wasm -v0
 
 if command -v zig >/dev/null 2>&1; then
   (
-    cd examples/Life/wasm
+    cd examples/src/JShark/Example/Life/wasm
     zig build -Doptimize=ReleaseFast
   )
 else
@@ -23,6 +23,6 @@ fi
 
 # not deterministic
 # if [[ "$build_only" == false ]]; then
-#   sha256sum examples/static/hvm2-demo.wasm > wasm/checksums.sha256
+#   sha256sum examples/static/hvm2/hvm2-demo.wasm > wasm/checksums.sha256
 #   echo "WASM checksums written to wasm/checksums.sha256"
 # fi

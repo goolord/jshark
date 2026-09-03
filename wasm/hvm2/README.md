@@ -22,6 +22,7 @@ bend gen-c generated/kernel.bend > generated/kernel.c
 # emit kernel_exports.c from Haskell (see JShark.EmitBend.emitKernelExportsC)
 zig build \
   -Doptimize=ReleaseFast \
+  -Dtpc-l2=2 \
   -Dkernel-c=/absolute/path/to/kernel.c \
   -Dexports-c=/absolute/path/to/kernel_exports.c
 cp zig-out/bin/jshark-hvm2.wasm ../../examples/static/jshark-hvm2.wasm

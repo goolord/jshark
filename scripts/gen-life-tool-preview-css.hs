@@ -1,9 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
+
 module Main where
 
+import JShark.Example.Life.Patterns
+  ( disturbPatterns
+  , gliderSpeciesSid
+  , patId
+  , speciesColor
+  )
+import JShark.Example.Life.Types (eraserToolSid, gliderToolSid, mouseToolSid)
 import Numeric (showFFloat)
-import Patterns (disturbPatterns, gliderSpeciesSid, patId, speciesColor)
-import Types (eraserToolSid, gliderToolSid, mouseToolSid)
 
 rgb :: (Int, Int, Int) -> String
 rgb (r, g, b) = "rgb(" ++ show r ++ ", " ++ show g ++ ", " ++ show b ++ ")"
@@ -19,20 +25,24 @@ rule sid
         ++ show sid
         ++ "\"] .life-tool-cell.is-on { background: #aaa; }"
   | sid == gliderToolSid =
-      let c = rgb (speciesColor gliderSpeciesSid)
-       in ".life-tool[data-tool=\""
-            ++ show sid
-            ++ "\"] .life-tool-cell.is-on { background: "
-            ++ c
-            ++ "; }"
+      let
+        c = rgb (speciesColor gliderSpeciesSid)
+       in
+        ".life-tool[data-tool=\""
+          ++ show sid
+          ++ "\"] .life-tool-cell.is-on { background: "
+          ++ c
+          ++ "; }"
   | otherwise =
-      let s = show sid
-          c = rgb (speciesColor sid)
-       in ".life-tool[data-tool=\""
-            ++ s
-            ++ "\"] .life-tool-cell.is-on { background: "
-            ++ c
-            ++ "; }"
+      let
+        s = show sid
+        c = rgb (speciesColor sid)
+       in
+        ".life-tool[data-tool=\""
+          ++ s
+          ++ "\"] .life-tool-cell.is-on { background: "
+          ++ c
+          ++ "; }"
 
 main :: IO ()
 main = do

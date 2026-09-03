@@ -33,6 +33,9 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Install Biome
+        run: bun install -g @biomejs/biome@2.5.11
+
       - uses: haskell-actions/setup@v2
         id: setup
         with:
@@ -69,20 +72,21 @@ jobs:
         with:
           version: "0.20.1.0"
           pattern: |
-            src
+            packages
             examples
-            test
-            jshark-lucid
-            bench
 
       - name: Fourmolu advisory notice
         if: steps.fourmolu.outcome != 'success'
         run: |
           echo "::warning title=Fourmolu::Some files are not formatted. Run scripts/format.sh locally."
 
+      - name: Install jshark-bindgen TypeScript deps
+        run: bun install
+        working-directory: packages/jshark-bindgen
+
       - name: Test
         run: |
-          cabal test jshark-test --test-show-details=direct \
+          cabal test all --test-show-details=direct \
             --test-options='+RTS -N1 -M4G -RTS -t120'
 
   pages-build:
@@ -112,6 +116,9 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Install Biome
+        run: bun install -g @biomejs/biome@2.5.11
+
       - uses: actions/cache@v4
         with:
           path: ${{ steps.setup.outputs.cabal-store }}
@@ -128,7 +135,7 @@ jobs:
           ./scripts/gen-life-tool-preview-css.sh
 
       - name: Export static site
-        run: cabal run examples -- export _site
+        run: cabal run exe:jshark-examples -- export _site
 
       - uses: actions/upload-pages-artifact@v3
         with:

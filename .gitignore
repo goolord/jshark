@@ -31,11 +31,21 @@ wasm/hvm2/generated-demo/
 .ghc.environment.*
 _site/
 tools/
+node_modules/
+bun.lock
+!/packages/jshark-bindgen/bun.lock
 .aider*
 *.csv
+
+# Scratch scripts, profiling dumps, and Windows junk
+nul
+tmp-*
+tmp_*
+_enc.*
 
 # GHC/tasty profile and bench captures (see docs/benchmarking-and-testing.md)
 profile/
 
-# ad-hoc timing scripts
-tmp_*.hs
+# Hot-reload Mode B JS cache
+.jshark-cache/
+.zed/settings.json
