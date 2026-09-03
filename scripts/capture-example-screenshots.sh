@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Refresh examples/static/<name>.png from a running examples server.
-# Usage: cabal run examples
+# Refresh examples/static/img/<name>.png from a running examples server.
+# Usage: cabal run exe:jshark-examples
 #        ./scripts/capture-example-screenshots.sh
 set -euo pipefail
 
@@ -28,7 +28,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 if ! curl -fsS -o /dev/null "$base/"; then
   echo "capture: examples server not reachable at $base" >&2
-  echo "capture: start it with: cabal run examples" >&2
+  echo "capture: start it with: cabal run exe:jshark-examples" >&2
   exit 1
 fi
 
@@ -45,7 +45,7 @@ fi
 
 export NODE_PATH="$cache/node_modules${NODE_PATH:+:$NODE_PATH}"
 export SHOT_BASE="$base"
-export SHOT_OUT="${SHOT_OUT:-$root/examples/static}"
+export SHOT_OUT="${SHOT_OUT:-$root/examples/static/img}"
 
 if command -v bun >/dev/null 2>&1; then
   bun "$script"

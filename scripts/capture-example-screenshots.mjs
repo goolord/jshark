@@ -5,7 +5,7 @@ import puppeteer from "puppeteer-core";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const BASE = process.env.SHOT_BASE || "http://127.0.0.1:3000";
-const OUT = process.env.SHOT_OUT || path.join(root, "examples/static");
+const OUT = process.env.SHOT_OUT || path.join(root, "examples/static/img");
 const CHROME = process.env.CHROME || "/usr/bin/chromium";
 
 const hideSourceCss = `
