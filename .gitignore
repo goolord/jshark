@@ -40,5 +40,5 @@ bun.lock
 # GHC/tasty profile and bench captures (see docs/benchmarking-and-testing.md)
 profile/
 
-# ad-hoc timing scripts
-tmp_*.hs
+# Hot-reload Mode B JS cache
+.jshark-cache/

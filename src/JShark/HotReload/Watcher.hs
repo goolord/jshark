@@ -6,6 +6,7 @@ module JShark.HotReload.Watcher
   ( WatchTargets (..)
   , defaultWatchTargets
   , startWatcher
+  , exampleAppForHs
   )
 where
 
@@ -36,6 +37,8 @@ data WatchTargets = WatchTargets
   -- ^ Map a changed path to the browser CSS URL.
   , cacheJsAppFor :: FilePath -> Maybe T.Text
   -- ^ Map @.jshark-cache/<app>.js@ updates to an app name.
+  , onHaskellSource :: FilePath -> IO ()
+  -- ^ Fired for non-Page @.hs@ edits (Mode B recompiler hook).
   }
 
 defaultWatchTargets :: [FilePath] -> WatchTargets
@@ -44,6 +47,7 @@ defaultWatchTargets dirs =
     { watchDirs = dirs
     , cssUrlFor = defaultCssUrl
     , cacheJsAppFor = defaultCacheJs
+    , onHaskellSource = \_ -> pure ()
     }
 
 defaultCssUrl :: FilePath -> Maybe T.Text
@@ -67,6 +71,31 @@ defaultCacheJs path
   stripSuffix sfx s
     | sfx `isSuffixOf` s = take (length s - length sfx) s
     | otherwise = s
+
+-- | Map a changed @.hs@ path under @examples/@ to an example app name.
+exampleAppForHs :: FilePath -> Maybe T.Text
+exampleAppForHs path
+  | takeExtension path /= ".hs" = Nothing
+  | takeFileName path == "Page.hs" = Nothing
+  | serverOrTheme path = Nothing
+  | otherwise = matchDir path
+ where
+  serverOrTheme p =
+    any
+      (`isInfixOf` p)
+      [ "examples\\server"
+      , "examples/server"
+      , "ThemeHead"
+      , "examples\\compile"
+      , "examples/compile"
+      ]
+  matchDir p
+    | "TodoMvc" `isInfixOf` p = Just "todo-mvc"
+    | "Breakout" `isInfixOf` p = Just "breakout"
+    | "Synth" `isInfixOf` p = Just "synth"
+    | "Hvm2Demo" `isInfixOf` p = Just "hvm2-demo"
+    | "Life" `isInfixOf` p = Just "life"
+    | otherwise = Nothing
 
 -- | Start a debounced fsnotify loop. Returns an IO action that stops it.
 startWatcher :: HotReloadHub -> WatchTargets -> IO (IO ())
@@ -126,6 +155,8 @@ handlePath hub targets path =
     Nothing
       | takeFileName path == "Page.hs" || takeExtension path == ".html" ->
           broadcastEvent hub (PageReload (T.pack path))
+      | takeExtension path == ".hs" ->
+          onHaskellSource targets path
       | otherwise ->
           case cacheJsAppFor targets path of
             Just app -> do

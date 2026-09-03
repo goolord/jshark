@@ -29,12 +29,13 @@ import JShark.HotReload.Core
   , registerJs
   )
 import JShark.HotReload.Wai (hotReloadMiddleware)
-import JShark.HotReload.Watcher (defaultWatchTargets, startWatcher)
+import JShark.HotReload.Watcher (WatchTargets (..), defaultWatchTargets, startWatcher)
 import qualified Life
 import Lucid
 import Lucid.Base (makeAttribute)
 import Network.Wai.Handler.Warp (setHost, setPort)
 import Paths_jshark (getDataFileName)
+import Recompile (startHsRecompiler)
 import System.Directory
   ( copyFile
   , createDirectoryIfMissing
@@ -47,6 +48,8 @@ import System.Directory
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import System.IO.Error (isAlreadyInUseError)
+import System.Exit (ExitCode (..))
+import System.Process (readProcessWithExitCode)
 import ThemeHead (githubCorner, themeLinks)
 import Web.Scotty
 
@@ -178,10 +181,16 @@ serveExamples mode startPort examples = do
       hub <- newHotReloadHub cfg
       forM_ examples $ \ex ->
         registerJs hub (exampleName ex) (exampleJs ex)
-      _ <-
-        startWatcher
-          hub
-          (defaultWatchTargets ["examples", "examples/static", ".jshark-cache"])
+      compileBin <- locateJsharkCompile
+      onHs <- startHsRecompiler hub compileBin
+      let
+        targets =
+          (defaultWatchTargets ["examples", "examples/static"])
+            { onHaskellSource = onHs
+            }
+      _ <- startWatcher hub targets
+      putStrLn ("hot-reload: haskell recompiler via " <> compileBin)
+      hFlush stdout
       pure (Just (cfg, hub))
   tryServe
     startPort
@@ -521,6 +530,22 @@ resolveExampleJs mHub ex =
           case mCached of
             Just (src, _) -> pure src
             Nothing -> pure (exampleJs ex)
+
+-- | Prefer @cabal list-bin jshark-compile@ so hot reload invokes a rebuilt
+-- binary without nesting another @cabal run@.
+locateJsharkCompile :: IO FilePath
+locateJsharkCompile = do
+  (ec, out, _) <-
+    readProcessWithExitCode "cabal" ["list-bin", "jshark-compile"] ""
+  case ec of
+    ExitSuccess ->
+      case filter (not . null) (lines out) of
+        (p : _) -> pure (trim p)
+        [] -> pure "jshark-compile"
+    ExitFailure _ -> pure "jshark-compile"
+ where
+  trim = reverse . dropWhile isSp . reverse . dropWhile isSp
+  isSp c = c == ' ' || c == '\r' || c == '\n' || c == '\t'
 
 staticFiles :: [FilePath]
 staticFiles =

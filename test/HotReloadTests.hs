@@ -37,6 +37,7 @@ import Network.Wai
   , responseStatus
   )
 import Network.Wai.Internal (Response (..), ResponseReceived (..))
+import JShark.HotReload.Watcher (exampleAppForHs)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 
@@ -51,6 +52,7 @@ hotReloadTests =
     , testCase "broadcast reaches subscribers" sseBroadcastOk
     , testCase "HTML inject inserts client script before </body>" injectOk
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
+    , testCase "exampleAppForHs maps Client.hs paths" exampleAppMapOk
     ]
 
 encodeShapes :: IO ()
@@ -150,6 +152,25 @@ middlewareInjectOk = do
     strict = LBS.toStrict body
   assertBool "client script" ("/__jshark/client.js" `BS8.isInfixOf` strict)
   assertBool "still has body close" ("</body>" `BS8.isInfixOf` strict)
+
+exampleAppMapOk :: IO ()
+exampleAppMapOk = do
+  assertEqual
+    "todo"
+    (Just "todo-mvc")
+    (exampleAppForHs "examples/TodoMvc/Client.hs")
+  assertEqual
+    "breakout"
+    (Just "breakout")
+    (exampleAppForHs "examples\\Breakout\\Types.hs")
+  assertEqual
+    "page skip"
+    Nothing
+    (exampleAppForHs "examples/TodoMvc/Page.hs")
+  assertEqual
+    "server skip"
+    Nothing
+    (exampleAppForHs "examples/server/DevServer.hs")
 
 contentType :: [(HeaderName, BS.ByteString)] -> BS.ByteString
 contentType = fromMaybe "" . lookup "Content-Type"

@@ -171,4 +171,4 @@ main = do
     ["export", dest] -> exportExamples dest examples
     _ ->
       die
-        "usage: examples [--progress] [--readable] [--warn-hvm2-candidates] [--hot|--watch] | examples [--progress] [--readable] [--warn-hvm2-candidates] export DIR"
+        "usage: examples [--progress] [--readable] [--warn-hvm2-candidates] [--hot|--watch] | examples […] export DIR\n  --hot/--watch: SSE + CSS swap + Haskell recompile via jshark-compile"
