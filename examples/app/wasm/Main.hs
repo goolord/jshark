@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Build @examples/static/hvm2-demo.wasm@ from 'Kernels.hvm2Entries'.
+-- | Build @examples/static/hvm2/hvm2-demo.wasm@ from 'Kernels.hvm2Entries'.
 --
 -- Pipeline: JShark → Bend → @bend gen-c@ → HVM2 C → Zig WASM.
 --
@@ -22,7 +22,7 @@ outDir :: FilePath
 outDir = "wasm/hvm2/generated-demo"
 
 staticWasm :: FilePath
-staticWasm = "examples/static/hvm2-demo.wasm"
+staticWasm = "examples/static/hvm2/hvm2-demo.wasm"
 
 main :: IO ()
 main = do

@@ -22,8 +22,8 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $
       meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
       title_ "Synth"
       themeLinks staticRoot
-      link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth.css")]
-      link_ [rel_ "stylesheet", href_ (staticRoot <> "/synth-keys.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/synth.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/synth-keys.css")]
       headExtra
     body_ $ do
       githubCorner

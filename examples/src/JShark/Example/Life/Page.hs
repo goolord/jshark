@@ -78,7 +78,7 @@ page staticRoot frameSrc = doctypehtml_ $
       meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
       title_ "Life"
       themeLinks staticRoot
-      link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-shell.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/life-shell.css")]
     body_ [class_ "life-shell"] $ do
       iframe_
         [ id_ "life-frame"
@@ -131,8 +131,8 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
       title_ "Life"
       base_ [href_ assetBase]
       themeLinks staticRoot
-      link_ [rel_ "stylesheet", href_ (staticRoot <> "/life.css")]
-      link_ [rel_ "stylesheet", href_ (staticRoot <> "/life-tool-preview.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/life.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/life-tool-preview.css")]
       sourceLinks staticRoot
     body_ $ do
       githubCorner
@@ -199,7 +199,7 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
       lifeSourceSection
       script_ [src_ "js/pixi.min.js"] ("" :: Html ())
       script_ [src_ scriptSrc] ("" :: Html ())
-      script_ [type_ "module", src_ (staticRoot <> "/source-pane.js")] ("" :: Html ())
+      script_ [type_ "module", src_ (staticRoot <> "/js/source-pane.js")] ("" :: Html ())
       sourceLoadScript (sourceSrcFor scriptSrc)
 
 lifeSourceSection :: Html ()

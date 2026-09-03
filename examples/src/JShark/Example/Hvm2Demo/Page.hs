@@ -100,7 +100,7 @@ page staticRoot demoBase headExtra source scriptSrc = doctypehtml_ $
       meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
       title_ "Mandelbrot"
       themeLinks staticRoot
-      link_ [rel_ "stylesheet", href_ (staticRoot <> "/hvm2-demo.css")]
+      link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/hvm2-demo.css")]
       headExtra
     body_ $ do
       githubCorner

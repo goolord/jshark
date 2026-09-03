@@ -63,10 +63,10 @@ staticCssTests =
     , testCase "pico version matches pin" assertPicoVersion
     , testCase "synth key labels match keyBindings" assertSynthKeyLabels
     , testCase "synth-keys.css matches Keys layout" $
-        assertCssFile "examples/static/synth-keys.css" genSynthKeysCss
+        assertCssFile "examples/static/css/synth-keys.css" genSynthKeysCss
     , testCase "life-tool-preview.css matches species colors" $
         assertCssFile
-          "examples/static/life-tool-preview.css"
+          "examples/static/css/life-tool-preview.css"
           genLifeToolPreviewCss
     ]
 
@@ -76,13 +76,13 @@ assertStaticAssets = do
   mapM_ (assertAsset root) requiredStaticAssets
  where
   requiredStaticAssets =
-    [ "examples/static/tokens.css"
-    , "examples/static/base.css"
+    [ "examples/static/css/tokens.css"
+    , "examples/static/css/base.css"
     , "examples/static/pico/pico.min.css"
     , "examples/static/pico/VERSION"
-    , "examples/static/source-pane.js"
-    , "examples/static/synth-keys.css"
-    , "examples/static/life-tool-preview.css"
+    , "examples/static/js/source-pane.js"
+    , "examples/static/css/synth-keys.css"
+    , "examples/static/css/life-tool-preview.css"
     , "examples/static/speed-highlight/index.js"
     , "examples/static/speed-highlight/themes/github-dark.css"
     ]

@@ -1,5 +1,5 @@
 // Import path must match DevServer.speedHighlightPrefix under /static/.
-import { highlightElement } from "./speed-highlight/index.js";
+import { highlightElement } from "../speed-highlight/index.js";
 
 function langFromClass(code) {
   var m = (code.className || "").match(/shj-lang-(\S+)/);

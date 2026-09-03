@@ -14,9 +14,9 @@ page staticRoot headExtra source scriptSrc = doctypehtml_ $ do
     meta_ [charset_ "utf-8"]
     meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
     title_ "Todos"
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/todomvc-common-base.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/todomvc-app-index.css")]
-    link_ [rel_ "stylesheet", href_ (staticRoot <> "/todo-mvc.css")]
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/todomvc-common-base.css")]
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/todomvc-app-index.css")]
+    link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/todo-mvc.css")]
     headExtra
   body_ $ do
     githubCorner

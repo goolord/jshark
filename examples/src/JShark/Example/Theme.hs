@@ -19,8 +19,8 @@ import Lucid.Base (makeAttribute)
 themeLinks :: T.Text -> Html ()
 themeLinks staticRoot = do
   link_ [rel_ "stylesheet", href_ (staticRoot <> "/pico/pico.min.css")]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/tokens.css")]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/base.css")]
+  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/tokens.css")]
+  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/base.css")]
 
 -- | Source pane + highlighter. Link after 'themeLinks' on themed pages.
 sourceLinks :: T.Text -> Html ()
@@ -29,12 +29,12 @@ sourceLinks staticRoot = do
     [ rel_ "stylesheet"
     , href_ (staticRoot <> "/speed-highlight/themes/github-dark.css")
     ]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/source.css")]
+  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/source.css")]
 
 -- | TodoMVC and other pages that skip 'themeLinks'.
 sourceLinksLite :: T.Text -> Html ()
 sourceLinksLite staticRoot = do
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/tokens.css")]
+  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/tokens.css")]
   sourceLinks staticRoot
 
 -- | Floating corner link back to the JShark repo. Put it at the top of

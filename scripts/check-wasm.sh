@@ -23,6 +23,6 @@ fi
 
 # not deterministic
 # if [[ "$build_only" == false ]]; then
-#   sha256sum examples/static/hvm2-demo.wasm > wasm/checksums.sha256
+#   sha256sum examples/static/hvm2/hvm2-demo.wasm > wasm/checksums.sha256
 #   echo "WASM checksums written to wasm/checksums.sha256"
 # fi

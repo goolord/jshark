@@ -105,7 +105,7 @@ serverPaths :: SitePaths
 serverPaths =
   SitePaths
     { hrefExample = ("/" <>)
-    , srcShot = \n -> "/static/" <> n <> ".png"
+    , srcShot = \n -> "/static/img/" <> n <> ".png"
     , srcScript = \n -> "/" <> n <> "/app.js"
     , indexStatic = "/static"
     , srcStatic = "/static"
@@ -116,7 +116,7 @@ exportPaths :: SitePaths
 exportPaths =
   SitePaths
     { hrefExample = (<> "/")
-    , srcShot = \n -> "static/" <> n <> ".png"
+    , srcShot = \n -> "static/img/" <> n <> ".png"
     , srcScript = const "app.js"
     , indexStatic = "static"
     , srcStatic = "../static"
@@ -134,10 +134,10 @@ lifeEngineJs =
 -- | scripts are not blocked and do not depend on @/static/@ data-file install.
 hvm2DemoAssets :: [(FilePath, FilePath)]
 hvm2DemoAssets =
-  [ ("hvm2-worker.js", "static/hvm2-worker.js")
-  , ("hvm2-grid-worker.js", "static/hvm2-grid-worker.js")
-  , ("hvm2-wasm.js", "static/hvm2-wasm.js")
-  , ("hvm2-demo.wasm", "static/hvm2-demo.wasm")
+  [ ("hvm2-worker.js", "static/hvm2/hvm2-worker.js")
+  , ("hvm2-grid-worker.js", "static/hvm2/hvm2-grid-worker.js")
+  , ("hvm2-wasm.js", "static/hvm2/hvm2-wasm.js")
+  , ("hvm2-demo.wasm", "static/hvm2/hvm2-demo.wasm")
   ]
 
 -- | Sandboxed frame fetches @app.js@ / wasm from the example origin; CORP +
@@ -344,7 +344,7 @@ exampleRoutes mHot shots assets lifeJs hvm2Js examples = do
     case path of
       Nothing -> pure ()
       Just filePath ->
-        get (fromString ("/static/" <> T.unpack (exampleName ex) <> ".png")) $ do
+        get (fromString ("/static/img/" <> T.unpack (exampleName ex) <> ".png")) $ do
           setHeader "Content-Type" "image/png"
           setHeader "Cross-Origin-Resource-Policy" "cross-origin"
           file filePath
@@ -367,7 +367,7 @@ exportExamples dest examples = do
       Just filePath ->
         copyFileInto
           filePath
-          (dest </> "static" </> (T.unpack (exampleName ex) <> ".png"))
+          (dest </> "static" </> "img" </> (T.unpack (exampleName ex) <> ".png"))
   forM_ examples $ \ex -> do
     let
       name = T.unpack (exampleName ex)
@@ -431,7 +431,7 @@ copyStatic dest name = do
 exampleShot :: Example -> IO (Example, Maybe FilePath)
 exampleShot ex = do
   path <-
-    getDataFileName ("static/" <> T.unpack (exampleName ex) <> ".png")
+    getDataFileName ("static/img/" <> T.unpack (exampleName ex) <> ".png")
   exists <- doesFileExist path
   pure (ex, if exists then Just path else Nothing)
 
@@ -442,7 +442,7 @@ staticAsset name = do
   pure [(name, path) | exists]
 
 -- | URL segment under @/static/@ for vendored speed-highlight. Must match
--- @source-pane.js@ import @./speed-highlight/index.js@.
+-- @source-pane.js@ import @../speed-highlight/index.js@.
 speedHighlightPrefix :: FilePath
 speedHighlightPrefix = "speed-highlight"
 
@@ -514,7 +514,7 @@ indexPage paths shots = doctypehtml_ $
       meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
       title_ "Examples"
       themeLinks (indexStatic paths)
-      link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/index.css")]
+      link_ [rel_ "stylesheet", href_ (indexStatic paths <> "/css/index.css")]
     body_ $ do
       githubCorner
       main_ [class_ "page examples-index"] $ do
@@ -562,25 +562,25 @@ resolveExampleHtml mHub ex fallback =
 
 staticFiles :: [FilePath]
 staticFiles =
-  [ "source-pane.js"
-  , "jshark-reload.js"
-  , "tokens.css"
-  , "base.css"
+  [ "js/source-pane.js"
+  , "js/jshark-reload.js"
+  , "css/tokens.css"
+  , "css/base.css"
   , "pico/pico.min.css"
-  , "source.css"
-  , "index.css"
-  , "breakout.css"
-  , "synth.css"
-  , "todo-mvc.css"
-  , "todomvc-common-base.css"
-  , "todomvc-app-index.css"
-  , "life.css"
-  , "life-shell.css"
-  , "life-tool-preview.css"
-  , "synth-keys.css"
-  , "hvm2-demo.css"
-  , "hvm2-demo.wasm"
-  , "hvm2-wasm.js"
-  , "hvm2-worker.js"
-  , "hvm2-grid-worker.js"
+  , "css/source.css"
+  , "css/index.css"
+  , "css/breakout.css"
+  , "css/synth.css"
+  , "css/todo-mvc.css"
+  , "css/todomvc-common-base.css"
+  , "css/todomvc-app-index.css"
+  , "css/life.css"
+  , "css/life-shell.css"
+  , "css/life-tool-preview.css"
+  , "css/synth-keys.css"
+  , "css/hvm2-demo.css"
+  , "hvm2/hvm2-demo.wasm"
+  , "hvm2/hvm2-wasm.js"
+  , "hvm2/hvm2-worker.js"
+  , "hvm2/hvm2-grid-worker.js"
   ]
