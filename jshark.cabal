@@ -439,13 +439,16 @@ test-suite jshark-test
     Hvm2Tests
     BindgenTests
     BindgenToy
+    HotReloadTests
   hs-source-dirs:
     test
   build-depends:
     , base
     , async
     , breakout
+    , bytestring
     , hvm2-demo
+    , http-types
     , jshark
     , bindgen
     , jshark-lucid
@@ -459,6 +462,7 @@ test-suite jshark-test
     , filepath
     , containers
     , process
+    , wai >= 3.2 && < 3.3
   default-language:
     Haskell2010
   ghc-options:

@@ -17,6 +17,7 @@ import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
+import HotReloadTests (hotReloadTests)
 import Hvm2Tests (hvm2Tests)
 import GridApi (paintGridCellsJs, seedLiveCells)
 import JShark
@@ -97,6 +98,7 @@ tests =
     , lifeWorkerTests
     , staticCssTests
     , bindgenTests
+    , hotReloadTests
     ]
 
 bigIntTests :: TestTree
