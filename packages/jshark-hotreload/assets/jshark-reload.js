@@ -235,7 +235,12 @@
         "#__jshark-hr-panel pre{margin:0;padding:8px 10px;max-height:12em;overflow:auto;" +
         "white-space:pre-wrap;word-break:break-word;background:#2a1612;color:#ffd2c4;" +
         "border-top:1px solid #6a3a32;display:none}" +
-        "#__jshark-hr-panel.is-wait .wick{background:#e8a54b;animation:jsharkWick .85s steps(2,end) infinite}" +
+        "#__jshark-hr-panel .spin{display:none;width:12px;height:12px;flex:0 0 auto;" +
+        "border-radius:50%;border:2px solid rgba(232,165,75,.25);" +
+        "border-top-color:#e8a54b;animation:jsharkSpin .65s linear infinite}" +
+        "#__jshark-hr-panel.is-wait .spin{display:block}" +
+        "#__jshark-hr-panel.is-wait .wick{background:#e8a54b;" +
+        "animation:jsharkWick .8s ease-in-out infinite}" +
         "#__jshark-hr-panel.is-apply .wick{background:#7ec8ff}" +
         "#__jshark-hr-panel.is-err .wick{background:#e85d4c}" +
         "#__jshark-hr-panel.is-down .wick{background:#8d7b63}" +
@@ -248,8 +253,10 @@
         "#__jshark-hr-panel.is-collapsed{width:auto}" +
         "#__jshark-hr-panel.is-collapsed header{border-bottom:0}" +
         "#__jshark-hr-panel.is-collapsed dl,#__jshark-hr-panel.is-collapsed pre{display:none}" +
-        "@media (prefers-reduced-motion:reduce){#__jshark-hr-panel.is-wait .wick{animation:none}}" +
-        "@keyframes jsharkWick{50%{opacity:.28}}";
+        "@media (prefers-reduced-motion:reduce){" +
+        "#__jshark-hr-panel.is-wait .wick,#__jshark-hr-panel .spin{animation:none}}" +
+        "@keyframes jsharkSpin{to{transform:rotate(1turn)}}" +
+        "@keyframes jsharkWick{0%,100%{opacity:1}50%{opacity:.2}}";
       document.documentElement.appendChild(style);
     }
     panel = el("aside");
@@ -260,9 +267,12 @@
     head.setAttribute("tabindex", "0");
     var wick = el("span", "wick");
     var brand = el("span", "brand", "JSHARK");
+    var spin = el("span", "spin");
+    spin.setAttribute("aria-hidden", "true");
     var phase = el("span", "phase", "boot");
     head.appendChild(wick);
     head.appendChild(brand);
+    head.appendChild(spin);
     head.appendChild(phase);
     var dl = el("dl");
     function row(key) {
