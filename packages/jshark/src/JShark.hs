@@ -119,7 +119,6 @@ module JShark
   , evaluate
   , evaluateNumber
   , evaluateBigInt
-  , evaluateCached
   , packUint8
   , uint8Elems
   , optimize
@@ -158,7 +157,6 @@ module JShark
   , collectHvm2Kernels
   , pureProgram
   , effectfulProgram
-  , printComputation
   , renderJS
   , renderJSCompact
   , escapeJsString
@@ -178,7 +176,6 @@ import JShark.Compiler.Codegen.Core
   , flatSoaNodeCount
   , flatSoaParallelThreshold
   , preparePureProgram
-  , printComputation
   , profileFlatOptFromIr
   , profileIrOptFromClosed
   , profileIrOptFromIr
@@ -199,7 +196,6 @@ import JShark.Compiler.Evaluate
   ( escapeJsString
   , evaluate
   , evaluateBigInt
-  , evaluateCached
   , evaluateNumber
   , packUint8
   , uint8Elems

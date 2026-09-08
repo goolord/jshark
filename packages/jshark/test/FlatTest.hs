@@ -7,12 +7,11 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Flat / SoA test helpers (not part of the main codegen API).
-module JShark.FlatTest
+module FlatTest
   ( flatSoaPureNodeCount
   , flatDirectPackDeterministic
   , flatDirectPackForRangeOk
   , flatDirectPackOptimizeStable
-  , freezeEncColumnsOrderOk
   , lowerOptEffectRegressionOk
   , optIrEffectForRangeImpure
   , batchJobSlotTimingOk
@@ -40,7 +39,6 @@ import JShark.Compiler.CompileTiming
   , cjsIrPrepareSec
   , cjsLintSec
   )
-import qualified JShark.Compiler.FlatEnc as FlatEnc
 import qualified JShark.Compiler.FlatSoA as FlatSoA
 import qualified JShark.Compiler.Ir as Ir
 import JShark.Compiler.Lower
@@ -48,9 +46,6 @@ import JShark.Compiler.Lower
   , lowerOptEffectAt
   , reifyEffect
   )
-
-freezeEncColumnsOrderOk :: Bool
-freezeEncColumnsOrderOk = FlatEnc.freezeEncColumnsOrderOk
 
 flatDirectPackDeterministic :: ClosedEffect u -> Bool
 flatDirectPackDeterministic e =

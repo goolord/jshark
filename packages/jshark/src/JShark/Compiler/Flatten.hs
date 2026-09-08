@@ -477,7 +477,3 @@ rebindExpr2 tA tB body a b = rebindExpr tA (rebindExpr tB body b) a
 class PhoasDummy f where
   phoasDummy :: f u
   isPureExpr_ :: Expr f u -> Bool
-
-instance PhoasDummy Value where
-  phoasDummy = error "JShark.phoasDummy: Value binder"
-  isPureExpr_ _ = True

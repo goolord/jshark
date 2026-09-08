@@ -7,7 +7,7 @@
 -- Shims are a closed catalog ('Builtin'). 'useShim' records a constructor
 -- and returns the @$name(… )@ call. Named-lambda hoist ('insertHoisted')
 -- is a separate bag on 'Preamble' — those bodies are program-specific.
--- 'renderPreamble' prints both, name-sorted, as @const $name = …;@ so
+-- 'renderPreambleStyled' prints both, name-sorted, as @const $name = …;@ so
 -- call-time order does not matter (function expressions close over the
 -- bindings).
 module JShark.Compiler.JsShim
@@ -17,7 +17,6 @@ module JShark.Compiler.JsShim
   , useShim
   , insertHoisted
   , mergePreamble
-  , renderPreamble
   , renderPreambleStyled
   , builtinSrc
   )
@@ -127,11 +126,6 @@ mergeHoistedSrc name existing incoming
       error $
         "JShark.mergeHoistedSrc: conflicting body for "
           <> T.unpack name
-
--- | @const $name = <src>;@ for every used shim and hoisted lambda,
--- sorted by name (same order as a single map).
-renderPreamble :: Preamble -> JS
-renderPreamble = renderPreambleStyled False
 
 -- | Render preamble bindings. The @sourceNames@ flag is reserved for codegen
 -- ('esSourceNames'); shim bodies stay compact and Biome formats the full emit.

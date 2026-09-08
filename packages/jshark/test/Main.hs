@@ -26,13 +26,12 @@ import qualified JShark.Canvas as Canvas
 import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
-import JShark.FlatTest
+import FlatTest
   ( batchJobSlotTimingOk
   , flatDirectPackDeterministic
   , flatDirectPackForRangeOk
   , flatDirectPackOptimizeStable
   , flatSoaPureNodeCount
-  , freezeEncColumnsOrderOk
   , lowerOptEffectRegressionOk
   , optIrEffectForRangeImpure
   )
@@ -136,12 +135,6 @@ bigIntTests =
           ValueString s -> s @?= "bigint"
     , testCase "Generic Integer is BigInt" $
         G.fromValue (evaluate (G.toJS (13 :: Integer))) @?= (13 :: Integer)
-    , testCase "evaluateCached matches evaluate" $ do
-        let
-          e = bigInt 10 + bigInt 3
-        cached <- evaluateCached e
-        case cached of
-          ValueBigInt n -> n @?= evaluateBigInt e
     ]
 
 -- | GHC RULES fold literal-literal EDSL ops at compile time of the
@@ -306,21 +299,6 @@ evaluatorTests =
     , testCase "typeof of Uint8Array is object" $
         case evaluate (typeOf (uint8Array sampleArray)) of
           ValueString s -> s @?= "object"
-    , testCase "evaluateCached agrees with evaluate on a shared heap node" $ do
-        let
-          x = number 21 + number 21
-          e = x + x
-        cached <- evaluateCached e
-        case cached of
-          ValueNumber n -> do
-            n @?= evaluateNumber e
-            n @?= 84
-    , testCase "evaluateCached parseInt_ matches evaluate" $ do
-        let
-          e = parseInt_ (string "10") (number 16)
-        cached <- evaluateCached e
-        case cached of
-          ValueNumber n -> n @?= evaluateNumber e
     ]
 
 codegenTests :: TestTree
@@ -2096,8 +2074,6 @@ flatSoATests =
     , testCase "constant fold chains" $
         renderJS (effectfulASTIr (expr ((number 1 + number 2) + number 3)))
           @?= renderJS (effectfulASTIr (expr (number 6)))
-    , testCase "freezeEncColumns preserves row order" $
-        freezeEncColumnsOrderOk @?= True
     , testCase "direct pack is deterministic (kernel)" $
         flatDirectPackDeterministic kernelAndLambdaUse @?= True
     , testCase "direct pack is deterministic (forRange u8set)" $

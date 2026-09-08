@@ -18,7 +18,6 @@ module JShark.Compiler.Evaluate
   ( evaluate
   , evaluateNumber
   , evaluateBigInt
-  , evaluateCached
   , valueEq
   , isCheapValue
   , mapFixedArgs
@@ -806,7 +805,3 @@ withFrozenField (ValueFrozen fs) k =
   case lookupFrozenField @k fs of
     Just e -> k e
     Nothing -> cannotEval "GetField of a frozen object with effectful fields"
-
--- | 'evaluate' in 'IO'. Same semantics as 'evaluate'.
-evaluateCached :: ClosedExpr u -> IO (Value u)
-evaluateCached e = pure (evaluate e)

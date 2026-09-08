@@ -23,7 +23,6 @@ import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
 import GHC.Clock (getMonotonicTime)
 import qualified GHC.IO as GHCIO
 import GHC.IO.Unsafe (unsafePerformIO)
@@ -66,7 +65,6 @@ import JShark.Compiler.Emit
   , parens
   , punctuate
   , renderJS
-  , renderJSCompact
   , semi
   , vcat
   , ($$)
@@ -91,8 +89,6 @@ import JShark.Compiler.Optimize
   ( nodeCountExpr
   , optimizeWith
   )
-
-printComputation computation = T.putStrLn (renderJSCompact computation)
 
 preambleDecls s =
   renderPreambleStyled (esSourceNames (cgStyle s)) (cgPreamble s)
@@ -145,8 +141,7 @@ data Code = MkCode
 -- | Codegen presentation. Syntax flags are safe for minified output;
 -- structure flags are 'Readable' only (keep source names and lets).
 data EmitStyle = EmitStyle
-  { esArrowFns :: !Bool
-  , esIntLiterals :: !Bool
+  { esIntLiterals :: !Bool
   , esBareKeys :: !Bool
   , esSourceNames :: !Bool
   , esKeepLets :: !Bool
@@ -156,8 +151,7 @@ data EmitStyle = EmitStyle
 minifiedStyle :: EmitStyle
 minifiedStyle =
   EmitStyle
-    { esArrowFns = True
-    , esIntLiterals = True
+    { esIntLiterals = True
     , esBareKeys = True
     , esSourceNames = False
     , esKeepLets = False
@@ -166,21 +160,10 @@ minifiedStyle =
 idiomaticStyle :: EmitStyle
 idiomaticStyle =
   EmitStyle
-    { esArrowFns = True
-    , esIntLiterals = True
+    { esIntLiterals = True
     , esBareKeys = True
     , esSourceNames = True
     , esKeepLets = True
-    }
-
-legacyStyle :: EmitStyle
-legacyStyle =
-  EmitStyle
-    { esArrowFns = False
-    , esIntLiterals = False
-    , esBareKeys = False
-    , esSourceNames = False
-    , esKeepLets = False
     }
 
 data CG = CG
@@ -686,25 +669,14 @@ jsPropKey style k
   | esBareKeys style && jsIdent k = jsText k
   | otherwise = dquotes (jsText k)
 
--- | @function (n0) {…}@ or @n0 => …@ depending on 'esArrowFns'.
+-- | @n0 => …@ arrow functions (the only supported style).
 renderFunction s nParam decl ref =
   renderFn s [nJS s nParam] decl ref
 
 jsCallback s params decl ref = renderFn s params (nonEmpty decl) (Just ref)
 
 renderFn :: CG -> [JS] -> Maybe JS -> Maybe JS -> JS
-renderFn s params mDecl mRef
-  | esArrowFns (cgStyle s) = renderArrow params mDecl mRef
-  | otherwise = renderClassic params mDecl mRef
-
-renderClassic params mDecl mRef =
-  "function"
-    <+> parens (hcat (punctuate ", " params))
-    <+> blockBody (fromMaybe mempty mDecl $$ ret)
- where
-  ret = case mRef of
-    Nothing -> "return"
-    Just r -> "return" <+> returnExpr r
+renderFn _s params mDecl mRef = renderArrow params mDecl mRef
 
 renderArrow params mDecl mRef =
   let

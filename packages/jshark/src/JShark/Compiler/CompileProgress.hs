@@ -498,14 +498,7 @@ phaseWeight = \case
   PhaseDone -> 1.0
 
 phaseOrder :: CompilePhase -> Int
-phaseOrder = \case
-  PhaseLint -> 0
-  PhaseIrPrepare -> 1
-  PhasePack -> 2
-  PhaseFlatOpt -> 3
-  PhaseEmit -> 4
-  PhaseMinify -> 5
-  PhaseDone -> 6
+phaseOrder = phaseToInt
 
 phaseLabel :: CompilePhase -> String
 phaseLabel = \case

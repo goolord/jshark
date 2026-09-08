@@ -37,11 +37,6 @@ letChain n = go n (number 0)
   go 0 acc = acc
   go k acc = let_ acc (\x -> go (k - 1) (x + number 1))
 
-deepUseChain :: Int -> ClosedEffect 'Number
-deepUseChain n = fromSyntax $ do
-  vars <- mapM (\_ -> toSyntax (Lift (number 1))) [1 .. n]
-  toSyntax $ Lift (sum (map Var vars))
-
 scaleNs :: [Int]
 scaleNs = [100, 200, 400, 800]
 
@@ -58,7 +53,4 @@ main =
     , bgroup
         "letChain"
         [codepathStagesPure (show n) (letChain n) | n <- scaleNs]
-    , bgroup
-        "deepUseChain"
-        [codepathStages (show n) (deepUseChain n) | n <- scaleNs]
     ]
