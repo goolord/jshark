@@ -6,7 +6,6 @@
 -- | Struct-of-arrays flat IR and bulk-friendly optimizer passes.
 module JShark.Compiler.FlatSoA
   ( FlatSoA (..)
-  , flatSoaParallelThreshold
   , packEffectProgramDirect
   , optimizeFlatPack
   , flatSoaNodeCount
@@ -30,12 +29,9 @@ module JShark.Compiler.FlatSoA
   )
 where
 
-import Control.Concurrent (getNumCapabilities)
-import Control.Concurrent.Async (mapConcurrently)
 import Control.Monad (foldM, forM_, when)
 import Control.Monad.ST (runST)
 import Data.Bits ((.&.))
-import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import qualified Data.Map.Strict as Map
 import Data.STRef (newSTRef, readSTRef, writeSTRef)
@@ -47,7 +43,6 @@ import qualified Data.Vector.Mutable as MV
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
 import Data.Word (Word8)
-import GHC.IO.Unsafe (unsafePerformIO)
 import JShark.Api.Types (BigBinOp (..), FFIForm (..), Value (..))
 import JShark.Compiler.Flat
   ( FlatArg (..)
@@ -721,175 +716,12 @@ soaSideLengthsEqual a b =
     && V.length (fsaLits a) == V.length (fsaLits b)
     && V.length (fsaFFIs a) == V.length (fsaFFIs b)
 
--- | Node count above which SoA passes use chunked 'mapConcurrently'.
-flatSoaParallelThreshold :: Int
-flatSoaParallelThreshold = 4096
-
-chunkRanges :: Int -> Int -> [[Int]]
-chunkRanges n chunk =
-  let
-    go lo acc
-      | lo >= n = reverse acc
-      | otherwise =
-          let
-            hi = min n (lo + chunk)
-           in
-            go hi ([lo .. hi - 1] : acc)
-   in
-    go 0 []
-
-propagatePureFlagsPassPar :: FlatSoA -> (FlatSoA, Bool)
-propagatePureFlagsPassPar soa
-  | VU.length (fsaOpcodes soa) < flatSoaParallelThreshold =
-      propagatePureFlagsPass soa
-  | otherwise =
-      unsafePerformIO $
-        propagatePureFlagsPassIO soa
-{-# NOINLINE propagatePureFlagsPassPar #-}
-
-propagatePureFlagsPassIO :: FlatSoA -> IO (FlatSoA, Bool)
-propagatePureFlagsPassIO soa = do
-  let
-    n = VU.length (fsaOpcodes soa)
-  caps <- max 1 <$> getNumCapabilities
-  let
-    chunk = max 256 (n `div` (caps * 4))
-    ranges = chunkRanges n chunk
-  mp <- VU.unsafeThaw (fsaPure soa)
-  changedRef <- newIORef False
-  let
-    ch j = do
-      let
-        i = fromIntegral j :: Int
-      if i >= 0 && i < n
-        then MVU.read mp i
-        else pure (0 :: Word8)
-    bin j k = do
-      x <- ch j
-      y <- ch k
-      pure (x .&. y)
-    tri j k l = do
-      x <- bin j k
-      y <- ch l
-      pure (x .&. y)
-    andNodes ns =
-      foldM
-        (\acc j -> do p <- ch (i32 j); pure (acc .&. p))
-        (1 :: Word8)
-        ns
-    pureFixed fi =
-      case fsaFixed soa V.! fromIntegral fi of
-        FlatFixedU _ j -> ch (i32 j)
-        FlatFixedB _ j k -> bin (i32 j) (i32 k)
-        FlatFixedT _ j k l -> tri (i32 j) (i32 k) (i32 l)
-    pureArray gi =
-      andNodes (V.toList (fsaArrayGroups soa V.! fromIntegral gi))
-    pureFields gi =
-      let
-        fieldNode = \case
-          FlatField _ j -> j
-          FlatFieldEff _ j -> j
-          FlatFieldExtra _ j -> j
-          FlatFieldExtraEff _ j -> j
-        ns = map fieldNode (fsaFieldGroups soa V.! fromIntegral gi)
-       in
-        andNodes ns
-    pureForOp op a b c d e
-      | op == oFE_LITERAL = pure 1
-      | op == oFE_VAR = pure 1
-      | op == oFE_FROZEN = pure 1
-      | op == oFE_RESOK = ch a
-      | op == oFE_RESERR = ch a
-      | op == oFE_LET = bin b c
-      | op == oFE_LETREC = bin b c
-      | op == oFE_LAMBDA = ch b
-      | op == oFE_APPLY = bin a b
-      | op == oFE_IF = tri a b c
-      | op == oFE_OPTIONCASE = tri a b d
-      | op == oFE_RESCASE = tri a c e
-      | op == oFE_INDEX = bin a b
-      | op == oFE_U8INDEX = bin a b
-      | op == oFE_FIXED = pureFixed a
-      | op == oFE_FNLIT = ch b
-      | op == oFE_GETFIELD = ch b
-      | op == oFE_HVM2REF = pure 1
-      | op == oFE_UNSAFENULL = ch a
-      | op == oFE_KNEG = ch a
-      | op == oFE_KBIGNEG = ch a
-      | op == oFE_KSHOW = ch a
-      | op == oFE_KTYPEOF = ch a
-      | op == oFE_KEQ = bin b c
-      | op == oFE_KNEQ = bin b c
-      | op == oFE_KBIG = bin b c
-      | op == oFE_MMAP = bin a c
-      | op == oFE_MFILTER = bin a c
-      | op == oFE_MREDUCE = tri a b e
-      | op == oFE_MREDUCER = tri a b e
-      | op == oFE_MTOSORTED = bin a d
-      | op == oFE_MFROM = bin a c
-      | op == oFX_LIFT = ch a
-      | op == oFX_BIND = bin b c
-      | op == oFX_THENE = bin a b
-      | op == oFX_BINDREC = bin b c
-      | op == oFX_LAMBDAE = ch b
-      | op == oFX_IFE = tri a b c
-      | op == oFX_FORRANGE = tri a b d
-      | op == oFX_U8SET = tri a b c
-      | op == oFX_U8FILL = bin a b
-      | op == oFX_OPTCASEE = tri a b d
-      | op == oFX_RESCASEE = tri a c e
-      | op == oFX_STRCASEE = bin a c
-      | op == oFX_THROW = ch a
-      | op == oFX_TRY = bin a c
-      | op == oFX_OBJLIT = pureFields a
-      | op == oFX_DELETEPROP = bin a b
-      | op == oFX_ARRAYLIT = pureArray a
-      | op < oFX_LIFT = bin a b
-      | otherwise = pure 0
-    runIdx idx = do
-      let
-        op = fsaOpcodes soa VU.! idx
-        a = fsaA soa VU.! idx
-        b = fsaB soa VU.! idx
-        c = fsaC soa VU.! idx
-        d = fsaD soa VU.! idx
-        e = fsaE soa VU.! idx
-      p <-
-        if impureOp op
-          then pure (0 :: Word8)
-          else pureForOp op a b c d e
-      old <- MVU.read mp idx
-      when (p /= old) (writeIORef changedRef True)
-      MVU.write mp idx p
-  _ <- mapConcurrently (\ixs -> forM_ ixs runIdx) ranges
-  changed <- readIORef changedRef
-  pureV' <- VU.unsafeFreeze mp
-  pure (soa {fsaPure = pureV'}, changed)
- where
-  impureOp op
-    | op >= oFX_LIFT =
-        op
-          `elem` [ oFX_FFI
-                 , oFX_UNSAFEOBJ
-                 , oFX_UNSAFEOBJGET
-                 , oFX_UNSAFEOBJSET
-                 , oFX_CALLMETHOD
-                 , oFX_APPLYE
-                 , oFX_WHILE
-                 , oFX_FORRANGE
-                 , oFX_U8SET
-                 , oFX_U8FILL
-                 , oFX_THROW
-                 , oFX_DELETEPROP
-                 ]
-    | otherwise = op `elem` [oFE_ERROR, oFE_EMBEDEFF]
-
 propagatePureFlagsPar :: FlatSoA -> FlatSoA
 propagatePureFlagsPar soa0 =
   let
     go soa =
       let
-        (soa', changed) = propagatePureFlagsPassPar soa
+        (soa', changed) = propagatePureFlagsPass soa
        in
         if changed then go soa' else soa'
    in
@@ -923,7 +755,7 @@ propagatePureWithStats soa0 =
   let
     go soa passes =
       let
-        (soa', changed) = propagatePureFlagsPassPar soa
+        (soa', changed) = propagatePureFlagsPass soa
        in
         if changed then go soa' (passes + 1) else (soa, passes + 1)
    in

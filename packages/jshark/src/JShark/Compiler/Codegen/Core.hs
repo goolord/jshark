@@ -703,5 +703,3 @@ allocNIdentsHints s (h : hs) =
     (i : is, s2)
 
 flatSoaNodeCount = FlatSoA.flatSoaNodeCount
-
-flatSoaParallelThreshold = FlatSoA.flatSoaParallelThreshold

@@ -150,7 +150,6 @@ module JShark
   , profileIrOptFromIr
   , profileLowerFromClosed
   , flatSoaNodeCount
-  , flatSoaParallelThreshold
   , irExprFromClosed
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
@@ -174,7 +173,6 @@ import JShark.Compiler.Codegen.Core
   ( flatPrepareCore
   , flatPrepareFromIr
   , flatSoaNodeCount
-  , flatSoaParallelThreshold
   , preparePureProgram
   , profileFlatOptFromIr
   , profileIrOptFromClosed
