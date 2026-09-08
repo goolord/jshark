@@ -9,7 +9,6 @@
 
 module Main (main) where
 
-import qualified Control.Exception as Ex
 import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
 import Data.Text (Text)
@@ -101,22 +100,12 @@ bigIntTests =
         evaluateBigInt (bitXor (bigInt 7) (bigInt 3)) @?= 4
         evaluateBigInt (shl (bigInt 1) (bigInt 8)) @?= 256
         evaluateBigInt (shr (bigInt 256) (bigInt 3)) @?= 32
-    , testCase "negative shift throws" $ do
-        r <- Ex.try (Ex.evaluate (evaluateBigInt (shl (bigInt 1) (bigInt (-1)))))
-        case r of
-          Left (Ex.ErrorCall msg)
-            | "negative" `T.isInfixOf` T.pack msg -> pure ()
-            | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
-          Right n -> assertFailure ("expected throw, got " <> show n)
+    , testCase "negative shift throws" $
+        assertThrows "negative" (evaluateBigInt (shl (bigInt 1) (bigInt (-1))))
     , testCase "toBigInt of an integer Number" $
         evaluateBigInt (toBigInt (number 10)) @?= 10
-    , testCase "toBigInt of a non-integer Number throws" $ do
-        r <- Ex.try (Ex.evaluate (evaluateBigInt (toBigInt (number 1.5))))
-        case r of
-          Left (Ex.ErrorCall msg)
-            | "not an integer" `T.isInfixOf` T.pack msg -> pure ()
-            | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
-          Right n -> assertFailure ("expected throw, got " <> show n)
+    , testCase "toBigInt of a non-integer Number throws" $
+        assertThrows "not an integer" (evaluateBigInt (toBigInt (number 1.5)))
     , testCase "fromBigInt of a small value" $
         evaluateNumber (fromBigInt (bigInt 9)) @?= 9
     , testCase "parseBigInt_ sign and prefixes" $ do
@@ -734,21 +723,10 @@ stdlibTests =
         evaluateNumber (Array.index numArray (number 1)) @?= 2
     , testCase "Array.index 1.9 is the integer slot" $
         evaluateNumber (Array.index numArray (number 1.9)) @?= 2
-    , testCase "Array.index out of bounds throws" $ do
-        r <- Ex.try (Ex.evaluate (evaluateNumber (Array.index numArray (number 9))))
-        case r of
-          Left (Ex.ErrorCall msg)
-            | "evaluate: array index" `T.isPrefixOf` T.pack msg -> pure ()
-            | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
-          Right n -> assertFailure ("expected throw, got " <> show n)
-    , testCase "Array.index NaN is out of bounds" $ do
-        r <-
-          Ex.try (Ex.evaluate (evaluateNumber (Array.index numArray (number (0 / 0)))))
-        case r of
-          Left (Ex.ErrorCall msg)
-            | "evaluate: array index" `T.isPrefixOf` T.pack msg -> pure ()
-            | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
-          Right n -> assertFailure ("expected throw, got " <> show n)
+    , testCase "Array.index out of bounds throws" $
+        assertThrows "evaluate: array index" (evaluateNumber (Array.index numArray (number 9)))
+    , testCase "Array.index NaN is out of bounds" $
+        assertThrows "evaluate: array index" (evaluateNumber (Array.index numArray (number (0 / 0))))
     , testCase "Array.index truncates and throws out of bounds" $ do
         let
           js =

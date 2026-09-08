@@ -28,12 +28,14 @@ module Support
   , numArray
   , mulDiv
   , assertJSContains
+  , assertThrows
   , captureStderr
   , requireBiome
   )
 where
 
 import CaptureStderr (captureStderr)
+import Control.Exception (ErrorCall (..), evaluate, try)
 import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
@@ -166,6 +168,16 @@ assertJSContains needle haystack =
       <> T.unpack needle
       <> " in:\n"
       <> T.unpack haystack
+
+-- | Force @x@ to WHNF and assert it throws an 'ErrorCall' containing @needle@.
+assertThrows :: Show a => String -> a -> IO ()
+assertThrows needle x = do
+  r <- try (evaluate x)
+  case r of
+    Left (ErrorCall msg)
+      | T.pack needle `T.isInfixOf` T.pack msg -> pure ()
+      | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+    Right v -> assertFailure ("expected throw, got " <> show v)
 
 requireBiome :: IO ()
 requireBiome = do
