@@ -10,24 +10,34 @@
 -- == Pipeline (read top to bottom)
 --
 -- @
--- ClosedExpr / ClosedEffect          -- 'JShark.Api.Types'
+-- ClosedExpr / ClosedEffect           -- 'JShark.Api.Types'
+--       |
+--       +--> Evaluate                 -- 'JShark.Compiler.Evaluate' (tests, REPL)
 --       |
 --       v
--- Flatten  ('JShark.Compiler.Flatten')        -- tree normalize before lower/opt
+-- Flatten                             -- 'JShark.Compiler.Flatten' (normalize tree)
 --       |
 --       v
--- Lower    ('JShark.Compiler.Lower')          -- PHOAS -> first-order IR
+-- Optimize (PHOAS)                    -- 'JShark.Compiler.Optimize'
+--       |
+--       +-- pure:  Codegen.Phoas -> JS            -- 'JShark.Compiler.Codegen.Phoas' ('pureAST')
 --       |
 --       v
--- Optimize ('JShark.Compiler.Optimize')      -- PHOAS + IR passes
+-- Lower                               -- 'JShark.Compiler.Lower' (PHOAS -> first-order Ir)
 --       |
---       +-- pure:  Codegen.Phoas     -- direct PHOAS -> JS ('pureAST')
+--       v
+-- Ir optimize                         -- 'JShark.Compiler.Ir' (first-order passes)
 --       |
---       +-- effect: Flat -> SoA -> Codegen.Flat
---                 ('JShark.Compiler.Flat', 'JShark.Compiler.FlatSoA', 'JShark.Compiler.Codegen.Flat')
+--       v
+-- Flat (pack)                         -- 'JShark.Compiler.Flat'
+--       |
+--       v
+-- FlatSoA (bulk opts)                 -- 'JShark.Compiler.FlatSoA'
+--       |
+--       v
+-- FlatView -> Codegen.Flat -> JS      -- 'JShark.Compiler.FlatView', 'JShark.Compiler.Codegen.Flat'
 --
--- Evaluate ('JShark.Compiler.Evaluate')      -- reference interpreter (tests, REPL)
--- Hoist    ('JShark.Compiler.Hoist')         -- named @$tag@ registration
+-- Hoist    ('JShark.Compiler.Hoist')          -- named @$tag@ registration
 --           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
 -- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
 -- @

@@ -3,12 +3,18 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Per-job compile progress for batch builds (phase + flat-AST node index).
+-- | Per-job compile progress for batch builds.
 --
--- Emit ticks from pure codegen use 'unsafePerformIO' with an 'EmitCtx'
--- captured once per job ('withActiveJob'). Only batch compiles with
--- '--progress' and 'configProgressSlot' set are supported; other paths
--- leave 'cgEmitCtx' empty and skip ticks.
+-- A batch compile creates a 'ProgressBoard' with one 'JobSlot' per job, then
+-- runs each job under 'withActiveJob' so that phase reports issued by the
+-- compiler driver and prepare passes land on the right slot. Phase weights
+-- ('phaseWeight') and the emit node total ('initEmitCtxTotal' /
+-- 'finishEmitPhase') turn slot counters into the percentage bars rendered by
+-- 'renderBatchProgress'. Jobs on threads without an active slot (single
+-- compiles, tests) report nowhere.
+--
+-- Terminal output is serialized through a hand-rolled CAS gate
+-- ('withProgressIO') so concurrent jobs do not interleave their redraws.
 module JShark.Compiler.CompileProgress
   ( CompilePhase (..)
   , JobProgress (..)
@@ -78,6 +84,7 @@ import JShark.Compiler.CompileTiming
   , PhoasPrepareTiming (..)
   )
 
+-- | The ordered phases of a single compile, as shown on the progress bar.
 data CompilePhase
   = PhaseLint
   | PhaseIrPrepare
@@ -136,6 +143,9 @@ data ActiveJobState = ActiveJobState
   , ajsTiming :: !JobTiming
   }
 
+-- | The emit-phase view of an active job: which slot/board to report on, and
+-- the shared emit node total (set by 'initEmitCtxTotal', closed by
+-- 'finishEmitPhase').
 data EmitCtx = EmitCtx
   { ecSlot :: !Int
   , ecBoard :: !ProgressBoardHandle
@@ -327,6 +337,7 @@ captureEmitCtx :: IO (Maybe EmitCtx)
 captureEmitCtx =
   fmap (emitCtxFromJob <$>) lookupActiveJob
 
+-- | Record the emit node total and open the emit phase at index 0.
 initEmitCtxTotal :: EmitCtx -> Int -> IO ()
 initEmitCtxTotal EmitCtx {ecSlot, ecBoard, ecTotal} n = do
   let
@@ -466,7 +477,7 @@ phaseOrder = phaseToInt
 phaseLabel :: CompilePhase -> String
 phaseLabel = \case
   PhaseLint -> "lint"
-  PhaseIrPrepare -> "irpr"
+  PhaseIrPrepare -> "irprep"
   PhasePack -> "pack"
   PhaseFlatOpt -> "fopt"
   PhaseEmit -> "emit"
@@ -602,6 +613,9 @@ markJobDone ProgressBoardHandle {pbhDone, pbhJobs} slot =
         writeJobPhase jobSlot PhaseDone 1 1
       maybeRedraw
 
+-- | Bind the current thread to job @slot@ on @board@ for the duration of
+-- @io@, so any 'reportJobPhase' / 'recordJob*' / 'captureEmitCtx' calls made
+-- inside it land on the right slot. Also resets the slot's timing refs.
 withActiveJob :: Int -> ProgressBoardHandle -> IO a -> IO a
 withActiveJob slot board@ProgressBoardHandle {pbhJobs} io = do
   tid <- myThreadId
@@ -625,6 +639,7 @@ withActiveJob slot board@ProgressBoardHandle {pbhJobs} io = do
     `finally` do
       atomicModifyIORef' progressActive $ \m -> (Map.delete tid m, ())
 
+-- | Close the emit phase at full width for the job running on this thread.
 finishEmitPhase :: IO ()
 finishEmitPhase = do
   mJob <- lookupActiveJob
@@ -689,7 +704,7 @@ renderSubLine style j =
     filled = min subBarWidth (floor (pct * fromIntegral subBarWidth))
     empty = subBarWidth - filled
     name = truncateLabel 18 (T.unpack lbl)
-    phase = padRight 4 (phaseLabel ph)
+    phase = padRight 6 (phaseLabel ph)
     idxShow =
       if tot > 1 && phaseUsesIndex ph
         then " " ++ show (min idx tot) ++ "/" ++ show tot

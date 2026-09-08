@@ -41,6 +41,7 @@ type JS = TextBuilder
 renderJS :: JS -> Text
 renderJS = TB.toText
 
+-- | Alias of 'renderJS' (codegen always emits compact JS).
 renderJSCompact :: JS -> Text
 renderJSCompact = renderJS
 
