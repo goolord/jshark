@@ -25,22 +25,19 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import qualified GHC.IO as GHCIO
-import GHC.IO.Unsafe (unsafePerformIO)
 import JShark.Api.Types
 import JShark.Compiler.Binder
   ( Stamp (..)
   , stampId
   )
 import JShark.Compiler.CompileProgress
-  ( EmitCtx
-  , captureEmitCtx
+  ( captureEmitCtx
   , initEmitCtxTotal
   , recordJobFlatPrepare
   , recordJobPhoasPrepare
   , reportFlatOptPhase
   , reportIrPreparePhase
   , reportPackPhase
-  , tickEmitCtx
   )
 import JShark.Compiler.CompileTiming
   ( FlatOptProfile (..)
@@ -76,7 +73,6 @@ import JShark.Compiler.JsShim
   ( Builtin (CheckedIndex, ValueEq)
   , Preamble
   , emptyPreamble
-  , mergePreamble
   , renderPreambleStyled
   , useShim
   )
@@ -170,8 +166,6 @@ data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
   , cgTag :: {-# UNPACK #-} !Int
   , cgPreamble :: !Preamble
-  , cgEmit :: {-# UNPACK #-} !Int
-  , cgEmitCtx :: !(Maybe EmitCtx)
   , cgStyle :: !EmitStyle
   , cgNames :: !(IM.IntMap Text)
   , cgScope :: ![Set Text]
@@ -231,7 +225,7 @@ arrayElemRef = fromMaybe "undefined"
 startCG = startCGWith minifiedStyle
 
 startCGWith :: EmitStyle -> CG
-startCGWith style = CG 0 (-3) emptyPreamble 0 Nothing style IM.empty [S.empty]
+startCGWith style = CG 0 (-3) emptyPreamble style IM.empty [S.empty]
 
 -- | Prepare optimized pure AST and wire batch progress (pack then emit).
 -- Requires 'withActiveJob' + 'configProgressSlot' when progress is enabled.
@@ -272,7 +266,7 @@ preparePureProgramWith style e = do
       recordJobPhoasPrepare timing
       reportPackPhase ctx 1 1
       initEmitCtxTotal ctx (nodeCountExpr expr)
-      pure ((startCGWith style) {cgEmitCtx = Just ctx}, expr)
+      pure (startCGWith style, expr)
 {-# NOINLINE preparePureProgramWith #-}
 
 prepareFlatEffectProgram :: ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
@@ -287,7 +281,7 @@ prepareFlatEffectProgramWith style e = do
     Nothing -> pure (soa, startCGWith style)
     Just ctx -> do
       initEmitCtxTotal ctx (flatSoaNodeCount soa)
-      pure (soa, (startCGWith style) {cgEmitCtx = Just ctx})
+      pure (soa, startCGWith style)
 {-# NOINLINE prepareFlatEffectProgramWith #-}
 
 flatPrepareFromIr :: Ir.IrEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
@@ -500,25 +494,6 @@ flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
   pure (soa, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareCoreWith #-}
 
-{-# NOINLINE tickEmitCtxUnit #-}
-tickEmitCtxUnit ctx tag = unsafePerformIO (tag `seq` tickEmitCtx ctx)
-
-bumpEmit s =
-  let
-    n = cgEmit s + 1
-   in
-    (n, s {cgEmit = n})
-
-bumpEmitTick sIn =
-  case cgEmitCtx sIn of
-    Nothing -> sIn
-    Just ctx ->
-      let
-        (tag, s0) = bumpEmit sIn
-       in
-        tag `seq` tickEmitCtxUnit ctx tag `seq` s0
-{-# NOINLINE bumpEmitTick #-}
-
 allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 
 allocIdent s = allocIdentHint s Nothing
@@ -726,25 +701,6 @@ allocNIdentsHints s (h : hs) =
     (is, s2) = allocNIdentsHints s1 hs
    in
     (i : is, s2)
-
-mergeEmitCG a b =
-  a
-    { cgIdent = max (cgIdent a) (cgIdent b)
-    , cgPreamble = mergePreamble (cgPreamble a) (cgPreamble b)
-    , cgEmit = max (cgEmit a) (cgEmit b)
-    , cgNames = cgNames a <> cgNames b
-    , cgScope = mergeHintScopes (cgScope a) (cgScope b)
-    }
-
-mergeHintScopes :: [Set Text] -> [Set Text] -> [Set Text]
-mergeHintScopes as bs
-  | length as < length bs =
-      zipWith S.union (as ++ replicate (length bs - length as) S.empty) bs
-  | otherwise =
-      zipWith S.union as (bs ++ replicate (length as - length bs) S.empty)
-
-mergeEmitCGs :: CG -> [CG] -> CG
-mergeEmitCGs = foldl (\acc cg -> mergeEmitCG acc cg `seq` mergeEmitCG acc cg)
 
 flatSoaNodeCount = FlatSoA.flatSoaNodeCount
 

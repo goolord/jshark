@@ -1060,7 +1060,7 @@ flatEmitLayered view root plan s0 =
 
 flatPureASTGo !ctx !env !sIn view nid =
   let
-    s0 = bumpEmitTick sIn
+    s0 = sIn
    in
     case FlatView.firNode view nid of
       Flat.FE_Literal li ->
@@ -1195,7 +1195,7 @@ flatPureASTGo !ctx !env !sIn view nid =
 
 flatEffectfulASTGo !ctx !env !sIn view nid =
   let
-    s0 = bumpEmitTick sIn
+    s0 = sIn
    in
     case FlatView.firNode view nid of
       Flat.FX_Lift eId -> flatPureChild ctx s0 eId

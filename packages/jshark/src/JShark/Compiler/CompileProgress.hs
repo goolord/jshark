@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Per-job compile progress for batch builds (phase + flat-AST node index).
@@ -33,7 +32,6 @@ module JShark.Compiler.CompileProgress
   , reportPackPhase
   , reportFlatOptPhase
   , reportIrPreparePhase
-  , tickEmitCtx
   , recordJobLintSec
   , recordJobCodegenSec
   , recordJobMinifySec
@@ -79,7 +77,6 @@ import JShark.Compiler.CompileTiming
   , FlatPrepareTiming (..)
   , PhoasPrepareTiming (..)
   )
-import System.CPUTime (getCPUTime)
 
 data CompilePhase
   = PhaseLint
@@ -136,19 +133,13 @@ data ActiveJobState = ActiveJobState
   { ajsSlot :: !Int
   , ajsBoard :: !ProgressBoardHandle
   , ajsEmitTotal :: !(IORef Int)
-  , ajsEmitIndex :: !(IORef Int)
-  , ajsEmitStep :: !(IORef Int)
-  , ajsLastEmit :: !(IORef Integer)
   , ajsTiming :: !JobTiming
   }
 
 data EmitCtx = EmitCtx
   { ecSlot :: !Int
   , ecBoard :: !ProgressBoardHandle
-  , ecIndex :: !(IORef Int)
   , ecTotal :: !(IORef Int)
-  , ecStep :: !(IORef Int)
-  , ecLast :: !(IORef Integer)
   }
 
 emitCtxFromJob :: ActiveJobState -> EmitCtx
@@ -157,17 +148,11 @@ emitCtxFromJob
     { ajsSlot
     , ajsBoard
     , ajsEmitTotal
-    , ajsEmitIndex
-    , ajsEmitStep
-    , ajsLastEmit
     } =
     EmitCtx
       { ecSlot = ajsSlot
       , ecBoard = ajsBoard
-      , ecIndex = ajsEmitIndex
       , ecTotal = ajsEmitTotal
-      , ecStep = ajsEmitStep
-      , ecLast = ajsLastEmit
       }
 
 newJobTiming :: IO JobTiming
@@ -343,13 +328,10 @@ captureEmitCtx =
   fmap (emitCtxFromJob <$>) lookupActiveJob
 
 initEmitCtxTotal :: EmitCtx -> Int -> IO ()
-initEmitCtxTotal EmitCtx {ecSlot, ecBoard, ecTotal, ecIndex, ecStep} n = do
+initEmitCtxTotal EmitCtx {ecSlot, ecBoard, ecTotal} n = do
   let
     total = max 1 n
-    step = emitStepSize total
   writeIORef ecTotal total
-  writeIORef ecIndex 0
-  writeIORef ecStep step
   reportJobPhaseDirect ecBoard ecSlot PhaseEmit 0 total
 
 reportFlatOptPhase :: EmitCtx -> Int -> Int -> IO ()
@@ -363,25 +345,6 @@ reportIrPreparePhase EmitCtx {ecBoard, ecSlot} idx tot =
 reportPackPhase :: EmitCtx -> Int -> Int -> IO ()
 reportPackPhase EmitCtx {ecBoard, ecSlot} idx tot =
   reportJobPhaseDirect ecBoard ecSlot PhasePack idx tot
-
-tickEmitCtx :: EmitCtx -> IO ()
-tickEmitCtx EmitCtx {ecSlot, ecBoard, ecIndex, ecTotal, ecStep, ecLast} = do
-  total <- readIORef ecTotal
-  when (total > 0) $ do
-    idx <- (+ 1) <$> readIORef ecIndex
-    writeIORef ecIndex idx
-    step <- readIORef ecStep
-    lastEmit <- readIORef ecLast
-    let
-      should =
-        idx == 1
-          || idx >= total
-          || (idx `mod` step == 0)
-    when should $ do
-      now <- getCPUTime
-      when (idx == 1 || idx >= total || now - lastEmit > 50_000_000_000) $ do
-        writeIORef ecLast now
-        reportJobPhaseDirect ecBoard ecSlot PhaseEmit idx total
 
 {-# NOINLINE progressActive #-}
 progressActive :: IORef (Map.Map ThreadId ActiveJobState)
@@ -643,9 +606,6 @@ withActiveJob :: Int -> ProgressBoardHandle -> IO a -> IO a
 withActiveJob slot board@ProgressBoardHandle {pbhJobs} io = do
   tid <- myThreadId
   emitTotal <- newIORef 0
-  emitIndex <- newIORef 0
-  emitStep <- newIORef 32
-  lastEmit <- newIORef (0 :: Integer)
   timing <-
     case pbhJobs V.!? slot of
       Nothing -> newJobTiming
@@ -658,9 +618,6 @@ withActiveJob slot board@ProgressBoardHandle {pbhJobs} io = do
         { ajsSlot = slot
         , ajsBoard = board
         , ajsEmitTotal = emitTotal
-        , ajsEmitIndex = emitIndex
-        , ajsEmitStep = emitStep
-        , ajsLastEmit = lastEmit
         , ajsTiming = timing
         }
   atomicModifyIORef' progressActive $ \m -> (Map.insert tid ctx m, ())
@@ -668,18 +625,14 @@ withActiveJob slot board@ProgressBoardHandle {pbhJobs} io = do
     `finally` do
       atomicModifyIORef' progressActive $ \m -> (Map.delete tid m, ())
 
-emitStepSize :: Int -> Int
-emitStepSize n = max 1 (min 500 (n `div` 100))
-
 finishEmitPhase :: IO ()
 finishEmitPhase = do
   mJob <- lookupActiveJob
   case mJob of
-    Just ActiveJobState {ajsSlot, ajsBoard, ajsEmitTotal, ajsEmitIndex} -> do
+    Just ActiveJobState {ajsSlot, ajsBoard, ajsEmitTotal} -> do
       total <- readIORef ajsEmitTotal
-      idx <- readIORef ajsEmitIndex
       when (total > 0) $
-        reportJobPhaseDirect ajsBoard ajsSlot PhaseEmit (max idx total) total
+        reportJobPhaseDirect ajsBoard ajsSlot PhaseEmit total total
     _ -> pure ()
 
 subBarWidth :: Int

@@ -345,7 +345,7 @@ parenBalanced txt depth =
 effectfulAST' :: forall v. Env -> CG -> Effect Stamp v -> (CG, Code)
 effectfulAST' !env !sIn eff =
   let
-    s0 = bumpEmitTick sIn
+    s0 = sIn
    in
     case eff of
       Lift x -> pureAST' s0 env x
@@ -591,7 +591,7 @@ pureAST' ::
   -> (CG, Code)
 pureAST' !sIn env expr =
   let
-    s0 = bumpEmitTick sIn
+    s0 = sIn
    in
     case expr of
       Literal v -> case v of
