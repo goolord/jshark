@@ -18,6 +18,8 @@ module JShark.Compiler.Flat
   , FlatFixed (..)
   , FlatLit (FLit)
   , packEffectProgramState
+  , encodeFlatNode
+  , emptySoaSideAcc
   , flatNodeIsEffect
   , flatNodeChildRefs
   , flatArgRef

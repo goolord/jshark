@@ -18,6 +18,8 @@ module JShark.Compiler.FlatSoA
   , flatSoaFieldGroup
   , flatSoaArgGroup
   , flatSoaNodePackRefs
+  , flatSoaHoistTag
+  , flatSoaParamName
   , flatSoaIdentBudget
   , flatSoaLayerBuckets
   , soaPureCount
@@ -393,6 +395,20 @@ flatSoaNodeSideRefs soa = \case
 flatSoaNodePackRefs :: FlatSoA -> FlatNode -> [NodeId]
 flatSoaNodePackRefs soa node =
   flatNodeChildRefs node ++ flatSoaNodeSideRefs soa node
+
+-- | Named-lambda hoist tag for a node, if any (bounds-checked).
+flatSoaHoistTag :: FlatSoA -> NodeId -> Maybe Text
+flatSoaHoistTag soa i =
+  if i >= 0 && i < V.length (fsaHoistTags soa)
+    then fsaHoistTags soa V.! i
+    else Nothing
+
+-- | Source-hint param name for a node, if any (bounds-checked).
+flatSoaParamName :: FlatSoA -> NodeId -> Maybe Text
+flatSoaParamName soa i =
+  if i >= 0 && i < V.length (fsaParamNames soa)
+    then fsaParamNames soa V.! i
+    else Nothing
 
 flatSoaSubtreeSizes :: FlatSoA -> V.Vector Int
 flatSoaSubtreeSizes soa =

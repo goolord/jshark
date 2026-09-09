@@ -286,15 +286,6 @@ executable jshark-probe
     , jshark-examples
     , text
 
-executable print-size
-  import: bench
-  main-is: PrintSize.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , jshark
-    , jshark-examples
-    , text
 
 benchmark jshark-examples-bench
   import: bench

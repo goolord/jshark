@@ -23,6 +23,7 @@ import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import JShark.Compiler
+import JShark.Compiler.Codegen.Core (minifiedStyle)
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import FlatTest
@@ -30,6 +31,7 @@ import FlatTest
   , flatDirectPackDeterministic
   , flatDirectPackForRangeOk
   , flatDirectPackOptimizeStable
+  , flatOpcodeRoundTripOk
   , flatSoaPureNodeCount
   , lowerOptEffectRegressionOk
   , optIrEffectForRangeImpure
@@ -464,7 +466,7 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTIr
+              ( effectfulASTWith minifiedStyle
                   ( fromSyntax
                       ( toSyntax_
                           ( forRange (number 0) (number 3) $ \i ->
@@ -480,7 +482,7 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTIr
+              ( effectfulASTWith minifiedStyle
                   ( fromSyntax $ do
                       buf <- bindExpr (newByteArray (number 4))
                       _ <-
@@ -497,7 +499,7 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTIr
+              ( effectfulASTWith minifiedStyle
                   ( fromSyntax $ do
                       pal <- bindExpr (newByteArray (number 12))
                       rgba <- bindExpr (newByteArray (number 16))
@@ -516,7 +518,7 @@ controlFlowTests =
           h = number 3
           js =
             renderJS
-              ( effectfulASTIr
+              ( effectfulASTWith minifiedStyle
                   ( fromSyntax $ do
                       buf <- bindExpr (newByteArray (w * h))
                       _ <-
@@ -533,7 +535,7 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTIr
+              ( effectfulASTWith minifiedStyle
                   ( fromSyntax $ do
                       buf <- bindExpr (newByteArray (number 1))
                       _ <-
@@ -555,7 +557,7 @@ controlFlowTests =
           @?= "((a,b)=>a+b)(1, 2)"
     , testCase "flat multi-arg arrow FFI wraps IIFE" $
         renderJS
-          ( effectfulASTIr
+          ( effectfulASTWith minifiedStyle
               ( ffi
                   ("(a,b)=>a+b")
                   (arg (number 1) <: arg (number 2) <: RecNil)
@@ -2050,8 +2052,8 @@ flatSoATests =
     [ testCase "optimize attaches pure flags" $
         flatSoaPureNodeCount (expr (number 1 + number 2)) > (0 :: Int) @?= True
     , testCase "constant fold chains" $
-        renderJS (effectfulASTIr (expr ((number 1 + number 2) + number 3)))
-          @?= renderJS (effectfulASTIr (expr (number 6)))
+        renderJS (effectfulASTWith minifiedStyle (expr ((number 1 + number 2) + number 3)))
+          @?= renderJS (effectfulASTWith minifiedStyle (expr (number 6)))
     , testCase "direct pack is deterministic (kernel)" $
         flatDirectPackDeterministic kernelAndLambdaUse @?= True
     , testCase "direct pack is deterministic (forRange u8set)" $
@@ -2060,6 +2062,8 @@ flatSoATests =
         lowerOptEffectRegressionOk @?= True
     , testCase "optimize is stable on second pass" $
         flatDirectPackOptimizeStable kernelAndLambdaUse @?= True
+    , testCase "every opcode decodes and re-encodes" $
+        flatOpcodeRoundTripOk @?= True
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number

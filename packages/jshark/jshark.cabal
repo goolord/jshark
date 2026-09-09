@@ -76,7 +76,6 @@ library
     JShark.Compiler.FlatEnc
     JShark.Compiler.FlatSoA
     JShark.Compiler.Flatten
-    JShark.Compiler.FlatView
     JShark.Compiler.Hoist
     JShark.Compiler.Hoist.Canonical
     JShark.Compiler.Hvm2Lint

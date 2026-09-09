@@ -25,7 +25,6 @@ module JShark.Compiler.Optimize
   , nodeCountEff
   , closedEffectNodes
   , closedExprNodes
-  , optIrLargeThreshold
   , optimizedExprSize
   , optimizedEffectSize
   , irOptimizedEffectFromClosed
@@ -127,10 +126,6 @@ closedExprNodes (e :: ClosedExpr u) =
    in
     Ir.irSize (Ir.metaIrExpr ir)
 {-# NOINLINE closedExprNodes #-}
-
--- | PHOAS 'optEffect' is quadratic on long bind chains; IR opt for huge ASTs.
-optIrLargeThreshold :: Int
-optIrLargeThreshold = 0
 
 keepExprCont ::
   (?keepLets :: Bool) =>

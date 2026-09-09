@@ -69,7 +69,6 @@ import JShark.Compiler.Evaluate
   )
 import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.FlatSoA as FlatSoA
-import qualified JShark.Compiler.FlatView as FlatView
 import JShark.Compiler.Hoist (emitHoistedFnValue)
 
 flatRenderLiteral ::
@@ -101,15 +100,15 @@ flatRenderLiteral env s0 = \case
   ValueBool False -> (s0, Code mempty "false")
   ValueFrozen {} -> error "JShark.flatPureAST: ValueFrozen is eval-only"
 
-flatIsUnitExpr view nid = case FlatView.firNode view nid of
+flatIsUnitExpr view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FE_Literal li ->
-    FlatView.withLitValue view li $ \case
+    FlatSoA.withFlatLitValue view li $ \case
       ValueUnit -> True
       _ -> False
   Flat.FE_Var {} -> False
   _ -> False
 
-flatIsUnitEffect view nid = case FlatView.firNode view nid of
+flatIsUnitEffect view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FX_Lift eid -> flatIsUnitExpr view eid
   Flat.FX_Throw _ -> True
   Flat.FX_While _ b -> flatIsUnitEffect view b
@@ -123,12 +122,12 @@ flatIsUnitEffect view nid = case FlatView.firNode view nid of
   Flat.FX_ResultCaseE _ _ er _ ok ->
     flatIsUnitEffect view er && flatIsUnitEffect view ok
   Flat.FX_StringCaseE _ ai d ->
-    all (flatIsUnitEffect view . snd) (FlatView.firStrCases view ai)
+    all (flatIsUnitEffect view . snd) (FlatSoA.flatSoaStrCases view ai)
       && flatIsUnitEffect view d
   Flat.FX_Try a _ k -> flatIsUnitEffect view a && flatIsUnitEffect view k
   _ -> False
 
-flatIsSimpleEffectNode view nid = case FlatView.firNode view nid of
+flatIsSimpleEffectNode view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FX_Lift eid -> flatIsSimpleNode view eid
   Flat.FX_FFI {} -> True
   Flat.FX_CallMethod {} -> True
@@ -137,7 +136,7 @@ flatIsSimpleEffectNode view nid = case FlatView.firNode view nid of
   Flat.FX_ArrayLit es -> all (flatIsSimpleEffectNode view) es
   _ -> False
 
-flatIsSimpleNode view nid = case FlatView.firNode view nid of
+flatIsSimpleNode view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FE_Literal _ -> True
   Flat.FE_Var _ -> True
   Flat.FE_EmbedEff eid -> flatIsSimpleEffectNode view eid
@@ -232,7 +231,7 @@ flatRenderArgListSeq ctx s0 args =
     (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
 
 flatRenderArgList ctx s0 view ai =
-  flatRenderArgListSeq ctx s0 (FlatView.firArgGroup view ai)
+  flatRenderArgListSeq ctx s0 (FlatSoA.flatSoaArgGroup view ai)
 
 flatRenderField ctx s = \case
   Flat.FlatField k eid ->
@@ -268,7 +267,7 @@ flatRenderField ctx s = \case
 
 flatRenderObjectLit ctx s0 view gi =
   let
-    fs = FlatView.firFieldGroup view gi
+    fs = FlatSoA.flatSoaFieldGroup view gi
     (s1, parts) = mapAccumL (flatRenderField ctx) s0 fs
     (declList, pairs) = unzip parts
    in
@@ -510,9 +509,9 @@ flatSeqEffect ctx s0 xId yId =
     (s2, MkCode (Just (stmt $$ fromMaybe mempty yDecl)) yRef yFX)
 
 flatBindEffect ctx s0 view nid tag xId bodyId =
-  case FlatView.firNode view bodyId of
+  case FlatSoA.flatSoaNode view bodyId of
     Flat.FX_Lift eId
-      | Flat.FE_Var i <- FlatView.firNode view eId
+      | Flat.FE_Var i <- FlatSoA.flatSoaNode view eId
       , i == tag ->
           flatEffectChild ctx s0 xId
     _ ->
@@ -521,7 +520,7 @@ flatBindEffect ctx s0 view nid tag xId bodyId =
 flatBindEffectKeep ctx s0 view nid _tag xId bodyId =
   let
     (s1, MkCode xDecl xRef xFX) = flatEffectChild ctx s0 xId
-    hint = FlatView.firParamName view nid
+    hint = FlatSoA.flatSoaParamName view nid
     (nBind, s2) = flatPlanIdentHint ctx s1 nid hint
     (s3, MkCode yDecl yRef yFX) = flatEffectChild ctx s2 bodyId
     stmtX
@@ -593,7 +592,7 @@ flatRenderResultCaseE ctx env s0 view nid resId tagE errId _tagO okId =
 
 flatRenderStringCaseE ctx s0 view nid scrutId ai defId =
   let
-    arms = FlatView.firStrCases view ai
+    arms = FlatSoA.flatSoaStrCases view ai
     unit =
       all (flatIsUnitEffect view . snd) arms
         && flatIsUnitEffect view defId
@@ -673,13 +672,13 @@ flatEmitLambdaSpine ctx env0 s0 view nid0 tag0 bodyId0 =
  where
   go s env nid tag bodyId acc =
     let
-      hint = FlatView.firParamName view nid
+      hint = FlatSoA.flatSoaParamName view nid
       (nParam, s1) = flatPlanIdentHint ctx s nid hint
       env' = IM.insert tag nParam env
      in
-      case FlatView.firNode view bodyId of
+      case FlatSoA.flatSoaNode view bodyId of
         Flat.FE_Lambda tag2 body2
-          | isNothing (FlatView.firHoistTag view bodyId) ->
+          | isNothing (FlatSoA.flatSoaHoistTag view bodyId) ->
               go s1 env' bodyId tag2 body2 (nParam : acc)
         _ ->
           let
@@ -693,13 +692,13 @@ flatEmitLambdaESpine ctx env0 s0 view nid0 tag0 bodyId0 =
  where
   go s env nid tag bodyId acc =
     let
-      hint = FlatView.firParamName view nid
+      hint = FlatSoA.flatSoaParamName view nid
       (nParam, s1) = flatPlanIdentHint ctx s nid hint
       env' = IM.insert tag nParam env
      in
-      case FlatView.firNode view bodyId of
+      case FlatSoA.flatSoaNode view bodyId of
         Flat.FX_LambdaE tag2 body2
-          | isNothing (FlatView.firHoistTag view bodyId) ->
+          | isNothing (FlatSoA.flatSoaHoistTag view bodyId) ->
               go s1 env' bodyId tag2 body2 (nParam : acc)
         _ ->
           let
@@ -710,32 +709,32 @@ flatEmitLambdaESpine ctx env0 s0 view nid0 tag0 bodyId0 =
 
 -- | Apply-spine length that matches a hoisted peeled lambda. Opaque
 -- heads (params, @id@, FFI) stay curried: @f(a)(b)@, not @f(a, b)@.
-flatCallArity view nid = case FlatView.firNode view nid of
+flatCallArity view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FE_Lambda _ bodyId
-    | isJust (FlatView.firHoistTag view nid) ->
+    | isJust (FlatSoA.flatSoaHoistTag view nid) ->
         1 + flatUntaggedLambdaChain view bodyId
   Flat.FX_LambdaE _ bodyId
-    | isJust (FlatView.firHoistTag view nid) ->
+    | isJust (FlatSoA.flatSoaHoistTag view nid) ->
         1 + flatUntaggedLambdaEChain view bodyId
   _ -> 0
 
-flatUntaggedLambdaChain view nid = case FlatView.firNode view nid of
+flatUntaggedLambdaChain view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FE_Lambda _ bodyId
-    | isNothing (FlatView.firHoistTag view nid) ->
+    | isNothing (FlatSoA.flatSoaHoistTag view nid) ->
         1 + flatUntaggedLambdaChain view bodyId
   _ -> 0
 
-flatUntaggedLambdaEChain view nid = case FlatView.firNode view nid of
+flatUntaggedLambdaEChain view nid = case FlatSoA.flatSoaNode view nid of
   Flat.FX_LambdaE _ bodyId
-    | isNothing (FlatView.firHoistTag view nid) ->
+    | isNothing (FlatSoA.flatSoaHoistTag view nid) ->
         1 + flatUntaggedLambdaEChain view bodyId
   _ -> 0
 
-flatCollectApply view fId argIds = case FlatView.firNode view fId of
+flatCollectApply view fId argIds = case FlatSoA.flatSoaNode view fId of
   Flat.FE_Apply f2 x2 -> flatCollectApply view f2 (x2 : argIds)
   _ -> (fId, argIds)
 
-flatCollectApplyE view fId argIds = case FlatView.firNode view fId of
+flatCollectApplyE view fId argIds = case FlatSoA.flatSoaNode view fId of
   Flat.FX_ApplyE f2 x2 -> flatCollectApplyE view f2 (x2 : argIds)
   _ -> (fId, argIds)
 
@@ -810,13 +809,13 @@ flatPureChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
 flatEffectChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
 
 flatNodeKindEffect view nid =
-  FlatView.firNodeIsEffect (FlatView.firNode view nid)
+  Flat.flatNodeIsEffect (FlatSoA.flatSoaNode view nid)
 
 buildFlatEmitPlan ::
-  FlatView.FlatIRView -> Flat.NodeId -> CG -> (FlatEmitPlan, CG)
+  FlatSoA.FlatSoA -> Flat.NodeId -> CG -> (FlatEmitPlan, CG)
 buildFlatEmitPlan view root s0 =
   let
-    n = FlatView.firNodeCount view
+    n = FlatSoA.flatSoaNodeCount view
    in
     runST $ do
       envAt <- MV.replicate n Nothing
@@ -829,7 +828,7 @@ buildFlatEmitPlan view root s0 =
         planAlloc i = do
           s <- readSTRef sRef
           let
-            hint = FlatView.firParamName view i
+            hint = FlatSoA.flatSoaParamName view i
             (ident, s') = allocIdentHint s hint
           writeSTRef sRef s'
           MV.write bindAt i (Just ident)
@@ -843,7 +842,7 @@ buildFlatEmitPlan view root s0 =
           | otherwise = do
               markReach nid
               writeEnv nid env
-              case FlatView.firNode view nid of
+              case FlatSoA.flatSoaNode view nid of
                 Flat.FE_Let tag xId bodyId -> do
                   planGo env xId
                   ident <- planAlloc nid
@@ -1011,11 +1010,11 @@ buildFlatEmitPlan view root s0 =
                   _ <- planAlloc nid
                   mapM_
                     (planGo env . snd)
-                    (FlatView.firStrCases view ai)
+                    (FlatSoA.flatSoaStrCases view ai)
                   planGo env defId
                 node -> do
                   let
-                    refs = FlatView.firNodePackRefs view node
+                    refs = FlatSoA.flatSoaNodePackRefs view node
                   mapM_ (planGo env) refs
       planGo IM.empty root
       envF <- V.unsafeFreeze envAt
@@ -1027,7 +1026,7 @@ buildFlatEmitPlan view root s0 =
             { fepEnv = envF
             , fepBind = bindF
             , fepReach = reachF
-            , fepLayers = FlatView.firLayerBuckets view root
+            , fepLayers = FlatSoA.flatSoaLayerBuckets view root
             }
         , sFinal
         )
@@ -1035,7 +1034,7 @@ buildFlatEmitPlan view root s0 =
 flatEmitLayered view root plan s0 =
   unsafePerformIO $ do
     let
-      n = FlatView.firNodeCount view
+      n = FlatSoA.flatSoaNodeCount view
       emitOrder = concatMap V.toList (V.toList (fepLayers plan))
     tableMV <- MV.new n
     MV.set tableMV (Code mempty mempty)
@@ -1062,13 +1061,13 @@ flatPureASTGo !ctx !env !sIn view nid =
   let
     s0 = sIn
    in
-    case FlatView.firNode view nid of
+    case FlatSoA.flatSoaNode view nid of
       Flat.FE_Literal li ->
-        FlatView.withLitValue view li (flatRenderLiteral env s0)
+        FlatSoA.withFlatLitValue view li (flatRenderLiteral env s0)
       Flat.FE_Var i ->
         (s0, Code mempty (varStampJS s0 env (Name i)))
       Flat.FE_Let tag xId bodyId ->
-        case FlatView.firNode view bodyId of
+        case FlatSoA.flatSoaNode view bodyId of
           Flat.FE_Var i
             | i == tag ->
                 flatPureChild ctx s0 xId
@@ -1097,7 +1096,7 @@ flatPureASTGo !ctx !env !sIn view nid =
           , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
           )
       Flat.FE_Lambda tag bodyId ->
-        case FlatView.firHoistTag view nid of
+        case FlatSoA.flatSoaHoistTag view nid of
           Just _ ->
             let
               (s1, fnJs) = flatEmitLambdaSpine ctx env s0 view nid tag bodyId
@@ -1107,7 +1106,7 @@ flatPureASTGo !ctx !env !sIn view nid =
           Nothing ->
             withHintScope s0 $ \sScoped ->
               let
-                hint = FlatView.firParamName view nid
+                hint = FlatSoA.flatSoaParamName view nid
                 (nParam, s1) = flatPlanIdentHint ctx sScoped nid hint
                 (s2, MkCode d r _) = flatPureChild ctx s1 bodyId
                in
@@ -1180,9 +1179,9 @@ flatPureASTGo !ctx !env !sIn view nid =
         let
           (s1, Code d r) = flatPureChild ctx s0 oId
          in
-          (s1, Code d (jsDotOrBracket r (FlatView.firText view ti)))
+          (s1, Code d (jsDotOrBracket r (FlatSoA.flatSoaText view ti)))
       Flat.FE_Hvm2Ref ti ->
-        (s0, Code mempty (hvm2ExportRef (FlatView.firText view ti)))
+        (s0, Code mempty (hvm2ExportRef (FlatSoA.flatSoaText view ti)))
       knode ->
         case knode of
           Flat.FE_MethMap {} -> flatRenderMethod ctx env s0 view knode
@@ -1197,7 +1196,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
   let
     s0 = sIn
    in
-    case FlatView.firNode view nid of
+    case FlatSoA.flatSoaNode view nid of
       Flat.FX_Lift eId -> flatPureChild ctx s0 eId
       Flat.FX_FFI fi ai ->
         let
@@ -1206,15 +1205,15 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           ( s1
           , fxCode
               argDecl
-              (renderFFIInvoke (FlatView.firFFI view fi) argRefs)
+              (renderFFIInvoke (FlatSoA.flatSoaFFI view fi) argRefs)
           )
       Flat.FX_UnsafeObject ti ->
-        (s0, Code mempty (jsText (FlatView.firText view ti)))
+        (s0, Code mempty (jsText (FlatSoA.flatSoaText view ti)))
       Flat.FX_UnsafeObjectGet xId sId ->
         let
           (s1, Code xDecl xRef) = flatEffectChild ctx s0 xId
          in
-          (s1, Code xDecl $ jsDotOrBracket xRef (FlatView.firText view sId))
+          (s1, Code xDecl $ jsDotOrBracket xRef (FlatSoA.flatSoaText view sId))
       Flat.FX_UnsafeObjectAssign xId yId ->
         let
           (s1, Code xDecl xRef) = flatEffectChild ctx s0 xId
@@ -1223,7 +1222,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           (s2, fxCode (xDecl $$ yDecl) $ xRef <> " = " <> yRef)
       Flat.FX_CallMethod recvId methodIdx ai ->
         let
-          method = FlatView.firText view methodIdx
+          method = FlatSoA.flatSoaText view methodIdx
           (s1, Code rDecl rRef) = flatEffectChild ctx s0 recvId
           (s2, argDecl, argRefs) = flatRenderArgList ctx s1 view ai
          in
@@ -1246,7 +1245,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
           )
       Flat.FX_LambdaE tag bodyId ->
-        case FlatView.firHoistTag view nid of
+        case FlatSoA.flatSoaHoistTag view nid of
           Just _ ->
             let
               (s1, fnJs) = flatEmitLambdaESpine ctx env s0 view nid tag bodyId
@@ -1256,7 +1255,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           Nothing ->
             withHintScope s0 $ \sScoped ->
               let
-                hint = FlatView.firParamName view nid
+                hint = FlatSoA.flatSoaParamName view nid
                 (nParam, s1) = flatPlanIdentHint ctx sScoped nid hint
                 (s2, MkCode exprXDecl exprXRef _) =
                   flatEffectChild ctx s1 bodyId
@@ -1429,8 +1428,8 @@ flatEffectfulCodegenFromView soa =
 
 flatEffectfulCodegenFromViewWith sStart soa =
   let
-    root = FlatView.firRoot soa
-    total = FlatView.firNodeCount soa
+    root = FlatSoA.fsaRoot soa
+    total = FlatSoA.flatSoaNodeCount soa
    in
     if root < 0 || root >= total
       then error "JShark.flatEffectfulCodegen: invalid root node"
@@ -1454,9 +1453,6 @@ flatEffectfulCodegenWith style (e :: ClosedEffect u) =
     flatEffectfulCodegenFromViewWith s0 soa
 {-# NOINLINE flatEffectfulCodegenWith #-}
 
-effectfulASTFromFlat :: ClosedEffect u -> JS
-effectfulASTFromFlat e = uncurry renderWithPreamble (flatEffectfulCodegen e)
-
 effectfulASTFromSoA :: FlatSoA.FlatSoA -> JS
 effectfulASTFromSoA soa =
   uncurry renderWithPreamble (flatEffectfulCodegenFromView soa)
@@ -1467,7 +1463,5 @@ effectfulAST = effectfulASTWith idiomaticStyle
 effectfulASTWith :: EmitStyle -> ClosedEffect u -> JS
 effectfulASTWith style e =
   uncurry renderWithPreamble (flatEffectfulCodegenWith style e)
-
-effectfulASTIr = effectfulASTFromFlat
 
 -- | Stmt-only codegen for branching effects (no shared @let result@).

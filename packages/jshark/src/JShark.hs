@@ -35,7 +35,7 @@
 -- FlatSoA (bulk opts)                 -- 'JShark.Compiler.FlatSoA'
 --       |
 --       v
--- FlatView -> Codegen.Flat -> JS      -- 'JShark.Compiler.FlatView', 'JShark.Compiler.Codegen.Flat'
+-- FlatSoA -> Codegen.Flat -> JS      -- 'JShark.Compiler.FlatSoA', 'JShark.Compiler.Codegen.Flat'
 --
 -- Hoist    ('JShark.Compiler.Hoist')          -- named @$tag@ registration
 --           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
@@ -134,24 +134,18 @@ module JShark
   , optimize
   , optimizeWith
   , optimizeEffect
-  , optimizeEffectFromIr
-  , phoasNodeCountFromIr
   , optimizeEffectIr
   , nodeCountExpr
   , nodeCountEff
   , closedEffectNodes
   , closedExprNodes
-  , lowerOptEffectIr
-  , optIrLargeThreshold
   , optimizedExprSize
   , optimizedEffectSize
   , pureAST
   , pureASTWith
   , effectfulAST
   , effectfulASTWith
-  , effectfulASTFromFlat
   , effectfulASTFromSoA
-  , effectfulASTIr
   , irEffectFromClosed
   , flatPrepareCore
   , flatPrepareFromIr
@@ -192,9 +186,7 @@ import JShark.Compiler.Codegen.Core
   )
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
-  , effectfulASTFromFlat
   , effectfulASTFromSoA
-  , effectfulASTIr
   , effectfulASTWith
   , flatEffectfulCodegen
   )
@@ -212,7 +204,6 @@ import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
   ( irEffectFromClosed
   , irExprFromClosed
-  , lowerOptEffectIr
   )
 import JShark.Compiler.Optimize
   ( closedEffectNodes
@@ -222,15 +213,12 @@ import JShark.Compiler.Optimize
   , irOptimizedExprFromClosed
   , nodeCountEff
   , nodeCountExpr
-  , optIrLargeThreshold
   , optimize
   , optimizeEffect
-  , optimizeEffectFromIr
   , optimizeEffectIr
   , optimizeWith
   , optimizedEffectSize
   , optimizedExprSize
-  , phoasNodeCountFromIr
   )
 
 pureProgram :: ClosedExpr u -> JS
