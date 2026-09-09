@@ -131,12 +131,6 @@ module JShark
   , evaluateBigInt
   , packUint8
   , uint8Elems
-  , optimize
-  , optimizeWith
-  , optimizeEffect
-  , optimizeEffectIr
-  , nodeCountExpr
-  , nodeCountEff
   , closedEffectNodes
   , closedExprNodes
   , optimizedExprSize
@@ -210,12 +204,6 @@ import JShark.Compiler.Optimize
   , collectHvm2Kernels
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
-  , nodeCountEff
-  , nodeCountExpr
-  , optimize
-  , optimizeEffect
-  , optimizeEffectIr
-  , optimizeWith
   , optimizedEffectSize
   , optimizedExprSize
   )

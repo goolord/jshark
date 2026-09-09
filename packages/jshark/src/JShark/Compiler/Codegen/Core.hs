@@ -27,14 +27,12 @@ import GHC.Clock (getMonotonicTime)
 import qualified GHC.IO as GHCIO
 import JShark.Api.Types
 import JShark.Compiler.Binder
-  ( Stamp (..)
-  , stampId
+  ( stampId
   )
 import JShark.Compiler.CompileProgress
   ( captureEmitCtx
   , initEmitCtxTotal
   , recordJobFlatPrepare
-  , recordJobPhoasPrepare
   , reportFlatOptPhase
   , reportIrPreparePhase
   , reportPackPhase
@@ -44,9 +42,7 @@ import JShark.Compiler.CompileTiming
   , FlatPrepareTiming (..)
   , IrOptProfile (..)
   , LowerProfile (..)
-  , PhoasPrepareTiming (..)
   , reportFlatPrepareTiming
-  , reportPhoasPrepareTiming
   , seconds
   )
 import JShark.Compiler.Emit
@@ -81,10 +77,6 @@ import JShark.Compiler.Lower
   , lowerOptEffectIrWith
   , lowerOptExprIr
   , optEffectClosed
-  )
-import JShark.Compiler.Optimize
-  ( nodeCountExpr
-  , optimizeWith
   )
 
 preambleDecls s =
@@ -227,48 +219,6 @@ startCG = startCGWith minifiedStyle
 
 startCGWith :: EmitStyle -> CG
 startCGWith style = CG 0 (-3) emptyPreamble style IM.empty [S.empty]
-
--- | Prepare optimized pure AST and wire batch progress (pack then emit).
--- Requires 'withActiveJob' + 'configProgressSlot' when progress is enabled.
-preparePureProgram :: ClosedExpr u -> IO (CG, Expr Stamp u)
-preparePureProgram = preparePureProgramWith minifiedStyle
-
-preparePureProgramWith :: EmitStyle -> ClosedExpr u -> IO (CG, Expr Stamp u)
-preparePureProgramWith style e = do
-  mCtx <- captureEmitCtx
-  case mCtx of
-    Nothing -> do
-      t0 <- getMonotonicTime
-      let
-        !expr = optimizeWith (esKeepLets style) e
-      t1 <- getMonotonicTime
-      let
-        timing =
-          PhoasPrepareTiming
-            { pptOptimizeSec = seconds t0 t1
-            , pptTotalSec = seconds t0 t1
-            }
-      reportPhoasPrepareTiming timing
-      recordJobPhoasPrepare timing
-      pure (startCGWith style, expr)
-    Just ctx -> do
-      reportPackPhase ctx 0 1
-      t0 <- getMonotonicTime
-      let
-        !expr = optimizeWith (esKeepLets style) e
-      t1 <- getMonotonicTime
-      let
-        timing =
-          PhoasPrepareTiming
-            { pptOptimizeSec = seconds t0 t1
-            , pptTotalSec = seconds t0 t1
-            }
-      reportPhoasPrepareTiming timing
-      recordJobPhoasPrepare timing
-      reportPackPhase ctx 1 1
-      initEmitCtxTotal ctx (nodeCountExpr expr)
-      pure (startCGWith style, expr)
-{-# NOINLINE preparePureProgramWith #-}
 
 prepareFlatEffectProgram ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)

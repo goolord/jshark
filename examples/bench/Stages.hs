@@ -28,10 +28,8 @@ import JShark
   , ClosedExpr
   , effectfulAST
   , effectfulProgram
-  , nodeCountEff
-  , nodeCountExpr
-  , optimize
-  , optimizeEffect
+  , optimizedEffectSize
+  , optimizedExprSize
   , pureAST
   , pureProgram
   , renderJS
@@ -56,21 +54,13 @@ emitLen :: ClosedEffect u -> Int
 emitLen e = T.length (emit e)
 {-# NOINLINE emitLen #-}
 
--- | PHOAS optimizer node count (the path 'effectfulAST' uses).
+-- | IR optimizer node count (the path 'effectfulAST' uses).
 optEffectNodes :: ClosedEffect u -> Int
-optEffectNodes e =
-  let
-    r = optimizeEffect e
-   in
-    nodeCountEff r
+optEffectNodes = optimizedEffectSize
 {-# NOINLINE optEffectNodes #-}
 
 optExprNodes :: ClosedExpr u -> Int
-optExprNodes e =
-  let
-    r = optimize e
-   in
-    nodeCountExpr r
+optExprNodes = optimizedExprSize
 {-# NOINLINE optExprNodes #-}
 
 runClosedEffect :: (ClosedEffect u -> b) -> ClosedEffect u -> b

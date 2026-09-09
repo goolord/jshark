@@ -30,7 +30,7 @@ import JShark.Compiler.Binder
   ( pattern Name
   )
 import JShark.Compiler.Codegen.Core
-import JShark.Compiler.Codegen.Phoas
+import JShark.Compiler.Codegen.Stmt
   ( asStmt
   , assignResult
   , emitBranching
@@ -40,8 +40,6 @@ import JShark.Compiler.Codegen.Phoas
   , letResult
   , recBindStmt
   , renderFFIInvoke
-  , renderResultLit
-  , resultObject
   , tryCatchStmt
   )
 import JShark.Compiler.Emit
@@ -71,6 +69,23 @@ import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.FlatSoA as FlatSoA
 import JShark.Compiler.Hoist (emitHoistedFnValue)
 
+resultPayloadRef :: Maybe JS -> JS
+resultPayloadRef = fromMaybe "undefined"
+
+resultObject :: Bool -> Maybe JS -> JS
+resultObject isOk payload =
+  let
+    flag = if isOk then "true" else "false"
+   in
+    braces ((("ok:" <+> flag) <> ",") <+> ("value:" <+> resultPayloadRef payload))
+
+flatRenderResultLit :: Bool -> CG -> Value u -> (CG, Code)
+flatRenderResultLit isOk s0 x =
+  let
+    (s1, MkCode d r _) = flatRenderLiteral (IM.empty) s0 x
+   in
+    (s1, MkCode d (Just (resultObject isOk r)) False)
+
 flatRenderLiteral ::
   Env -> CG -> Value u -> (CG, Code)
 flatRenderLiteral env s0 = \case
@@ -91,8 +106,8 @@ flatRenderLiteral env s0 = \case
   ValueUnit -> (s0, mempty)
   ValueOption (Just x) -> flatRenderLiteral env s0 x
   ValueOption Nothing -> (s0, Code mempty "null")
-  ValueResult (Right x) -> renderResultLit True s0 x
-  ValueResult (Left x) -> renderResultLit False s0 x
+  ValueResult (Right x) -> flatRenderResultLit True s0 x
+  ValueResult (Left x) -> flatRenderResultLit False s0 x
   ValueRegex s ->
     (s0, Code mempty ("new RegExp" <> parens (jsQuote s)))
   ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))

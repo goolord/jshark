@@ -64,7 +64,7 @@ library
     JShark.Compiler.Binder
     JShark.Compiler.Codegen.Core
     JShark.Compiler.Codegen.Flat
-    JShark.Compiler.Codegen.Phoas
+    JShark.Compiler.Codegen.Stmt
     JShark.Compiler.CompileProgress
     JShark.Compiler.CompileReport
     JShark.Compiler.CompileTerminal
@@ -85,9 +85,6 @@ library
     JShark.Compiler.JsShim
     JShark.Compiler.Lower
     JShark.Compiler.Optimize
-    JShark.Compiler.Optimize.Analysis
-    JShark.Compiler.Optimize.Elim
-    JShark.Compiler.Optimize.Fold
     JShark.Compiler.Optimize.Hvm2
     JShark.Compiler.Process
     JShark.Console
@@ -105,7 +102,6 @@ library
     JShark.Timers
     JShark.Worker
   other-modules:
-    JShark.Compiler.Metadata
   build-depends:
     , ansi-terminal >= 1.0
     , async >= 2.2 && < 2.4

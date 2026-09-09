@@ -15,8 +15,7 @@ import JShark
   ( ClosedEffect
   , closedEffectNodes
   , effectfulAST
-  , nodeCountEff
-  , optimizeEffect
+  , optimizedEffectSize
   , renderJSCompact
   )
 import JShark.Api
@@ -96,7 +95,7 @@ perfTests =
     , testCase "Life optimize nodes and alloc" $ do
         (n, bytes) <-
           allocated $
-            evaluate (nodeCountEff (optimizeEffect life))
+            evaluate (optimizedEffectSize life)
         assertCeiling "optNodes" n maxLifeOptNodes
         assertCeiling "optAlloc" bytes maxLifeOptAlloc
     , probeCase 16 maxProbe16Chars maxProbe16Alloc

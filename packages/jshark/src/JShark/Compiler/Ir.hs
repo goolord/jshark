@@ -31,6 +31,8 @@ module JShark.Compiler.Ir
   , effectMd
   , nodeMeta
   , bindMeta
+  , optStep
+  , optSmall
   )
 where
 
@@ -82,7 +84,6 @@ import JShark.Compiler.Evaluate
   , valueEq
   )
 import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
-import JShark.Compiler.Metadata (optSmall, optStep)
 import Unsafe.Coerce (unsafeCoerce)
 import Prelude hiding (Bool, lookup)
 import qualified Prelude as P
@@ -100,6 +101,14 @@ instance Semigroup IrMeta where
 
 instance Monoid IrMeta where
   mempty = IrMeta 0 IM.empty True True
+
+-- | Optimizer tag spacing and the small-body inline threshold (kept from
+-- the deleted 'JShark.Compiler.Metadata').
+optStep :: Int
+optStep = 2
+
+optSmall :: Int
+optSmall = 16
 
 -- | Force impure on optimized metadata (empty 'RecNil' args are otherwise pure).
 effectMd :: IrMeta -> IrMeta

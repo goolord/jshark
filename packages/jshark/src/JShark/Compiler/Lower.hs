@@ -46,7 +46,7 @@ import JShark.Compiler.Flatten
   , rebindExpr2
   )
 import qualified JShark.Compiler.Ir as Ir
-import JShark.Compiler.Metadata (optStep)
+import JShark.Compiler.Ir (optStep)
 
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
 lowerArgAt !t0 a = case a of
