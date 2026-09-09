@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+* The IR GADT pair `IrExpr`/`IrEffect` merges into one untyped
+  `data IrNode` (`JShark.Compiler.Ir`). The type indices did no checking
+  post-lowering — the EDSL construction already type-checked the program —
+  so they carried only runtime data the flat IR already reifies. One
+  constructor per `FlatNode` opcode; kernel/method/fixed/fn-literal payloads
+  flatten onto `IrNode`, and object fields become `IrField` (name + child;
+  the `KnownSymbol`/`Typeable` per-field dictionaries reduce to `Text`
+  names). The optimizer is a single `optIr`/`metaIr`/`occursIr`/
+  `lazyOccursIr`; the `IrEmbedEff` bridge node and the sole `unsafeCoerce`
+  (`replaceIrVarExpr`) are gone. `Lower.hs`, `Flat.hs` (single `runPack`),
+  `FlatSoA.hs` (single `packProgramDirect`), `EmitBend.hs` (no
+  `SomeIrExpr`), `Hvm2Lint.hs` (single `IrNode` scan), and
+  `Codegen/Core.hs` (single `flatPrepareFromIr`) are updated to match.
+  Breaking: `IrExpr`, `IrEffect`, `optIrExpr`, `optIrEffect`,
+  `metaIrExpr`, `metaIrEffect`, and the `IrKernel`/`IrMethod`/`IrFnBody`/
+  `IrArg`/`IrFieldLit`/`IrFixedArgs` wrapper types no longer exist. The
+  `JShark.*` facade names are unchanged.
+
 * Flat-opt purity computed once, at pack. `fsaPure` is filled by
   `FlatSoA.computeFlatSoaPure` (one backward sweep in pack order) when
   the SoA is frozen, instead of being zeroed at pack and re-derived by

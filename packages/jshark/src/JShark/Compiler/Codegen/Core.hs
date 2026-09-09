@@ -252,7 +252,7 @@ prepareFlatPureProgramWith style e = do
       pure (soa, startCGWith style)
 {-# NOINLINE prepareFlatPureProgramWith #-}
 
-flatPrepareFromIr :: Ir.IrEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
+flatPrepareFromIr :: Ir.IrNode -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
 flatPrepareFromIr irOpt = do
   mCtx <- captureEmitCtx
   t0 <- getMonotonicTime
@@ -260,7 +260,7 @@ flatPrepareFromIr irOpt = do
     Just ctx -> reportPackPhase ctx 0 1
     Nothing -> pure ()
   let
-    !soa0 = FlatSoA.packEffectProgramDirect irOpt
+    !soa0 = FlatSoA.packProgramDirect irOpt
     !packNodes = FlatSoA.flatSoaNodeCount soa0
     !_ = FlatSoA.soaPureCount soa0
   t1 <- getMonotonicTime
@@ -296,55 +296,10 @@ flatPrepareFromIr irOpt = do
   pure (soaOpt, timing)
 {-# NOINLINE flatPrepareFromIr #-}
 
--- | Pure-program variant of 'flatPrepareFromIr'.
-flatPrepareFromIrExpr :: Ir.IrExpr u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
-flatPrepareFromIrExpr irOpt = do
-  mCtx <- captureEmitCtx
-  t0 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportPackPhase ctx 0 1
-    Nothing -> pure ()
-  let
-    !soa0 = FlatSoA.packExprProgramDirect irOpt
-    !packNodes = FlatSoA.flatSoaNodeCount soa0
-    !_ = FlatSoA.soaPureCount soa0
-  t1 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportPackPhase ctx 1 1
-    Nothing -> pure ()
-  let
-    packSec = seconds t0 t1
-  t2 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportFlatOptPhase ctx 0 1
-    Nothing -> pure ()
-  let
-    !soaOpt = FlatSoA.optimizeFlatPack soa0
-  _ <-
-    GHCIO.evaluate
-      ( packNodes
-          `seq` FlatSoA.soaPureCount soaOpt
-          `seq` FlatSoA.flatSoaNodeCount soaOpt
-      )
-  t3 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportFlatOptPhase ctx 1 1
-    Nothing -> pure ()
-  let
-    timing =
-      FlatPrepareTiming
-        { fptIrPrepareSec = 0
-        , fptPackSec = packSec
-        , fptFlatOptSec = seconds t2 t3
-        , fptTotalSec = seconds t0 t3
-        }
-  pure (soaOpt, timing)
-{-# NOINLINE flatPrepareFromIrExpr #-}
-
-profileFlatOptFromIr :: Ir.IrEffect u -> IO FlatOptProfile
+profileFlatOptFromIr :: Ir.IrNode -> IO FlatOptProfile
 profileFlatOptFromIr irOpt = do
   let
-    !soa0 = FlatSoA.packEffectProgramDirect irOpt
+    !soa0 = FlatSoA.packProgramDirect irOpt
     !nodeCount = FlatSoA.flatSoaNodeCount soa0
   _ <- GHCIO.evaluate (FlatSoA.soaPureCount soa0)
   tFold0 <- getMonotonicTime
@@ -377,11 +332,11 @@ profileFlatOptFromIr irOpt = do
       }
 {-# NOINLINE profileFlatOptFromIr #-}
 
-profileIrOptFromIr :: Ir.IrEffect u -> IO IrOptProfile
+profileIrOptFromIr :: Ir.IrNode -> IO IrOptProfile
 profileIrOptFromIr !irRaw = do
   tMetaRaw0 <- getMonotonicTime
   let
-    !rawNodes = Ir.irSize (Ir.metaIrEffect irRaw)
+    !rawNodes = Ir.irSize (Ir.metaIr irRaw)
   tMetaRaw1 <- getMonotonicTime
   tOpt0 <- getMonotonicTime
   let
@@ -389,12 +344,12 @@ profileIrOptFromIr !irRaw = do
    in
     do
       let
-        !(_, !irOpt, !mdOpt) = Ir.optIrEffect (-2) irRaw
+        !(_, !irOpt, !mdOpt) = Ir.optIr (-2) irRaw
         !optNodes = Ir.irSize mdOpt
       tOpt1 <- getMonotonicTime
       tMetaOpt0 <- getMonotonicTime
       let
-        !_ = Ir.metaIrEffect irOpt
+        !_ = Ir.metaIr irOpt
       tMetaOpt1 <- getMonotonicTime
       _ <- GHCIO.evaluate irOpt
       let
@@ -424,7 +379,7 @@ profileIrOptFromClosed e = do
   tPrep0 <- getMonotonicTime
   let
     !irOpt = optEffectClosed irRaw
-    !optNodes = Ir.irSize (Ir.metaIrEffect irOpt)
+    !optNodes = Ir.irSize (Ir.metaIr irOpt)
   tPrep1 <- getMonotonicTime
   _ <- GHCIO.evaluate irOpt
   breakdown <- profileIrOptFromIr irRaw
@@ -449,7 +404,7 @@ profileLowerFromClosed e = do
   tLazy1 <- getMonotonicTime
   tForce0 <- getMonotonicTime
   let
-    !rawNodes = Ir.irSize (Ir.metaIrEffect irRaw)
+    !rawNodes = Ir.irSize (Ir.metaIr irRaw)
   tForce1 <- getMonotonicTime
   let
     lazySec = seconds tLazy0 tLazy1
@@ -465,13 +420,13 @@ profileLowerFromClosed e = do
 {-# NOINLINE profileLowerFromClosed #-}
 
 flatPrepareCore ::
-  ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)
+  ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
 flatPrepareCore = flatPrepareCoreWith False
 
 flatPrepareCoreWith ::
   Bool
   -> ClosedEffect u
-  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrEffect u)
+  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
 flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
@@ -505,7 +460,7 @@ flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
 flatPrepareExprCore ::
   Bool
   -> ClosedExpr u
-  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrExpr u)
+  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
 flatPrepareExprCore keepLets e = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
@@ -519,7 +474,7 @@ flatPrepareExprCore keepLets e = do
   case mCtx of
     Just ctx -> reportIrPreparePhase ctx 1 1
     Nothing -> pure ()
-  (soa, packTiming) <- flatPrepareFromIrExpr irOpt
+  (soa, packTiming) <- flatPrepareFromIr irOpt
   tAll1 <- getMonotonicTime
   let
     timing =

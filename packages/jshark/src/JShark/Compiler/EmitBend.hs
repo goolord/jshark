@@ -1,7 +1,9 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Emit Bend source for the HVM2 pipeline (Bend → HVM2 → C → WASM).
@@ -23,26 +25,9 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark.Api.Types (Universe (..), Value (..))
-import JShark.Compiler.Ir
-  ( IrExpr (..)
-  , IrKernel (..)
-  , irPure
-  , metaIrExpr
-  )
+import JShark.Api.Types (Value (..))
+import JShark.Compiler.Ir (IrNode (..), irPure, metaIr, data IrLiteral)
 import Prelude
-
-data SomeIrExpr where
-  SomeIrExpr :: IrExpr u -> SomeIrExpr
-
-emitSomeIrExpr :: IntMap Text -> SomeIrExpr -> Either Hvm2Error Text
-emitSomeIrExpr env (SomeIrExpr e) = emitIrExpr env e
-
-inferTypeSome :: SomeIrExpr -> BendType
-inferTypeSome (SomeIrExpr e) = inferType e
-
-inferParamTypesSome :: [Int] -> SomeIrExpr -> [BendType]
-inferParamTypesSome tags (SomeIrExpr body) = inferParamTypes tags body
 
 data BendType
   = BendU24
@@ -56,11 +41,6 @@ data Hvm2Error
   | Hvm2ImpureKernel
   deriving (Eq, Show)
 
--- | Join kernel defs and emit a parallelizable @main@ in Bend's canonical
--- two-phase form: @bend@ grows a balanced binary tree whose leaves are
--- independent kernel calls, then a @fold@ over the tree reduces sibling
--- subtrees concurrently. Both phases parallelize on multicore HVM2.
--- The fold reducer is a local @def@ so it never becomes a WASM export.
 emitBendModuleFromDefs :: [Text] -> Either Hvm2Error Text
 emitBendModuleFromDefs defs =
   pure $
@@ -128,19 +108,16 @@ emitBendModuleFromDefs defs =
         , "  return sum_tree(acc)"
         ]
 
-emitBodySome :: IntMap Text -> SomeIrExpr -> Either Hvm2Error [Text]
-emitBodySome env (SomeIrExpr e) = emitBody env e
-
-emitBendKernel :: Text -> IrExpr u -> Either Hvm2Error Text
+emitBendKernel :: Text -> IrNode -> Either Hvm2Error Text
 emitBendKernel name ir = do
   guardPure ir
   let
     (paramTags, body) = peelLambdas ir
     paramNames = zipWith paramName paramTags [0 ..]
-    paramTypes = inferParamTypesSome paramTags body
+    paramTypes = inferParamTypes paramTags body
     env = IM.fromList (zip paramTags paramNames)
-    retTy = bendTypeName (inferTypeSome body)
-  bodyLines <- emitBodySome env body
+    retTy = bendTypeName (inferType body)
+  bodyLines <- emitBody env body
   pure $
     T.unlines
       ( ( "def "
@@ -162,7 +139,7 @@ paramsLine ps ts =
         <> T.intercalate ", " (zipWith (\p ty -> p <> ": " <> bendTypeName ty) ps ts)
         <> ")"
 
-emitBody :: IntMap Text -> IrExpr u -> Either Hvm2Error [Text]
+emitBody :: IntMap Text -> IrNode -> Either Hvm2Error [Text]
 emitBody env = \case
   IrLetRec tag r b -> emitLetRec env tag r b
   IrIf c t e -> emitIfReturn env c t e
@@ -182,7 +159,7 @@ indentLines n =
   map (\line -> T.replicate n " " <> line)
 
 emitIfReturn ::
-  IntMap Text -> IrExpr 'Bool -> IrExpr u -> IrExpr u -> Either Hvm2Error [Text]
+  IntMap Text -> IrNode -> IrNode -> IrNode -> Either Hvm2Error [Text]
 emitIfReturn env c t e = do
   cTxt <- emitIrExpr env c
   tTxt <- emitIrExpr env t
@@ -195,7 +172,7 @@ emitIfReturn env c t e = do
     ]
 
 emitLetRec ::
-  IntMap Text -> Int -> IrExpr u -> IrExpr v -> Either Hvm2Error [Text]
+  IntMap Text -> Int -> IrNode -> IrNode -> Either Hvm2Error [Text]
 emitLetRec env tag r b = do
   let
     recName = "rec" <> T.pack (show (abs tag))
@@ -203,14 +180,14 @@ emitLetRec env tag r b = do
   (fnTags, fnBody) <- peelRecFn tag r
   let
     fnNames = zipWith paramName fnTags [0 ..]
-    fnTypes = inferParamTypesSome fnTags fnBody
+    fnTypes = inferParamTypes fnTags fnBody
     envFn =
       foldl
         (\e (t, n) -> IM.insert t n e)
         envRec
         (zip fnTags fnNames)
-    retTy = bendTypeName (inferTypeSome fnBody)
-  fnBodyLines <- indentLines 2 <$> emitBodySome envFn fnBody
+    retTy = bendTypeName (inferType fnBody)
+  fnBodyLines <- indentLines 2 <$> emitBody envFn fnBody
   callLines <- emitBody envRec b
   pure $
     ( "  def "
@@ -223,7 +200,7 @@ emitLetRec env tag r b = do
     )
       ++ callLines
 
-peelRecFn :: Int -> IrExpr u -> Either Hvm2Error ([Int], SomeIrExpr)
+peelRecFn :: Int -> IrNode -> Either Hvm2Error ([Int], IrNode)
 peelRecFn _ r =
   case r of
     IrLambda {} ->
@@ -231,7 +208,7 @@ peelRecFn _ r =
     _ ->
       Left (Hvm2Unsupported "letRec rhs must be a lambda")
 
-emitIrExpr :: IntMap Text -> IrExpr u -> Either Hvm2Error Text
+emitIrExpr :: IntMap Text -> IrNode -> Either Hvm2Error Text
 emitIrExpr env e =
   case e of
     IrLiteral v -> emitLiteral v
@@ -245,15 +222,35 @@ emitIrExpr env e =
       tTxt <- emitIrExpr env t
       eTxt <- emitIrExpr env eF
       pure ("(" <> tTxt <> " if (" <> cTxt <> ") != 0 else " <> eTxt <> ")")
-    IrKernelK k -> emitKernel env k
+    KPlus x y -> binop env "+" x y
+    KMinus x y -> binop env "-" x y
+    KTimes x y -> binop env "*" x y
+    KFracDiv x y -> binop env "/" x y
+    KRem x y -> binop env "%" x y
+    KNegate x -> do
+      xTxt <- emitIrExpr env x
+      pure ("(-" <> xTxt <> ")")
+    KAnd x y -> do
+      xTxt <- emitIrExpr env x
+      yTxt <- emitIrExpr env y
+      pure ("((" <> xTxt <> ") * (" <> yTxt <> ")) != 0")
+    KOr x y -> do
+      xTxt <- emitIrExpr env x
+      yTxt <- emitIrExpr env y
+      pure ("((" <> xTxt <> ") + (" <> yTxt <> ")) != 0")
+    KEq _ x y -> binop env "==" x y
+    KNEq _ x y -> binop env "!=" x y
+    KGTh x y -> binop env ">" x y
+    KLTh x y -> binop env "<" x y
+    KGTEq x y -> binop env ">=" x y
+    KLTEq x y -> binop env "<=" x y
     IrLambda {} ->
       Left (Hvm2Unsupported "nested lambda in HVM2 kernel body")
     IrLet {} ->
       Left (Hvm2Unsupported "let outside kernel body walker")
     IrLetRec {} ->
       Left (Hvm2Unsupported "letrec in expression position")
-    IrEmbedEff {} ->
-      Left Hvm2ImpureKernel
+    IrLift {} -> Left Hvm2ImpureKernel
     IrOptionCase {} ->
       Left (Hvm2Unsupported "Option")
     IrResultOk {} ->
@@ -270,8 +267,6 @@ emitIrExpr env e =
       Left (Hvm2Unsupported "Error")
     IrFixed {} ->
       Left (Hvm2Unsupported "stdlib fixed op")
-    IrMethod {} ->
-      Left (Hvm2Unsupported "array method")
     IrFnLit {} ->
       Left (Hvm2Unsupported "FnLit")
     IrUnsafeNullable {} ->
@@ -282,76 +277,30 @@ emitIrExpr env e =
       Left (Hvm2Unsupported "field access")
     IrHvm2Ref {} ->
       Left (Hvm2Unsupported "nested Hvm2Kernel")
+    _ ->
+      Left (Hvm2Unsupported "effect node in HVM2 kernel body")
 
 emitApplyCall ::
-  IntMap Text -> IrExpr ('Function u v) -> IrExpr u -> Either Hvm2Error Text
+  IntMap Text -> IrNode -> IrNode -> Either Hvm2Error Text
 emitApplyCall env f x = do
   let
     (fn, args) = collectApplySpine f x
-  fnTxt <- emitSomeIrExpr env fn
-  argTxts <- traverse (emitSomeIrExpr env) args
+  fnTxt <- emitIrExpr env fn
+  argTxts <- traverse (emitIrExpr env) args
   pure (fnTxt <> "(" <> T.intercalate ", " argTxts <> ")")
 
-collectApplySpine ::
-  IrExpr ('Function u v) -> IrExpr u -> (SomeIrExpr, [SomeIrExpr])
+collectApplySpine :: IrNode -> IrNode -> (IrNode, [IrNode])
 collectApplySpine f x =
   case f of
     IrApply f' x' ->
       let
         (fn, args) = collectApplySpine f' x'
        in
-        (fn, args ++ [SomeIrExpr x])
+        (fn, args ++ [x])
     _ ->
-      (SomeIrExpr f, [SomeIrExpr x])
+      (f, [x])
 
-emitKernel :: IntMap Text -> IrKernel u -> Either Hvm2Error Text
-emitKernel env = \case
-  KPlus x y -> binop env "+" x y
-  KMinus x y -> binop env "-" x y
-  KTimes x y -> binop env "*" x y
-  KFracDiv x y -> binop env "/" x y
-  KRem x y -> binop env "%" x y
-  KNegate x -> do
-    xTxt <- emitIrExpr env x
-    pure ("(-" <> xTxt <> ")")
-  KAnd x y -> do
-    xTxt <- emitIrExpr env x
-    yTxt <- emitIrExpr env y
-    pure ("((" <> xTxt <> ") * (" <> yTxt <> ")) != 0")
-  KOr x y -> do
-    xTxt <- emitIrExpr env x
-    yTxt <- emitIrExpr env y
-    pure ("((" <> xTxt <> ") + (" <> yTxt <> ")) != 0")
-  KEq _ x y -> binop env "==" x y
-  KNEq _ x y -> binop env "!=" x y
-  KGTh x y -> binop env ">" x y
-  KLTh x y -> binop env "<" x y
-  KGTEq x y -> binop env ">=" x y
-  KLTEq x y -> binop env "<=" x y
-  KBitAnd {} ->
-    Left (Hvm2Unsupported "bitwise and")
-  KBitOr {} ->
-    Left (Hvm2Unsupported "bitwise or")
-  KBitXor {} ->
-    Left (Hvm2Unsupported "bitwise xor")
-  KShl {} ->
-    Left (Hvm2Unsupported "shift")
-  KShr {} ->
-    Left (Hvm2Unsupported "shift")
-  KUShr {} ->
-    Left (Hvm2Unsupported "unsigned shift")
-  KBig {} ->
-    Left (Hvm2Unsupported "BigInt")
-  KBigNeg {} ->
-    Left (Hvm2Unsupported "BigInt")
-  KConcat {} ->
-    Left (Hvm2Unsupported "string concat")
-  KShow {} ->
-    Left (Hvm2Unsupported "show")
-  KTypeOf {} ->
-    Left (Hvm2Unsupported "typeof")
-
-binop :: IntMap Text -> Text -> IrExpr a -> IrExpr b -> Either Hvm2Error Text
+binop :: IntMap Text -> Text -> IrNode -> IrNode -> Either Hvm2Error Text
 binop env op x y = do
   xTxt <- emitIrExpr env x
   yTxt <- emitIrExpr env y
@@ -384,7 +333,7 @@ emitLiteral = \case
   ValueFrozen {} ->
     Left (Hvm2Unsupported "object")
 
-peelLambdasFn :: IrExpr v -> ([Int], SomeIrExpr)
+peelLambdasFn :: IrNode -> ([Int], IrNode)
 peelLambdasFn ir =
   case ir of
     IrLambda tag _ body ->
@@ -393,9 +342,9 @@ peelLambdasFn ir =
        in
         (tag : tags, inner)
     e ->
-      ([], SomeIrExpr e)
+      ([], e)
 
-peelLambdas :: IrExpr u -> ([Int], SomeIrExpr)
+peelLambdas :: IrNode -> ([Int], IrNode)
 peelLambdas ir =
   case ir of
     IrLambda tag _ body ->
@@ -404,32 +353,32 @@ peelLambdas ir =
        in
         (tag : rest, inner)
     _ ->
-      ([], SomeIrExpr ir)
+      ([], ir)
 
 paramName :: Int -> Int -> Text
 paramName tag _ = "a" <> T.pack (show (abs tag))
 
-inferParamTypes :: [Int] -> IrExpr u -> [BendType]
+inferParamTypes :: [Int] -> IrNode -> [BendType]
 inferParamTypes tags body = map (`inferParamType` body) tags
 
 -- | JShark 'Number' is an f64; f24 is Bend's float, so every numeric
 -- parameter maps to f24.
-inferParamType :: Int -> IrExpr u -> BendType
+inferParamType :: Int -> IrNode -> BendType
 inferParamType _ _ = BendF24
 
-inferType :: IrExpr u -> BendType
+inferType :: IrNode -> BendType
 inferType e =
   case e of
     IrLiteral (ValueBool _) -> BendBool
     IrLiteral (ValueNumber _) -> BendF24
-    IrKernelK (KAnd _ _) -> BendBool
-    IrKernelK (KOr _ _) -> BendBool
-    IrKernelK (KEq _ _ _) -> BendBool
-    IrKernelK (KNEq _ _ _) -> BendBool
-    IrKernelK (KGTh _ _) -> BendBool
-    IrKernelK (KLTh _ _) -> BendBool
-    IrKernelK (KGTEq _ _) -> BendBool
-    IrKernelK (KLTEq _ _) -> BendBool
+    KAnd _ _ -> BendBool
+    KOr _ _ -> BendBool
+    KEq _ _ _ -> BendBool
+    KNEq _ _ _ -> BendBool
+    KGTh _ _ -> BendBool
+    KLTh _ _ -> BendBool
+    KGTEq _ _ -> BendBool
+    KLTEq _ _ -> BendBool
     _ -> BendF24
 
 bendTypeName :: BendType -> Text
@@ -533,9 +482,9 @@ emitKernelExportsC _exports =
     , ""
     ]
 
-guardPure :: IrExpr u -> Either Hvm2Error ()
+guardPure :: IrNode -> Either Hvm2Error ()
 guardPure ir =
-  if irPure (metaIrExpr ir)
+  if irPure (metaIr ir)
     then Right ()
     else Left Hvm2ImpureKernel
 

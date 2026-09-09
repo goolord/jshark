@@ -6,8 +6,7 @@
 -- | Struct-of-arrays flat IR and bulk-friendly optimizer passes.
 module JShark.Compiler.FlatSoA
   ( FlatSoA (..)
-  , packEffectProgramDirect
-  , packExprProgramDirect
+  , packProgramDirect
   , optimizeFlatPack
   , flatSoaNodeCount
   , flatSoaNode
@@ -63,8 +62,7 @@ import JShark.Compiler.Flat
   , packStateParamNames
   , packStateSideTables
   , packStateSoaSide
-  , runPackEffect
-  , runPackExpr
+  , runPack
   , sideAccToVectors
   )
 import JShark.Compiler.FlatEnc
@@ -146,7 +144,7 @@ import JShark.Compiler.FlatEnc
   , oFX_UNSAFEOBJSET
   , oFX_WHILE
   )
-import JShark.Compiler.Ir (IrEffect, IrExpr)
+import JShark.Compiler.Ir (IrNode)
 
 data FlatSoA = FlatSoA
   { fsaOpcodes :: !(VU.Vector Op)
@@ -216,15 +214,10 @@ freezeSoaFromPackState root st = do
     pure
       (attachFlatSoaSubtreeSizes soa0 {fsaPure = computeFlatSoaPure soa0})
 
--- | Pack IR directly to SoA columns (no intermediate node vector).
-packEffectProgramDirect :: IrEffect u -> FlatSoA
-packEffectProgramDirect e = runST $ do
-  (root, st) <- runPackEffect e
-  freezeSoaFromPackState root st
-
-packExprProgramDirect :: IrExpr u -> FlatSoA
-packExprProgramDirect e = runST $ do
-  (root, st) <- runPackExpr e
+-- | Pack an IR tree directly to SoA columns (no intermediate node vector).
+packProgramDirect :: IrNode -> FlatSoA
+packProgramDirect e = runST $ do
+  (root, st) <- runPack e
   freezeSoaFromPackState root st
 
 -- | SoA optimizer pass; returns optimized SoA (emit decodes nodes on demand).

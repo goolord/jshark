@@ -30,7 +30,7 @@ main = do
   putStrLn $ "rawNodes," ++ show irNodes
   t0 <- getMonotonicTime
   let
-    optNodes = Ir.irSize (Ir.metaIrEffect irOpt)
+    optNodes = Ir.irSize (Ir.metaIr irOpt)
   t1 <- getMonotonicTime
   evaluate optNodes
   putStrLn $ "irOptMeta," ++ show (seconds t0 t1)

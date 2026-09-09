@@ -17,8 +17,7 @@ module JShark.Compiler.Flat
   , FlatField (..)
   , FlatFixed (..)
   , FlatLit (FLit)
-  , runPackEffect
-  , runPackExpr
+  , runPack
   , freezePackColumns
   , encodeFlatNode
   , emptySoaSideAcc
@@ -43,17 +42,13 @@ import Data.Foldable (toList)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as MVU
-import GHC.TypeLits (KnownSymbol, symbolVal)
-import JShark.Api.Rec (Rec (..))
 import JShark.Api.Types
   ( BigBinOp (..)
   , FFIForm (..)
@@ -462,9 +457,6 @@ packStateSideTables st =
   , V.fromList (toList (psArgGroups st))
   )
 
-fieldKeyText :: forall k. KnownSymbol k => Text
-fieldKeyText = T.pack (symbolVal (Proxy @k))
-
 addNode :: FlatNode -> PackM s NodeId
 addNode node = do
   st <- get
@@ -584,11 +576,8 @@ addArgGroup args = do
   put st {psArgGroups = psArgGroups st Seq.|> args, psArgGroupCount = i + 1}
   pure i
 
-runPackEffect :: IrEffect u -> ST s (NodeId, PackState s)
-runPackEffect e = emptyPackState >>= runStateT (packEffect e)
-
-runPackExpr :: IrExpr u -> ST s (NodeId, PackState s)
-runPackExpr e = emptyPackState >>= runStateT (packExpr e)
+runPack :: IrNode -> ST s (NodeId, PackState s)
+runPack e = emptyPackState >>= runStateT (packExpr e)
 
 -- | Freeze the written prefix of each column (capacity may exceed the row
 -- count after growth).
@@ -746,191 +735,95 @@ flatNodeIsEffect = \case
   FX_ArrayLit {} -> True
   _ -> False
 
-packRecArgs :: Rec IrArg us -> PackM s Int
-packRecArgs rec = addArgGroup =<< packRecArgsGo rec
+-- | Classify a subtree by its top constructor: expression-producing or
+-- effect-producing. Mirrors the 'FlatNode' @FE_\/FX_@ split (and
+-- 'flatNodeIsEffect').
+irNodeIsEffect :: IrNode -> Bool
+irNodeIsEffect = \case
+  IrLift {} -> True
+  IrFFI {} -> True
+  IrUnsafeObject {} -> True
+  IrUnsafeObjectGet {} -> True
+  IrUnsafeObjectAssign {} -> True
+  IrCallMethod {} -> True
+  IrBind {} -> True
+  IrThenE {} -> True
+  IrBindRec {} -> True
+  IrLambdaE {} -> True
+  IrApplyE {} -> True
+  IrIfE {} -> True
+  IrWhile {} -> True
+  IrForRange {} -> True
+  IrU8Set {} -> True
+  IrU8Fill {} -> True
+  IrOptionCaseE {} -> True
+  IrResultCaseE {} -> True
+  IrStringCaseE {} -> True
+  IrThrow {} -> True
+  IrTry {} -> True
+  IrObjectLit {} -> True
+  IrDeleteProp {} -> True
+  IrArrayLit {} -> True
+  _ -> False
 
-packRecArgsGo :: Rec IrArg us -> PackM s [FlatArg]
-packRecArgsGo RecNil = pure []
-packRecArgsGo (RecCons (IrArgExpr e) rs) = do
-  n <- packExpr e
-  rest <- packRecArgsGo rs
-  pure (FlatArgExpr n : rest)
-packRecArgsGo (RecCons (IrArgEffect e) rs) = do
-  n <- packEffect e
-  rest <- packRecArgsGo rs
-  pure (FlatArgEffect n : rest)
+-- | Pack a node used in expression position. An effect subtree there is the
+-- optimizer splicing an effect into an expression slot: pack the effect then
+-- wrap it with 'FE_EmbedEff' (the row the old type-bridge emitted). A stray
+-- 'IrLift' unwraps to its body (a pure expression was spliced).
+packExpr :: IrNode -> PackM s NodeId
+packExpr n = case n of
+  IrLift x -> packExpr x
+  _
+    | irNodeIsEffect n -> do
+        i <- packNode n
+        addNode (FE_EmbedEff i)
+    | otherwise -> packNode n
 
-packFieldLit :: IrFieldLit r -> PackM s FlatField
-packFieldLit = \case
-  IrFieldLit @k e -> do
-    n <- packExpr e
-    pure (FlatField (fieldKeyText @k) n)
-  IrFieldLitEffect @k e -> do
-    n <- packEffect e
-    pure (FlatFieldEff (fieldKeyText @k) n)
-  IrFieldLitExtra @k e -> do
-    n <- packExpr e
-    pure (FlatFieldExtra (fieldKeyText @k) n)
-  IrFieldLitExtraEffect @k e -> do
-    n <- packEffect e
-    pure (FlatFieldExtraEff (fieldKeyText @k) n)
+-- | Pack a node used in effect position. Lowering always wraps pure values
+-- in 'IrLift'; a bare expression here is defensive only.
+packEffect :: IrNode -> PackM s NodeId
+packEffect n
+  | irNodeIsEffect n = packNode n
+  | otherwise = packNode n >>= addNode . FX_Lift
 
-packFieldLits :: [IrFieldLit r] -> PackM s Int
-packFieldLits fs = addFieldGroup =<< traverse packFieldLit fs
+packArgs :: [IrNode] -> PackM s [FlatArg]
+packArgs = traverse packArg
+ where
+  packArg a
+    | irNodeIsEffect a = FlatArgEffect <$> packNode a
+    | otherwise = FlatArgExpr <$> packExpr a
 
-packFnBody :: IrFnBody us r -> PackM s ([Int], [Maybe Text], NodeId)
-packFnBody = \case
-  IrJfNil e -> ([],[],) <$> packExpr e
-  IrJfCons t pn rest -> do
-    (ts, pns, body) <- packFnBody rest
-    pure (t : ts, pn : pns, body)
+packField :: IrField -> PackM s FlatField
+packField = \case
+  IrField k c -> FlatField k <$> packExpr c
+  IrFieldEff k c -> FlatFieldEff k <$> packEffect c
+  IrFieldExtra k c -> FlatFieldExtra k <$> packExpr c
+  IrFieldExtraEff k c -> FlatFieldExtraEff k <$> packEffect c
 
-packFixed ::
-  FixedOp a b c u -> IrFixedArgs a b c -> PackM s NodeId
-packFixed op = \case
-  IrArgsU x -> do
+packFields :: [IrField] -> PackM s Int
+packFields fs = addFieldGroup =<< traverse packField fs
+
+packStrCases :: [(Text, IrNode)] -> PackM s Int
+packStrCases arms = addStrCases =<< traverse (\(k, e) -> (k,) <$> packEffect e) arms
+
+packFixedOp :: SomeFixedOp -> [IrNode] -> PackM s NodeId
+packFixedOp (SomeFixedOp op) args = case args of
+  [x] -> do
     n <- packExpr x
     addNode (FE_Fixed (FlatFixedU op n))
-  IrArgsB x y -> do
+  [x, y] -> do
     nx <- packExpr x
     ny <- packExpr y
     addNode (FE_Fixed (FlatFixedB op nx ny))
-  IrArgsT x y z -> do
+  [x, y, z] -> do
     nx <- packExpr x
     ny <- packExpr y
     nz <- packExpr z
     addNode (FE_Fixed (FlatFixedT op nx ny nz))
+  _ -> error "JShark.Flat.packFixedOp: unexpected fixed arity"
 
-packKernel :: IrKernel u -> PackM s NodeId
-packKernel = \case
-  KConcat x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KConcat nx ny)
-  KPlus x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KPlus nx ny)
-  KTimes x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KTimes nx ny)
-  KMinus x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KMinus nx ny)
-  KNegate x -> do
-    n <- packExpr x
-    addNode (FE_KNegate n)
-  KFracDiv x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KFracDiv nx ny)
-  KRem x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KRem nx ny)
-  KBitAnd x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KBitAnd nx ny)
-  KBitOr x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KBitOr nx ny)
-  KBitXor x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KBitXor nx ny)
-  KShl x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KShl nx ny)
-  KShr x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KShr nx ny)
-  KUShr x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KUShr nx ny)
-  KBig op x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KBig op nx ny)
-  KBigNeg x -> do
-    n <- packExpr x
-    addNode (FE_KBigNeg n)
-  KAnd x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KAnd nx ny)
-  KOr x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KOr nx ny)
-  KEq s x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KEq s nx ny)
-  KNEq s x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KNEq s nx ny)
-  KGTh x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KGTh nx ny)
-  KLTh x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KLTh nx ny)
-  KGTEq x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KGTEq nx ny)
-  KLTEq x y -> do
-    nx <- packExpr x
-    ny <- packExpr y
-    addNode (FE_KLTEq nx ny)
-  KShow x -> do
-    n <- packExpr x
-    addNode (FE_KShow n)
-  KTypeOf x -> do
-    n <- packExpr x
-    addNode (FE_KTypeOf n)
-
-packMethod :: IrMethod u -> PackM s NodeId
-packMethod = \case
-  IrMethMap arr tag body -> do
-    nArr <- packExpr arr
-    nBody <- packExpr body
-    addNode (FE_MethMap nArr tag nBody)
-  IrMethFilter arr tag body -> do
-    nArr <- packExpr arr
-    nBody <- packExpr body
-    addNode (FE_MethFilter nArr tag nBody)
-  IrMethReduce arr z tagA tagB body -> do
-    nArr <- packExpr arr
-    nz <- packExpr z
-    nBody <- packExpr body
-    addNode (FE_MethReduce nArr nz tagA tagB nBody)
-  IrMethReduceRight arr z tagA tagB body -> do
-    nArr <- packExpr arr
-    nz <- packExpr z
-    nBody <- packExpr body
-    addNode (FE_MethReduceRight nArr nz tagA tagB nBody)
-  IrMethToSorted arr tagA tagB body -> do
-    nArr <- packExpr arr
-    nBody <- packExpr body
-    addNode (FE_MethToSorted nArr tagA tagB nBody)
-  IrMethFrom n tag body -> do
-    nn <- packExpr n
-    nBody <- packExpr body
-    addNode (FE_MethFrom nn tag nBody)
-
-packExpr :: IrExpr u -> PackM s NodeId
-packExpr = \case
+packNode :: IrNode -> PackM s NodeId
+packNode node = case node of
   IrLiteral v -> do
     li <- addLit (FLit v)
     addNode (FE_Literal li)
@@ -938,32 +831,29 @@ packExpr = \case
   IrLet tag hint x body -> do
     nx <- packExpr x
     nb <- packExpr body
-    n <- addNode (FE_Let tag nx nb)
+    nid <- addNode (FE_Let tag nx nb)
     case hint of
-      Just pn -> addParamName n pn
+      Just pn -> addParamName nid pn
       Nothing -> pure ()
-    pure n
+    pure nid
   IrLetRec tag r b -> do
-    nr <- packExpr r
-    nb <- packExpr b
+    nr <- packNode r
+    nb <- packNode b
     addNode (FE_LetRec tag nr nb)
   IrLambda tag info body -> do
-    nb <- packExpr body
-    n <- addNode (FE_Lambda tag nb)
+    nb <- packNode body
+    nid <- addNode (FE_Lambda tag nb)
     case lamTag info of
-      Just name -> addHoistTag n name
+      Just name -> addHoistTag nid name
       Nothing -> pure ()
     case lamParam info of
-      Just pn -> addParamName n pn
+      Just pn -> addParamName nid pn
       Nothing -> pure ()
-    pure n
+    pure nid
   IrApply f x -> do
     nf <- packExpr f
     nx <- packExpr x
     addNode (FE_Apply nf nx)
-  IrEmbedEff e -> do
-    ne <- packEffect e
-    addNode (FE_EmbedEff ne)
   IrIf c t e -> do
     nc <- packExpr c
     nt <- packExpr t
@@ -996,41 +886,89 @@ packExpr = \case
   IrError msg -> do
     n <- packExpr msg
     addNode (FE_Error n)
-  IrFixed op args -> packFixed op args
-  IrKernelK k -> packKernel k
-  IrMethod m -> packMethod m
-  IrFnLit body -> do
-    (tags, names, nBody) <- packFnBody body
-    addNode (FE_FnLit tags names nBody)
+  IrFixed op args -> packFixedOp op args
+  IrFnLit tags names body -> do
+    nb <- packExpr body
+    addNode (FE_FnLit tags names nb)
   IrUnsafeNullable x -> do
     n <- packExpr x
     addNode (FE_UnsafeNullable n)
   IrFrozenLit fs -> do
-    gi <- packFieldLits fs
+    gi <- packFields fs
     addNode (FE_FrozenLit gi)
-  IrGetField @k o -> do
-    ti <- addText (fieldKeyText @k)
+  IrGetField key o -> do
+    ti <- addText key
     n <- packExpr o
     addNode (FE_GetField ti n)
   IrHvm2Ref name -> do
     ti <- addText name
     addNode (FE_Hvm2Ref ti)
-
-packEffectArms :: [(Text, IrEffect v)] -> PackM s Int
-packEffectArms arms =
-  addStrCases =<< traverse (\(k, e) -> (k,) <$> packEffect e) arms
-
-packEffects :: [IrEffect u] -> PackM s [NodeId]
-packEffects = traverse packEffect
-
-packEffect :: IrEffect u -> PackM s NodeId
-packEffect = \case
+  KConcat x y -> packBin2 FE_KConcat x y
+  KPlus x y -> packBin2 FE_KPlus x y
+  KTimes x y -> packBin2 FE_KTimes x y
+  KMinus x y -> packBin2 FE_KMinus x y
+  KNegate x -> packBin1 FE_KNegate x
+  KFracDiv x y -> packBin2 FE_KFracDiv x y
+  KRem x y -> packBin2 FE_KRem x y
+  KBitAnd x y -> packBin2 FE_KBitAnd x y
+  KBitOr x y -> packBin2 FE_KBitOr x y
+  KBitXor x y -> packBin2 FE_KBitXor x y
+  KShl x y -> packBin2 FE_KShl x y
+  KShr x y -> packBin2 FE_KShr x y
+  KUShr x y -> packBin2 FE_KUShr x y
+  KBig op x y -> do
+    nx <- packExpr x
+    ny <- packExpr y
+    addNode (FE_KBig op nx ny)
+  KBigNeg x -> packBin1 FE_KBigNeg x
+  KAnd x y -> packBin2 FE_KAnd x y
+  KOr x y -> packBin2 FE_KOr x y
+  KEq s x y -> do
+    nx <- packExpr x
+    ny <- packExpr y
+    addNode (FE_KEq s nx ny)
+  KNEq s x y -> do
+    nx <- packExpr x
+    ny <- packExpr y
+    addNode (FE_KNEq s nx ny)
+  KGTh x y -> packBin2 FE_KGTh x y
+  KLTh x y -> packBin2 FE_KLTh x y
+  KGTEq x y -> packBin2 FE_KGTEq x y
+  KLTEq x y -> packBin2 FE_KLTEq x y
+  KShow x -> packBin1 FE_KShow x
+  KTypeOf x -> packBin1 FE_KTypeOf x
+  IrMethMap a tag b -> do
+    na <- packExpr a
+    nb <- packExpr b
+    addNode (FE_MethMap na tag nb)
+  IrMethFilter a tag b -> do
+    na <- packExpr a
+    nb <- packExpr b
+    addNode (FE_MethFilter na tag nb)
+  IrMethReduce a z ta tb body -> do
+    na <- packExpr a
+    nz <- packExpr z
+    nbody <- packExpr body
+    addNode (FE_MethReduce na nz ta tb nbody)
+  IrMethReduceRight a z ta tb body -> do
+    na <- packExpr a
+    nz <- packExpr z
+    nbody <- packExpr body
+    addNode (FE_MethReduceRight na nz ta tb nbody)
+  IrMethToSorted a ta tb b -> do
+    na <- packExpr a
+    nb <- packExpr b
+    addNode (FE_MethToSorted na ta tb nb)
+  IrMethFrom n tag b -> do
+    nn <- packExpr n
+    nb <- packExpr b
+    addNode (FE_MethFrom nn tag nb)
   IrLift x -> do
     n <- packExpr x
     addNode (FX_Lift n)
   IrFFI form args -> do
     fi <- addFFI form
-    ai <- packRecArgs args
+    ai <- addArgGroup =<< packArgs args
     addNode (FX_FFI fi ai)
   IrUnsafeObject o -> do
     ti <- addText o
@@ -1046,7 +984,7 @@ packEffect = \case
   IrCallMethod x method args -> do
     nx <- packEffect x
     ti <- addText method
-    ai <- packRecArgs args
+    ai <- addArgGroup =<< packArgs args
     addNode (FX_CallMethod nx ti ai)
   IrBind tag hint x body -> do
     nx <- packEffect x
@@ -1106,7 +1044,7 @@ packEffect = \case
     addNode (FX_ResultCaseE no tagE ner tagO nok)
   IrStringCaseE s arms d -> do
     ns <- packExpr s
-    ai <- packEffectArms arms
+    ai <- packStrCases arms
     nd <- packEffect d
     addNode (FX_StringCaseE ns ai nd)
   IrThrow x -> do
@@ -1117,12 +1055,20 @@ packEffect = \case
     nk <- packEffect k
     addNode (FX_Try na tag nk)
   IrObjectLit fs -> do
-    gi <- packFieldLits fs
+    gi <- packFields fs
     addNode (FX_ObjectLit gi)
   IrDeleteProp o k -> do
     no <- packEffect o
     nk <- packExpr k
     addNode (FX_DeleteProp no nk)
   IrArrayLit es -> do
-    ns <- packEffects es
+    ns <- traverse packEffect es
     addNode (FX_ArrayLit ns)
+ where
+  packBin1 kon x = do
+    nx <- packExpr x
+    addNode (kon nx)
+  packBin2 kon x y = do
+    nx <- packExpr x
+    ny <- packExpr y
+    addNode (kon nx ny)

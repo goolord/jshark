@@ -28,7 +28,6 @@ import JShark (irEffectFromClosed)
 import JShark.Api.Types
   ( ClosedEffect
   , FixedOp (FixArrLen)
-  , Universe (Unit)
   , Value (..)
   )
 import JShark.Compiler.CompileProgress
@@ -53,16 +52,16 @@ flatDirectPackDeterministic :: ClosedEffect u -> Bool
 flatDirectPackDeterministic e =
   let
     ir = irEffectFromClosed e
-    soa1 = FlatSoA.packEffectProgramDirect ir
-    soa2 = FlatSoA.packEffectProgramDirect ir
+    soa1 = FlatSoA.packProgramDirect ir
+    soa2 = FlatSoA.packProgramDirect ir
    in
     FlatSoA.soaColumnsEqual soa1 soa2
 
 flatDirectPackForRangeOk :: Bool
 flatDirectPackForRangeOk =
   let
-    soa1 = FlatSoA.packEffectProgramDirect forRangeU8SetLoop
-    soa2 = FlatSoA.packEffectProgramDirect forRangeU8SetLoop
+    soa1 = FlatSoA.packProgramDirect forRangeU8SetLoop
+    soa2 = FlatSoA.packProgramDirect forRangeU8SetLoop
    in
     FlatSoA.soaColumnsEqual soa1 soa2
 
@@ -70,7 +69,7 @@ flatDirectPackOptimizeStable :: ClosedEffect u -> Bool
 flatDirectPackOptimizeStable e =
   let
     ir = irEffectFromClosed e
-    soa0 = FlatSoA.packEffectProgramDirect ir
+    soa0 = FlatSoA.packProgramDirect ir
     soa1 = FlatSoA.optimizeFlatPack soa0
     soa2 = FlatSoA.optimizeFlatPack soa1
    in
@@ -219,7 +218,7 @@ flatSoaPureNodeCount e =
   let
     soa =
       FlatSoA.optimizeFlatPack
-        (FlatSoA.packEffectProgramDirect (irEffectFromClosed e))
+        (FlatSoA.packProgramDirect (irEffectFromClosed e))
     n = FlatSoA.flatSoaNodeCount soa
    in
     countPure (FlatSoA.soaPureVector soa) n
@@ -228,7 +227,7 @@ countPure :: Vector Word8 -> Int -> Int
 countPure v n =
   length [i | i <- [0 .. n - 1], i < V.length v, v V.! i == 1]
 
-forRangeU8SetLoop :: Ir.IrEffect 'Unit
+forRangeU8SetLoop :: Ir.IrNode
 forRangeU8SetLoop =
   Ir.IrForRange
     (Ir.IrLiteral (ValueNumber 0))
@@ -240,7 +239,7 @@ forRangeU8SetLoop =
         (Ir.IrLiteral (ValueNumber 1))
     )
 
--- | @optIrEffect@ must mark @ForRange@ + @IrU8Set@ impure so flat codegen
+-- | @optIr@ must mark @ForRange@ + @IrU8Set@ impure so flat codegen
 -- keeps mutation loops.
 optIrEffectForRangeImpure :: Bool
 optIrEffectForRangeImpure =
@@ -248,7 +247,7 @@ optIrEffectForRangeImpure =
     ?keepLets = False
    in
     let
-      (_, _, md) = Ir.optIrEffect 0 forRangeU8SetLoop
+      (_, _, md) = Ir.optIr 0 forRangeU8SetLoop
      in
       not (Ir.irPure md)
 

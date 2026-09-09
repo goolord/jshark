@@ -1,6 +1,8 @@
+{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -21,19 +23,16 @@ import JShark
   ( irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
   )
-import JShark.Api.Rec (Rec (..))
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
 import JShark.Compiler.EmitBend (emitBendKernel, peelLambdas)
 import JShark.Compiler.Ir
-  ( IrArg (..)
-  , IrEffect (..)
-  , IrExpr (..)
-  , IrFieldLit (..)
+  ( IrNode (..)
+  , irFieldChild
   , irPure
   , irSize
-  , metaIrExpr
+  , metaIr
+  , data IrLiteral
   )
-import qualified JShark.Compiler.Ir as Ir
 import System.IO (hPutStrLn, stderr)
 
 data Hvm2Candidate = Hvm2Candidate
@@ -49,11 +48,11 @@ defaultHvm2MinCandidateSize = 8
 
 hvm2CandidatesFromExpr :: ClosedExpr u -> [Hvm2Candidate]
 hvm2CandidatesFromExpr (e :: ClosedExpr u) =
-  scanIrExprs defaultHvm2MinCandidateSize 0 (irOptimizedExprFromClosed e)
+  scanIr defaultHvm2MinCandidateSize 0 (irOptimizedExprFromClosed e)
 
 hvm2CandidatesFromEffect :: ClosedEffect u -> [Hvm2Candidate]
 hvm2CandidatesFromEffect (e :: ClosedEffect u) =
-  scanIrEffect defaultHvm2MinCandidateSize 0 (irOptimizedEffectFromClosed e)
+  scanIr defaultHvm2MinCandidateSize 0 (irOptimizedEffectFromClosed e)
 
 warnHvm2CandidatesExpr :: ClosedExpr u -> IO ()
 warnHvm2CandidatesExpr e = mapM_ printCandidate (hvm2CandidatesFromExpr e)
@@ -76,98 +75,20 @@ printCandidate c =
       <> " (...)` — "
       <> T.take 72 (T.strip (hvm2CandidatePreview c))
 
-scanIrEffect :: Int -> Int -> IrEffect u -> [Hvm2Candidate]
-scanIrEffect minSize n = \case
-  IrLift x ->
-    scanIrExprs minSize n x
-  IrFFI _ args ->
-    scanIrArgs minSize n args
-  IrUnsafeObjectGet x _ ->
-    scanIrEffect minSize n x
-  IrUnsafeObjectAssign x y ->
-    scanIrEffect minSize n x <> scanIrEffect minSize n y
-  IrCallMethod x _ args ->
-    scanIrEffect minSize n x <> scanIrArgs minSize n args
-  IrBind _ _ x y ->
-    scanIrEffect minSize n x <> scanIrEffect minSize n y
-  IrThenE x y ->
-    scanIrEffect minSize n x <> scanIrEffect minSize n y
-  IrBindRec _ x y ->
-    scanIrEffect minSize n x <> scanIrEffect minSize n y
-  IrLambdaE _ y ->
-    scanIrEffect minSize n y
-  IrApplyE x y ->
-    scanIrEffect minSize n x <> scanIrEffect minSize n y
-  IrIfE c t e ->
-    scanIrEffect minSize n c <> scanIrEffect minSize n t <> scanIrEffect minSize n e
-  IrWhile c b ->
-    scanIrEffect minSize n c <> scanIrEffect minSize n b
-  IrForRange s e _ b ->
-    scanIrExprs minSize n s <> scanIrExprs minSize n e <> scanIrEffect minSize n b
-  IrU8Set b i v ->
-    scanIrExprs minSize n b <> scanIrExprs minSize n i <> scanIrExprs minSize n v
-  IrU8Fill b v ->
-    scanIrExprs minSize n b <> scanIrExprs minSize n v
-  IrOptionCaseE o noneE _ someE ->
-    scanIrExprs minSize n o
-      <> scanIrEffect minSize n noneE
-      <> scanIrEffect minSize n someE
-  IrResultCaseE o _ er _ ok ->
-    scanIrExprs minSize n o
-      <> scanIrEffect minSize n er
-      <> scanIrEffect minSize n ok
-  IrStringCaseE o arms d ->
-    scanIrExprs minSize n o
-      <> concatMap (scanIrEffect minSize n . snd) arms
-      <> scanIrEffect minSize n d
-  IrThrow x ->
-    scanIrExprs minSize n x
-  IrTry x _ k ->
-    scanIrEffect minSize n x <> scanIrEffect minSize n k
-  IrObjectLit fs ->
-    concatMap (scanIrFieldLit minSize n) fs
-  IrDeleteProp o k ->
-    scanIrEffect minSize n o <> scanIrExprs minSize n k
-  IrArrayLit es ->
-    concatMap (scanIrEffect minSize n) es
-  IrUnsafeObject {} ->
-    []
-
-scanIrFieldLit :: Int -> Int -> IrFieldLit r -> [Hvm2Candidate]
-scanIrFieldLit minSize n = \case
-  IrFieldLitEffect e -> scanIrEffect minSize n e
-  IrFieldLitExtraEffect e -> scanIrEffect minSize n e
-  IrFieldLit x -> scanIrExprs minSize n x
-  IrFieldLitExtra x -> scanIrExprs minSize n x
-
-scanIrArgs :: Int -> Int -> Rec IrArg us -> [Hvm2Candidate]
-scanIrArgs minSize n = \case
-  RecNil -> []
-  RecCons (IrArgExpr x) rest ->
-    scanIrExprs minSize n x <> scanIrArgs minSize n rest
-  RecCons (IrArgEffect x) rest ->
-    scanIrEffect minSize n x <> scanIrArgs minSize n rest
-
-scanIrExprs :: Int -> Int -> IrExpr u -> [Hvm2Candidate]
-scanIrExprs minSize n e =
+-- | Every node is visited once; only expression-kind subtrees are candidate
+-- checked (effects were never candidates in the typed IR either).
+scanIr :: Int -> Int -> IrNode -> [Hvm2Candidate]
+scanIr minSize n e =
   let
-    (here, n') = checkIrExpr minSize n e
-    below = concatMap (scanSome minSize n') (irKids e)
+    (here, n') = checkIr minSize n e
    in
-    here <> below
+    here <> concatMap (scanIr minSize n') (irKids e)
 
-scanSome :: Int -> Int -> SomeIrExpr -> [Hvm2Candidate]
-scanSome minSize n = \case
-  SomeIrExpr x -> scanIrExprs minSize n x
-  SomeIrEffect x -> scanIrEffect minSize n x
-  SomeIrFnBody x -> scanIrFnBody minSize n x
-  SomeIrFieldLit x -> scanIrFieldLit minSize n x
-
-checkIrExpr :: Int -> Int -> IrExpr u -> ([Hvm2Candidate], Int)
-checkIrExpr minSize n e
-  | IrHvm2Ref {} <- e = ([], n)
-  | not (irPure (metaIrExpr e)) = ([], n)
-  | irSize (metaIrExpr e) < minSize = ([], n)
+checkIr :: Int -> Int -> IrNode -> ([Hvm2Candidate], Int)
+checkIr minSize n e
+  | isEffectNode e = ([], n)
+  | not (irPure (metaIr e)) = ([], n)
+  | irSize (metaIr e) < minSize = ([], n)
   | otherwise =
       case emitBendKernel (candidateName n) e of
         Left _ ->
@@ -179,7 +100,7 @@ checkIrExpr minSize n e
             cand =
               Hvm2Candidate
                 { hvm2CandidateName = candidateName n
-                , hvm2CandidateSize = irSize (metaIrExpr e)
+                , hvm2CandidateSize = irSize (metaIr e)
                 , hvm2CandidateParams = length tags
                 , hvm2CandidatePreview = preview
                 }
@@ -189,82 +110,110 @@ checkIrExpr minSize n e
 candidateName :: Int -> Text
 candidateName i = "candidate_" <> T.pack (show i)
 
-irKids :: IrExpr u -> [SomeIrExpr]
+-- | The node constructors that denote effect subtrees (mirrors the flat
+-- @FX_@ split). Expression-kind nodes are everything else.
+isEffectNode :: IrNode -> Bool
+isEffectNode = \case
+  IrLift {} -> True
+  IrFFI {} -> True
+  IrUnsafeObject {} -> True
+  IrUnsafeObjectGet {} -> True
+  IrUnsafeObjectAssign {} -> True
+  IrCallMethod {} -> True
+  IrBind {} -> True
+  IrThenE {} -> True
+  IrBindRec {} -> True
+  IrLambdaE {} -> True
+  IrApplyE {} -> True
+  IrIfE {} -> True
+  IrWhile {} -> True
+  IrForRange {} -> True
+  IrU8Set {} -> True
+  IrU8Fill {} -> True
+  IrOptionCaseE {} -> True
+  IrResultCaseE {} -> True
+  IrStringCaseE {} -> True
+  IrThrow {} -> True
+  IrTry {} -> True
+  IrObjectLit {} -> True
+  IrDeleteProp {} -> True
+  IrArrayLit {} -> True
+  _ -> False
+
+irKids :: IrNode -> [IrNode]
 irKids = \case
   IrLiteral {} -> []
   IrVar {} -> []
-  IrEmbedEff e -> [SomeIrEffect e]
-  IrLet _ _ x b -> [SomeIrExpr x, SomeIrExpr b]
-  IrLetRec _ r b -> [SomeIrExpr r, SomeIrExpr b]
-  IrLambda _ _ b -> [SomeIrExpr b]
-  IrApply f x -> [SomeIrExpr f, SomeIrExpr x]
-  IrIf c t eF -> [SomeIrExpr c, SomeIrExpr t, SomeIrExpr eF]
-  IrOptionCase o n _ s -> [SomeIrExpr o, SomeIrExpr n, SomeIrExpr s]
-  IrResultOk x -> [SomeIrExpr x]
-  IrResultErr x -> [SomeIrExpr x]
-  IrResultCase o _ er _ ok -> [SomeIrExpr o, SomeIrExpr er, SomeIrExpr ok]
-  IrIndex x i -> [SomeIrExpr x, SomeIrExpr i]
-  IrU8Index x i -> [SomeIrExpr x, SomeIrExpr i]
-  IrError x -> [SomeIrExpr x]
-  IrFixed _ args -> irFixedKids args
-  IrKernelK k -> irKernelKids k
-  IrMethod m -> irMethodKids m
-  IrFnLit b -> [SomeIrFnBody b]
-  IrUnsafeNullable x -> [SomeIrExpr x]
-  IrFrozenLit fs -> map SomeIrFieldLit fs
-  IrGetField o -> [SomeIrExpr o]
+  IrLet _ _ x b -> [x, b]
+  IrLetRec _ r b -> [r, b]
+  IrLambda _ _ b -> [b]
+  IrApply f x -> [f, x]
+  IrIf c t eF -> [c, t, eF]
+  IrOptionCase o n _ s -> [o, n, s]
+  IrResultOk x -> [x]
+  IrResultErr x -> [x]
+  IrResultCase o _ er _ ok -> [o, er, ok]
+  IrIndex x i -> [x, i]
+  IrU8Index x i -> [x, i]
+  IrError x -> [x]
+  IrFixed _ args -> args
+  IrFnLit _ _ b -> [b]
+  IrUnsafeNullable x -> [x]
+  IrFrozenLit fs -> map irFieldChild fs
+  IrGetField _ o -> [o]
   IrHvm2Ref {} -> []
-
-data SomeIrExpr where
-  SomeIrExpr :: IrExpr u -> SomeIrExpr
-  SomeIrEffect :: IrEffect u -> SomeIrExpr
-  SomeIrFnBody :: Ir.IrFnBody us r -> SomeIrExpr
-  SomeIrFieldLit :: Ir.IrFieldLit r -> SomeIrExpr
-
-scanIrFnBody :: Int -> Int -> Ir.IrFnBody us r -> [Hvm2Candidate]
-scanIrFnBody minSize n = \case
-  Ir.IrJfNil x -> scanIrExprs minSize n x
-  Ir.IrJfCons _ _ b -> scanIrFnBody minSize n b
-
-irFixedKids :: Ir.IrFixedArgs a b c -> [SomeIrExpr]
-irFixedKids = \case
-  Ir.IrArgsU x -> [SomeIrExpr x]
-  Ir.IrArgsB x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.IrArgsT x y z -> [SomeIrExpr x, SomeIrExpr y, SomeIrExpr z]
-
-irKernelKids :: Ir.IrKernel u -> [SomeIrExpr]
-irKernelKids = \case
-  Ir.KPlus x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KTimes x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KMinus x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KNegate x -> [SomeIrExpr x]
-  Ir.KFracDiv x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KRem x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KBitAnd x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KBitOr x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KBitXor x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KShl x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KShr x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KUShr x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KBig _ x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KBigNeg x -> [SomeIrExpr x]
-  Ir.KConcat x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KShow x -> [SomeIrExpr x]
-  Ir.KTypeOf x -> [SomeIrExpr x]
-  Ir.KAnd x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KOr x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KEq _ x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KNEq _ x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KGTh x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KLTh x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KGTEq x y -> [SomeIrExpr x, SomeIrExpr y]
-  Ir.KLTEq x y -> [SomeIrExpr x, SomeIrExpr y]
-
-irMethodKids :: Ir.IrMethod u -> [SomeIrExpr]
-irMethodKids = \case
-  Ir.IrMethMap x _ g -> [SomeIrExpr x, SomeIrExpr g]
-  Ir.IrMethFilter x _ g -> [SomeIrExpr x, SomeIrExpr g]
-  Ir.IrMethReduce x z _ _ g -> [SomeIrExpr x, SomeIrExpr z, SomeIrExpr g]
-  Ir.IrMethReduceRight x z _ _ g -> [SomeIrExpr x, SomeIrExpr z, SomeIrExpr g]
-  Ir.IrMethToSorted x _ _ g -> [SomeIrExpr x, SomeIrExpr g]
-  Ir.IrMethFrom n _ g -> [SomeIrExpr n, SomeIrExpr g]
+  KConcat x y -> [x, y]
+  KPlus x y -> [x, y]
+  KTimes x y -> [x, y]
+  KMinus x y -> [x, y]
+  KNegate x -> [x]
+  KFracDiv x y -> [x, y]
+  KRem x y -> [x, y]
+  KBitAnd x y -> [x, y]
+  KBitOr x y -> [x, y]
+  KBitXor x y -> [x, y]
+  KShl x y -> [x, y]
+  KShr x y -> [x, y]
+  KUShr x y -> [x, y]
+  KBig _ x y -> [x, y]
+  KBigNeg x -> [x]
+  KAnd x y -> [x, y]
+  KOr x y -> [x, y]
+  KEq _ x y -> [x, y]
+  KNEq _ x y -> [x, y]
+  KGTh x y -> [x, y]
+  KLTh x y -> [x, y]
+  KGTEq x y -> [x, y]
+  KLTEq x y -> [x, y]
+  KShow x -> [x]
+  KTypeOf x -> [x]
+  IrMethMap x _ g -> [x, g]
+  IrMethFilter x _ g -> [x, g]
+  IrMethReduce x z _ _ g -> [x, z, g]
+  IrMethReduceRight x z _ _ g -> [x, z, g]
+  IrMethToSorted x _ _ g -> [x, g]
+  IrMethFrom n _ g -> [n, g]
+  IrLift x -> [x]
+  IrFFI _ args -> args
+  IrUnsafeObject {} -> []
+  IrUnsafeObjectGet x _ -> [x]
+  IrUnsafeObjectAssign x y -> [x, y]
+  IrCallMethod x _ args -> x : args
+  IrBind _ _ x b -> [x, b]
+  IrThenE x y -> [x, y]
+  IrBindRec _ r b -> [r, b]
+  IrLambdaE _ b -> [b]
+  IrApplyE f x -> [f, x]
+  IrIfE c t eF -> [c, t, eF]
+  IrWhile c b -> [c, b]
+  IrForRange s e _ b -> [s, e, b]
+  IrU8Set b i v -> [b, i, v]
+  IrU8Fill b v -> [b, v]
+  IrOptionCaseE o n _ s -> [o, n, s]
+  IrResultCaseE o _ er _ ok -> [o, er, ok]
+  IrStringCaseE s arms d -> s : map snd arms ++ [d]
+  IrThrow x -> [x]
+  IrTry a _ k -> [a, k]
+  IrObjectLit fs -> map irFieldChild fs
+  IrDeleteProp o k -> [o, k]
+  IrArrayLit es -> es
