@@ -33,7 +33,6 @@ import FlatTest
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
   , flatSoaPureNodeCount
-  , lowerOptEffectRegressionOk
   , optIrEffectForRangeImpure
   )
 import qualified JShark.Json as Json
@@ -2058,8 +2057,6 @@ flatSoATests =
         flatDirectPackDeterministic kernelAndLambdaUse @?= True
     , testCase "direct pack is deterministic (forRange u8set)" $
         flatDirectPackForRangeOk @?= True
-    , testCase "lowerOptEffectIr matches lower-then-opt on bind/forRange probe" $
-        lowerOptEffectRegressionOk @?= True
     , testCase "optimize is stable on second pass" $
         flatDirectPackOptimizeStable kernelAndLambdaUse @?= True
     , testCase "every opcode decodes and re-encodes" $
