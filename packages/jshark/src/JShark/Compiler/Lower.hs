@@ -29,8 +29,9 @@ import Data.Text (Text)
 import JShark.Api.Rec
 import JShark.Api.Types
 import JShark.Compiler.Binder
-  ( Stamp (..)
+  ( Stamp
   , pattern Name
+  , pattern Stamp
   )
 import JShark.Compiler.Ir (optStep)
 import qualified JShark.Compiler.Ir as Ir

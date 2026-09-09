@@ -1,13 +1,15 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-pattern-namespace-specifier #-}
 
 -- | Optimizer / codegen binder tag.
 module JShark.Compiler.Binder
-  ( Stamp (..)
+  ( Stamp
+  , pattern Stamp
   , pattern Name
   , stampId
   , nestedDummyId
@@ -16,21 +18,28 @@ module JShark.Compiler.Binder
   )
 where
 
-import JShark.Api.Types
+import Data.Functor.Const (Const (..), getConst)
 
--- | A codegen\/optimizer binder is just an 'Int' tag (phantom-indexed by
--- universe so 'JShark.Api.Types.Var' stays well-typed). 'Stamp' used to
--- carry 'Embed'\/'EmbedEff' PHOAS inlining holes; those died with the
--- PHOAS optimizer, so tags are plain integers again.
-data Stamp (u :: Universe) where
-  Stamp :: Int -> Stamp u
+-- | A codegen\/optimizer binder is a 'Const' 'Int' over the phantom
+-- universe index, so 'JShark.Api.Types.Var' stays well-typed. 'Const''s
+-- second parameter is kind-polymorphic, so the partially applied
+-- 'Const Int' fills the @Universe -> Type@ functor role of the PHOAS
+-- types. 'Stamp' used to carry 'Embed'\/'EmbedEff' inlining holes; those
+-- died with the PHOAS optimizer, leaving the plain tag 'Const' represents.
+type Stamp = Const Int
+
+-- | Pattern form of a binder tag.
+pattern Stamp :: Int -> Stamp u
+pattern Stamp i = Const i
+
+{-# COMPLETE Stamp #-}
 
 -- | Readable alias for binder tags.
 pattern Name :: Int -> Stamp u
 pattern Name i = Stamp i
 
 stampId :: Stamp u -> Int
-stampId (Stamp i) = i
+stampId = getConst
 
 nestedDummyId :: Int
 nestedDummyId = minBound
