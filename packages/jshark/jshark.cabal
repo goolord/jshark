@@ -1,7 +1,6 @@
 cabal-version: 2.4
 
--- jshark core: safe JS EDSL + compiler pipeline (see packages/jshark/jshark.cabal)
-
+-- jshark core: safe JS EDSL + compiler pipeline.
 name: jshark
 version: 0.1
 synopsis: Safe Javascript EDSL

@@ -1,7 +1,6 @@
 cabal-version: 2.4
 
--- jshark-bindgen: TypeScript/JS FFI generator (see packages/jshark-bindgen)
--- jshark-bindgen: TypeScript/JS FFI generator (see packages/jshark-bindgen)
+-- jshark-bindgen: TypeScript/JS FFI generator.
 name: jshark-bindgen
 version: 0.1
 synopsis: Generate Haskell FFI bindings from TypeScript declarations

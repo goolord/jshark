@@ -38,6 +38,24 @@ module before calling `hvm2Kernel` sites. JShark codegen for `hvm2Kernel "name" 
 emits a callable wrapper around `__jsharkHvm2.exports["name"]` (throws if the
 kernel is missing).
 
+## Headless dev tools
+
+Node scripts (no browser needed) for the HVM2 threading work. They run
+against the built demo wasm (`scripts/check-wasm.sh --build-only` or a
+prior site export):
+
+- `check-threads.mjs` — measures the parallel steal path on real
+  `node:worker_threads` (eval workers first over a shared memory,
+  coordinator last). Reports ms per grid job; tune with `LIVE`, `CELLS`,
+  `REPS`, `BX`, `BY` env vars.
+- `check-tm-fix.mjs` — regression check for the eval-worker TM binding
+  fix: instantiates the wasm twice over one shared memory and asserts
+  both instances agree on the same non-null `tm[]` slots.
+- `wasm-mem.mjs` — shared helper that reads imported-memory limits out
+  of the wasm binary so harnesses do not hardcode page counts.
+- `thread-eval-worker.mjs` — the eval worker driven by
+  `check-threads.mjs` (mirrors `examples/static/hvm2-worker.js`).
+
 ## Lint
 
 Pass `--warn-hvm2-candidates` when compiling (via `JShark.Compiler.applyCompilerArgs`)

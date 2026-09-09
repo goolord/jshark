@@ -9,105 +9,13 @@ tests: True
 benchmarks: True
 optimization: 2
 
--- Project-wide warning flags (local packages only; third-party deps must
--- build with their own options).
-package jshark
-  ghc-options:
-    -Wall
-    -Wextra
-    -Werror
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wmissing-export-lists
-    -Wmissing-home-modules
-    -Wpartial-fields
-    -Wredundant-constraints
-
-package jshark-lucid
-  ghc-options:
-    -Wall
-    -Wextra
-    -Werror
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wmissing-export-lists
-    -Wmissing-home-modules
-    -Wpartial-fields
-    -Wredundant-constraints
-
-package jshark-bindgen
-  ghc-options:
-    -Wall
-    -Wextra
-    -Werror
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wmissing-export-lists
-    -Wmissing-home-modules
-    -Wpartial-fields
-    -Wredundant-constraints
-
-package jshark-hotreload
-  ghc-options:
-    -Wall
-    -Wextra
-    -Werror
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wmissing-export-lists
-    -Wmissing-home-modules
-    -Wpartial-fields
-    -Wredundant-constraints
-
-package jshark-examples
-  ghc-options:
-    -Wall
-    -Wextra
-    -Werror
-    -Wcompat
-    -Widentities
-    -Wincomplete-record-updates
-    -Wincomplete-uni-patterns
-    -Wmissing-export-lists
-    -Wmissing-home-modules
-    -Wpartial-fields
-    -Wredundant-constraints
+-- Warning flags live in each package's own `common warnings` stanza
+-- (the Hackage-safe location); this file only carries environment
+-- specifics.
 
 -- Windows lacks the LLVM opt/llc-20 toolchain used elsewhere.
 if !os(windows)
-  package jshark
-    ghc-options:
-      -fllvm
-      -pgmlo opt-20
-      -pgmlc llc-20
-
-  package jshark-lucid
-    ghc-options:
-      -fllvm
-      -pgmlo opt-20
-      -pgmlc llc-20
-
-  package jshark-bindgen
-    ghc-options:
-      -fllvm
-      -pgmlo opt-20
-      -pgmlc llc-20
-
-  package jshark-hotreload
-    ghc-options:
-      -fllvm
-      -pgmlo opt-20
-      -pgmlc llc-20
-
-  package jshark-examples
+  package *
     ghc-options:
       -fllvm
       -pgmlo opt-20
