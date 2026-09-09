@@ -52,6 +52,27 @@
   the test suite builds `CompilerConfig` via `defaultCompilerConfig{...}`
   record updates instead of ten positional 8-field blocks.
 
+* New ergonomics surface (breaking, see the new `JShark.Prelude` for a
+  one-import quick start):
+  - `JShark.Prelude` re-exports `JShark.Api`, `JShark.Api.Rec`
+    (`Rec`/`<:`), the object-literal constructors, and `JShark.Compiler`;
+    a typical program drops from 4-8 imports to 1-2.
+  - The `addEventListener` callback now receives a typed
+    `Event` (`JShark.Api.Event`) instead of an untyped
+    `Expr f ('MutableObject ())`, and `addEventListenerS` takes the
+    handler directly in `EffectSyntax` (no `stmts` wrap, no inline
+    annotations). Typed field accessors `eventKey`, `eventCode`,
+    `eventRepeat`, `eventPointerId`, `eventButton`, `eventShiftKey`,
+    `eventClientX/Y`, `eventOffsetX/Y` (and `Dom.eventTarget` replacing
+    the old `getProp' e "..."` dances in the examples.
+  - New combinators filling gaps the examples kept re-implementing:
+    `toNumber` (JS `Number()` coercion), `whenNoneS` (the `whenSomeS`
+    complement), `argEffect` (smart constructor next to `arg`),
+    `Dom.byId` (literal-id element lookup), and `compileEffectSyntax`
+    (absorbs the `fromSyntax` wrap at the compile boundary).
+  - `JShark.Api`'s module header documents the `_`/`S`/prime naming
+    conventions.
+
 * `CaptureStderr` (both copies) hoists its Windows `pipe` arity
   difference out of the do-block; fourmolu can now parse and format the
   whole repo (`scripts/format.sh` exits clean).

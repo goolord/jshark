@@ -75,6 +75,7 @@ tests =
     , optimizeTests
     , flatSoATests
     , compilerTests
+    , ergonomicsTests
     ]
 
 bigIntTests :: TestTree
@@ -2084,6 +2085,60 @@ bindSyntax :: Effect f a -> (Expr f a -> Effect f b) -> Effect f b
 bindSyntax e k = fromSyntax $ do
   x <- toSyntax e
   toSyntax (k (Var x))
+
+-- | Round-trips for the newer ergonomics surface ('toNumber',
+-- 'whenNoneS', 'Dom.byId', typed event accessors, 'addEventListenerS',
+-- 'compileEffectSyntax').
+ergonomicsTests :: TestTree
+ergonomicsTests =
+  testGroup
+    "ergonomics"
+    [ testCase "toNumber coerces a string via Number()" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      n <- toNumber (string "4.5")
+                      Console.log n
+                      done
+                  )
+              )
+          )
+          @?= "const n0 = Number(\"4.5\");\nconsole.log(n0);"
+    , testCase "whenNoneS runs the body only on none" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      v <- Storage.getItem Storage.localStorage (string "k")
+                      _ <- whenNoneS v (toSyntax_ (ffi "seed" RecNil) *> done)
+                      done
+                  )
+              )
+          )
+          @?= "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\nif (n1 === null) {seed();}"
+    , testCase "addEventListenerS + eventKey avoids stmts and annotations" $
+        renderJS
+          ( effectfulAST
+              ( fromSyntax
+                  ( do
+                      el <- Dom.byId "board"
+                      addEventListenerS "keydown" el $ \e -> do
+                        k <- eventKey e
+                        toSyntax_ (ffi "sink" (arg k <: RecNil))
+                        done
+                      done
+                  )
+              )
+          )
+          @?= "const n0 = document.getElementById(\"board\");\nn0.addEventListener(\"keydown\", n1 => {const n2 = n1.key;\nsink(n2);\nreturn});"
+    , testCase "compileEffectSyntax absorbs fromSyntax" $ do
+        out <-
+          compileEffectSyntax
+            readableConfig
+            (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp)
+        out @?= "console.log(\"hi\");"
+    ]
 
 compilerTests :: TestTree
 compilerTests =

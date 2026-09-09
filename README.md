@@ -84,15 +84,16 @@ it may be useful to inspect the haskell source code (viewable in this repository
 ## Quick start
 
 A closed program is a value whose type is `forall f. Effect f 'Unit`. This
-one logs a greeting; compiling it prints the JavaScript:
+one logs a greeting; compiling it prints the JavaScript. `JShark.Prelude`
+re-exports the EDSL surface, the FFI argument syntax, object literals, and
+the compiler, so one import covers a typical program:
 
 ```haskell
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import qualified Data.Text.IO as T
-import JShark.Api
-import JShark.Compiler
+import JShark.Prelude
 import qualified JShark.Console as Console
 
 greet :: Expr f 'String -> Effect f 'Unit
@@ -101,7 +102,7 @@ greet name = fromSyntax $ do
   done
 
 main :: IO ()
-main = compileEffect readableConfig (greet "world") >>= T.putStrLn
+main = compileEffectSyntax readableConfig (greet (string "world")) >>= T.putStrLn
 ```
 
 ```js

@@ -347,10 +347,10 @@ handlePointerUp ::
   -> Effect f ('MutableObject ())
   -> Effect f (MutableObjectOf LifeState)
   -> Effect f (MutableObjectOf BoundScratch)
-  -> Expr f ('MutableObject ())
+  -> Expr f ('MutableObject Event)
   -> EffectSyntax f (f 'Unit)
 handlePointerUp canvas toolRef viewport state editScratch e = do
-  btn <- getProp' e "button"
+  btn <- eventButton e
   whenS (btn .== 0) $ do
     aiming <- getProp viewport "gliderAiming"
     whenS (aiming .== 1) $ finishGliderAim state editScratch toolRef viewport
@@ -367,13 +367,13 @@ syncPointerAtEvent ::
   -> Effect f (MutableObjectOf BoundScratch)
   -> Effect f ('MutableObject ())
   -> Expr f 'Bool
-  -> Expr f ('MutableObject ())
+  -> Expr f ('MutableObject Event)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 syncPointerAtEvent canvas viewport tipRef state editScratch toolRef doErase e cx cy = do
-  ox <- getProp' e "offsetX"
-  oy <- getProp' e "offsetY"
+  ox <- eventOffsetX e
+  oy <- eventOffsetY e
   (gx, gy) <- gridFromPointer canvas viewport ox oy
   syncPointerTip viewport tipRef cx cy gx gy
   whenS doErase $ applyErase state editScratch toolRef gx gy
@@ -385,11 +385,11 @@ handleCanvasMouseMove ::
   -> Effect f (MutableObjectOf LifeState)
   -> Effect f (MutableObjectOf BoundScratch)
   -> Effect f ('MutableObject ())
-  -> Expr f ('MutableObject ())
+  -> Expr f ('MutableObject Event)
   -> EffectSyntax f (f 'Unit)
 handleCanvasMouseMove canvas viewport tipRef state editScratch toolRef e = do
-  cx <- getProp' e "clientX"
-  cy <- getProp' e "clientY"
+  cx <- eventClientX e
+  cy <- eventClientY e
   dragging <- getProp viewport "dragging"
   rightPanning <- getProp viewport "rightPanning"
   gliderAiming <- getProp viewport "gliderAiming"
@@ -455,8 +455,8 @@ handleCanvasMouseMove canvas viewport tipRef state editScratch toolRef e = do
             ( do
                 startX <- getProp viewport "dragStartX"
                 startY <- getProp viewport "dragStartY"
-                ox <- getProp' e "offsetX"
-                oy <- getProp' e "offsetY"
+                ox <- eventOffsetX e
+                oy <- eventOffsetY e
                 let
                   dx = cx - startX
                   dy = cy - startY
@@ -523,9 +523,9 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
           <> "})"
       )
       (ArgEffect canvas <: ArgEffect toolRef <: arg mouseToolN <: RecNil)
-  addEventListener "keydown" win $ \(e :: Expr f ('MutableObject ())) ->
+  addEventListener "keydown" win $ \e ->
     stmts $ do
-      code <- getProp' e "code"
+      code <- eventCode e
       toSyntax $
         stringCaseE
           code
@@ -571,16 +571,16 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
             )
           ]
           noOp
-  addEventListener "mousedown" canvas $ \(e :: Expr f ('MutableObject ())) ->
+  addEventListener "mousedown" canvas $ \e ->
     stmts $ do
       toSyntax_ $ callMethod canvas "focus" RecNil
-      btn <- getProp' e "button"
-      shift <- getProp' e "shiftKey"
+      btn <- eventButton e
+      shift <- eventShiftKey e
       sid <- getProp toolRef "sid"
       whenS (btn .== 0 .&& (shift .|| isMouseToolSid sid)) $ do
         toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-        cx <- getProp' e "clientX"
-        cy <- getProp' e "clientY"
+        cx <- eventClientX e
+        cy <- eventClientY e
         _ <- setProp viewport "dragging" (number 1)
         _ <- setProp viewport "dragX" cx
         _ <- setProp viewport "dragY" cy
@@ -592,8 +592,8 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
         syncToolCursor canvas toolRef viewport
       whenS (btn .== 2 .&& isMouseToolSid sid) $ do
         toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-        cx <- getProp' e "clientX"
-        cy <- getProp' e "clientY"
+        cx <- eventClientX e
+        cy <- eventClientY e
         moveNow <- performanceNow
         _ <- setProp viewport "rightPanning" (number 1)
         _ <- setProp viewport "panVelX" (number 0)
@@ -604,24 +604,24 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
         syncToolCursor canvas toolRef viewport
       whenS (not_ shift .&& btn .== 0 .&& sid .== eraserToolN) $ do
         _ <- setProp viewport "erasing" (number 1)
-        cx <- getProp' e "clientX"
-        cy <- getProp' e "clientY"
-        ox <- getProp' e "offsetX"
-        oy <- getProp' e "offsetY"
+        cx <- eventClientX e
+        cy <- eventClientY e
+        ox <- eventOffsetX e
+        oy <- eventOffsetY e
         (gx, gy) <- gridFromPointer canvas viewport ox oy
         syncPointerTip viewport tipRef cx cy gx gy
         applyErase state editScratch toolRef gx gy
       whenS (not_ shift .&& btn .== 0 .&& isGliderToolSid sid) $ do
-        ox <- getProp' e "offsetX"
-        oy <- getProp' e "offsetY"
+        ox <- eventOffsetX e
+        oy <- eventOffsetY e
         (gx, gy) <- gridFromPointer canvas viewport ox oy
         clientW <- getProp canvas "clientWidth"
         let
           bufScale = number canvasW / clientW
           ax = ox * bufScale
           ay = oy * bufScale
-        cx <- getProp' e "clientX"
-        cy <- getProp' e "clientY"
+        cx <- eventClientX e
+        cy <- eventClientY e
         _ <- setProp viewport "gliderAiming" (number 1)
         _ <- setProp viewport "gliderGx" gx
         _ <- setProp viewport "gliderGy" gy
@@ -637,12 +637,12 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
     stmts $ handlePointerUp canvas toolRef viewport state editScratch e
   addEventListener "mouseup" win $ \e ->
     stmts $ handlePointerUp canvas toolRef viewport state editScratch e
-  addEventListener "click" canvas $ \(e :: Expr f ('MutableObject ())) ->
+  addEventListener "click" canvas $ \e ->
     stmts $ do
       moved <- getProp viewport "moved"
       whenS (moved .== 0) $ do
-        ox <- getProp' e "offsetX"
-        oy <- getProp' e "offsetY"
+        ox <- eventOffsetX e
+        oy <- eventOffsetY e
         (gx, gy) <- gridFromPointer canvas viewport ox oy
         applyClick state editScratch toolRef toolsMap gx gy
       _ <- setProp viewport "moved" (number 0)

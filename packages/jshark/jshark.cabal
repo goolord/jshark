@@ -53,6 +53,7 @@ library
     JShark.Api.Params
     JShark.Api.Rec
     JShark.Api.Types
+    JShark.Prelude
     JShark.Ajax
     JShark.Array
     JShark.Bun

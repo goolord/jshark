@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -9,6 +11,8 @@
 -- integration boundaries when the host already has a node reference.
 module JShark.Dom
   ( DomElement
+  , byId
+  , eventTarget
   , lookupId
   , lookupSelector
   , classAdd
@@ -36,6 +40,7 @@ import Data.Text (Text)
 import JShark
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
+import qualified JShark.Object as Object
 
 -- | Browser node. 'MutableObject' so 'get' / 'Field' apply.
 data DomElement
@@ -43,6 +48,20 @@ data DomElement
 type instance Field DomElement "innerHTML" = 'String
 
 type instance Field DomElement "innerText" = 'String
+
+-- | @document.getElementById(id)@ for a literal id.
+byId :: Text -> EffectSyntax f (Effect f ('MutableObject DomElement))
+byId = lookupId . string
+
+-- | The element the handler fired on, as a usable 'DomElement' handle.
+eventTarget ::
+  forall f o.
+  ToEffect f ('MutableObject Event) o =>
+  o
+  -> EffectSyntax f (Effect f ('MutableObject DomElement))
+eventTarget o =
+  hold
+    (Object.unsafeObjectGet (toEffect o :: Effect f ('MutableObject Event)) "target")
 
 -- | @document.getElementById(x)@. Bound via 'hold' so reusing the
 -- handle only references the variable, never re-runs the lookup.

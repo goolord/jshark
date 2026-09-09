@@ -200,9 +200,6 @@ persistState state items filt = do
         `asTypeOf` emptyState
   Storage.setItem Storage.localStorage storageKey (Json.stringify (var blob))
 
-byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-byId = Dom.lookupId . string
-
 incomplete ::
   Expr f ('Array (MutableObjectOf Todo))
   -> EffectSyntax f (Expr f ('Array (MutableObjectOf Todo)))
@@ -212,15 +209,15 @@ incomplete items = Array.filterE_ items $ \t -> do
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
-  form <- byId idForm
-  input <- byId idNewTodo
-  list <- byId idTodoList
-  mainEl <- byId idMain
-  footerEl <- byId idFooter
-  countEl <- byId idTodoCount
-  countSuffix <- byId idTodoCountSuffix
-  clearBtn <- byId idClearCompleted
-  filterLinks <- traverse (\r -> (,) r <$> byId (routeId r)) routes
+  form <- Dom.byId idForm
+  input <- Dom.byId idNewTodo
+  list <- Dom.byId idTodoList
+  mainEl <- Dom.byId idMain
+  footerEl <- Dom.byId idFooter
+  countEl <- Dom.byId idTodoCount
+  countSuffix <- Dom.byId idTodoCountSuffix
+  clearBtn <- Dom.byId idClearCompleted
+  filterLinks <- traverse (\r -> (,) r <$> Dom.byId (routeId r)) routes
 
   state <- hold emptyState
   set @"todos" state emptyTodos

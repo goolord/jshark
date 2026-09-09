@@ -44,6 +44,7 @@ module JShark.Compiler
   , compileTerser
   , compileEffect
   , compileEffectPure
+  , compileEffectSyntax
   , compileEffectIO
   , compileEffects
   , compileEffectsLabeled
@@ -94,6 +95,7 @@ import JShark
   , pureProgram
   , renderJSCompact
   )
+import JShark.Api.Types (EffectSyntax, fromSyntax)
 import qualified JShark.Compiler.CompileProgress as CP
 import qualified JShark.Compiler.CompileReport as CR
 import JShark.Compiler.CompileTiming
@@ -502,6 +504,12 @@ compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff =
   runEff $
     CR.runCompileReportFromConfig (configProgress cfg) (compileEffectEff cfg eff)
+
+-- | Compile a program written directly in 'JShark.Api.EffectSyntax'
+-- (absorbs the @fromSyntax@ wrap at the compile boundary).
+compileEffectSyntax ::
+  CompilerConfig -> (forall f. EffectSyntax f (f u)) -> IO Text
+compileEffectSyntax cfg body = compileEffect cfg (fromSyntax body)
 
 compileEffectPure :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffectPure cfg eff =

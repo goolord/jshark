@@ -11,6 +11,21 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
+-- | The JShark EDSL surface: literals, operators, functions, control
+-- flow, FFI, and the 'EffectSyntax' do-notation bridge.
+--
+-- == Naming conventions
+--
+-- - Trailing @_@ avoids a Haskell/Prelude clash ('true_', 'not_', 'rem_')
+--   or marks the statement-shaped member of a pair ('push_' vs
+--   'Array.push', 'forRange_' vs 'forRange').
+-- - An @S@ suffix marks the 'EffectSyntax' (do-notation) variant of an
+--   'Effect'-based combinator: 'whenS'\/'ifS' run blocks of syntax,
+--   'whenSomeS'\/'whenNoneS' branch on an 'Option' inside a do-block,
+--   'addEventListenerS' takes a do-block handler. The un-suffixed names
+--   compose 'Effect' values (see "JShark.Api.Types" for the two trees).
+-- - Prime variants ('getProp'', 'setProp'') are the row-untyped forms:
+--   any property name, unchecked field type.
 module JShark.Api
   ( -- * Types
     Expr
@@ -51,6 +66,7 @@ module JShark.Api
   , expr
   , yield
   , arg
+  , argEffect
   , ToEffect (..)
   , ToExpr (..)
 
@@ -95,6 +111,7 @@ module JShark.Api
   , optionCase
   , optionCaseE
   , whenSomeS
+  , whenNoneS
   , whenSomeE
   , unsafeNullable
   , orElse
@@ -124,6 +141,7 @@ module JShark.Api
   , setProp'
 
     -- * Events / window
+  , Event
   , window
   , host
   , locationHash
@@ -131,6 +149,17 @@ module JShark.Api
   , onClick_
   , addEventListener
   , addEventListener_
+  , addEventListenerS
+  , eventKey
+  , eventCode
+  , eventRepeat
+  , eventPointerId
+  , eventClientX
+  , eventClientY
+  , eventButton
+  , eventShiftKey
+  , eventOffsetX
+  , eventOffsetY
 
     -- * Syntax
   , noOp
@@ -164,6 +193,7 @@ module JShark.Api
   , ushr
   , quot_
   , parseInt_
+  , toNumber
   , toBigInt
   , fromBigInt
   , parseBigInt_
@@ -199,6 +229,71 @@ data Window
 type instance Field Window "location.host" = 'String
 
 type instance Field Window "location.hash" = 'String
+
+-- | The event object handed to 'addEventListener' callbacks. Read it
+-- with the typed accessors ('eventKey', 'eventCode', …); @target@ is
+-- typed in "JShark.Dom" ('JShark.Dom.eventTarget').
+data Event
+
+type instance Field Event "key" = 'String
+
+type instance Field Event "code" = 'String
+
+type instance Field Event "repeat" = 'Bool
+
+type instance Field Event "pointerId" = 'Number
+
+type instance Field Event "clientX" = 'Number
+
+type instance Field Event "clientY" = 'Number
+
+type instance Field Event "button" = 'Number
+
+type instance Field Event "offsetX" = 'Number
+
+type instance Field Event "offsetY" = 'Number
+
+type instance Field Event "shiftKey" = 'Bool
+
+eventKey ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
+eventKey o = Object.get @"key" @Event (toEffect o)
+
+eventCode ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
+eventCode o = Object.get @"code" @Event (toEffect o)
+
+eventRepeat ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
+eventRepeat o = Object.get @"repeat" @Event (toEffect o)
+
+eventPointerId ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventPointerId o = Object.get @"pointerId" @Event (toEffect o)
+
+eventClientX ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventClientX o = Object.get @"clientX" @Event (toEffect o)
+
+eventClientY ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventClientY o = Object.get @"clientY" @Event (toEffect o)
+
+eventButton ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventButton o = Object.get @"button" @Event (toEffect o)
+
+eventShiftKey ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
+eventShiftKey o = Object.get @"shiftKey" @Event (toEffect o)
+
+eventOffsetX ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventOffsetX o = Object.get @"offsetX" @Event (toEffect o)
+
+eventOffsetY ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventOffsetY o = Object.get @"offsetY" @Event (toEffect o)
 
 window :: Effect f ('MutableObject Window)
 window = unsafeObject "window"
@@ -532,7 +627,7 @@ not_ c = c .== false_
 addEventListener ::
   Text
   -> Effect f ('MutableObject obj)
-  -> (Expr f u -> Effect f a)
+  -> (Expr f ('MutableObject Event) -> Effect f a)
   -> EffectSyntax f ()
 addEventListener name el handler =
   toSyntax_ $
@@ -540,6 +635,16 @@ addEventListener name el handler =
       el
       "addEventListener"
       (ArgExpr (string name) <: ArgEffect (LambdaE (\x -> handler (var x))) <: RecNil)
+
+-- | 'addEventListener' with the handler written directly in
+-- 'EffectSyntax' (no @stmts@ wrap needed).
+addEventListenerS ::
+  Text
+  -> Effect f ('MutableObject obj)
+  -> (Expr f ('MutableObject Event) -> EffectSyntax f (f 'Unit))
+  -> EffectSyntax f ()
+addEventListenerS name el handler =
+  addEventListener name el (stmts . handler)
 
 addEventListener_ ::
   Text
@@ -550,6 +655,11 @@ addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
 
 arg :: Expr f u -> Arg f u
 arg = ArgExpr
+
+-- | Lift an effectful computation into an FFI argument position
+-- (rendered as an inline callback).
+argEffect :: Effect f u -> Arg f u
+argEffect = ArgEffect
 
 class ToEffect f u a where
   toEffect :: a -> Effect f u
@@ -654,6 +764,13 @@ whenSomeS ::
   -> EffectSyntax f (f 'Unit)
 whenSomeS opt k = toSyntax $ optionCaseE opt noOp (\x -> stmts (k x))
 
+-- | Run the body when the option is 'none' (the 'whenSomeS' complement).
+whenNoneS ::
+  Expr f ('Option u)
+  -> EffectSyntax f (f 'Unit)
+  -> EffectSyntax f (f 'Unit)
+whenNoneS opt k = toSyntax $ optionCaseE opt (stmts k) (\_ -> noOp)
+
 -- | Bind an optional effect, then run the body when it is present.
 whenSomeE ::
   Effect f ('Option u)
@@ -711,6 +828,11 @@ quot_ x y = Std (Kernel (KBig BQuot x y))
 -- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
 parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number
 parseInt_ s r = expr2 FixParseInt s r
+
+-- | JS @Number(x)@ coercion on strings (unlike 'parseInt_', no radix,
+-- accepts decimals; yields NaN on garbage).
+toNumber :: Expr f 'String -> EffectSyntax f (Expr f 'Number)
+toNumber x = fmap var (toSyntax (ffi "Number" (arg x <: RecNil)))
 
 -- | @BigInt(n)@. Throws when @n@ is not an integer Number.
 toBigInt :: Expr f 'Number -> Expr f 'BigInt
