@@ -852,6 +852,15 @@ buildFlatEmitPlan view root s0 =
           modifySTRef sRef pushHintScope
           act
           modifySTRef sRef popHintScope
+        -- @v <- e; pure v@: codegen flattens the bind into its RHS
+        -- ('flatBindEffect'), so the binder never emits a name.
+        isTransparentBind tag bodyId =
+          case FlatSoA.flatSoaNode view bodyId of
+            Flat.FX_Lift eId ->
+              case FlatSoA.flatSoaNode view eId of
+                Flat.FE_Var i -> i == tag
+                _ -> False
+            _ -> False
         planGo env nid
           | nid < 0 || nid >= n = pure ()
           | otherwise = do
@@ -979,8 +988,14 @@ buildFlatEmitPlan view root s0 =
                     planGo env' bodyId
                 Flat.FX_Bind tag xId bodyId -> do
                   planGo env xId
-                  ident <- planAlloc nid
-                  planGo (IM.insert tag ident env) bodyId
+                  -- A bind whose body is just @Lift (Var tag)@ (@v <- e; pure v@)
+                  -- is flattened by 'flatBindEffect' into its RHS and never
+                  -- emits a name; do not reserve one for it.
+                  if isTransparentBind tag bodyId
+                    then planGo env bodyId
+                    else do
+                      ident <- planAlloc nid
+                      planGo (IM.insert tag ident env) bodyId
                 Flat.FX_BindRec tag rId bId -> do
                   ident <- planAlloc nid
                   let

@@ -20,14 +20,13 @@
   `IrArg`/`IrFieldLit`/`IrFixedArgs` wrapper types no longer exist. The
   `JShark.*` facade names are unchanged.
 
-  Known cosmetic drift (readable style only): the pretty-printed
-  (`readableConfig`) output of the `life` example renumbers two generated
-  identifiers (+2 from mid-file onward) because the merged optimizer keeps
-  two single-use redundant effect binds (`v <- e; …`) that the twin
-  optimizer inlined under `keepLets`. The IR semantics and the emitted JS
-  are identical (identifier-stripped outputs are byte-equal; minified
-  outputs are byte-identical). To be revisited after the phase-7 test
-  sweep.
+  Emitted output is byte-identical to before: the merged optimizer keeps
+  two redundant single-use effect binds (`v <- e; pure v`) under `keepLets`
+  that the twin optimizer inlined, and `buildFlatEmitPlan` reserved a
+  phantom identifier for each (shifting later generated names by +2 in the
+  readable `life` output). The plan now skips binder names for binds that
+  codegen flattens into their RHS (`flatBindEffect`), restoring the
+  pre-merge numbering; readable and minified goldens are byte-identical.
 
 * Flat-opt purity computed once, at pack. `fsaPure` is filled by
   `FlatSoA.computeFlatSoaPure` (one backward sweep in pack order) when
