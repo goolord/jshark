@@ -32,8 +32,8 @@ import JShark.Compiler.Binder
   ( Stamp (..)
   , pattern Name
   )
-import qualified JShark.Compiler.Ir as Ir
 import JShark.Compiler.Ir (optStep)
+import qualified JShark.Compiler.Ir as Ir
 
 lowerArgAt :: Int -> Arg Stamp u -> (Int, Ir.IrArg u)
 lowerArgAt !t0 a = case a of

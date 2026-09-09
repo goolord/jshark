@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+* One compilation pipeline. Pure expressions and effectful programs now
+  share a single path — lower to the first-order IR (`JShark.Compiler.Ir`),
+  one IR optimizer (all constant/structural folds live in `optIrExpr` /
+  `optIrEffect`), pack to the flat SoA, one emitter (`Codegen.Flat`).
+  The PHOAS optimizer (`JShark.Compiler.Optimize` and its
+  `Analysis`/`Elim`/`Fold`/`Metadata` satellites) and the direct-PHOAS
+  emitter (`JShark.Compiler.Codegen.Phoas`) are deleted; its shared
+  statement helpers moved to `JShark.Compiler.Codegen.Stmt`.
+  `JShark.Compiler.FlatView` (a pure `FlatSoA` alias) is gone.
+
+  * `Stamp` is a plain `Int` binder tag again. `Embed`/`EmbedEff` PHOAS
+    inlining holes and the `Lower.reify*` inverse are removed; so is the
+    `JShark.Compiler.Flatten` module. `IrEmbedEff` remains as the IR node
+    for an inlined effect used in expression position.
+  * `IrLet` carries the source hint so readable mode keeps pure-let names.
+  * A single canonical opcode table (`FlatEnc.flatOpTable`) is round-tripped
+    by `FlatTest` (decode totality, tag bijection, pinned operand columns).
+  * Pure programs report through the flat timing hooks; the obsolete
+    `optIrLargeThreshold` routing is gone.
+  * Real programs compile faster (Life e2e ~9% on readable) and emit less
+    (folds); the adversarial 800-deep `longChain` IR-opt bench is ~25%
+    slower from per-node fold/hint work.
+
+  Breaking API: `pureAST`/`pureASTWith`/`pureProgram` output text changed
+  (one emitter), and these are gone: `optimize`, `optimizeWith`,
+  `optimizeEffect`, `optimizeEffectIr`, `optimizeEffectFromIr`,
+  `phoasNodeCountFromIr`, `optIrLargeThreshold`, `nodeCountExpr`,
+  `nodeCountEff`, `effectfulASTIr`, `effectfulASTFromFlat`,
+  `preparePureProgram*`. `effectfulASTFromSoA` stays. `Stamp` is a
+  single-constructor `Int` tag.
+
 * `jshark-bindgen` executable: generate JShark FFI wrappers from TypeScript
   `.d.ts` / `.ts` (and JS with JSDoc). `cabal run jshark-bindgen -- FILE`.
   Not part of the `jshark` library.

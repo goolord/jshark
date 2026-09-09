@@ -48,6 +48,7 @@ import JShark.Compiler.FlatEnc (Enc (..))
 import qualified JShark.Compiler.FlatEnc as FlatEnc
 import qualified JShark.Compiler.FlatSoA as FlatSoA
 import qualified JShark.Compiler.Ir as Ir
+
 flatDirectPackDeterministic :: ClosedEffect u -> Bool
 flatDirectPackDeterministic e =
   let

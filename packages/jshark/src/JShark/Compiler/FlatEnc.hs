@@ -247,7 +247,6 @@ oFX_DELETEPROP = 122
 oFX_ARRAYLIT :: Op
 oFX_ARRAYLIT = 123
 
-
 -- | Every opcode with its source name: the one canonical enumeration
 -- the encoder (JShark.Compiler.Flat.encodeFlatNode) and decoder
 -- (JShark.Compiler.FlatSoA.decodeOp) must both cover. FlatTest
@@ -331,7 +330,6 @@ flatOpTable =
   , ("oFX_DELETEPROP", oFX_DELETEPROP)
   , ("oFX_ARRAYLIT", oFX_ARRAYLIT)
   ]
-
 
 -- | Freeze enc rows in pack order (row @i@ is the @i@th append).
 freezeEncSeq ::

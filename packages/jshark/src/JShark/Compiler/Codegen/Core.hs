@@ -510,7 +510,9 @@ flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
 -- | Pure-program variant of 'flatPrepareCoreWith': lower, IR-opt, pack,
 -- and bulk-optimize a closed expression onto the same flat SoA.
 flatPrepareExprCore ::
-  Bool -> ClosedExpr u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrExpr u)
+  Bool
+  -> ClosedExpr u
+  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrExpr u)
 flatPrepareExprCore keepLets e = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime

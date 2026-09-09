@@ -15,18 +15,10 @@
 --       +--> Evaluate                 -- 'JShark.Compiler.Evaluate' (tests, REPL)
 --       |
 --       v
--- Flatten                             -- 'JShark.Compiler.Flatten' (normalize tree)
---       |
---       v
--- Optimize (PHOAS)                    -- 'JShark.Compiler.Optimize'
---       |
---       +-- pure:  Codegen.Phoas -> JS            -- 'JShark.Compiler.Codegen.Phoas' ('pureAST')
---       |
---       v
 -- Lower                               -- 'JShark.Compiler.Lower' (PHOAS -> first-order Ir)
 --       |
 --       v
--- Ir optimize                         -- 'JShark.Compiler.Ir' (first-order passes)
+-- Ir optimize                         -- 'JShark.Compiler.Ir' (one optimizer: folds + elim)
 --       |
 --       v
 -- Flat (pack)                         -- 'JShark.Compiler.Flat'
@@ -35,11 +27,12 @@
 -- FlatSoA (bulk opts)                 -- 'JShark.Compiler.FlatSoA'
 --       |
 --       v
--- FlatSoA -> Codegen.Flat -> JS      -- 'JShark.Compiler.FlatSoA', 'JShark.Compiler.Codegen.Flat'
+-- Codegen.Flat -> JS                  -- 'JShark.Compiler.Codegen.Flat' (pure + effectful)
 --
 -- Hoist    ('JShark.Compiler.Hoist')          -- named @$tag@ registration
 --           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
 -- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
+-- Codegen.Stmt ('JShark.Compiler.Codegen.Stmt') -- shared statement renderers
 -- @
 --
 -- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings via

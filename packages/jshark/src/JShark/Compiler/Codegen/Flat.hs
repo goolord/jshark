@@ -1098,8 +1098,8 @@ flatPureASTGo !ctx !env !sIn view nid =
                       $$ constBind s3 nBind (fromMaybe mempty xRef)
                       $$ fromMaybe mempty (codeDecl yCode)
                   )
-                   yCode
-               )
+                  yCode
+              )
       Flat.FE_LetRec _tag rId bId ->
         let
           (nBind, s1) = flatPlanIdent ctx s0 nid
@@ -1138,8 +1138,8 @@ flatPureASTGo !ctx !env !sIn view nid =
           ( s3
           , Code
               (cDecl $$ tDecl $$ eDecl)
-               (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
-           )
+              (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
+          )
       Flat.FE_OptionCase oId nId _tag sId ->
         let
           (s1, Code optDecl optRef) = flatPureChild ctx s0 oId
@@ -1398,8 +1398,8 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
                in
                 (s2, oDecl $$ constBind s2 nBind oRef, nBind)
           )
-           ( \mRes nBind s ->
-               let
+          ( \mRes nBind s ->
+              let
                 (s1, MkCode nDecl nRef _) = flatEffectChild ctx s nId
                 (s2, MkCode sDecl sRef _) = flatEffectChild ctx s1 sId
                 cond = nJS s nBind <+> "===" <+> "null"

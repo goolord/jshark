@@ -13,6 +13,15 @@ import Data.Array.Byte (ByteArray)
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
+import FlatTest
+  ( batchJobSlotTimingOk
+  , flatDirectPackDeterministic
+  , flatDirectPackForRangeOk
+  , flatDirectPackOptimizeStable
+  , flatOpcodeRoundTripOk
+  , flatSoaPureNodeCount
+  , optIrEffectForRangeImpure
+  )
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
@@ -26,15 +35,6 @@ import JShark.Compiler
 import JShark.Compiler.Codegen.Core (minifiedStyle)
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
-import FlatTest
-  ( batchJobSlotTimingOk
-  , flatDirectPackDeterministic
-  , flatDirectPackForRangeOk
-  , flatDirectPackOptimizeStable
-  , flatOpcodeRoundTripOk
-  , flatSoaPureNodeCount
-  , optIrEffectForRangeImpure
-  )
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
@@ -465,7 +465,8 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTWith minifiedStyle
+              ( effectfulASTWith
+                  minifiedStyle
                   ( fromSyntax
                       ( toSyntax_
                           ( forRange (number 0) (number 3) $ \i ->
@@ -481,7 +482,8 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTWith minifiedStyle
+              ( effectfulASTWith
+                  minifiedStyle
                   ( fromSyntax $ do
                       buf <- bindExpr (newByteArray (number 4))
                       _ <-
@@ -498,7 +500,8 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTWith minifiedStyle
+              ( effectfulASTWith
+                  minifiedStyle
                   ( fromSyntax $ do
                       pal <- bindExpr (newByteArray (number 12))
                       rgba <- bindExpr (newByteArray (number 16))
@@ -517,7 +520,8 @@ controlFlowTests =
           h = number 3
           js =
             renderJS
-              ( effectfulASTWith minifiedStyle
+              ( effectfulASTWith
+                  minifiedStyle
                   ( fromSyntax $ do
                       buf <- bindExpr (newByteArray (w * h))
                       _ <-
@@ -534,7 +538,8 @@ controlFlowTests =
         let
           js =
             renderJS
-              ( effectfulASTWith minifiedStyle
+              ( effectfulASTWith
+                  minifiedStyle
                   ( fromSyntax $ do
                       buf <- bindExpr (newByteArray (number 1))
                       _ <-
@@ -556,7 +561,8 @@ controlFlowTests =
           @?= "((a,b)=>a+b)(1, 2)"
     , testCase "flat multi-arg arrow FFI wraps IIFE" $
         renderJS
-          ( effectfulASTWith minifiedStyle
+          ( effectfulASTWith
+              minifiedStyle
               ( ffi
                   ("(a,b)=>a+b")
                   (arg (number 1) <: arg (number 2) <: RecNil)
@@ -725,9 +731,13 @@ stdlibTests =
     , testCase "Array.index 1.9 is the integer slot" $
         evaluateNumber (Array.index numArray (number 1.9)) @?= 2
     , testCase "Array.index out of bounds throws" $
-        assertThrows "evaluate: array index" (evaluateNumber (Array.index numArray (number 9)))
+        assertThrows
+          "evaluate: array index"
+          (evaluateNumber (Array.index numArray (number 9)))
     , testCase "Array.index NaN is out of bounds" $
-        assertThrows "evaluate: array index" (evaluateNumber (Array.index numArray (number (0 / 0))))
+        assertThrows
+          "evaluate: array index"
+          (evaluateNumber (Array.index numArray (number (0 / 0))))
     , testCase "Array.index truncates and throws out of bounds" $ do
         let
           js =
@@ -2051,7 +2061,8 @@ flatSoATests =
     [ testCase "optimize attaches pure flags" $
         flatSoaPureNodeCount (expr (number 1 + number 2)) > (0 :: Int) @?= True
     , testCase "constant fold chains" $
-        renderJS (effectfulASTWith minifiedStyle (expr ((number 1 + number 2) + number 3)))
+        renderJS
+          (effectfulASTWith minifiedStyle (expr ((number 1 + number 2) + number 3)))
           @?= renderJS (effectfulASTWith minifiedStyle (expr (number 6)))
     , testCase "direct pack is deterministic (kernel)" $
         flatDirectPackDeterministic kernelAndLambdaUse @?= True

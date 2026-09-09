@@ -63,9 +63,9 @@ import JShark.Api.Types
   ( BigBinOp
   , Comparable
   , Expr (Literal)
-  , FieldLit (..)
   , FFIForm (..)
   , Field
+  , FieldLit (..)
   , FixedOp (..)
   , LamInfo (..)
   , Universe (..)
@@ -1401,8 +1401,6 @@ lookupIrField = go . reverse
     Just Refl -> Just e
     Nothing -> go rest
   go (_ : rest) = go rest
-
-
 
 optIrMethod ::
   (?keepLets :: P.Bool) => Int -> IrMethod u -> (Int, IrMethod u, IrMeta)

@@ -111,7 +111,8 @@ ifAssignOrStmt (Just rv) c tD tR eD eR =
     $$ "else"
     <+> blockBody (fromMaybe mempty eD $$ assignResult rv eR)
 
-tryCatchStmt :: Maybe Text -> JS -> Maybe JS -> Maybe JS -> Maybe JS -> Maybe JS -> JS
+tryCatchStmt ::
+  Maybe Text -> JS -> Maybe JS -> Maybe JS -> Maybe JS -> Maybe JS -> JS
 tryCatchStmt mRes catchJs aDecl aRef bDecl bRef =
   let
     catchHead = "catch" <+> parens catchJs
