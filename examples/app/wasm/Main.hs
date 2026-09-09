@@ -12,7 +12,11 @@
 module Main (main) where
 
 import JShark.Example.Hvm2Demo.Kernels (hvm2Entries, maxIter)
-import JShark.Hvm2 (bendModule, compileHvm2Wasm, defaultHvm2Config)
+import JShark.Example.Hvm2Demo.WasmBuild
+  ( compileHvm2Wasm
+  , defaultHvm2Config
+  , demoBendModule
+  )
 import System.Directory (createDirectoryIfMissing, makeAbsolute)
 import System.Exit (ExitCode (..), die)
 import System.FilePath (takeDirectory)
@@ -26,7 +30,7 @@ staticWasm = "examples/static/hvm2/hvm2-demo.wasm"
 
 main :: IO ()
 main = do
-  case bendModule hvm2Entries of
+  case demoBendModule hvm2Entries of
     Left err -> die ("bend emit: " <> show err)
     Right bendSrc -> do
       createDirectoryIfMissing True outDir

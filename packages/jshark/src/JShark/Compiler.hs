@@ -36,7 +36,6 @@ module JShark.Compiler
   , CacheStrategy (..)
 
     -- * Compilation
-  , compileJS
   , compileWith
   , compileWithPure
   , tryCompileWith
@@ -313,13 +312,6 @@ cacheKey cfg source =
 -- by default — no external minifier). Set 'configBackend' to 'Esbuild',
 -- 'Terser', or 'Auto' for an extra shrink pass.
 --
--- Does __not__ wrap the input in an IIFE: a bare expression with no side
--- effects may be DCE'd to empty by esbuild/Terser. Prefer 'compilePure' /
--- 'compileEffect' for JShark output. Empty minifier output on non-empty
--- input is treated as failure.
-compileJS :: Text -> IO Text
-compileJS = compileWith defaultCompilerConfig
-
 -- | Minify using 'tryCompileWith'. On 'Left', either throw or (when
 -- 'configFallback' is set) log to stderr and return the original source.
 compileWith :: CompilerConfig -> Text -> IO Text

@@ -16,7 +16,6 @@ import Data.Text (Text)
 import JShark.Compiler.Codegen.Core (CG (..))
 import JShark.Compiler.Emit (JS, jsText, renderJS)
 import qualified JShark.Compiler.Flat as Flat
-import qualified JShark.Compiler.FlatSoA as FlatSoA
 import JShark.Compiler.Hoist.Canonical (hoistTagName)
 import JShark.Compiler.JsShim (insertHoisted)
 
@@ -28,9 +27,9 @@ registerHoistedTag s tag src =
     (s {cgPreamble = insertHoisted name src (cgPreamble s)}, name)
 
 emitHoistedFnValue ::
-  CG -> FlatSoA.FlatSoA -> Flat.NodeId -> JS -> (CG, JS)
+  CG -> Flat.FlatSoA -> Flat.NodeId -> JS -> (CG, JS)
 emitHoistedFnValue s view nid fnJs =
-  case FlatSoA.flatSoaHoistTag view nid of
+  case Flat.flatSoaHoistTag view nid of
     Nothing -> (s, fnJs)
     Just tag ->
       let

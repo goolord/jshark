@@ -19,11 +19,11 @@ import JShark.Compiler
 import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Hvm2Demo as Hvm2Demo
 import JShark.Example.Hvm2Demo.Kernels (hvm2Entries, mandelJsSource)
+import JShark.Example.Hvm2Demo.WasmBuild (demoBendModule)
 import qualified JShark.Example.Life as Life
 import qualified JShark.Example.Synth as Synth
 import qualified JShark.Example.TodoMvc as TodoMvc
 import JShark.HotReload.Core (defaultHotReloadConfig)
-import JShark.Hvm2 (bendModule)
 import SourcePane (hvm2SourcePanes, sourceHead, sourceHeadLite, sourcePane)
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -92,7 +92,7 @@ main = do
     lifeSrc = lookupPane "life"
     hvm2Src = lookupPane "hvm2-demo"
   hvm2Bend <-
-    case bendModule hvm2Entries of
+    case demoBendModule hvm2Entries of
       Left err -> die ("hvm2-demo bend: " <> show err)
       Right bend -> pure bend
   let

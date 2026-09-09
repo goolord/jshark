@@ -43,7 +43,6 @@ module JShark.Compiler.CompileProgress
   , recordJobMinifySec
   , recordJobJsBytes
   , recordJobFlatPrepare
-  , recordJobPhoasPrepare
   , recordJobForm
   , snapshotJobStatsFromSlot
   )
@@ -81,7 +80,6 @@ import JShark.Compiler.CompileTiming
   ( CompileForm (..)
   , CompileJobStats (..)
   , FlatPrepareTiming (..)
-  , PhoasPrepareTiming (..)
   )
 
 -- | The ordered phases of a single compile, as shown on the progress bar.
@@ -133,7 +131,6 @@ data JobTiming = JobTiming
   , jtMinifySec :: !(IORef Double)
   , jtJsBytes :: !(IORef Int)
   , jtFlatPrepare :: !(IORef (Maybe FlatPrepareTiming))
-  , jtPhoasPrepare :: !(IORef (Maybe PhoasPrepareTiming))
   }
 
 data ActiveJobState = ActiveJobState
@@ -173,7 +170,6 @@ newJobTiming = do
   minify <- newIORef 0
   bytes <- newIORef 0
   flat <- newIORef Nothing
-  phoas <- newIORef Nothing
   pure
     JobTiming
       { jtForm = form
@@ -182,7 +178,6 @@ newJobTiming = do
       , jtMinifySec = minify
       , jtJsBytes = bytes
       , jtFlatPrepare = flat
-      , jtPhoasPrepare = phoas
       }
 
 lookupJobTiming :: IO (Maybe JobTiming)
@@ -197,7 +192,6 @@ resetJobTiming
     , jtMinifySec
     , jtJsBytes
     , jtFlatPrepare
-    , jtPhoasPrepare
     } = do
     writeIORef jtForm FormMinified
     writeIORef jtLintSec 0
@@ -205,7 +199,6 @@ resetJobTiming
     writeIORef jtMinifySec 0
     writeIORef jtJsBytes 0
     writeIORef jtFlatPrepare Nothing
-    writeIORef jtPhoasPrepare Nothing
 
 snapshotJobStatsFromTiming ::
   JobTiming -> Text -> Double -> IO CompileJobStats
@@ -217,7 +210,6 @@ snapshotJobStatsFromTiming
     , jtMinifySec
     , jtJsBytes
     , jtFlatPrepare
-    , jtPhoasPrepare
     }
   label
   totalSec = do
@@ -227,15 +219,12 @@ snapshotJobStatsFromTiming
     minify <- readIORef jtMinifySec
     bytes <- readIORef jtJsBytes
     flat <- readIORef jtFlatPrepare
-    phoas <- readIORef jtPhoasPrepare
     let
       irPrepare = maybe 0 fptIrPrepareSec flat
       pack = maybe 0 fptPackSec flat
       flatOpt = maybe 0 fptFlatOptSec flat
-      phoasOpt = maybe 0 pptOptimizeSec phoas
-      hasPrepare = isJust flat || isJust phoas
-      prepareTotal =
-        maybe 0 fptTotalSec flat + maybe 0 pptTotalSec phoas
+      hasPrepare = isJust flat
+      prepareTotal = maybe 0 fptTotalSec flat
       emit =
         if hasPrepare
           then max 0 (codegen - prepareTotal)
@@ -249,7 +238,6 @@ snapshotJobStatsFromTiming
           , cjsIrPrepareSec = irPrepare
           , cjsPackSec = pack
           , cjsFlatOptSec = flatOpt
-          , cjsPhoasOptSec = phoasOpt
           , cjsEmitSec = emit
           , cjsMinifySec = minify
           , cjsTotalSec = totalSec
@@ -269,7 +257,6 @@ snapshotJobStats label totalSec = do
           , cjsIrPrepareSec = 0
           , cjsPackSec = 0
           , cjsFlatOptSec = 0
-          , cjsPhoasOptSec = 0
           , cjsEmitSec = 0
           , cjsMinifySec = 0
           , cjsTotalSec = totalSec
@@ -318,13 +305,6 @@ recordJobFlatPrepare t = do
   case m of
     Nothing -> pure ()
     Just JobTiming {jtFlatPrepare} -> writeIORef jtFlatPrepare (Just t)
-
-recordJobPhoasPrepare :: PhoasPrepareTiming -> IO ()
-recordJobPhoasPrepare t = do
-  m <- lookupJobTiming
-  case m of
-    Nothing -> pure ()
-    Just JobTiming {jtPhoasPrepare} -> writeIORef jtPhoasPrepare (Just t)
 
 recordJobForm :: CompileForm -> IO ()
 recordJobForm form = do

@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+* The flat IR collapses from three modules into one:
+  `JShark.Compiler.Flat` now owns packing, the frozen SoA view, the bulk
+  passes, and decode. The 78 hand-written opcode constants and the
+  78-row `flatOpTable` (`FlatEnc`) become a `data FlatOp` deriving
+  `Enum`/`Bounded` (one constructor per `FlatNode`), stored as `Word16`
+  via `opCode`/`flatOpOf`. `decodeOp` becomes a `case`, so GHC proves
+  decode coverage at compile time — a new opcode without a decode arm is
+  a build error, not a runtime one. The unused subtree-size machinery
+  (`flatSoaSubtreeSizes`, `attachFlatSoaSubtreeSizes`,
+  `computeFlatSoaSubtreeSizes`, `flatSoaIdentBudget`) is deleted; it ran
+  on every pack and had no callers. Breaking: `JShark.Compiler.FlatEnc`
+  and `JShark.Compiler.FlatSoA` no longer exist; import
+  `JShark.Compiler.Flat`. Emitted JS is byte-identical.
+
+* The Mandelbrot demo's WASM payload moves out of the core library:
+  `emitKernelWasmBridge` (the SIMD128 fast path, HVM2 net-reduction
+  driver, and 8-ary `jshark_grid` bridge), the demo Bend module assembly
+  (`ParTree` prelude, `jshark_grid`, 4096-leaf `main`), and the
+  bend→C→zig orchestration (`compileHvm2GenC`/`compileHvm2Wasm`,
+  `Hvm2Config`) now live in `JShark.Example.Hvm2Demo.WasmBuild`
+  (examples package). Core `JShark.Hvm2` keeps the generic Bend emitter
+  surface (`bendKernel`, `bendDefNames`, `bendDefExports`,
+  `emitKernelExportsC`, `sanitizeKernelCForWasm`). `bendModule` is
+  renamed `demoBendModule` and `bendModuleFromTree` (unused) is deleted.
+
+* Sixteen compiler-internal modules (`Lower`, `Evaluate`, `Emit`,
+  `Hoist`, `Codegen.Flat`, `Codegen.Stmt`, `JsShim`, `JsNum`, `JsFormat`,
+  `Binder`, `CompileReport`, `CompileTerminal`, `Optimize.Hvm2`,
+  `Process`, `Hoist.Canonical`, `Api.Prim`) move from the library's
+  exposed-modules to other-modules: they compile the same but no longer
+  sit on the public Haddock surface. The `JShark` facade and
+  `JShark.Compiler` re-export the public entry points.
+
+* Dead code removed: `compileJS` (Compiler), `mapFixedArgs`/`foldFixed`
+  and the `sortByM` alias (Evaluate), `mergePreamble`/`assertDisjoint`
+  (JsShim), the identity wrapper `emitFlatSiblings` (Codegen.Flat), the
+  duplicate `peelLambdasFn` (EmitBend), and the PHOAS-optimizer timing
+  plumbing left behind by its deletion (`PhoasPrepareTiming`,
+  `recordJobPhoasPrepare`, the always-zero `phopt` stats column).
+
+* `CaptureStderr` (both copies) hoists its Windows `pipe` arity
+  difference out of the do-block; fourmolu can now parse and format the
+  whole repo (`scripts/format.sh` exits clean).
+
 * The IR GADT pair `IrExpr`/`IrEffect` merges into one untyped
   `data IrNode` (`JShark.Compiler.Ir`). The type indices did no checking
   post-lowering — the EDSL construction already type-checked the program —

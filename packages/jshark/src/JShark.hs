@@ -21,10 +21,7 @@
 -- Ir optimize                         -- 'JShark.Compiler.Ir' (one optimizer: folds + elim)
 --       |
 --       v
--- Flat (pack)                         -- 'JShark.Compiler.Flat'
---       |
---       v
--- FlatSoA (bulk opts)                 -- 'JShark.Compiler.FlatSoA'
+-- Flat (pack + SoA bulk opts)         -- 'JShark.Compiler.Flat'
 --       |
 --       v
 -- Codegen.Flat -> JS                  -- 'JShark.Compiler.Codegen.Flat' (pure + effectful)

@@ -191,7 +191,6 @@ statsColumns =
   , secCol "irprep" 7 cjsIrPrepareSec
   , secCol "pack" 7 cjsPackSec
   , secCol "fopt" 7 cjsFlatOptSec
-  , secCol "phopt" 7 cjsPhoasOptSec
   , secCol "emit" 7 cjsEmitSec
   , secCol "min" 7 cjsMinifySec
   , bytesCol
@@ -281,7 +280,6 @@ phaseSec c = case colHeader c of
   "irprep" -> cjsIrPrepareSec
   "pack" -> cjsPackSec
   "fopt" -> cjsFlatOptSec
-  "phopt" -> cjsPhoasOptSec
   "emit" -> cjsEmitSec
   "min" -> cjsMinifySec
   _ -> const 0

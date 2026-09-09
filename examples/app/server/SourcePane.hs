@@ -51,7 +51,9 @@ sourcePanes :: T.Text -> [SourcePaneSpec] -> Html ()
 sourcePanes staticRoot specs = do
   div_ [class_ "source-stack"] $
     mapM_ (pane staticRoot) specs
-  script_ [type_ "module", src_ (staticRoot <> "/js/source-pane.js")] ("" :: Html ())
+  script_
+    [type_ "module", src_ (staticRoot <> "/js/source-pane.js")]
+    ("" :: Html ())
 
 pane :: T.Text -> SourcePaneSpec -> Html ()
 pane _ (SourcePaneSpec label lang body) = do

@@ -14,9 +14,7 @@ module JShark.Compiler.CompileTiming
   , FlatOptProfile (..)
   , IrOptProfile (..)
   , LowerProfile (..)
-  , PhoasPrepareTiming (..)
   , reportFlatPrepareTiming
-  , reportPhoasPrepareTiming
   , seconds
   )
 where
@@ -78,12 +76,6 @@ data LowerProfile = LowerProfile
   }
   deriving (Eq, Show)
 
-data PhoasPrepareTiming = PhoasPrepareTiming
-  { pptOptimizeSec :: !Double
-  , pptTotalSec :: !Double
-  }
-  deriving (Eq, Show)
-
 data CompileJobStats = CompileJobStats
   { cjsLabel :: !Text
   , cjsForm :: !CompileForm
@@ -91,7 +83,6 @@ data CompileJobStats = CompileJobStats
   , cjsIrPrepareSec :: !Double
   , cjsPackSec :: !Double
   , cjsFlatOptSec :: !Double
-  , cjsPhoasOptSec :: !Double
   , cjsEmitSec :: !Double
   , cjsMinifySec :: !Double
   , cjsTotalSec :: !Double
@@ -113,17 +104,6 @@ reportFlatPrepareTiming t = do
       , "  pack:     " ++ show (fptPackSec t)
       , "  flat-opt: " ++ show (fptFlatOptSec t)
       , "  total:    " ++ show (fptTotalSec t)
-      ]
-
-reportPhoasPrepareTiming :: PhoasPrepareTiming -> IO ()
-reportPhoasPrepareTiming t = do
-  ok <- timingEnabled
-  when ok
-    $ hPutStrLn stderr
-    $ unlines
-      [ "JShark PHOAS prepare timing (seconds):"
-      , "  optimize: " ++ show (pptOptimizeSec t)
-      , "  total:    " ++ show (pptTotalSec t)
       ]
 
 seconds :: Double -> Double -> Double

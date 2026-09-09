@@ -16,7 +16,6 @@ module JShark.Compiler.JsShim
   , emptyPreamble
   , useShim
   , insertHoisted
-  , mergePreamble
   , renderPreambleStyled
   , builtinSrc
   )
@@ -92,31 +91,6 @@ insertHoisted name src p
               src
               (pHoisted p)
         }
-
-mergePreamble :: Preamble -> Preamble -> Preamble
-mergePreamble a b =
-  assertDisjoint
-    Preamble
-      { pBuiltins = pBuiltins a <> pBuiltins b
-      , pHoisted =
-          M.unionWithKey
-            mergeHoistedSrc
-            (pHoisted a)
-            (pHoisted b)
-      }
-
-assertDisjoint :: Preamble -> Preamble
-assertDisjoint p =
-  case [ builtinName b
-       | b <- S.toList (pBuiltins p)
-       , builtinName b `M.member` pHoisted p
-       ] of
-    (name : _) ->
-      error $
-        "JShark.mergePreamble: "
-          <> T.unpack name
-          <> " used as both shim and hoist"
-    [] -> p
 
 mergeHoistedSrc :: Text -> Text -> Text -> Text
 mergeHoistedSrc name existing incoming

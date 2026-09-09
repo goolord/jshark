@@ -20,8 +20,6 @@ module JShark.Compiler.Evaluate
   , evaluateBigInt
   , valueEq
   , isCheapValue
-  , mapFixedArgs
-  , foldFixed
   , isFiniteDouble
   , escapeJsString
   , jsQuote
@@ -588,9 +586,6 @@ evalAsUint8Array rec buf k = do
   case arr of
     ValueUint8Array ba -> k ba
 
-sortByM :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
-sortByM cmp xs = mergeSort cmp xs
-
 mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
 mergeSort _ [] = pure []
 mergeSort _ [x] = pure [x]
@@ -692,7 +687,7 @@ evalMethod rec = \case
   MethToSorted xs f ->
     evalAsArray rec xs $ \vs ->
       ValueArray
-        <$> sortByM (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
+        <$> mergeSort (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
   MethFrom n f -> do
     nv <- rec n
     let
@@ -760,29 +755,6 @@ evalFixed rec op args = case (op, args) of
       pure (ValueArray (jsArraySlice vs (unNumber av) (unNumber bv)))
   -- String/regex fixed ops are codegen-only (same as old Un/Bin/Tern gaps).
   _ -> cannotEval "a fixed stdlib op"
-
-mapFixedArgs ::
-  forall f a b c.
-  (forall v. Expr f v -> Expr f v)
-  -> FixedArgs f a b c
-  -> FixedArgs f a b c
-mapFixedArgs ge a = case a of
-  ArgsU x -> ArgsU (ge x)
-  ArgsB x y -> ArgsB (ge x) (ge y)
-  ArgsT x y z -> ArgsT (ge x) (ge y) (ge z)
-
-foldFixed ::
-  forall f m a b c u.
-  Monoid m =>
-  (forall v. f v)
-  -> (forall v. Expr f v -> m)
-  -> FixedOp a b c u
-  -> FixedArgs f a b c
-  -> m
-foldFixed _ se _ a = case a of
-  ArgsU x -> se x
-  ArgsB x y -> se x <> se y
-  ArgsT x y z -> se x <> se y <> se z
 
 lookupFrozenField ::
   forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))

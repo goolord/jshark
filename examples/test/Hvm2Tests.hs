@@ -17,7 +17,11 @@ import JShark.Compiler.Hvm2Lint
   , hvm2CandidatesFromExpr
   )
 import JShark.Example.Hvm2Demo.Kernels (hvm2Entries, mandelJsSource, maxIter)
-import JShark.Hvm2
+import JShark.Example.Hvm2Demo.WasmBuild
+  ( demoBendModule
+  , emitKernelWasmBridge
+  )
+import JShark.Hvm2 (bendDefNames, bendKernel, sanitizeKernelCForWasm)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -31,8 +35,8 @@ hvm2Tests =
           Right bend -> do
             T.isInfixOf "def double" bend @?= True
             T.isInfixOf "return" bend @?= True
-    , testCase "bendModule includes main" $
-        case bendModule [Hvm2KernelEntry "inc" (lambda (\x -> x + number 1))] of
+    , testCase "demoBendModule includes main" $
+        case demoBendModule [Hvm2KernelEntry "inc" (lambda (\x -> x + number 1))] of
           Left bendErr -> assertFailure (show bendErr)
           Right bend -> T.isInfixOf "def main():" bend @?= True
     , testCase "bendDefNames skips main" $
@@ -63,7 +67,7 @@ hvm2Tests =
             T.isInfixOf "node_buf + (u64)ti * part" bridge @?= True
             T.isInfixOf "evaluator(net, tm[0], book)" bridge @?= False
     , testCase "bend demo kernels pass bend check (no or/and)" $
-        case bendModule hvm2Entries of
+        case demoBendModule hvm2Entries of
           Left bendErr -> assertFailure (show bendErr)
           Right bend -> do
             T.isInfixOf " or " bend @?= False
@@ -113,7 +117,7 @@ hvm2Tests =
         null (hvm2CandidatesFromExpr (lambda (\x -> toString x)))
           @?= True
     , testCase "hvm2 demo kernels emit bend module" $
-        case bendModule hvm2Entries of
+        case demoBendModule hvm2Entries of
           Left bendErr -> assertFailure (show bendErr)
           Right bend -> do
             T.isInfixOf "def mandel" bend @?= True
@@ -123,7 +127,7 @@ hvm2Tests =
             -- JS numbers are floats; kernels must be f24 end to end.
             T.isInfixOf "def mandel(a2: f24, a4: f24) -> f24:" bend @?= True
     , testCase "bend module main is a parallel bend + fold sweep" $
-        case bendModule hvm2Entries of
+        case demoBendModule hvm2Entries of
           Left bendErr -> assertFailure (show bendErr)
           Right bend -> do
             T.isInfixOf "def main():" bend @?= True
@@ -143,7 +147,7 @@ hvm2Tests =
     , testCase "mandelJsSource matches maxIter" $
         T.pack (show maxIter) `T.isInfixOf` T.pack mandelJsSource @?= True
     , testCase "mandel bend module uses maxIter" $
-        case bendModule hvm2Entries of
+        case demoBendModule hvm2Entries of
           Left bendErr -> assertFailure (show bendErr)
           Right bend ->
             T.pack (show maxIter) `T.isInfixOf` bend @?= True

@@ -67,6 +67,7 @@ library
     JShark.Example.Hvm2Demo.Client
     JShark.Example.Hvm2Demo.Kernels
     JShark.Example.Hvm2Demo.Page
+    JShark.Example.Hvm2Demo.WasmBuild
     JShark.Example.Life
     JShark.Example.Life.Catalog
     JShark.Example.Life.Client
@@ -103,8 +104,11 @@ library
     , array
     , base
     , containers
+    , directory
+    , filepath
     , jshark
     , jshark-lucid
+    , process
     , text
   hs-source-dirs: src
   default-language: Haskell2010

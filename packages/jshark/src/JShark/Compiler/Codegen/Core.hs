@@ -63,7 +63,7 @@ import JShark.Compiler.Emit
   , ($$)
   , (<+>)
   )
-import qualified JShark.Compiler.FlatSoA as FlatSoA
+import qualified JShark.Compiler.Flat as FlatSoA
 import qualified JShark.Compiler.Ir as Ir
 import JShark.Compiler.JsShim
   ( Builtin (CheckedIndex, ValueEq)

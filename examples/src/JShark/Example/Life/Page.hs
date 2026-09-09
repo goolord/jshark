@@ -199,7 +199,9 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
       lifeSourceSection
       script_ [src_ "js/pixi.min.js"] ("" :: Html ())
       script_ [src_ scriptSrc] ("" :: Html ())
-      script_ [type_ "module", src_ (staticRoot <> "/js/source-pane.js")] ("" :: Html ())
+      script_
+        [type_ "module", src_ (staticRoot <> "/js/source-pane.js")]
+        ("" :: Html ())
       sourceLoadScript (sourceSrcFor scriptSrc)
 
 lifeSourceSection :: Html ()

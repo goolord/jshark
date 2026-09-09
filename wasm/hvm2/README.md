@@ -5,7 +5,8 @@ as `examples/Life/wasm/`).
 
 Pipeline:
 
-1. JShark `Hvm2Kernel` nodes → Bend (`.bend`) via `JShark.Hvm2.bendModule`
+1. JShark `Hvm2Kernel` nodes → Bend (`.bend`) via
+   `JShark.Example.Hvm2Demo.WasmBuild.demoBendModule`
 2. `bend gen-c` → `kernel.c`
 3. JShark generates `kernel_exports.c` with per-kernel WASM export shims
 4. `zig build` (this directory) → `jshark-hvm2.wasm`

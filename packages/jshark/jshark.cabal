@@ -51,7 +51,6 @@ library
     JShark.Api.Classes
     JShark.Api.Generic
     JShark.Api.Params
-    JShark.Api.Prim
     JShark.Api.Rec
     JShark.Api.Types
     JShark.Ajax
@@ -60,30 +59,13 @@ library
     JShark.Bun.Internal
     JShark.Canvas
     JShark.Compiler
-    JShark.Compiler.Binder
     JShark.Compiler.Codegen.Core
-    JShark.Compiler.Codegen.Flat
-    JShark.Compiler.Codegen.Stmt
     JShark.Compiler.CompileProgress
-    JShark.Compiler.CompileReport
-    JShark.Compiler.CompileTerminal
     JShark.Compiler.CompileTiming
-    JShark.Compiler.Emit
     JShark.Compiler.EmitBend
-    JShark.Compiler.Evaluate
     JShark.Compiler.Flat
-    JShark.Compiler.FlatEnc
-    JShark.Compiler.FlatSoA
-    JShark.Compiler.Hoist
-    JShark.Compiler.Hoist.Canonical
     JShark.Compiler.Hvm2Lint
     JShark.Compiler.Ir
-    JShark.Compiler.JsFormat
-    JShark.Compiler.JsNum
-    JShark.Compiler.JsShim
-    JShark.Compiler.Lower
-    JShark.Compiler.Optimize.Hvm2
-    JShark.Compiler.Process
     JShark.Console
     JShark.Dom
     JShark.Hvm2
@@ -99,6 +81,24 @@ library
     JShark.Timers
     JShark.Worker
   other-modules:
+    -- compiler internals: compiled with the library but not exposed
+    -- (the JShark facade and JShark.Compiler carry the public surface)
+    JShark.Api.Prim
+    JShark.Compiler.Binder
+    JShark.Compiler.Codegen.Flat
+    JShark.Compiler.Codegen.Stmt
+    JShark.Compiler.CompileReport
+    JShark.Compiler.CompileTerminal
+    JShark.Compiler.Emit
+    JShark.Compiler.Evaluate
+    JShark.Compiler.Hoist
+    JShark.Compiler.Hoist.Canonical
+    JShark.Compiler.JsFormat
+    JShark.Compiler.JsNum
+    JShark.Compiler.JsShim
+    JShark.Compiler.Lower
+    JShark.Compiler.Optimize.Hvm2
+    JShark.Compiler.Process
   build-depends:
     , ansi-terminal >= 1.0
     , async >= 2.2 && < 2.4
