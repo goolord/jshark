@@ -130,8 +130,8 @@ lifeTests =
                 life = stmts mainJS
               (soa, _, irNodes, _) <- flatPrepareCore life
               js <- Ex.evaluate $ renderJSCompact (effectfulASTFromSoA soa)
-              irNodes @?= 60420
-              T.length js @?= 1005377
+              irNodes @?= 69812
+              T.length js @?= 872421
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $
               renderJS
                 ( effectfulAST

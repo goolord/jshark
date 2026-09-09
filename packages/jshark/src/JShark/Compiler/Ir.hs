@@ -34,30 +34,57 @@ module JShark.Compiler.Ir
   )
 where
 
+import Data.Bits (xor, (.&.), (.|.))
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Kind (Type)
+import Data.List (lookup)
+import Data.Maybe (fromMaybe)
 import Data.Monoid (Any (..))
+import Data.Proxy (Proxy (..))
 import Data.Text (Text)
-import Data.Typeable (Typeable)
-import GHC.TypeLits (KnownSymbol)
-import JShark.Api.Prim (isPureFixed)
+import qualified Data.Text as T
+import Data.Typeable (Typeable, (:~:) (Refl))
+import GHC.TypeLits (KnownSymbol, sameSymbol)
+import JShark.Api.Prim
+  ( MathBinary (..)
+  , MathUnary (..)
+  , exactMathBinary
+  , exactMathUnary
+  , isFiniteDouble
+  , isPureFixed
+  , matchMathBinary
+  , matchMathUnary
+  )
 import JShark.Api.Rec (Rec (..))
 import JShark.Api.Types
   ( BigBinOp
   , Comparable
+  , Expr (Literal)
+  , FieldLit (..)
   , FFIForm (..)
   , Field
-  , FixedOp
+  , FixedOp (..)
   , LamInfo (..)
   , Universe (..)
   , Value (..)
   )
 import JShark.Compiler.Binder (strictFoldMap)
-import JShark.Compiler.Evaluate (isCheapValue)
+import JShark.Compiler.Evaluate
+  ( eqFoldableValue
+  , isCheapValue
+  , isOrderableValue
+  , jsShow
+  , parseBigIntString
+  , tryEvalBigBin
+  , typeOfValue
+  , valueCompare
+  , valueEq
+  )
+import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Compiler.Metadata (optSmall, optStep)
 import Unsafe.Coerce (unsafeCoerce)
-import Prelude hiding (Bool)
+import Prelude hiding (Bool, lookup)
 import qualified Prelude as P
 
 data IrMeta = IrMeta
@@ -828,14 +855,14 @@ optIrExpr !t0 expr = case expr of
         (t2, e', md')
   IrFixed op args ->
     let
-      (t1, args', md) = optIrFixedArgs t0 args
+      (t1, e', md) = optIrFixedF t0 op args
      in
-      (t1, IrFixed op args', md)
+      (t1, e', md)
   IrKernelK k ->
     let
-      (t1, k', md) = optIrKernel t0 k
+      (t1, e', md) = optIrKernelF t0 k
      in
-      (t1, IrKernelK k', md)
+      (t1, e', md)
   IrMethod m ->
     let
       (t1, m', md) = optIrMethod t0 m
@@ -883,23 +910,40 @@ optIrExprChildren !t0 expr = case expr of
   IrIf c t e ->
     let
       (t1, c', mdC) = optIrExpr t0 c
-      (t2, t', mdT) = optIrExpr t1 t
-      (t3, e', mdE) = optIrExpr t2 e
      in
-      ( t3
-      , IrIf c' t' e'
-      , nodeMeta mdC (nodeMeta mdT mdE)
-      )
+      case c' of
+        IrLiteral (ValueBool P.True) -> optIrExpr t1 t
+        IrLiteral (ValueBool P.False) -> optIrExpr t1 e
+        _ ->
+          let
+            (t2, t', mdT) = optIrExpr t1 t
+            (t3, e', mdE) = optIrExpr t2 e
+           in
+            ( t3
+            , IrIf c' t' e'
+            , nodeMeta mdC (nodeMeta mdT mdE)
+            )
   IrOptionCase o n tag s ->
     let
       (t1, o', mdO) = optIrExpr t0 o
-      (t2, n', mdN) = optIrExpr t1 n
-      (t3, s', mdS) = optIrExpr t2 s
      in
-      ( t3
-      , IrOptionCase o' n' tag s'
-      , nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS))
-      )
+      case peelIrOption o' of
+        Just Nothing -> optIrExpr t1 n
+        Just (Just v) ->
+          let
+            (t2, s', mdS) = optIrExpr t1 s
+            (e', md') = elimIrLet (litMeta v) tag (IrLiteral v) s' mdS
+           in
+            (t2, e', md')
+        Nothing ->
+          let
+            (t2, n', mdN) = optIrExpr t1 n
+            (t3, s', mdS) = optIrExpr t2 s
+           in
+            ( t3
+            , IrOptionCase o' n' tag s'
+            , nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS))
+            )
   IrResultOk x ->
     let
       (t1, x', md) = optIrExpr t0 x
@@ -913,15 +957,46 @@ optIrExprChildren !t0 expr = case expr of
   IrResultCase o tagE e tagO s ->
     let
       (t1, o', mdO) = optIrExpr t0 o
-      (t2, e', mdE) = optIrExpr t1 e
-      (t3, s', mdS) = optIrExpr t2 s
      in
-      ( t3
-      , IrResultCase o' tagE e' tagO s'
-      , nodeMeta mdO (nodeMeta (bindMeta tagE mdE) (bindMeta tagO mdS))
-      )
+      case peelIrResult o' of
+        Just (Left x) ->
+          let
+            (t2, e'', mdE) = optIrExpr t1 e
+            (res, md') = elimIrLet (boundIrMeta x) tagE x e'' mdE
+           in
+            (t2, res, md')
+        Just (Right x) ->
+          let
+            (t2, s', mdS) = optIrExpr t1 s
+            (res, md') = elimIrLet (boundIrMeta x) tagO x s' mdS
+           in
+            (t2, res, md')
+        Nothing ->
+          let
+            (t2, e', mdE) = optIrExpr t1 e
+            (t3, s', mdS) = optIrExpr t2 s
+           in
+            ( t3
+            , IrResultCase o' tagE e' tagO s'
+            , nodeMeta mdO (nodeMeta (bindMeta tagE mdE) (bindMeta tagO mdS))
+            )
   IrIndex x i ->
-    binOptIr t0 IrIndex x i
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      (t2, i', mdI) = optIrExpr t1 i
+     in
+      case (x', i') of
+        (IrIndex {}, _) -> (t2, IrIndex x' i', nodeMeta mdX mdI)
+        (IrLiteral (ValueArray vs), IrLiteral (ValueNumber d))
+          | isFiniteDouble d
+          , let
+              n = truncate d :: Int
+          , n >= 0 && n < length vs ->
+              let
+                v = vs !! n
+               in
+                (t2, IrLiteral v, litMeta v <> mdX <> mdI)
+        _ -> (t2, IrIndex x' i', nodeMeta mdX mdI)
   IrU8Index x i ->
     binOptIr t0 IrU8Index x i
   IrError x ->
@@ -946,9 +1021,16 @@ optIrExprChildren !t0 expr = case expr of
       (t1, IrFrozenLit fs', md)
   IrGetField @k o ->
     let
-      (t1, o', md) = optIrExpr t0 o
+      (t1, o', mdO) = optIrExpr t0 o
      in
-      (t1, IrGetField @k o', md)
+      case o' of
+        -- Project only when every sibling field is pure, so projecting
+        -- @.b@ cannot DCE an effectful @.a@.
+        IrFrozenLit fs
+          | irPure mdO
+          , Just fld <- lookupIrField @k fs ->
+              optIrExpr t1 fld
+        _ -> (t1, IrGetField @k o', mdO)
   _ -> error "JShark.Compiler.Ir.optIrExprChildren: unhandled constructor"
 
 binOptIr ::
@@ -965,87 +1047,349 @@ binOptIr !t0 k x y =
    in
     (t2, k x' y', nodeMeta mdX mdY)
 
-optIrFixedArgs ::
+-- | Optimize fixed-op args; a fold can escape to an 'IrLiteral'. The
+-- node contributes @1 / pure-is-@isPureFixed@ / cheap@, matching
+-- 'metaIrExpr'.
+optIrFixedF ::
   (?keepLets :: P.Bool) =>
-  Int -> IrFixedArgs a b c -> (Int, IrFixedArgs a b c, IrMeta)
-optIrFixedArgs !t0 a = case a of
-  IrArgsU x ->
+  Int -> FixedOp a b c u -> IrFixedArgs a b c -> (Int, IrExpr u, IrMeta)
+optIrFixedF !t0 op args = case (op, args) of
+  (n, IrArgsU x)
+    | Just (MathUnary n') <- matchMathUnary n ->
+        let
+          (t1, x', mdX) = optIrExpr t0 x
+          res = case x' of
+            IrLiteral (ValueNumber a)
+              | Just r <- exactMathUnary n' a -> IrLiteral (ValueNumber r)
+            _ -> IrFixed n' (IrArgsU x')
+         in
+          (t1, res, fixedFoldMd n' res <> mdX)
+  (n, IrArgsB x y)
+    | Just (MathBinary n') <- matchMathBinary n ->
+        let
+          (t1, x', mdX) = optIrExpr t0 x
+          (t2, y', mdY) = optIrExpr t1 y
+          res = case (x', y') of
+            (IrLiteral (ValueNumber a), IrLiteral (ValueNumber b))
+              | Just r <- exactMathBinary n' a b -> IrLiteral (ValueNumber r)
+            _ -> IrFixed n' (IrArgsB x' y')
+         in
+          (t2, res, fixedFoldMd n' res <> nodeMeta mdX mdY)
+  (FixArrLen, IrArgsU x) ->
     let
-      (t1, x', md) = optIrExpr t0 x
+      (t1, x', mdX) = optIrExpr t0 x
+      res = case x' of
+        IrLiteral (ValueArray vs) ->
+          IrLiteral (ValueNumber (fromIntegral (length vs)))
+        _ -> IrFixed op (IrArgsU x')
      in
-      (t1, IrArgsU x', md)
-  IrArgsB x y ->
+      (t1, res, fixedFoldMd op res <> mdX)
+  (FixToBigInt, IrArgsU x) ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      res = case x' of
+        IrLiteral (ValueNumber d)
+          | isFiniteDouble d
+          , let
+              n = truncate d
+          , d == fromInteger n ->
+              IrLiteral (ValueBigInt n)
+        _ -> IrFixed op (IrArgsU x')
+     in
+      (t1, res, fixedFoldMd op res <> mdX)
+  (FixFromBigInt, IrArgsU x) ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      res = case x' of
+        IrLiteral (ValueBigInt n) -> IrLiteral (ValueNumber (fromInteger n))
+        _ -> IrFixed op (IrArgsU x')
+     in
+      (t1, res, fixedFoldMd op res <> mdX)
+  (FixParseBigInt, IrArgsU x) ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      res = case x' of
+        IrLiteral (ValueString s)
+          | Just n <- parseBigIntString (T.unpack s) ->
+              IrLiteral (ValueBigInt n)
+        _ -> IrFixed op (IrArgsU x')
+     in
+      (t1, res, fixedFoldMd op res <> mdX)
+  (_, IrArgsU x) ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+     in
+      (t1, IrFixed op (IrArgsU x'), fixedKeepMd op <> mdX)
+  (_, IrArgsB x y) ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, y', mdY) = optIrExpr t1 y
      in
-      (t2, IrArgsB x' y', nodeMeta mdX mdY)
-  IrArgsT x y z ->
+      (t2, IrFixed op (IrArgsB x' y'), fixedKeepMd op <> nodeMeta mdX mdY)
+  (_, IrArgsT x y z) ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, y', mdY) = optIrExpr t1 y
       (t3, z', mdZ) = optIrExpr t2 z
      in
-      (t3, IrArgsT x' y' z', nodeMeta mdX (nodeMeta mdY mdZ))
+      ( t3
+      , IrFixed op (IrArgsT x' y' z')
+      , fixedKeepMd op <> nodeMeta mdX (nodeMeta mdY mdZ)
+      )
 
-optIrKernel ::
-  (?keepLets :: P.Bool) => Int -> IrKernel u -> (Int, IrKernel u, IrMeta)
-optIrKernel !t0 k = case k of
-  KPlus x y -> binOptKernel t0 KPlus x y
-  KTimes x y -> binOptKernel t0 KTimes x y
-  KMinus x y -> binOptKernel t0 KMinus x y
-  KFracDiv x y -> binOptKernel t0 KFracDiv x y
-  KRem x y -> binOptKernel t0 KRem x y
-  KBitAnd x y -> binOptKernel t0 KBitAnd x y
-  KBitOr x y -> binOptKernel t0 KBitOr x y
-  KBitXor x y -> binOptKernel t0 KBitXor x y
-  KShl x y -> binOptKernel t0 KShl x y
-  KShr x y -> binOptKernel t0 KShr x y
-  KUShr x y -> binOptKernel t0 KUShr x y
-  KBig op x y -> binOptKernel t0 (KBig op) x y
+fixedFoldMd :: FixedOp a b c u -> IrExpr u -> IrMeta
+fixedFoldMd n res = case res of
+  IrLiteral v -> litMeta v
+  _ -> fixedKeepMd n
+
+fixedKeepMd :: FixedOp a b c u -> IrMeta
+fixedKeepMd n = IrMeta 1 IM.empty (isPureFixed n) True
+
+-- | Optimize a kernel node; a fold can escape the kernel entirely
+-- (two literals under 'KPlus' become one 'IrLiteral').
+optIrKernelF ::
+  (?keepLets :: P.Bool) => Int -> IrKernel u -> (Int, IrExpr u, IrMeta)
+optIrKernelF !t0 k = case k of
+  KPlus x y -> num2OptIr t0 (+) KPlus x y
+  KTimes x y -> num2OptIr t0 (*) KTimes x y
+  KMinus x y -> num2OptIr t0 (-) KMinus x y
+  KFracDiv x y -> num2OptIr t0 (/) KFracDiv x y
+  KRem x y -> num2OptIr t0 jsRem KRem x y
+  KBitAnd x y -> num2OptIr t0 (jsBit2 (.&.)) KBitAnd x y
+  KBitOr x y -> num2OptIr t0 (jsBit2 (.|.)) KBitOr x y
+  KBitXor x y -> num2OptIr t0 (jsBit2 xor) KBitXor x y
+  KShl x y -> num2OptIr t0 jsShl KShl x y
+  KShr x y -> num2OptIr t0 jsShr KShr x y
+  KUShr x y -> num2OptIr t0 jsUShr KUShr x y
+  KNegate x -> num1OptIr t0 negate KNegate x
+  KBig op x y ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      (t2, y', mdY) = optIrExpr t1 y
+      res = case (x', y') of
+        (IrLiteral (ValueBigInt a), IrLiteral (ValueBigInt b))
+          | Just r <- tryEvalBigBin op a b -> IrLiteral (ValueBigInt r)
+        _ -> IrKernelK (KBig op x' y')
+     in
+      (t2, res, kernelFoldMd res <> nodeMeta mdX mdY)
   KBigNeg x ->
     let
-      (t1, x', md) = optIrExpr t0 x
+      (t1, x', mdX) = optIrExpr t0 x
+      res = case x' of
+        IrLiteral (ValueBigInt n) -> IrLiteral (ValueBigInt (negate n))
+        _ -> IrKernelK (KBigNeg x')
      in
-      (t1, KBigNeg x', md)
-  KConcat x y -> binOptKernel t0 KConcat x y
+      (t1, res, kernelFoldMd res <> mdX)
+  KConcat x y ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+      (t2, y', mdY) = optIrExpr t1 y
+      res = case (x', y') of
+        (IrLiteral (ValueString a), IrLiteral (ValueString b)) ->
+          IrLiteral (ValueString (a <> b))
+        _ -> IrKernelK (KConcat x' y')
+     in
+      (t2, res, kernelFoldMd res <> nodeMeta mdX mdY)
   KShow x ->
     let
-      (t1, x', md) = optIrExpr t0 x
+      (t1, x', mdX) = optIrExpr t0 x
+      -- Function values have no compile-time show.
+      res = case x' of
+        IrLiteral (ValueFunction _) -> IrKernelK (KShow x')
+        IrLiteral v -> IrLiteral (ValueString (jsShow v))
+        _ -> IrKernelK (KShow x')
      in
-      (t1, KShow x', md)
+      (t1, res, kernelFoldMd res <> mdX)
   KTypeOf x ->
     let
-      (t1, x', md) = optIrExpr t0 x
+      (t1, x', mdX) = optIrExpr t0 x
+      res = case x' of
+        IrLiteral v -> IrLiteral (ValueString (typeOfValue v))
+        _ -> IrKernelK (KTypeOf x')
      in
-      (t1, KTypeOf x', md)
-  KNegate x ->
+      (t1, res, kernelFoldMd res <> mdX)
+  KAnd x y ->
     let
-      (t1, x', md) = optIrExpr t0 x
+      (t1, x', mdX) = optIrExpr t0 x
      in
-      (t1, KNegate x', md)
-  KAnd x y -> binOptKernel t0 KAnd x y
-  KOr x y -> binOptKernel t0 KOr x y
-  KEq s x y -> binOptKernel t0 (KEq s) x y
-  KNEq s x y -> binOptKernel t0 (KNEq s) x y
-  KGTh x y -> binOptKernel t0 KGTh x y
-  KLTh x y -> binOptKernel t0 KLTh x y
-  KGTEq x y -> binOptKernel t0 KGTEq x y
-  KLTEq x y -> binOptKernel t0 KLTEq x y
+      case x' of
+        IrLiteral (ValueBool P.False) ->
+          (t1, IrLiteral (ValueBool P.False), litMeta (ValueBool P.False) <> mdX)
+        IrLiteral (ValueBool P.True) -> optIrExpr t1 y
+        _ ->
+          let
+            (t2, y', mdY) = optIrExpr t1 y
+           in
+            case y' of
+              -- @x && true@ is @x@ (kept with its own metadata).
+              IrLiteral (ValueBool P.True) -> (t2, x', mdX)
+              IrLiteral (ValueBool P.False)
+                -- @x && false@ is @false@ only when @x@ is pure; the
+                -- JS @&&@ never evaluates the RHS, but an impure @x@
+                -- must keep its effect.
+                | irPure mdX ->
+                    (t2, IrLiteral (ValueBool P.False), litMeta (ValueBool P.False) <> mdX)
+              _ ->
+                (t2, IrKernelK (KAnd x' y'), kernelFoldMdK <> nodeMeta mdX mdY)
+  KOr x y ->
+    let
+      (t1, x', mdX) = optIrExpr t0 x
+     in
+      case x' of
+        IrLiteral (ValueBool P.True) ->
+          (t1, IrLiteral (ValueBool P.True), litMeta (ValueBool P.True) <> mdX)
+        IrLiteral (ValueBool P.False) -> optIrExpr t1 y
+        _ ->
+          let
+            (t2, y', mdY) = optIrExpr t1 y
+           in
+            case y' of
+              IrLiteral (ValueBool P.False) -> (t2, x', mdX)
+              IrLiteral (ValueBool P.True)
+                | irPure mdX ->
+                    (t2, IrLiteral (ValueBool P.True), litMeta (ValueBool P.True) <> mdX)
+              _ ->
+                (t2, IrKernelK (KOr x' y'), kernelFoldMdK <> nodeMeta mdX mdY)
+  KEq s x y -> eqNeqOptIr t0 (KEq s) valueEq x y
+  KNEq s x y -> eqNeqOptIr t0 (KNEq s) (\a b -> P.not (valueEq a b)) x y
+  KGTh x y -> ordOptIr t0 KGTh (== GT) x y
+  KLTh x y -> ordOptIr t0 KLTh (== LT) x y
+  KGTEq x y -> ordOptIr t0 KGTEq (/= LT) x y
+  KLTEq x y -> ordOptIr t0 KLTEq (/= GT) x y
 
-binOptKernel ::
+kernelFoldMd :: IrExpr u -> IrMeta
+kernelFoldMd res = case res of
+  IrLiteral v -> litMeta v
+  _ -> kernelFoldMdK
+
+kernelFoldMdK :: IrMeta
+kernelFoldMdK = IrMeta 1 IM.empty True False
+
+num2OptIr ::
   (?keepLets :: P.Bool) =>
   Int
-  -> (IrExpr a -> IrExpr b -> IrKernel c)
-  -> IrExpr a
-  -> IrExpr b
-  -> (Int, IrKernel c, IrMeta)
-binOptKernel t0 k x y =
+  -> (Double -> Double -> Double)
+  -> (IrExpr 'Number -> IrExpr 'Number -> IrKernel 'Number)
+  -> IrExpr 'Number
+  -> IrExpr 'Number
+  -> (Int, IrExpr 'Number, IrMeta)
+num2OptIr !t0 f kon x y =
   let
     (t1, x', mdX) = optIrExpr t0 x
     (t2, y', mdY) = optIrExpr t1 y
+    res = case (x', y') of
+      (IrLiteral (ValueNumber a), IrLiteral (ValueNumber b)) ->
+        IrLiteral (ValueNumber (f a b))
+      _ -> IrKernelK (kon x' y')
    in
-    (t2, k x' y', nodeMeta mdX mdY)
+    (t2, res, kernelFoldMd res <> nodeMeta mdX mdY)
+
+num1OptIr ::
+  (?keepLets :: P.Bool) =>
+  Int
+  -> (Double -> Double)
+  -> (IrExpr 'Number -> IrKernel 'Number)
+  -> IrExpr 'Number
+  -> (Int, IrExpr 'Number, IrMeta)
+num1OptIr !t0 f kon x =
+  let
+    (t1, x', mdX) = optIrExpr t0 x
+    res = case x' of
+      IrLiteral (ValueNumber a) -> IrLiteral (ValueNumber (f a))
+      _ -> IrKernelK (kon x')
+   in
+    (t1, res, kernelFoldMd res <> mdX)
+
+eqNeqOptIr ::
+  (?keepLets :: P.Bool) =>
+  Int
+  -> (IrExpr u -> IrExpr u -> IrKernel 'Bool)
+  -> (Value u -> Value u -> P.Bool)
+  -> IrExpr u
+  -> IrExpr u
+  -> (Int, IrExpr 'Bool, IrMeta)
+eqNeqOptIr !t0 kon cmp x y =
+  let
+    (t1, x', mdX) = optIrExpr t0 x
+    (t2, y', mdY) = optIrExpr t1 y
+    res = case (x', y') of
+      (IrLiteral a, IrLiteral b)
+        | eqFoldableValue a && eqFoldableValue b ->
+            IrLiteral (ValueBool (cmp a b))
+      (IrFrozenLit as, IrFrozenLit bs)
+        | Just as' <- peelIrFrozen as
+        , Just bs' <- peelIrFrozen bs ->
+            IrLiteral (ValueBool (cmp (ValueFrozen as') (ValueFrozen bs')))
+      _ -> IrKernelK (kon x' y')
+   in
+    (t2, res, kernelFoldMd res <> nodeMeta mdX mdY)
+
+ordOptIr ::
+  (?keepLets :: P.Bool) =>
+  Int
+  -> (IrExpr u -> IrExpr u -> IrKernel 'Bool)
+  -> (Ordering -> P.Bool)
+  -> IrExpr u
+  -> IrExpr u
+  -> (Int, IrExpr 'Bool, IrMeta)
+ordOptIr !t0 kon cmp x y =
+  let
+    (t1, x', mdX) = optIrExpr t0 x
+    (t2, y', mdY) = optIrExpr t1 y
+    res = case (x', y') of
+      (IrLiteral a, IrLiteral b)
+        | isOrderableValue a && isOrderableValue b ->
+            IrLiteral (ValueBool (cmp (valueCompare a b)))
+      _ -> IrKernelK (kon x' y')
+   in
+    (t2, res, kernelFoldMd res <> nodeMeta mdX mdY)
+
+-- | Known-constructor scrutinees for 'IrOptionCase' \/ 'IrOptionCaseE'.
+peelIrOption :: IrExpr ('Option u) -> Maybe (Maybe (Value u))
+peelIrOption = \case
+  IrLiteral (ValueOption Nothing) -> Just Nothing
+  IrLiteral (ValueOption (Just v)) -> Just (Just v)
+  -- Host literals are never JS null; FFI / vars stay unpeeled so
+  -- 'Storage.getItem' keeps its @=== null@ check.
+  IrUnsafeNullable (IrLiteral v) -> Just (Just v)
+  _ -> Nothing
+
+-- | Known-constructor scrutinees for 'IrResultCase' \/ 'IrResultCaseE'.
+peelIrResult :: IrExpr ('Result e a) -> Maybe (Either (IrExpr e) (IrExpr a))
+peelIrResult = \case
+  IrLiteral (ValueResult (Left v)) -> Just (Left (IrLiteral v))
+  IrLiteral (ValueResult (Right v)) -> Just (Right (IrLiteral v))
+  IrResultOk x -> Just (Right x)
+  IrResultErr x -> Just (Left x)
+  _ -> Nothing
+
+-- | Metadata of a case-bound payload.
+boundIrMeta :: IrExpr u -> IrMeta
+boundIrMeta x = case x of
+  IrLiteral v -> litMeta v
+  _ -> metaIrExpr x
+
+peelIrFrozen :: [IrFieldLit r] -> Maybe [FieldLit Value r]
+peelIrFrozen = traverse $ \case
+  IrFieldLit @k (IrLiteral v) -> Just (FieldLit @k (Literal v))
+  IrFieldLit _ -> Nothing
+  IrFieldLitExtra @k (IrLiteral v) -> Just (FieldLitExtra @k (Literal v))
+  IrFieldLitExtra _ -> Nothing
+  IrFieldLitEffect {} -> Nothing
+  IrFieldLitExtraEffect {} -> Nothing
+
+-- | Last-wins field lookup, mirroring 'JShark.Compiler.Flatten.lookupField'.
+lookupIrField ::
+  forall k r. KnownSymbol k => [IrFieldLit r] -> Maybe (IrExpr (Field r k))
+lookupIrField = go . reverse
+ where
+  go [] = Nothing
+  go (IrFieldLit @k' e : rest) = case sameSymbol (Proxy @k) (Proxy @k') of
+    Just Refl -> Just e
+    Nothing -> go rest
+  go (_ : rest) = go rest
+
+
 
 optIrMethod ::
   (?keepLets :: P.Bool) => Int -> IrMethod u -> (Int, IrMethod u, IrMeta)
@@ -1210,22 +1554,45 @@ optIrEffect !t0 eff = case eff of
   IrApplyE f x ->
     let
       (t1, f', mdF) = optIrEffect t0 f
-      (t2, x', mdX) = optIrEffect t1 x
      in
-      (t2, IrApplyE f' x', effectMd (nodeMeta mdF mdX))
+      case f' of
+        IrLambdaE tag g ->
+          let
+            (t2, x', mdX) = optIrEffect t1 x
+            (t3, g', mdG) = optIrEffect t2 g
+            (e', md') = elimIrBind mdX Nothing tag x' g' mdG
+           in
+            (t3, e', md')
+        _ ->
+          let
+            (t2, x', mdX) = optIrEffect t1 x
+           in
+            (t2, IrApplyE f' x', effectMd (nodeMeta mdF mdX))
   IrIfE c t e ->
     let
       (t1, c', mdC) = optIrEffect t0 c
-      (t2, t', mdT) = optIrEffect t1 t
-      (t3, e', mdE) = optIrEffect t2 e
      in
-      (t3, IrIfE c' t' e', nodeMeta mdC (nodeMeta mdT mdE))
+      case c' of
+        IrLift (IrLiteral (ValueBool P.True)) -> optIrEffect t1 t
+        IrLift (IrLiteral (ValueBool P.False)) -> optIrEffect t1 e
+        _ ->
+          let
+            (t2, t', mdT) = optIrEffect t1 t
+            (t3, e', mdE) = optIrEffect t2 e
+           in
+            (t3, IrIfE c' t' e', nodeMeta mdC (nodeMeta mdT mdE))
   IrWhile c b ->
     let
       (t1, c', mdC) = optIrEffect t0 c
-      (t2, b', mdB) = optIrEffect t1 b
      in
-      (t2, IrWhile c' b', effectMd (nodeMeta mdC mdB))
+      case c' of
+        IrLift (IrLiteral (ValueBool P.False)) ->
+          (t1, IrLift (IrLiteral ValueUnit), litMeta ValueUnit <> mdC)
+        _ ->
+          let
+            (t2, b', mdB) = optIrEffect t1 b
+           in
+            (t2, IrWhile c' b', effectMd (nodeMeta mdC mdB))
   IrForRange s e tag b ->
     let
       (t1, s', mdS) = optIrExpr t0 s
@@ -1252,27 +1619,62 @@ optIrEffect !t0 eff = case eff of
   IrOptionCaseE o n tag s ->
     let
       (t1, o', mdO) = optIrExpr t0 o
-      (t2, n', mdN) = optIrEffect t1 n
-      (t3, s', mdS) = optIrEffect (t2 - optStep) s
      in
-      (t3, IrOptionCaseE o' n' tag s', nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS)))
+      case peelIrOption o' of
+        Just Nothing -> optIrEffect t1 n
+        Just (Just v) ->
+          let
+            (t2, s', mdS) = optIrEffect t1 s
+            (e', md') = elimIrBind (litMeta v) Nothing tag (IrLift (IrLiteral v)) s' mdS
+           in
+            (t2, e', md')
+        Nothing ->
+          let
+            (t2, n', mdN) = optIrEffect t1 n
+            (t3, s', mdS) = optIrEffect t2 s
+           in
+            ( t3
+            , IrOptionCaseE o' n' tag s'
+            , nodeMeta mdO (nodeMeta mdN (bindMeta tag mdS))
+            )
   IrResultCaseE o tagE e tagO s ->
     let
       (t1, o', mdO) = optIrExpr t0 o
-      (t2, e', mdE) = optIrEffect (t1 - optStep) e
-      (t3, s', mdS) = optIrEffect (t2 - optStep) s
      in
-      ( t3
-      , IrResultCaseE o' tagE e' tagO s'
-      , nodeMeta mdO (nodeMeta (bindMeta tagE mdE) (bindMeta tagO mdS))
-      )
+      case peelIrResult o' of
+        Just (Left x) ->
+          let
+            (t2, e', mdE) = optIrEffect t1 e
+            (res, md') = elimIrBind (boundIrMeta x) Nothing tagE (IrLift x) e' mdE
+           in
+            (t2, res, md')
+        Just (Right x) ->
+          let
+            (t2, s', mdS) = optIrEffect t1 s
+            (res, md') = elimIrBind (boundIrMeta x) Nothing tagO (IrLift x) s' mdS
+           in
+            (t2, res, md')
+        Nothing ->
+          let
+            (t2, e', mdE) = optIrEffect t1 e
+            (t3, s', mdS) = optIrEffect t2 s
+           in
+            ( t3
+            , IrResultCaseE o' tagE e' tagO s'
+            , nodeMeta mdO (nodeMeta (bindMeta tagE mdE) (bindMeta tagO mdS))
+            )
   IrStringCaseE s arms d ->
     let
       (t1, s', mdS) = optIrExpr t0 s
-      (t2, arms', mdA) = mapAccumIrEffect t1 arms
-      (t3, d', mdD) = optIrEffect t2 d
      in
-      (t3, IrStringCaseE s' arms' d', nodeMeta mdS (nodeMeta mdA mdD))
+      case s' of
+        IrLiteral (ValueString k) -> optIrEffect t1 (fromMaybe d (lookup k arms))
+        _ ->
+          let
+            (t2, arms', mdA) = mapAccumIrEffect t1 arms
+            (t3, d', mdD) = optIrEffect t2 d
+           in
+            (t3, IrStringCaseE s' arms' d', nodeMeta mdS (nodeMeta mdA mdD))
   IrThrow x ->
     let
       (t1, x', md) = optIrExpr t0 x

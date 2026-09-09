@@ -1976,11 +1976,11 @@ optimizeTests =
           @?= "false"
     , testCase "while false becomes a no-op" $
         renderJS (effectfulAST (while_ (expr (bool False)) (ffi "foo" RecNil)))
-          @?= "while (false) {foo();}"
+          @?= ""
     , testCase "ifE of True takes the true branch" $
         renderJS
           (effectfulAST (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil)))
-          @?= "let n0;\nif (true) {n0 = foo();}\nelse {n0 = bar();}\nn0"
+          @?= "foo()"
     , testCase "typeof of a literal folds" $
         renderJS (pureAST (typeOf (number 1))) @?= "\"number\""
     , testCase "typeof of Uint8Array folds to object" $
@@ -1999,7 +1999,7 @@ optimizeTests =
                   (\x -> expr x)
               )
           )
-          @?= "const n0 = null;\nlet n1;\nif (n0 === null) {n1 = missing();}\nelse {n1 = n0;}\nn1"
+          @?= "missing()"
     , testCase "stringCaseE of a literal takes the matching arm" $
         renderJS
           ( effectfulAST
@@ -2009,7 +2009,7 @@ optimizeTests =
                   (ffi "baz" RecNil)
               )
           )
-          @?= "let n0;\nswitch (\"a\") {case \"a\": {n0 = foo(); break;}\ncase \"b\": {n0 = bar(); break;}\ndefault: {n0 = baz();}}\nn0"
+          @?= "foo()"
     , testCase "stringCaseE of a literal miss takes default" $
         renderJS
           ( effectfulAST
@@ -2019,7 +2019,7 @@ optimizeTests =
                   (ffi "baz" RecNil)
               )
           )
-          @?= "let n0;\nswitch (\"z\") {case \"a\": {n0 = foo(); break;}\ndefault: {n0 = baz();}}\nn0"
+          @?= "baz()"
     , testCase "forRange array index uses the loop variable" $ do
         let
           eff =

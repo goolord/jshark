@@ -190,10 +190,9 @@ bunEvalTests =
             , bunCase
                 "Show Uint8Array"
                 (Show (uint8Array (packUint8 [1, 2, 3])))
-            , testCase "prettyJS compileEffect ifE+LambdaE" $ do
-                out <- compileEffect readableConfig prettyIfLambda
-                assertBool "indented if body" ("{\n" `T.isInfixOf` out)
-                got <- T.unpack <$> runJS (wrapReadableExpr out)
+            , testCase "compileEffect ifE+LambdaE evaluates" $ do
+                out <- compileEffect defaultCompilerConfig prettyIfLambda
+                got <- T.unpack <$> runJS (T.unpack out)
                 assertEqual
                   ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> T.unpack out)
                   "6"
@@ -456,37 +455,6 @@ domCanvas = fromSyntax $ do
   ctx <- Canvas.getContext2d el
   handle <- toSyntax ctx
   yield (optionCase (Var handle) (string "no 2d") (\_ -> string "2d"))
-
-wrapReadableExpr :: Text -> String
-wrapReadableExpr src =
-  let
-    t = T.strip src
-    ls = filter (not . T.null) (T.lines t)
-   in
-    case ls of
-      [] -> "undefined"
-      [one] -> wrapReturn one
-      many
-        | isStmtSnippet many ->
-            case reverse many of
-              result : revStmts ->
-                T.unpack
-                  $ T.unlines
-                  $ "(() => {" : reverse revStmts ++ ["return " <> result, "})()"]
-              [] -> "undefined"
-        | otherwise -> wrapReturn t
- where
-  wrapReturn x = "(() => { return " ++ T.unpack x ++ "; })()"
-  isStmtSnippet many =
-    case many of
-      (first : _)
-        | length many >= 2 ->
-            not ((";" `T.isSuffixOf`) (T.strip (last many)))
-              && case T.strip first of
-                stmt | "const " `T.isPrefixOf` stmt -> True
-                stmt | "let " `T.isPrefixOf` stmt -> True
-                _ -> False
-      _ -> False
 
 assertBunAgrees :: (forall f. Expr f u) -> IO ()
 assertBunAgrees e = do
