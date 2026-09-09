@@ -114,6 +114,7 @@ library
     , filepath
     , http-types >= 0.8 && < 1
     , mtl >= 2.2
+    , transformers
     , process
     , streaming-bytestring >= 0.3.0 && < 0.4
     , text >= 1.2 && < 3

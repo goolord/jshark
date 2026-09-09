@@ -33,7 +33,7 @@ module JShark.Compiler.FlatSoA
 where
 
 import Control.Monad (foldM, forM_, when)
-import Control.Monad.ST (runST)
+import Control.Monad.ST (ST, runST)
 import Data.Bits ((.&.))
 import Data.Int (Int32)
 import qualified Data.Map.Strict as Map
@@ -58,19 +58,18 @@ import JShark.Compiler.Flat
   , flatArgRef
   , flatFieldRef
   , flatNodeChildRefs
-  , packEffectProgramState
-  , packExprProgramState
-  , packStateEncs
+  , freezePackColumns
   , packStateHoistTags
   , packStateNodeCount
   , packStateParamNames
   , packStateSideTables
   , packStateSoaSide
+  , runPackEffect
+  , runPackExpr
   , sideAccToVectors
   )
 import JShark.Compiler.FlatEnc
   ( Op
-  , freezeEncSeq
   , oFE_APPLY
   , oFE_EMBEDEFF
   , oFE_ERROR
@@ -176,12 +175,12 @@ data FlatSoA = FlatSoA
 flatSoaNodeCount :: FlatSoA -> Int
 flatSoaNodeCount soa = VU.length (fsaOpcodes soa)
 
-freezeSoaFromPackState :: NodeId -> PackState -> FlatSoA
-freezeSoaFromPackState root st =
+freezeSoaFromPackState :: NodeId -> PackState s -> ST s FlatSoA
+freezeSoaFromPackState root st = do
+  (opF, aF, bF, cF, dF, eF) <- freezePackColumns st
   let
     side = packStateSoaSide st
     n = packStateNodeCount st
-    (opF, aF, bF, cF, dF, eF) = freezeEncSeq (packStateEncs st)
     (fx, fl, ag) = sideAccToVectors side
     (lits, texts, ffis, strCases, fieldGroups, argGroups) =
       packStateSideTables st
@@ -215,22 +214,18 @@ freezeSoaFromPackState root st =
         , fsaSubtreeSizes = V.empty
         }
    in
-    attachFlatSoaSubtreeSizes soa0
+    pure (attachFlatSoaSubtreeSizes soa0)
 
 -- | Pack IR directly to SoA columns (no intermediate node vector).
 packEffectProgramDirect :: IrEffect u -> FlatSoA
-packEffectProgramDirect e =
-  let
-    (root, st) = packEffectProgramState e
-   in
-    freezeSoaFromPackState root st
+packEffectProgramDirect e = runST $ do
+  (root, st) <- runPackEffect e
+  freezeSoaFromPackState root st
 
 packExprProgramDirect :: IrExpr u -> FlatSoA
-packExprProgramDirect e =
-  let
-    (root, st) = packExprProgramState e
-   in
-    freezeSoaFromPackState root st
+packExprProgramDirect e = runST $ do
+  (root, st) <- runPackExpr e
+  freezeSoaFromPackState root st
 
 -- | SoA optimizer passes; returns optimized SoA (emit decodes nodes on demand).
 optimizeFlatPack :: FlatSoA -> FlatSoA

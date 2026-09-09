@@ -17,15 +17,15 @@ module JShark.Compiler.Flat
   , FlatField (..)
   , FlatFixed (..)
   , FlatLit (FLit)
-  , packEffectProgramState
-  , packExprProgramState
+  , runPackEffect
+  , runPackExpr
+  , freezePackColumns
   , encodeFlatNode
   , emptySoaSideAcc
   , flatNodeIsEffect
   , flatNodeChildRefs
   , flatArgRef
   , flatFieldRef
-  , packStateEncs
   , packStateNodeCount
   , packStateSoaSide
   , packStateSideTables
@@ -36,7 +36,9 @@ module JShark.Compiler.Flat
   )
 where
 
-import Control.Monad.State.Strict (State, get, modify, put, runState)
+import Control.Monad.ST (ST)
+import Control.Monad.State.Strict (StateT, get, modify, put, runStateT)
+import Control.Monad.Trans.Class (lift)
 import Data.Foldable (toList)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
@@ -48,6 +50,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Unboxed.Mutable as MVU
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import JShark.Api.Rec (Rec (..))
 import JShark.Api.Types
@@ -57,7 +61,7 @@ import JShark.Api.Types
   , LamInfo (..)
   , Value (..)
   )
-import JShark.Compiler.FlatEnc (Enc (..))
+import JShark.Compiler.FlatEnc (Enc (..), Op)
 import qualified JShark.Compiler.FlatEnc as FE
 import JShark.Compiler.Ir
 
@@ -347,31 +351,17 @@ encodeFlatNode node side = case node of
           }
       )
 
-emptyPackState :: PackState
-emptyPackState =
-  PackState
-    { psEncs = Seq.empty
-    , psNodeCount = 0
-    , psSoaSide = emptySoaSideAcc
-    , psLits = Seq.empty
-    , psLitCount = 0
-    , psTexts = Seq.empty
-    , psTextCount = 0
-    , psFFIs = Seq.empty
-    , psFFICount = 0
-    , psStrCases = Seq.empty
-    , psStrCaseCount = 0
-    , psFieldGroups = Seq.empty
-    , psFieldGroupCount = 0
-    , psArgGroups = Seq.empty
-    , psArgGroupCount = 0
-    , psFFICache = Map.empty
-    , psHoistTags = Map.empty
-    , psParamNames = Map.empty
-    }
-
-data PackState = PackState
-  { psEncs :: !(Seq Enc)
+-- | Growable unboxed node columns plus boxed side tables. Rows are packed
+-- straight into the columns (no intermediate 'Enc' sequence), so the node
+-- table is never retained boxed.
+data PackState s = PackState
+  { psOpCol :: !(MVU.MVector s Op)
+  , psACol :: !(MVU.MVector s Int32)
+  , psBCol :: !(MVU.MVector s Int32)
+  , psCCol :: !(MVU.MVector s Int32)
+  , psDCol :: !(MVU.MVector s Int32)
+  , psECol :: !(MVU.MVector s Int32)
+  , psCap :: !Int
   , psNodeCount :: !Int
   , psSoaSide :: !SoaSideAcc
   , psLits :: !(Seq FlatLit)
@@ -391,30 +381,71 @@ data PackState = PackState
   , psParamNames :: !(Map NodeId Text)
   }
 
-packStateEncs :: PackState -> Seq Enc
-packStateEncs = psEncs
+type PackM s = StateT (PackState s) (ST s)
 
-packStateNodeCount :: PackState -> Int
+packStateNodeCount :: PackState s -> Int
 packStateNodeCount = psNodeCount
 
-packStateSoaSide :: PackState -> SoaSideAcc
+packStateSoaSide :: PackState s -> SoaSideAcc
 packStateSoaSide = psSoaSide
 
-packStateHoistTags :: PackState -> Map NodeId Text
+packStateHoistTags :: PackState s -> Map NodeId Text
 packStateHoistTags = psHoistTags
 
-packStateParamNames :: PackState -> Map NodeId Text
+packStateParamNames :: PackState s -> Map NodeId Text
 packStateParamNames = psParamNames
 
-addHoistTag :: NodeId -> Text -> State PackState ()
+-- | Initial column capacity; doubled on demand.
+initColCap :: Int
+initColCap = 16
+
+emptyPackState :: ST s (PackState s)
+emptyPackState = do
+  -- Start empty; the first node grows to 'initColCap', so a tiny program
+  -- never zero-fills a full initial buffer.
+  opCol <- MVU.new 0
+  aCol <- MVU.new 0
+  bCol <- MVU.new 0
+  cCol <- MVU.new 0
+  dCol <- MVU.new 0
+  eCol <- MVU.new 0
+  pure
+    PackState
+      { psOpCol = opCol
+      , psACol = aCol
+      , psBCol = bCol
+      , psCCol = cCol
+      , psDCol = dCol
+      , psECol = eCol
+      , psCap = 0
+      , psNodeCount = 0
+      , psSoaSide = emptySoaSideAcc
+      , psLits = Seq.empty
+      , psLitCount = 0
+      , psTexts = Seq.empty
+      , psTextCount = 0
+      , psFFIs = Seq.empty
+      , psFFICount = 0
+      , psStrCases = Seq.empty
+      , psStrCaseCount = 0
+      , psFieldGroups = Seq.empty
+      , psFieldGroupCount = 0
+      , psArgGroups = Seq.empty
+      , psArgGroupCount = 0
+      , psFFICache = Map.empty
+      , psHoistTags = Map.empty
+      , psParamNames = Map.empty
+      }
+
+addHoistTag :: NodeId -> Text -> PackM s ()
 addHoistTag nid tag = modify $ \st -> st {psHoistTags = Map.insert nid tag (psHoistTags st)}
 
-addParamName :: NodeId -> Text -> State PackState ()
+addParamName :: NodeId -> Text -> PackM s ()
 addParamName nid name =
   modify $ \st -> st {psParamNames = Map.insert nid name (psParamNames st)}
 
 packStateSideTables ::
-  PackState
+  PackState s
   -> ( Vector FlatLit
      , Vector Text
      , Vector FFIForm
@@ -434,21 +465,70 @@ packStateSideTables st =
 fieldKeyText :: forall k. KnownSymbol k => Text
 fieldKeyText = T.pack (symbolVal (Proxy @k))
 
-addNode :: FlatNode -> State PackState NodeId
+addNode :: FlatNode -> PackM s NodeId
 addNode node = do
   st <- get
   let
     n = psNodeCount st
-    (enc, side') = encodeFlatNode node (psSoaSide st)
+    (Enc o a b c d e, side') = encodeFlatNode node (psSoaSide st)
+  if n >= psCap st
+    then growCols >> addNodeWrite n o a b c d e side'
+    else addNodeWrite n o a b c d e side'
+ where
+  addNodeWrite ::
+    Int
+    -> Op
+    -> Int32
+    -> Int32
+    -> Int32
+    -> Int32
+    -> Int32
+    -> SoaSideAcc
+    -> PackM s NodeId
+  addNodeWrite n o a b c d e side' = do
+    st <- get
+    lift $ do
+      MVU.write (psOpCol st) n o
+      MVU.write (psACol st) n a
+      MVU.write (psBCol st) n b
+      MVU.write (psCCol st) n c
+      MVU.write (psDCol st) n d
+      MVU.write (psECol st) n e
+    put st {psNodeCount = n + 1, psSoaSide = side'}
+    pure n
+
+-- | Double the column capacity, copying the rows already written.
+growCols :: PackM s ()
+growCols = do
+  st <- get
+  let
+    newCap = max initColCap (psCap st * 2)
+  (opC, aC, bC, cC, dC, eC) <- lift $ do
+    opV <- MVU.new newCap
+    MVU.copy (MVU.take (MVU.length (psOpCol st)) opV) (psOpCol st)
+    aV <- MVU.new newCap
+    MVU.copy (MVU.take (MVU.length (psACol st)) aV) (psACol st)
+    bV <- MVU.new newCap
+    MVU.copy (MVU.take (MVU.length (psBCol st)) bV) (psBCol st)
+    cV <- MVU.new newCap
+    MVU.copy (MVU.take (MVU.length (psCCol st)) cV) (psCCol st)
+    dV <- MVU.new newCap
+    MVU.copy (MVU.take (MVU.length (psDCol st)) dV) (psDCol st)
+    eV <- MVU.new newCap
+    MVU.copy (MVU.take (MVU.length (psECol st)) eV) (psECol st)
+    pure (opV, aV, bV, cV, dV, eV)
   put
     st
-      { psEncs = psEncs st Seq.|> enc
-      , psNodeCount = n + 1
-      , psSoaSide = side'
+      { psOpCol = opC
+      , psACol = aC
+      , psBCol = bC
+      , psCCol = cC
+      , psDCol = dC
+      , psECol = eC
+      , psCap = newCap
       }
-  pure n
 
-addLit :: FlatLit -> State PackState Int
+addLit :: FlatLit -> PackM s Int
 addLit lit = do
   st <- get
   let
@@ -456,7 +536,7 @@ addLit lit = do
   put st {psLits = psLits st Seq.|> lit, psLitCount = i + 1}
   pure i
 
-addText :: Text -> State PackState Int
+addText :: Text -> PackM s Int
 addText txt = do
   st <- get
   let
@@ -464,7 +544,7 @@ addText txt = do
   put st {psTexts = psTexts st Seq.|> txt, psTextCount = i + 1}
   pure i
 
-addFFI :: FFIForm -> State PackState Int
+addFFI :: FFIForm -> PackM s Int
 addFFI form = do
   st <- get
   case Map.lookup form (psFFICache st) of
@@ -480,7 +560,7 @@ addFFI form = do
           }
       pure i
 
-addStrCases :: [(Text, NodeId)] -> State PackState Int
+addStrCases :: [(Text, NodeId)] -> PackM s Int
 addStrCases cases = do
   st <- get
   let
@@ -488,7 +568,7 @@ addStrCases cases = do
   put st {psStrCases = psStrCases st Seq.|> cases, psStrCaseCount = i + 1}
   pure i
 
-addFieldGroup :: [FlatField] -> State PackState Int
+addFieldGroup :: [FlatField] -> PackM s Int
 addFieldGroup fs = do
   st <- get
   let
@@ -496,7 +576,7 @@ addFieldGroup fs = do
   put st {psFieldGroups = psFieldGroups st Seq.|> fs, psFieldGroupCount = i + 1}
   pure i
 
-addArgGroup :: [FlatArg] -> State PackState Int
+addArgGroup :: [FlatArg] -> PackM s Int
 addArgGroup args = do
   st <- get
   let
@@ -504,11 +584,42 @@ addArgGroup args = do
   put st {psArgGroups = psArgGroups st Seq.|> args, psArgGroupCount = i + 1}
   pure i
 
-packEffectProgramState :: IrEffect u -> (NodeId, PackState)
-packEffectProgramState e = runState (packEffect e) emptyPackState
+runPackEffect :: IrEffect u -> ST s (NodeId, PackState s)
+runPackEffect e = emptyPackState >>= runStateT (packEffect e)
 
-packExprProgramState :: IrExpr u -> (NodeId, PackState)
-packExprProgramState e = runState (packExpr e) emptyPackState
+runPackExpr :: IrExpr u -> ST s (NodeId, PackState s)
+runPackExpr e = emptyPackState >>= runStateT (packExpr e)
+
+-- | Freeze the written prefix of each column (capacity may exceed the row
+-- count after growth).
+freezePackColumns ::
+  PackState s
+  -> ST
+       s
+       ( VU.Vector Op
+       , VU.Vector Int32
+       , VU.Vector Int32
+       , VU.Vector Int32
+       , VU.Vector Int32
+       , VU.Vector Int32
+       )
+freezePackColumns st = do
+  let
+    n = psNodeCount st
+  opF <- VU.unsafeFreeze (psOpCol st)
+  aF <- VU.unsafeFreeze (psACol st)
+  bF <- VU.unsafeFreeze (psBCol st)
+  cF <- VU.unsafeFreeze (psCCol st)
+  dF <- VU.unsafeFreeze (psDCol st)
+  eF <- VU.unsafeFreeze (psECol st)
+  pure
+    ( VU.take n opF
+    , VU.take n aF
+    , VU.take n bF
+    , VU.take n cF
+    , VU.take n dF
+    , VU.take n eF
+    )
 
 fixedRefs :: FlatFixed -> [NodeId]
 fixedRefs = \case
@@ -635,10 +746,10 @@ flatNodeIsEffect = \case
   FX_ArrayLit {} -> True
   _ -> False
 
-packRecArgs :: Rec IrArg us -> State PackState Int
+packRecArgs :: Rec IrArg us -> PackM s Int
 packRecArgs rec = addArgGroup =<< packRecArgsGo rec
 
-packRecArgsGo :: Rec IrArg us -> State PackState [FlatArg]
+packRecArgsGo :: Rec IrArg us -> PackM s [FlatArg]
 packRecArgsGo RecNil = pure []
 packRecArgsGo (RecCons (IrArgExpr e) rs) = do
   n <- packExpr e
@@ -649,7 +760,7 @@ packRecArgsGo (RecCons (IrArgEffect e) rs) = do
   rest <- packRecArgsGo rs
   pure (FlatArgEffect n : rest)
 
-packFieldLit :: IrFieldLit r -> State PackState FlatField
+packFieldLit :: IrFieldLit r -> PackM s FlatField
 packFieldLit = \case
   IrFieldLit @k e -> do
     n <- packExpr e
@@ -664,10 +775,10 @@ packFieldLit = \case
     n <- packEffect e
     pure (FlatFieldExtraEff (fieldKeyText @k) n)
 
-packFieldLits :: [IrFieldLit r] -> State PackState Int
+packFieldLits :: [IrFieldLit r] -> PackM s Int
 packFieldLits fs = addFieldGroup =<< traverse packFieldLit fs
 
-packFnBody :: IrFnBody us r -> State PackState ([Int], [Maybe Text], NodeId)
+packFnBody :: IrFnBody us r -> PackM s ([Int], [Maybe Text], NodeId)
 packFnBody = \case
   IrJfNil e -> ([],[],) <$> packExpr e
   IrJfCons t pn rest -> do
@@ -675,7 +786,7 @@ packFnBody = \case
     pure (t : ts, pn : pns, body)
 
 packFixed ::
-  FixedOp a b c u -> IrFixedArgs a b c -> State PackState NodeId
+  FixedOp a b c u -> IrFixedArgs a b c -> PackM s NodeId
 packFixed op = \case
   IrArgsU x -> do
     n <- packExpr x
@@ -690,7 +801,7 @@ packFixed op = \case
     nz <- packExpr z
     addNode (FE_Fixed (FlatFixedT op nx ny nz))
 
-packKernel :: IrKernel u -> State PackState NodeId
+packKernel :: IrKernel u -> PackM s NodeId
 packKernel = \case
   KConcat x y -> do
     nx <- packExpr x
@@ -789,7 +900,7 @@ packKernel = \case
     n <- packExpr x
     addNode (FE_KTypeOf n)
 
-packMethod :: IrMethod u -> State PackState NodeId
+packMethod :: IrMethod u -> PackM s NodeId
 packMethod = \case
   IrMethMap arr tag body -> do
     nArr <- packExpr arr
@@ -818,7 +929,7 @@ packMethod = \case
     nBody <- packExpr body
     addNode (FE_MethFrom nn tag nBody)
 
-packExpr :: IrExpr u -> State PackState NodeId
+packExpr :: IrExpr u -> PackM s NodeId
 packExpr = \case
   IrLiteral v -> do
     li <- addLit (FLit v)
@@ -905,14 +1016,14 @@ packExpr = \case
     ti <- addText name
     addNode (FE_Hvm2Ref ti)
 
-packEffectArms :: [(Text, IrEffect v)] -> State PackState Int
+packEffectArms :: [(Text, IrEffect v)] -> PackM s Int
 packEffectArms arms =
   addStrCases =<< traverse (\(k, e) -> (k,) <$> packEffect e) arms
 
-packEffects :: [IrEffect u] -> State PackState [NodeId]
+packEffects :: [IrEffect u] -> PackM s [NodeId]
 packEffects = traverse packEffect
 
-packEffect :: IrEffect u -> State PackState NodeId
+packEffect :: IrEffect u -> PackM s NodeId
 packEffect = \case
   IrLift x -> do
     n <- packExpr x
