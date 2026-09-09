@@ -25,13 +25,7 @@ printProfile FlatOptProfile {..} = do
       ++ show fopFolded
   putStrLn $ "constantFoldSeq," ++ show fopFoldSeqSec ++ ",one pass"
   putStrLn $
-    "propagatePure,"
-      ++ show fopPureSec
-      ++ ",passes="
-      ++ show fopPurePasses
-      ++ " pure="
-      ++ show fopPureCount
-  putStrLn $ "attachPure," ++ show fopAttachSec ++ ",nodes=" ++ show fopNodeCount
+    "attachPure," ++ show fopAttachSec ++ ",pure=" ++ show fopPureCount
   putStrLn $ "flatOptTotal," ++ show fopTotalSec ++ ",nodes=" ++ show fopNodeCount
 
 main :: IO ()

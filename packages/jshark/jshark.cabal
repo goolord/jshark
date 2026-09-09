@@ -83,7 +83,6 @@ library
     JShark.Compiler.JsNum
     JShark.Compiler.JsShim
     JShark.Compiler.Lower
-    JShark.Compiler.Optimize
     JShark.Compiler.Optimize.Hvm2
     JShark.Compiler.Process
     JShark.Console

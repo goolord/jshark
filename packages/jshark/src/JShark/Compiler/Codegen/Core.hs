@@ -354,21 +354,16 @@ profileFlatOptFromIr irOpt = do
   tFoldSeq0 <- getMonotonicTime
   _ <- GHCIO.evaluate (FlatSoA.optConstantFoldNumOnce soa0)
   tFoldSeq1 <- getMonotonicTime
-  tPure0 <- getMonotonicTime
-  let
-    !(soa2, purePasses) = FlatSoA.propagatePureWithStats soa1
-    !pureCount = FlatSoA.soaPureCount soa2
-  tPure1 <- getMonotonicTime
   tAttach0 <- getMonotonicTime
   let
-    !_ = FlatSoA.soaPureVector soa2
+    !pureCount = FlatSoA.soaPureCount soa1
+    !_ = FlatSoA.soaPureVector soa1
   tAttach1 <- getMonotonicTime
   let
     foldSec = seconds tFold0 tFold1
     foldSeqSec = seconds tFoldSeq0 tFoldSeq1
-    pureSec = seconds tPure0 tPure1
     attachSec = seconds tAttach0 tAttach1
-    total = foldSec + pureSec + attachSec
+    total = foldSec + attachSec
   pure
     FlatOptProfile
       { fopNodeCount = nodeCount
@@ -376,8 +371,6 @@ profileFlatOptFromIr irOpt = do
       , fopFoldSeqSec = foldSeqSec
       , fopFoldPasses = foldPasses
       , fopFolded = folded
-      , fopPureSec = pureSec
-      , fopPurePasses = purePasses
       , fopPureCount = pureCount
       , fopAttachSec = attachSec
       , fopTotalSec = total

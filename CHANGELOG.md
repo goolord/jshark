@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+* Flat-opt purity computed once, at pack. `fsaPure` is filled by
+  `FlatSoA.computeFlatSoaPure` (one backward sweep in pack order) when
+  the SoA is frozen, instead of being zeroed at pack and re-derived by
+  the `propagatePureFlagsPar` fixpoint in `optimizeFlatPack` — purity was
+  computed twice (IR `IrMeta` at opt, SoA propagation after) with the IR
+  result discarded. The numeric constant fold stays in the flat pass: it
+  is a post-inline wave, not a duplicate (`elimIrLet` on the tree can
+  create `lit op lit` nodes after the kernel was visited; the single
+  bottom-up IR pass never revisits). `propagatePureFlagsPass` /
+  `propagatePureFlagsPar` / `propagatePureWithStats` are deleted, and
+  `FlatOptProfile` drops `fopPureSec` / `fopPurePasses`.
+  `JShark.Compiler.Optimize` (a thin re-export shim since the PHOAS
+  optimizer was deleted) is gone; its entry points moved to
+  `JShark.Compiler.Lower` (`collectHvm2Kernels` now comes from
+  `JShark.Compiler.Optimize.Hvm2` directly). No public `JShark.*` names
+  changed.
+
 * One compilation pipeline. Pure expressions and effectful programs now
   share a single path — lower to the first-order IR (`JShark.Compiler.Ir`),
   one IR optimizer (all constant/structural folds live in `optIrExpr` /

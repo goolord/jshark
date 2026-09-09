@@ -26,7 +26,6 @@ module JShark.Compiler.FlatSoA
   , soaPureCount
   , soaPureVector
   , constantFoldWithStats
-  , propagatePureWithStats
   , optConstantFoldNumOnce
   , soaColumnsEqual
   )
@@ -198,7 +197,7 @@ freezeSoaFromPackState root st = do
         , fsaC = cF
         , fsaD = dF
         , fsaE = eF
-        , fsaPure = VU.replicate n 0
+        , fsaPure = VU.empty
         , fsaFixed = fx
         , fsaFnLit = fl
         , fsaArrayGroups = ag
@@ -214,7 +213,8 @@ freezeSoaFromPackState root st = do
         , fsaSubtreeSizes = V.empty
         }
    in
-    pure (attachFlatSoaSubtreeSizes soa0)
+    pure
+      (attachFlatSoaSubtreeSizes soa0 {fsaPure = computeFlatSoaPure soa0})
 
 -- | Pack IR directly to SoA columns (no intermediate node vector).
 packEffectProgramDirect :: IrEffect u -> FlatSoA
@@ -227,14 +227,18 @@ packExprProgramDirect e = runST $ do
   (root, st) <- runPackExpr e
   freezeSoaFromPackState root st
 
--- | SoA optimizer passes; returns optimized SoA (emit decodes nodes on demand).
+-- | SoA optimizer pass; returns optimized SoA (emit decodes nodes on demand).
+-- Purity is already computed at pack ('computeFlatSoaPure'); the fold only
+-- turns numeric kernels into literals, which keeps purity flags correct
+-- (both forms are pure). The fold is not redundant with the tree
+-- optimizer: let-inlining there can create @lit op lit@ nodes after the
+-- kernel was visited, and the single bottom-up pass never revisits.
 optimizeFlatPack :: FlatSoA -> FlatSoA
 optimizeFlatPack soa0 =
   let
     !(soa1, _folded) = optConstantFoldNumWithChanged soa0
-    !soa2 = propagatePureFlagsPar soa1
    in
-    attachFlatSoaSubtreeSizes soa2
+    attachFlatSoaSubtreeSizes soa1
 
 i32 :: Int -> Int32
 i32 = fromIntegral
@@ -501,126 +505,128 @@ flatSoaLayerBuckets soa root =
    in
     V.fromList [bucket d | d <- [0 .. maxD]]
 
-propagatePureFlagsPass :: FlatSoA -> (FlatSoA, Bool)
-propagatePureFlagsPass soa =
+-- | Per-node purity in one backward sweep. Pack order keeps every child
+-- ref (side-table rows included) below its parent, so children are final
+-- when the parent is written; no fixpoint iteration is needed.
+computeFlatSoaPure :: FlatSoA -> VU.Vector Word8
+computeFlatSoaPure soa =
   let
     n = VU.length (fsaOpcodes soa)
-    (pureV, changed) = runST $ do
-      mp <- VU.unsafeThaw (fsaPure soa)
-      changedRef <- newSTRef False
-      let
-        ch j = do
-          let
-            i = fromIntegral j :: Int
-          if i >= 0 && i < n
-            then MVU.read mp i
-            else pure (0 :: Word8)
-        bin j k = do
-          x <- ch j
-          y <- ch k
-          pure (x .&. y)
-        tri j k l = do
-          x <- bin j k
-          y <- ch l
-          pure (x .&. y)
-        andNodes ns =
-          foldM
-            (\acc j -> do p <- ch (i32 j); pure (acc .&. p))
-            (1 :: Word8)
-            ns
-        pureFixed fi =
-          case fsaFixed soa V.! fromIntegral fi of
-            FlatFixedU _ j -> ch (i32 j)
-            FlatFixedB _ j k -> bin (i32 j) (i32 k)
-            FlatFixedT _ j k l -> tri (i32 j) (i32 k) (i32 l)
-        pureArray gi =
-          andNodes (V.toList (fsaArrayGroups soa V.! fromIntegral gi))
-        pureFields gi =
-          let
-            fieldNode = \case
-              FlatField _ j -> j
-              FlatFieldEff _ j -> j
-              FlatFieldExtra _ j -> j
-              FlatFieldExtraEff _ j -> j
-            ns = map fieldNode (fsaFieldGroups soa V.! fromIntegral gi)
-           in
-            andNodes ns
-
-        pureForOp op a b c d e
-          | op == oFE_LITERAL = pure 1
-          | op == oFE_VAR = pure 1
-          | op == oFE_FROZEN = pure 1
-          | op == oFE_RESOK = ch a
-          | op == oFE_RESERR = ch a
-          | op == oFE_LET = bin b c
-          | op == oFE_LETREC = bin b c
-          | op == oFE_LAMBDA = ch b
-          | op == oFE_APPLY = bin a b
-          | op == oFE_IF = tri a b c
-          | op == oFE_OPTIONCASE = tri a b d
-          | op == oFE_RESCASE = tri a c e
-          | op == oFE_INDEX = bin a b
-          | op == oFE_U8INDEX = bin a b
-          | op == oFE_FIXED = pureFixed a
-          | op == oFE_FNLIT = ch b
-          | op == oFE_GETFIELD = ch b
-          | op == oFE_HVM2REF = pure 1
-          | op == oFE_UNSAFENULL = ch a
-          | op == oFE_KNEG = ch a
-          | op == oFE_KBIGNEG = ch a
-          | op == oFE_KSHOW = ch a
-          | op == oFE_KTYPEOF = ch a
-          | op == oFE_KEQ = bin b c
-          | op == oFE_KNEQ = bin b c
-          | op == oFE_KBIG = bin b c
-          | op == oFE_MMAP = bin a c
-          | op == oFE_MFILTER = bin a c
-          | op == oFE_MREDUCE = tri a b e
-          | op == oFE_MREDUCER = tri a b e
-          | op == oFE_MTOSORTED = bin a d
-          | op == oFE_MFROM = bin a c
-          | op == oFX_LIFT = ch a
-          | op == oFX_BIND = bin b c
-          | op == oFX_THENE = bin a b
-          | op == oFX_BINDREC = bin b c
-          | op == oFX_LAMBDAE = ch b
-          | op == oFX_IFE = tri a b c
-          | op == oFX_FORRANGE = tri a b d
-          | op == oFX_U8SET = tri a b c
-          | op == oFX_U8FILL = bin a b
-          | op == oFX_OPTCASEE = tri a b d
-          | op == oFX_RESCASEE = tri a c e
-          | op == oFX_STRCASEE = bin a c
-          | op == oFX_THROW = ch a
-          | op == oFX_TRY = bin a c
-          | op == oFX_OBJLIT = pureFields a
-          | op == oFX_DELETEPROP = bin a b
-          | op == oFX_ARRAYLIT = pureArray a
-          | op < oFX_LIFT = bin a b
-          | otherwise = pure 0
-
-        pureAt idx = do
-          let
-            op = fsaOpcodes soa VU.! idx
-            a = fsaA soa VU.! idx
-            b = fsaB soa VU.! idx
-            c = fsaC soa VU.! idx
-            d = fsaD soa VU.! idx
-            e = fsaE soa VU.! idx
-          if impureOp op
-            then pure (0 :: Word8)
-            else pureForOp op a b c d e
-       in
-        forM_ [0 .. n - 1] $ \idx -> do
-          p <- pureAt idx
-          old <- MVU.read mp idx
-          when (p /= old) (writeSTRef changedRef True)
-          MVU.write mp idx p
-      ch <- readSTRef changedRef
-      pureV' <- VU.unsafeFreeze mp
-      pure (pureV', ch)
    in
-    (soa {fsaPure = pureV}, changed)
+    if n <= 0
+      then VU.empty
+      else runST $ do
+        mp <- MVU.new n
+        let
+          ch j =
+            let
+              i = fromIntegral j :: Int
+             in
+              if i >= 0 && i < n
+                then MVU.read mp i
+                else pure (0 :: Word8)
+          bin j k = do
+            x <- ch j
+            y <- ch k
+            pure (x .&. y)
+          tri j k l = do
+            x <- bin j k
+            y <- ch l
+            pure (x .&. y)
+          andNodes ns =
+            foldM
+              (\acc j -> do p <- ch (i32 j); pure (acc .&. p))
+              (1 :: Word8)
+              ns
+          pureFixed fi =
+            case fsaFixed soa V.! fromIntegral fi of
+              FlatFixedU _ j -> ch (i32 j)
+              FlatFixedB _ j k -> bin (i32 j) (i32 k)
+              FlatFixedT _ j k l -> tri (i32 j) (i32 k) (i32 l)
+          pureArray gi =
+            andNodes (V.toList (fsaArrayGroups soa V.! fromIntegral gi))
+          pureFields gi =
+            let
+              fieldNode = \case
+                FlatField _ j -> j
+                FlatFieldEff _ j -> j
+                FlatFieldExtra _ j -> j
+                FlatFieldExtraEff _ j -> j
+              ns = map fieldNode (fsaFieldGroups soa V.! fromIntegral gi)
+             in
+              andNodes ns
+
+          pureForOp op a b c d e
+            | op == oFE_LITERAL = pure 1
+            | op == oFE_VAR = pure 1
+            | op == oFE_FROZEN = pure 1
+            | op == oFE_RESOK = ch a
+            | op == oFE_RESERR = ch a
+            | op == oFE_LET = bin b c
+            | op == oFE_LETREC = bin b c
+            | op == oFE_LAMBDA = ch b
+            | op == oFE_APPLY = bin a b
+            | op == oFE_IF = tri a b c
+            | op == oFE_OPTIONCASE = tri a b d
+            | op == oFE_RESCASE = tri a c e
+            | op == oFE_INDEX = bin a b
+            | op == oFE_U8INDEX = bin a b
+            | op == oFE_FIXED = pureFixed a
+            | op == oFE_FNLIT = ch b
+            | op == oFE_GETFIELD = ch b
+            | op == oFE_HVM2REF = pure 1
+            | op == oFE_UNSAFENULL = ch a
+            | op == oFE_KNEG = ch a
+            | op == oFE_KBIGNEG = ch a
+            | op == oFE_KSHOW = ch a
+            | op == oFE_KTYPEOF = ch a
+            | op == oFE_KEQ = bin b c
+            | op == oFE_KNEQ = bin b c
+            | op == oFE_KBIG = bin b c
+            | op == oFE_MMAP = bin a c
+            | op == oFE_MFILTER = bin a c
+            | op == oFE_MREDUCE = tri a b e
+            | op == oFE_MREDUCER = tri a b e
+            | op == oFE_MTOSORTED = bin a d
+            | op == oFE_MFROM = bin a c
+            | op == oFX_LIFT = ch a
+            | op == oFX_BIND = bin b c
+            | op == oFX_THENE = bin a b
+            | op == oFX_BINDREC = bin b c
+            | op == oFX_LAMBDAE = ch b
+            | op == oFX_IFE = tri a b c
+            | op == oFX_FORRANGE = tri a b d
+            | op == oFX_U8SET = tri a b c
+            | op == oFX_U8FILL = bin a b
+            | op == oFX_OPTCASEE = tri a b d
+            | op == oFX_RESCASEE = tri a c e
+            | op == oFX_STRCASEE = bin a c
+            | op == oFX_THROW = ch a
+            | op == oFX_TRY = bin a c
+            | op == oFX_OBJLIT = pureFields a
+            | op == oFX_DELETEPROP = bin a b
+            | op == oFX_ARRAYLIT = pureArray a
+            | op < oFX_LIFT = bin a b
+            | otherwise = pure 0
+
+          writeAt idx = do
+            let
+              op = fsaOpcodes soa VU.! idx
+              a = fsaA soa VU.! idx
+              b = fsaB soa VU.! idx
+              c = fsaC soa VU.! idx
+              d = fsaD soa VU.! idx
+              e = fsaE soa VU.! idx
+            p <-
+              if impureOp op
+                then pure (0 :: Word8)
+                else pureForOp op a b c d e
+            MVU.write mp idx p
+          go idx
+            | idx < 0 = pure ()
+            | otherwise = writeAt idx >> go (idx - 1)
+        go (n - 1)
+        VU.unsafeFreeze mp
  where
   impureOp :: Op -> Bool
   impureOp op
@@ -736,17 +742,6 @@ soaSideLengthsEqual a b =
     && V.length (fsaLits a) == V.length (fsaLits b)
     && V.length (fsaFFIs a) == V.length (fsaFFIs b)
 
-propagatePureFlagsPar :: FlatSoA -> FlatSoA
-propagatePureFlagsPar soa0 =
-  let
-    go soa =
-      let
-        (soa', changed) = propagatePureFlagsPass soa
-       in
-        if changed then go soa' else soa'
-   in
-    go soa0
-
 -- Sequential 'runST' scan. A parallel IO-per-node walk was ~100s on Life.
 optConstantFoldNumWithChanged :: FlatSoA -> (FlatSoA, Bool)
 optConstantFoldNumWithChanged soa =
@@ -769,15 +764,3 @@ constantFoldWithStats soa0 =
    in
     go soa0 0 False
 {-# NOINLINE constantFoldWithStats #-}
-
-propagatePureWithStats :: FlatSoA -> (FlatSoA, Int)
-propagatePureWithStats soa0 =
-  let
-    go soa passes =
-      let
-        (soa', changed) = propagatePureFlagsPass soa
-       in
-        if changed then go soa' (passes + 1) else (soa, passes + 1)
-   in
-    go soa0 0
-{-# NOINLINE propagatePureWithStats #-}

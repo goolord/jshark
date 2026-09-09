@@ -38,15 +38,14 @@ data FlatPrepareTiming = FlatPrepareTiming
   }
   deriving (Eq, Show)
 
--- | Sub-step breakdown of 'fptFlatOptSec' (constant fold vs pure propagation).
+-- | Sub-step breakdown of 'fptFlatOptSec' (constant fold vs attach); purity
+-- itself is computed at pack time, not in the flat-opt phase.
 data FlatOptProfile = FlatOptProfile
   { fopNodeCount :: !Int
   , fopFoldSec :: !Double
   , fopFoldSeqSec :: !Double
   , fopFoldPasses :: !Int
   , fopFolded :: !Bool
-  , fopPureSec :: !Double
-  , fopPurePasses :: !Int
   , fopPureCount :: !Int
   , fopAttachSec :: !Double
   , fopTotalSec :: !Double

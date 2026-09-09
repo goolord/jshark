@@ -188,18 +188,16 @@ import JShark.Compiler.Evaluate
   )
 import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
-  ( irEffectFromClosed
-  , irExprFromClosed
-  )
-import JShark.Compiler.Optimize
   ( closedEffectNodes
   , closedExprNodes
-  , collectHvm2Kernels
+  , irEffectFromClosed
+  , irExprFromClosed
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
   , optimizedEffectSize
   , optimizedExprSize
   )
+import JShark.Compiler.Optimize.Hvm2 (collectHvm2Kernels)
 
 pureProgram :: ClosedExpr u -> JS
 pureProgram e = uncurry renderIIFE (flatPureCodegen e)

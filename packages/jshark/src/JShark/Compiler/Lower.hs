@@ -22,6 +22,12 @@ module JShark.Compiler.Lower
   , irEffectFromClosed
   , irExprFromClosed
   , lowerOptEffectAt
+  , closedEffectNodes
+  , closedExprNodes
+  , optimizedExprSize
+  , optimizedEffectSize
+  , irOptimizedEffectFromClosed
+  , irOptimizedExprFromClosed
   )
 where
 
@@ -735,3 +741,27 @@ irExprFromClosed (e :: ClosedExpr u) =
      in
       irOpt
 {-# NOINLINE irExprFromClosed #-}
+
+-- | Nodes after IR optimize of a closed effect.
+closedEffectNodes :: ClosedEffect u -> Int
+closedEffectNodes e = snd (lowerOptEffectIr e)
+{-# NOINLINE closedEffectNodes #-}
+
+-- | Nodes after IR optimize of a closed expression.
+closedExprNodes :: ClosedExpr u -> Int
+closedExprNodes e = snd (lowerOptExprIr False e)
+{-# NOINLINE closedExprNodes #-}
+
+optimizedExprSize :: ClosedExpr u -> Int
+optimizedExprSize = closedExprNodes
+
+optimizedEffectSize :: ClosedEffect u -> Int
+optimizedEffectSize = closedEffectNodes
+
+irOptimizedEffectFromClosed :: ClosedEffect u -> Ir.IrEffect u
+irOptimizedEffectFromClosed e = fst (lowerOptEffectIr e)
+{-# NOINLINE irOptimizedEffectFromClosed #-}
+
+irOptimizedExprFromClosed :: ClosedExpr u -> Ir.IrExpr u
+irOptimizedExprFromClosed e = fst (lowerOptExprIr False e)
+{-# NOINLINE irOptimizedExprFromClosed #-}
