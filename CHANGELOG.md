@@ -20,6 +20,15 @@
   `IrArg`/`IrFieldLit`/`IrFixedArgs` wrapper types no longer exist. The
   `JShark.*` facade names are unchanged.
 
+  Known cosmetic drift (readable style only): the pretty-printed
+  (`readableConfig`) output of the `life` example renumbers two generated
+  identifiers (+2 from mid-file onward) because the merged optimizer keeps
+  two single-use redundant effect binds (`v <- e; …`) that the twin
+  optimizer inlined under `keepLets`. The IR semantics and the emitted JS
+  are identical (identifier-stripped outputs are byte-equal; minified
+  outputs are byte-identical). To be revisited after the phase-7 test
+  sweep.
+
 * Flat-opt purity computed once, at pack. `fsaPure` is filled by
   `FlatSoA.computeFlatSoaPure` (one backward sweep in pack order) when
   the SoA is frozen, instead of being zeroed at pack and re-derived by
