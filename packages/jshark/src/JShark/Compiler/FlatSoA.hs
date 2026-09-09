@@ -7,6 +7,7 @@
 module JShark.Compiler.FlatSoA
   ( FlatSoA (..)
   , packEffectProgramDirect
+  , packExprProgramDirect
   , optimizeFlatPack
   , flatSoaNodeCount
   , flatSoaNode
@@ -58,6 +59,7 @@ import JShark.Compiler.Flat
   , flatFieldRef
   , flatNodeChildRefs
   , packEffectProgramState
+  , packExprProgramState
   , packStateEncs
   , packStateHoistTags
   , packStateNodeCount
@@ -146,7 +148,7 @@ import JShark.Compiler.FlatEnc
   , oFX_UNSAFEOBJSET
   , oFX_WHILE
   )
-import JShark.Compiler.Ir (IrEffect)
+import JShark.Compiler.Ir (IrEffect, IrExpr)
 
 data FlatSoA = FlatSoA
   { fsaOpcodes :: !(VU.Vector Op)
@@ -220,6 +222,13 @@ packEffectProgramDirect :: IrEffect u -> FlatSoA
 packEffectProgramDirect e =
   let
     (root, st) = packEffectProgramState e
+   in
+    freezeSoaFromPackState root st
+
+packExprProgramDirect :: IrExpr u -> FlatSoA
+packExprProgramDirect e =
+  let
+    (root, st) = packExprProgramState e
    in
     freezeSoaFromPackState root st
 

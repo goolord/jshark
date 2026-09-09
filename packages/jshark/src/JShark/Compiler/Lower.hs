@@ -18,6 +18,7 @@ module JShark.Compiler.Lower
   , optEffectClosed
   , lowerOptEffectIr
   , lowerOptEffectIrWith
+  , lowerOptExprIr
   , reifyEffect
   , irEffectFromClosed
   , irExprFromClosed
@@ -511,14 +512,14 @@ lowerExprAt !t0 expr = case expr of
       (t1, e') = lowerEffectAt t0 (flattenEff e)
      in
       (t1, Ir.IrEmbedEff e')
-  Let _ x g ->
+  Let hint x g ->
     let
       tag = t0
       tUnder = t0 - optStep
       (_, x') = lowerExprAt tUnder x
       (t2, body') = lowerExprAt tUnder (g (Name tag))
      in
-      (t2, Ir.IrLet tag x' body')
+      (t2, Ir.IrLet tag hint x' body')
   LetRec r b ->
     let
       tag = t0
@@ -637,8 +638,8 @@ reifyExpr = \case
   Ir.IrLiteral v -> Literal v
   Ir.IrVar i -> Var (Name i)
   Ir.IrEmbedEff e -> Var (EmbedEff (reifyEffect e))
-  Ir.IrLet tag x body ->
-    Let Nothing (reifyExpr x) (\s -> rebindExpr tag (reifyExpr body) s)
+  Ir.IrLet tag hint x body ->
+    Let hint (reifyExpr x) (\s -> rebindExpr tag (reifyExpr body) s)
   Ir.IrLetRec tag r b ->
     LetRec
       (\s -> rebindExpr tag (reifyExpr r) s)
@@ -905,6 +906,19 @@ optEffectClosed ir =
 
 lowerOptEffectIr :: ClosedEffect u -> (Ir.IrEffect u, Int)
 lowerOptEffectIr = lowerOptEffectIrWith False
+
+lowerOptExprIr :: Bool -> ClosedExpr u -> (Ir.IrExpr u, Int)
+lowerOptExprIr keepLets (e :: ClosedExpr u) =
+  let
+    ?keepLets = keepLets
+   in
+    let
+      (!_, !ir) = lowerExprAt (-2) (flattenExpr (e :: Expr Stamp u))
+      (!_, !irOpt, !mdOpt) = Ir.optIrExpr (-2) ir
+      !nodes = Ir.irSize mdOpt
+     in
+      Ir.metaIrExpr irOpt `seq` (irOpt, nodes)
+{-# NOINLINE lowerOptExprIr #-}
 
 lowerOptEffectIrWith :: Bool -> ClosedEffect u -> (Ir.IrEffect u, Int)
 lowerOptEffectIrWith keepLets e =

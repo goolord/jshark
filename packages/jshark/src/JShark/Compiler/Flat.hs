@@ -18,6 +18,7 @@ module JShark.Compiler.Flat
   , FlatFixed (..)
   , FlatLit (FLit)
   , packEffectProgramState
+  , packExprProgramState
   , encodeFlatNode
   , emptySoaSideAcc
   , flatNodeIsEffect
@@ -506,6 +507,9 @@ addArgGroup args = do
 packEffectProgramState :: IrEffect u -> (NodeId, PackState)
 packEffectProgramState e = runState (packEffect e) emptyPackState
 
+packExprProgramState :: IrExpr u -> (NodeId, PackState)
+packExprProgramState e = runState (packExpr e) emptyPackState
+
 fixedRefs :: FlatFixed -> [NodeId]
 fixedRefs = \case
   FlatFixedU _ x -> [x]
@@ -820,10 +824,14 @@ packExpr = \case
     li <- addLit (FLit v)
     addNode (FE_Literal li)
   IrVar i -> addNode (FE_Var i)
-  IrLet tag x body -> do
+  IrLet tag hint x body -> do
     nx <- packExpr x
     nb <- packExpr body
-    addNode (FE_Let tag nx nb)
+    n <- addNode (FE_Let tag nx nb)
+    case hint of
+      Just pn -> addParamName n pn
+      Nothing -> pure ()
+    pure n
   IrLetRec tag r b -> do
     nr <- packExpr r
     nb <- packExpr b

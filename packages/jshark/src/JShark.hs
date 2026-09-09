@@ -170,14 +170,11 @@ module JShark
   )
 where
 
-import qualified Data.IntMap.Strict as IM
-import GHC.IO.Unsafe (unsafePerformIO)
 import JShark.Api.Types
 import JShark.Compiler.Codegen.Core
   ( flatPrepareCore
   , flatPrepareFromIr
   , flatSoaNodeCount
-  , preparePureProgram
   , profileFlatOptFromIr
   , profileIrOptFromClosed
   , profileIrOptFromIr
@@ -189,8 +186,10 @@ import JShark.Compiler.Codegen.Flat
   , effectfulASTFromSoA
   , effectfulASTWith
   , flatEffectfulCodegen
+  , flatPureCodegen
+  , pureAST
+  , pureASTWith
   )
-import JShark.Compiler.Codegen.Phoas (pureAST, pureAST', pureASTWith)
 import JShark.Compiler.Emit (JS, renderJS, renderJSCompact)
 import JShark.Compiler.Evaluate
   ( escapeJsString
@@ -222,11 +221,7 @@ import JShark.Compiler.Optimize
   )
 
 pureProgram :: ClosedExpr u -> JS
-pureProgram e =
-  let
-    !(s0, expr) = unsafePerformIO (preparePureProgram e)
-   in
-    uncurry renderIIFE (pureAST' s0 IM.empty expr)
+pureProgram e = uncurry renderIIFE (flatPureCodegen e)
 
 effectfulProgram :: ClosedEffect u -> JS
 effectfulProgram e = uncurry renderIIFE (flatEffectfulCodegen e)

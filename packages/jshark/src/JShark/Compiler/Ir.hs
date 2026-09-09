@@ -182,7 +182,7 @@ data IrFixedArgs a b c where
 
 data IrExpr :: Universe -> Type where
   IrLiteral :: Value u -> IrExpr u
-  IrLet :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
+  IrLet :: !Int -> !(Maybe Text) -> IrExpr u -> IrExpr v -> IrExpr v
   IrLetRec :: !Int -> IrExpr u -> IrExpr v -> IrExpr v
   IrLambda :: !Int -> !LamInfo -> IrExpr v -> IrExpr ('Function u v)
   IrApply :: IrExpr ('Function u v) -> IrExpr u -> IrExpr v
@@ -270,7 +270,10 @@ metaIrExpr !e = case e of
       md
  where
   here = case e of
-    IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) True
+    -- Stdlib calls (Math.*, checkedIndex, …) are not 'cheap': a 2-use
+    -- @let x = Math.sin(1) in x + x@ keeps its binding instead of
+    -- duplicating the call, matching the former PHOAS policy.
+    IrFixed op _ -> IrMeta 1 IM.empty (isPureFixed op) P.False
     _ -> IrMeta 1 IM.empty True False
 
 metaIrEffect :: IrEffect u -> IrMeta
@@ -361,7 +364,7 @@ foldIrExpr se le sf expr = case expr of
   IrLiteral {} -> mempty
   IrVar {} -> mempty
   IrEmbedEff e -> sf e
-  IrLet _ x g -> se x <> se g
+  IrLet _ _ x g -> se x <> se g
   IrLetRec _ r b -> se r <> se b
   IrLambda _ _ g -> le g
   IrApply f x -> se f <> se x
@@ -517,7 +520,7 @@ mapIrExpr ge gf expr = case expr of
   IrLiteral v -> IrLiteral v
   IrVar i -> IrVar i
   IrEmbedEff e -> IrEmbedEff (gf e)
-  IrLet tag x g -> IrLet tag (ge x) (ge g)
+  IrLet tag hint x g -> IrLet tag hint (ge x) (ge g)
   IrLetRec tag r b -> IrLetRec tag (ge r) (ge b)
   IrLambda tag hoist g -> IrLambda tag hoist (ge g)
   IrApply f x -> IrApply (ge f) (ge x)
@@ -720,12 +723,13 @@ isAliasIrEffect = \case
 elimIrLet ::
   (?keepLets :: P.Bool) =>
   IrMeta
+  -> Maybe Text
   -> Int
   -> IrExpr u
   -> IrExpr v
   -> IrMeta
   -> (IrExpr v, IrMeta)
-elimIrLet !mdX !tag !x !body !mdBody =
+elimIrLet !mdX !hint !tag !x !body !mdBody =
   let
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
@@ -736,10 +740,10 @@ elimIrLet !mdX !tag !x !body !mdBody =
    in
     case uses of
       0 | irPure mdX -> (body, closed)
-      0 -> (IrLet tag x body, nodeMeta mdX closed)
+      0 -> (IrLet tag hint x body, nodeMeta mdX closed)
       1
         | ?keepLets && preserve ->
-            (IrLet tag x body, nodeMeta mdX closed)
+            (IrLet tag hint x body, nodeMeta mdX closed)
       1
         | irSize mdBody <= optSmall
         , once ->
@@ -748,7 +752,7 @@ elimIrLet !mdX !tag !x !body !mdBody =
         | irCheap mdX
         , irSize mdBody <= optSmall ->
             (inlineIrExpr tag x body, spliced)
-      _ -> (IrLet tag x body, nodeMeta mdX closed)
+      _ -> (IrLet tag hint x body, nodeMeta mdX closed)
 
 isIrLambda :: IrExpr u -> P.Bool
 isIrLambda = \case
@@ -823,13 +827,13 @@ optIrExpr :: (?keepLets :: P.Bool) => Int -> IrExpr u -> (Int, IrExpr u, IrMeta)
 optIrExpr !t0 expr = case expr of
   IrLiteral v -> (t0, IrLiteral v, litMeta v)
   IrVar i -> (t0, IrVar i, varMeta i)
-  IrLet tag x body ->
+  IrLet tag hint x body ->
     let
       (t1, x', mdX) = optIrExpr t0 x
       (t2, body', mdBody) = optIrExpr t1 body
      in
       let
-        (e', md') = elimIrLet mdX tag x' body' mdBody
+        (e', md') = elimIrLet mdX hint tag x' body' mdBody
        in
         (t2, e', md')
   -- Named hoists (@Just@ tag) always stay as calls so codegen can emit one
@@ -850,7 +854,7 @@ optIrExpr !t0 expr = case expr of
       (t2, g', mdG) = optIrExpr t1 g
      in
       let
-        (e', md') = elimIrLet mdX tag x' g' mdG
+        (e', md') = elimIrLet mdX Nothing tag x' g' mdG
        in
         (t2, e', md')
   IrFixed op args ->
@@ -932,7 +936,7 @@ optIrExprChildren !t0 expr = case expr of
         Just (Just v) ->
           let
             (t2, s', mdS) = optIrExpr t1 s
-            (e', md') = elimIrLet (litMeta v) tag (IrLiteral v) s' mdS
+            (e', md') = elimIrLet (litMeta v) Nothing tag (IrLiteral v) s' mdS
            in
             (t2, e', md')
         Nothing ->
@@ -962,13 +966,13 @@ optIrExprChildren !t0 expr = case expr of
         Just (Left x) ->
           let
             (t2, e'', mdE) = optIrExpr t1 e
-            (res, md') = elimIrLet (boundIrMeta x) tagE x e'' mdE
+            (res, md') = elimIrLet (boundIrMeta x) Nothing tagE x e'' mdE
            in
             (t2, res, md')
         Just (Right x) ->
           let
             (t2, s', mdS) = optIrExpr t1 s
-            (res, md') = elimIrLet (boundIrMeta x) tagO x s' mdS
+            (res, md') = elimIrLet (boundIrMeta x) Nothing tagO x s' mdS
            in
             (t2, res, md')
         Nothing ->
@@ -1143,7 +1147,7 @@ fixedFoldMd n res = case res of
   _ -> fixedKeepMd n
 
 fixedKeepMd :: FixedOp a b c u -> IrMeta
-fixedKeepMd n = IrMeta 1 IM.empty (isPureFixed n) True
+fixedKeepMd n = IrMeta 1 IM.empty (isPureFixed n) P.False
 
 -- | Optimize a kernel node; a fold can escape the kernel entirely
 -- (two literals under 'KPlus' become one 'IrLiteral').

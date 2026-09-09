@@ -877,11 +877,11 @@ buildFlatEmitPlan view root s0 =
                   writeEnv nid envO
                   planGo envE errId
                   planGo envO okId
-                Flat.FE_FnLit tags _names bodyId ->
+                Flat.FE_FnLit tags names bodyId ->
                   planInScope $ do
                     s <- readSTRef sRef
                     let
-                      (ids, s') = allocNIdents s (length tags)
+                      (ids, s') = allocNIdentsHints s names
                     writeSTRef sRef s'
                     let
                       env' = foldr (\(tag, i) -> IM.insert tag i) env (zip tags ids)
@@ -1453,6 +1453,21 @@ flatEffectfulCodegenWith style (e :: ClosedEffect u) =
     flatEffectfulCodegenFromViewWith s0 soa
 {-# NOINLINE flatEffectfulCodegenWith #-}
 
+-- | Pure expression through the same flat pipeline (lower -> IR opt ->
+-- pack -> SoA opt -> emit), so pure and effectful programs share one
+-- optimizer and one emitter.
+flatPureCodegenWith ::
+  EmitStyle -> ClosedExpr u -> (CG, Code)
+flatPureCodegenWith style (e :: ClosedExpr u) =
+  let
+    !(soa, s0) = unsafePerformIO (prepareFlatPureProgramWith style e)
+   in
+    flatEffectfulCodegenFromViewWith s0 soa
+{-# NOINLINE flatPureCodegenWith #-}
+
+flatPureCodegen :: ClosedExpr u -> (CG, Code)
+flatPureCodegen = flatPureCodegenWith minifiedStyle
+
 effectfulASTFromSoA :: FlatSoA.FlatSoA -> JS
 effectfulASTFromSoA soa =
   uncurry renderWithPreamble (flatEffectfulCodegenFromView soa)
@@ -1463,5 +1478,12 @@ effectfulAST = effectfulASTWith idiomaticStyle
 effectfulASTWith :: EmitStyle -> ClosedEffect u -> JS
 effectfulASTWith style e =
   uncurry renderWithPreamble (flatEffectfulCodegenWith style e)
+
+pureAST :: ClosedExpr u -> JS
+pureAST = pureASTWith idiomaticStyle
+
+pureASTWith :: EmitStyle -> ClosedExpr u -> JS
+pureASTWith style e =
+  uncurry renderWithPreamble (flatPureCodegenWith style e)
 
 -- | Stmt-only codegen for branching effects (no shared @let result@).

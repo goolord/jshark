@@ -64,7 +64,6 @@ import JShark.Compiler.Lower (evalFnBody)
 import JShark.Compiler.Optimize
   ( bindProbeTag
   , letProbeTag
-  , optimizeWith
   )
 
 data SomeExpr where
@@ -573,15 +572,6 @@ letCode env s0 hint x g =
               )
               y
           )
-
-pureAST :: ClosedExpr u -> JS
-pureAST = pureASTWith idiomaticStyle
-
-pureASTWith :: EmitStyle -> ClosedExpr u -> JS
-pureASTWith style e =
-  uncurry
-    renderWithPreamble
-    (pureAST' (startCGWith style) IM.empty (optimizeWith (esKeepLets style) e))
 
 pureAST' ::
   forall v.

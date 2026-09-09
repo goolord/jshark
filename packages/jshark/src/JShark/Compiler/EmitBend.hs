@@ -166,7 +166,7 @@ emitBody :: IntMap Text -> IrExpr u -> Either Hvm2Error [Text]
 emitBody env = \case
   IrLetRec tag r b -> emitLetRec env tag r b
   IrIf c t e -> emitIfReturn env c t e
-  IrLet tag x body -> do
+  IrLet tag _ x body -> do
     xTxt <- emitIrExpr env x
     let
       bindName = "v" <> T.pack (show tag)

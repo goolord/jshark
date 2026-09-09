@@ -988,7 +988,7 @@ stdlibTests =
           @?= "n0 => n0.length"
     , testCase "Array.map renders as .map with a callback" $
         renderJS (pureAST (Array.map numArray (\x -> x + number 1)))
-          @?= "[1, 2].map(x => x + 1)"
+          @?= "[1, 2].map(n0 => n0 + 1)"
     , testCase "Array.filterE renders an effectful callback" $
         renderJS
           ( effectfulAST
@@ -1003,7 +1003,7 @@ stdlibTests =
     , testCase "Array.map callback with an internal let is inlined when used once" $
         renderJS
           (pureAST (Array.map numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
-          @?= "[1, 2].map(x => {const n1 = x + 1;\nreturn n1 * 2})"
+          @?= "[1, 2].map(n0 => {const n1 = n0 + 1;\nreturn n1 * 2})"
     , testCase "Array.join renders as .join" $
         renderJS (pureAST (Array.join numArray (string ",")))
           @?= "[1, 2].join(\",\")"
@@ -1593,10 +1593,10 @@ goodPartsTests =
           ( pureAST
               (typeOf (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)))
           )
-          @?= "typeof ({x: 1})"
+          @?= "typeof {x: 1}"
     , testCase "sort emits a binary compare callback" $
         renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
-          @?= "[1, 2].sort((n0, n1) => n0 - n1)"
+          @?= "[1, 2].sort((a, b) => a - b)"
     , testCase "toSorted emits a binary compare callback" $ do
         let
           js = renderJS (pureAST (Array.toSorted numArray (\a b -> a - b)))
@@ -1616,7 +1616,7 @@ goodPartsTests =
                   (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b)) <: RecNil)
               )
           )
-          @?= "f((n0, n1) => n0 + n1)"
+          @?= "f((a, b) => a + b)"
     , testCase "optimized toFn keeps param name hints" $
         renderJS
           ( pureAST
@@ -1640,7 +1640,7 @@ goodPartsTests =
                   )
               )
           )
-          @?= "f((n0, n1, n2) => (n0 + n1) + n2)"
+          @?= "f((a, b, c) => (a + b) + c)"
     , testCase "lambdaRow emits a nested unary function value" $
         renderJS
           ( pureAST
@@ -1943,7 +1943,7 @@ optimizeTests =
           @?= "1"
     , testCase "unused stringify is kept (can throw)" $
         renderJS (pureAST (let_ (Json.stringify (number 1)) (\_ -> number 2)))
-          @?= "JSON.stringify(1);\n2"
+          @?= "const n0 = JSON.stringify(1);\n2"
     , testCase "impure && false keeps stringify" $
         T.isInfixOf
           "JSON.stringify"

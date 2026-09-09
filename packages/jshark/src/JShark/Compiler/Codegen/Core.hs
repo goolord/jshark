@@ -79,6 +79,7 @@ import JShark.Compiler.JsShim
 import JShark.Compiler.Lower
   ( lowerEffectClosed
   , lowerOptEffectIrWith
+  , lowerOptExprIr
   , optEffectClosed
   )
 import JShark.Compiler.Optimize
@@ -269,7 +270,8 @@ preparePureProgramWith style e = do
       pure (startCGWith style, expr)
 {-# NOINLINE preparePureProgramWith #-}
 
-prepareFlatEffectProgram :: ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
+prepareFlatEffectProgram ::
+  ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
 prepareFlatEffectProgram = prepareFlatEffectProgramWith minifiedStyle
 
 prepareFlatEffectProgramWith ::
@@ -283,6 +285,22 @@ prepareFlatEffectProgramWith style e = do
       initEmitCtxTotal ctx (flatSoaNodeCount soa)
       pure (soa, startCGWith style)
 {-# NOINLINE prepareFlatEffectProgramWith #-}
+
+prepareFlatPureProgram ::
+  ClosedExpr u -> IO (FlatSoA.FlatSoA, CG)
+prepareFlatPureProgram = prepareFlatPureProgramWith minifiedStyle
+
+prepareFlatPureProgramWith ::
+  EmitStyle -> ClosedExpr u -> IO (FlatSoA.FlatSoA, CG)
+prepareFlatPureProgramWith style e = do
+  mCtx <- captureEmitCtx
+  (soa, _timing, _irNodes, _ir) <- flatPrepareExprCore (esKeepLets style) e
+  case mCtx of
+    Nothing -> pure (soa, startCGWith style)
+    Just ctx -> do
+      initEmitCtxTotal ctx (flatSoaNodeCount soa)
+      pure (soa, startCGWith style)
+{-# NOINLINE prepareFlatPureProgramWith #-}
 
 flatPrepareFromIr :: Ir.IrEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
 flatPrepareFromIr irOpt = do
@@ -327,6 +345,51 @@ flatPrepareFromIr irOpt = do
         }
   pure (soaOpt, timing)
 {-# NOINLINE flatPrepareFromIr #-}
+
+-- | Pure-program variant of 'flatPrepareFromIr'.
+flatPrepareFromIrExpr :: Ir.IrExpr u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
+flatPrepareFromIrExpr irOpt = do
+  mCtx <- captureEmitCtx
+  t0 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportPackPhase ctx 0 1
+    Nothing -> pure ()
+  let
+    !soa0 = FlatSoA.packExprProgramDirect irOpt
+    !packNodes = FlatSoA.flatSoaNodeCount soa0
+    !_ = FlatSoA.soaPureCount soa0
+  t1 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportPackPhase ctx 1 1
+    Nothing -> pure ()
+  let
+    packSec = seconds t0 t1
+  t2 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportFlatOptPhase ctx 0 1
+    Nothing -> pure ()
+  let
+    !soaOpt = FlatSoA.optimizeFlatPack soa0
+  _ <-
+    GHCIO.evaluate
+      ( packNodes
+          `seq` FlatSoA.soaPureCount soaOpt
+          `seq` FlatSoA.flatSoaNodeCount soaOpt
+      )
+  t3 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportFlatOptPhase ctx 1 1
+    Nothing -> pure ()
+  let
+    timing =
+      FlatPrepareTiming
+        { fptIrPrepareSec = 0
+        , fptPackSec = packSec
+        , fptFlatOptSec = seconds t2 t3
+        , fptTotalSec = seconds t0 t3
+        }
+  pure (soaOpt, timing)
+{-# NOINLINE flatPrepareFromIrExpr #-}
 
 profileFlatOptFromIr :: Ir.IrEffect u -> IO FlatOptProfile
 profileFlatOptFromIr irOpt = do
@@ -493,6 +556,38 @@ flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
   recordJobFlatPrepare timing
   pure (soa, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareCoreWith #-}
+
+-- | Pure-program variant of 'flatPrepareCoreWith': lower, IR-opt, pack,
+-- and bulk-optimize a closed expression onto the same flat SoA.
+flatPrepareExprCore ::
+  Bool -> ClosedExpr u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrExpr u)
+flatPrepareExprCore keepLets e = do
+  mCtx <- captureEmitCtx
+  tAll0 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportIrPreparePhase ctx 0 1
+    Nothing -> pure ()
+  t0 <- getMonotonicTime
+  let
+    !(irOpt, irNodes) = lowerOptExprIr keepLets e
+  t1 <- getMonotonicTime
+  case mCtx of
+    Just ctx -> reportIrPreparePhase ctx 1 1
+    Nothing -> pure ()
+  (soa, packTiming) <- flatPrepareFromIrExpr irOpt
+  tAll1 <- getMonotonicTime
+  let
+    timing =
+      FlatPrepareTiming
+        { fptIrPrepareSec = seconds t0 t1
+        , fptPackSec = fptPackSec packTiming
+        , fptFlatOptSec = fptFlatOptSec packTiming
+        , fptTotalSec = seconds tAll0 tAll1
+        }
+  reportFlatPrepareTiming timing
+  recordJobFlatPrepare timing
+  pure (soa, timing, irNodes, irOpt)
+{-# NOINLINE flatPrepareExprCore #-}
 
 allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 
