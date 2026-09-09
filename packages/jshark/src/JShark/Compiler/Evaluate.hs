@@ -32,6 +32,7 @@ module JShark.Compiler.Evaluate
   , isOrderableValue
   , eqFoldableValue
   , jsShow
+  , keepLastByKey
   , typeOfValue
   , valueCompare
   , parseBigIntString
@@ -146,13 +147,18 @@ frozenEq as bs =
    in
     length as' == length bs' && all (\fa -> any (fieldLitEq fa) bs') as'
 
-lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
-lastWinsFields = reverse . keep [] . reverse
+-- | Keep the last occurrence of each key (first-wins after the reverse
+-- pair, so later fields shadow earlier ones).
+keepLastByKey :: Eq k => (a -> k) -> [a] -> [a]
+keepLastByKey key = reverse . keep [] . reverse
  where
   keep acc [] = acc
-  keep acc (f : fs)
-    | fieldKey f `elem` map fieldKey acc = keep acc fs
-    | otherwise = keep (f : acc) fs
+  keep acc (x : xs)
+    | key x `elem` map key acc = keep acc xs
+    | otherwise = keep (x : acc) xs
+
+lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
+lastWinsFields = keepLastByKey fieldKey
 
 evalFieldLit ::
   Monad m =>
@@ -292,19 +298,9 @@ jsParseInt s r
           '+' : xs -> (False, xs)
           xs -> (False, xs)
        in
-        case readInt (fromIntegral r :: Integer) okDigit digitToInt t1 of
+        case readInt (fromIntegral r :: Integer) (digitBelowBase r) digitToInt t1 of
           (n, _) : _ -> fromInteger (if neg then negate n else n)
           [] -> 0 / 0
- where
-  okDigit c =
-    let
-      v
-        | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
-        | c >= 'a' && c <= 'z' = Char.ord c - Char.ord 'a' + 10
-        | c >= 'A' && c <= 'Z' = Char.ord c - Char.ord 'A' + 10
-        | otherwise = 99
-     in
-      v < r
 
 numberToBigInt :: Double -> Integer
 numberToBigInt d
@@ -341,12 +337,13 @@ parseBigIntString raw =
     case digits of
       [] -> Nothing
       _ ->
-        case readInt (fromIntegral base :: Integer) (okBigDigit base) digitToInt digits of
+        case readInt (fromIntegral base :: Integer) (digitBelowBase base) digitToInt digits of
           (n, []) : _ -> Just (if neg then negate n else n)
           _ -> Nothing
 
-okBigDigit :: Int -> Char -> Bool
-okBigDigit base c =
+-- | Digit value under @base@ (letters carry 10+; anything else fails).
+digitBelowBase :: Int -> Char -> Bool
+digitBelowBase base c =
   let
     v
       | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'

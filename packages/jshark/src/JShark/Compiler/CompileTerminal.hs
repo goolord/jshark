@@ -16,6 +16,8 @@ module JShark.Compiler.CompileTerminal
   , renderSingleDone
   , renderStatsTable
   , styled
+  , padLeft
+  , padRight
   )
 where
 

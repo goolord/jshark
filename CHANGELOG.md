@@ -42,6 +42,16 @@
   plumbing left behind by its deletion (`PhoasPrepareTiming`,
   `recordJobPhoasPrepare`, the always-zero `phopt` stats column).
 
+* Internal dedup: Hvm2Lint's private `irKids`/`isEffectNode` become the
+  shared `Ir.irNodeChildren` + `Flat.irNodeIsEffect` (one child layout to
+  maintain per constructor); Codegen.Flat's `flatPureChild`/`flatEffectChild`
+  twins merge into `flatChild`, and the apply/lambda-spine emitters are
+  parameterized over expression vs effect position; the compiler batch
+  driver drops two adapter layers; `padLeft`/`padRight`, the digit-check
+  helpers, and the last-wins field dedup each collapse to one definition;
+  the test suite builds `CompilerConfig` via `defaultCompilerConfig{...}`
+  record updates instead of ten positional 8-field blocks.
+
 * `CaptureStderr` (both copies) hoists its Windows `pipe` arity
   difference out of the do-block; fourmolu can now parse and format the
   whole repo (`scripts/format.sh` exits clean).

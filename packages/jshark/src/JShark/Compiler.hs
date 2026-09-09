@@ -608,39 +608,24 @@ compileBatchEff ::
   -> [(Text, item)]
   -> Eff CompileEff [Text]
 compileBatchEff cfg compileOne jobs
-  | configProgress cfg =
-      compileBatchProgressEff cfg (compileOneIO compileOne) jobs
+  | configProgress cfg = do
+      let
+        total = length jobs
+        jobs' =
+          [ ( label
+            , \slot -> compileOneIO (quietCfg cfg {configProgressSlot = Just slot}) item
+            )
+          | (label, item) <- jobs
+          ]
+      (results, stats, secs) <- liftIO $ batchProgressCore total jobs'
+      CR.drawBatchDone total secs
+      CR.drawBatchStats secs stats
+      pure results
   | otherwise =
-      liftIO $ mapConcurrently (\(_, item) -> compileOneIO compileOne cfg item) jobs
+      liftIO $ mapConcurrently (\(_, item) -> compileOneIO cfg item) jobs
  where
-  compileOneIO ::
-    (CompilerConfig -> item -> Eff CompileEff Text)
-    -> CompilerConfig
-    -> item
-    -> IO Text
-  compileOneIO run c item =
-    runEff $ CR.runCompileReportSilent $ run c item
-
-compileBatchProgressEff ::
-  CompilerConfig
-  -> (CompilerConfig -> item -> IO Text)
-  -> [(Text, item)]
-  -> Eff CompileEff [Text]
-compileBatchProgressEff cfg compileOneIO jobs = do
-  let
-    total = length jobs
-  (results, stats, secs) <-
-    liftIO $
-      batchProgressLabeledIO
-        cfg
-        total
-        ( \slot _label item ->
-            compileOneIO (quietCfg cfg {configProgressSlot = Just slot}) item
-        )
-        jobs
-  CR.drawBatchDone total secs
-  CR.drawBatchStats secs stats
-  pure results
+  compileOneIO c item =
+    runEff $ CR.runCompileReportSilent $ compileOne c item
 
 compileMixedBatchEff ::
   CompilerConfig
@@ -665,6 +650,8 @@ compileMixedBatchEff baseCfg jobs
             jobs
       pure (results, [])
 
+-- | Mixed-config jobs as slot-keyed IO actions (the separate signature
+-- keeps the rank-2 'ClosedEffect' polymorphism over the batch).
 batchProgressMixedIO ::
   CompilerConfig
   -> [(Text, CompilerConfig, ClosedEffect u)]
@@ -683,19 +670,6 @@ batchProgressMixedIO baseCfg jobs =
         )
         jobs
     )
-
-batchProgressLabeledIO ::
-  CompilerConfig
-  -> Int
-  -> (Int -> Text -> job -> IO Text)
-  -> [(Text, job)]
-  -> IO ([Text], [CompileJobStats], Double)
-batchProgressLabeledIO _cfg total compileOne labeledJobs =
-  batchProgressCore
-    total
-    [ (label, \slot -> compileOne slot label job)
-    | (label, job) <- labeledJobs
-    ]
 
 batchProgressCore ::
   Int

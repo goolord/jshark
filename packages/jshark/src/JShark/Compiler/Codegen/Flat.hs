@@ -201,8 +201,8 @@ flatWrapOperand view nid d =
 
 flatRenderBin ctx op s0 view xId yId =
   let
-    (s1, Code xDecl xRef) = flatPureChild ctx s0 xId
-    (s2, Code yDecl yRef) = flatPureChild ctx s1 yId
+    (s1, Code xDecl xRef) = flatChild ctx s0 xId
+    (s2, Code yDecl yRef) = flatChild ctx s1 yId
    in
     ( s2
     , Code
@@ -219,13 +219,13 @@ flatRenderArgListSeq ctx s0 args =
       [] -> (s, [])
       Flat.FlatArgExpr eid : rest ->
         let
-          (s', c) = flatPureChild ctx s eid
+          (s', c) = flatChild ctx s eid
           (s'', cs') = go s' rest
          in
           (s'', c : cs')
       Flat.FlatArgEffect eid : rest ->
         let
-          (s', c) = flatEffectChild ctx s eid
+          (s', c) = flatChild ctx s eid
           (s'', cs') = go s' rest
          in
           (s'', c : cs')
@@ -239,17 +239,17 @@ flatRenderArgList ctx s0 view ai =
 flatRenderField ctx s = \case
   Flat.FlatField k eid ->
     let
-      (s', Code d r) = flatPureChild ctx s eid
+      (s', Code d r) = flatChild ctx s eid
      in
       (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
   Flat.FlatFieldExtra k eid ->
     let
-      (s', Code d r) = flatPureChild ctx s eid
+      (s', Code d r) = flatChild ctx s eid
      in
       (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
   Flat.FlatFieldEff k eid ->
     let
-      (s', MkCode d r _) = flatEffectChild ctx s eid
+      (s', MkCode d r _) = flatChild ctx s eid
      in
       ( s'
       ,
@@ -259,7 +259,7 @@ flatRenderField ctx s = \case
       )
   Flat.FlatFieldExtraEff k eid ->
     let
-      (s', MkCode d r _) = flatEffectChild ctx s eid
+      (s', MkCode d r _) = flatChild ctx s eid
      in
       ( s'
       ,
@@ -282,7 +282,7 @@ flatRenderArrayLit ctx s0 es =
       mapAccumL
         ( \st nid ->
             let
-              (st', code) = flatEffectChild ctx st nid
+              (st', code) = flatChild ctx st nid
              in
               (st', code)
         )
@@ -299,14 +299,14 @@ flatRenderFixed ctx s0 view = \case
   Flat.FlatFixedU op xId
     | Just name <- Prim.math1Name op ->
         let
-          (s1, Code xDecl xRef) = flatPureChild ctx s0 xId
+          (s1, Code xDecl xRef) = flatChild ctx s0 xId
          in
           (s1, Code xDecl ("Math." <> jsText name <> parens xRef))
   Flat.FlatFixedB op xId yId
     | Just name <- Prim.math2Name op ->
         let
-          (s1, Code xDecl xRef) = flatPureChild ctx s0 xId
-          (s2, Code yDecl yRef) = flatPureChild ctx s1 yId
+          (s1, Code xDecl xRef) = flatChild ctx s0 xId
+          (s2, Code yDecl yRef) = flatChild ctx s1 yId
          in
           ( s2
           , Code
@@ -318,13 +318,13 @@ flatRenderFixed ctx s0 view = \case
           )
   Flat.FlatFixedU op xId ->
     let
-      (s1, Code rDecl rRef) = flatPureChild ctx s0 xId
+      (s1, Code rDecl rRef) = flatChild ctx s0 xId
      in
       (s1, Code rDecl (Prim.fixedUnaryJS op (flatWrapOperand view xId rRef)))
   Flat.FlatFixedB op xId yId ->
     let
-      (s1, Code rDecl rRef) = flatPureChild ctx s0 xId
-      (s2, Code aDecl aRef) = flatPureChild ctx s1 yId
+      (s1, Code rDecl rRef) = flatChild ctx s0 xId
+      (s2, Code aDecl aRef) = flatChild ctx s1 yId
      in
       ( s2
       , Code
@@ -333,9 +333,9 @@ flatRenderFixed ctx s0 view = \case
       )
   Flat.FlatFixedT op xId yId zId ->
     let
-      (s1, Code rDecl rRef) = flatPureChild ctx s0 xId
-      (s2, Code aDecl aRef) = flatPureChild ctx s1 yId
-      (s3, Code bDecl bRef) = flatPureChild ctx s2 zId
+      (s1, Code rDecl rRef) = flatChild ctx s0 xId
+      (s2, Code aDecl aRef) = flatChild ctx s1 yId
+      (s3, Code bDecl bRef) = flatChild ctx s2 zId
      in
       ( s3
       , Code
@@ -364,22 +364,22 @@ flatRenderKernel ctx s0 view = \case
   Flat.FE_KBig op x y -> flatRenderBin ctx (bigOpJS op) s0 view x y
   Flat.FE_KBigNeg x ->
     let
-      (s1, Code xDecl xRef) = flatPureChild ctx s0 x
+      (s1, Code xDecl xRef) = flatChild ctx s0 x
      in
       (s1, Code xDecl $ "-" <> parens xRef)
   Flat.FE_KShow x ->
     let
-      (s1, Code xDecl xRef) = flatPureChild ctx s0 x
+      (s1, Code xDecl xRef) = flatChild ctx s0 x
      in
       (s1, Code xDecl $ "String" <> parens xRef)
   Flat.FE_KTypeOf x ->
     let
-      (s1, Code xDecl xRef) = flatPureChild ctx s0 x
+      (s1, Code xDecl xRef) = flatChild ctx s0 x
      in
       (s1, Code xDecl $ "typeof" <+> xRef)
   Flat.FE_KNegate x ->
     let
-      (s1, Code xDecl xRef) = flatPureChild ctx s0 x
+      (s1, Code xDecl xRef) = flatChild ctx s0 x
      in
       (s1, Code xDecl $ "-" <> parens xRef)
   Flat.FE_KAnd x y -> flatRenderBin ctx "&&" s0 view x y
@@ -387,8 +387,8 @@ flatRenderKernel ctx s0 view = \case
   Flat.FE_KEq structural x y
     | structural ->
         let
-          (s1, Code xDecl xRef) = flatPureChild ctx s0 x
-          (s2, Code yDecl yRef) = flatPureChild ctx s1 y
+          (s1, Code xDecl xRef) = flatChild ctx s0 x
+          (s2, Code yDecl yRef) = flatChild ctx s1 y
           (s3, eqJs) =
             emitValueEq
               s2
@@ -401,8 +401,8 @@ flatRenderKernel ctx s0 view = \case
   Flat.FE_KNEq structural x y
     | structural ->
         let
-          (s1, Code xDecl xRef) = flatPureChild ctx s0 x
-          (s2, Code yDecl yRef) = flatPureChild ctx s1 y
+          (s1, Code xDecl xRef) = flatChild ctx s0 x
+          (s2, Code yDecl yRef) = flatChild ctx s1 y
           (s3, neJs) =
             emitValueNEq
               s2
@@ -425,8 +425,8 @@ flatEnvTag env tag =
 
 flatRenderCallbackMethod ctx env name s0 view arrId tag bodyId =
   let
-    (s1, Code rDecl rRef) = flatPureChild ctx s0 arrId
-    (s2, Code exDecl exRef) = flatPureChild ctx s1 bodyId
+    (s1, Code rDecl rRef) = flatChild ctx s0 arrId
+    (s2, Code exDecl exRef) = flatChild ctx s1 bodyId
     nParam = flatEnvTag env tag
     call =
       flatWrapOperand view arrId rRef
@@ -438,9 +438,9 @@ flatRenderCallbackMethod ctx env name s0 view arrId tag bodyId =
 
 flatRenderFold ctx env method s0 view arrId zId tagA tagB bodyId =
   let
-    (s1, Code rDecl rRef) = flatPureChild ctx s0 arrId
-    (s2, Code zDecl zRef) = flatPureChild ctx s1 zId
-    (s3, Code exDecl exRef) = flatPureChild ctx s2 bodyId
+    (s1, Code rDecl rRef) = flatChild ctx s0 arrId
+    (s2, Code zDecl zRef) = flatChild ctx s1 zId
+    (s3, Code exDecl exRef) = flatChild ctx s2 bodyId
     nAcc = flatEnvTag env tagA
     nElem = flatEnvTag env tagB
     cb = jsCallback s3 [nJS s3 nAcc, nJS s3 nElem] exDecl exRef
@@ -462,10 +462,10 @@ flatRenderMethod ctx env s0 view = \case
     flatRenderFold ctx env ".reduceRight" s0 view arr z tagA tagB body
   Flat.FE_MethToSorted arr tagA tagB body ->
     let
-      (s1, Code rDecl rRef) = flatPureChild ctx s0 arr
+      (s1, Code rDecl rRef) = flatChild ctx s0 arr
       nA = flatEnvTag env tagA
       nB = flatEnvTag env tagB
-      (s2, Code exDecl exRef) = flatPureChild ctx s1 body
+      (s2, Code exDecl exRef) = flatChild ctx s1 body
       cb = jsCallback s2 [nJS s2 nA, nJS s2 nB] exDecl exRef
      in
       ( s2
@@ -473,9 +473,9 @@ flatRenderMethod ctx env s0 view = \case
       )
   Flat.FE_MethFrom n tag body ->
     let
-      (s1, Code nDecl nRef) = flatPureChild ctx s0 n
+      (s1, Code nDecl nRef) = flatChild ctx s0 n
       nI = flatEnvTag env tag
-      (s2, Code exDecl exRef) = flatPureChild ctx s1 body
+      (s2, Code exDecl exRef) = flatChild ctx s1 body
       cb = jsCallback s2 [jsText "_", nJS s2 nI] exDecl exRef
      in
       (s2, Code nDecl ("Array.from({length: " <> nRef <> "}, " <> cb <> ")"))
@@ -484,15 +484,16 @@ flatRenderMethod ctx env s0 view = \case
 flatRenderFnLit ctx env s0 tags bodyId =
   let
     ids = map (flatEnvTag env) tags
-    (s1, Code d r) = flatPureChild ctx s0 bodyId
+    (s1, Code d r) = flatChild ctx s0 bodyId
    in
     (s1, Code mempty (jsCallback s1 (map (nJS s1) ids) d r))
 
 flatResultUnwrapIdent env s tag = (flatEnvTag env tag, s)
 
-flatRenderResultCase ctx env s0 resId tagE errId _tagO okId =
+-- | Shared result-case prelude: bind the scrutinee, then its @.value@.
+flatResultPrelude ctx env s0 resId tagE =
   let
-    (s1, MkCode rDecl rRef _) = flatPureChild ctx s0 resId
+    (s1, MkCode rDecl rRef _) = flatChild ctx s0 resId
     (nObj, s2) = allocIdent s1
     (nUnw, s3) = flatResultUnwrapIdent env s2 tagE
     obj = identName s3 nObj
@@ -500,8 +501,14 @@ flatRenderResultCase ctx env s0 resId tagE errId _tagO okId =
       fromMaybe mempty rDecl
         $$ constBind s3 nObj (fromMaybe mempty rRef)
         $$ constBind s3 nUnw (jsText obj <> ".value")
-    (s4, Code eDecl eRef) = flatPureChild ctx s3 errId
-    (s5, Code oDecl oRef) = flatPureChild ctx s4 okId
+   in
+    (s3, obj, prelude)
+
+flatRenderResultCase ctx env s0 resId tagE errId _tagO okId =
+  let
+    (s3, obj, prelude) = flatResultPrelude ctx env s0 resId tagE
+    (s4, Code eDecl eRef) = flatChild ctx s3 errId
+    (s5, Code oDecl oRef) = flatChild ctx s4 okId
    in
     ( s5
     , Code
@@ -511,8 +518,8 @@ flatRenderResultCase ctx env s0 resId tagE errId _tagO okId =
 
 flatSeqEffect ctx s0 xId yId =
   let
-    (s1, MkCode xDecl xRef xFX) = flatEffectChild ctx s0 xId
-    (s2, MkCode yDecl yRef yFX) = flatEffectChild ctx s1 yId
+    (s1, MkCode xDecl xRef xFX) = flatChild ctx s0 xId
+    (s2, MkCode yDecl yRef yFX) = flatChild ctx s1 yId
     stmt
       | isNothing xRef = fromMaybe mempty xDecl
       | not xFX && isJust xDecl = fromMaybe mempty xDecl
@@ -525,16 +532,16 @@ flatBindEffect ctx s0 view nid tag xId bodyId =
     Flat.FX_Lift eId
       | Flat.FE_Var i <- Flat.flatSoaNode view eId
       , i == tag ->
-          flatEffectChild ctx s0 xId
+          flatChild ctx s0 xId
     _ ->
       flatBindEffectKeep ctx s0 view nid tag xId bodyId
 
 flatBindEffectKeep ctx s0 view nid _tag xId bodyId =
   let
-    (s1, MkCode xDecl xRef xFX) = flatEffectChild ctx s0 xId
+    (s1, MkCode xDecl xRef xFX) = flatChild ctx s0 xId
     hint = Flat.flatSoaParamName view nid
     (nBind, s2) = flatPlanIdentHint ctx s1 nid hint
-    (s3, MkCode yDecl yRef yFX) = flatEffectChild ctx s2 bodyId
+    (s3, MkCode yDecl yRef yFX) = flatChild ctx s2 bodyId
     stmtX
       | isNothing xRef = fromMaybe mempty xDecl
       | not xFX && isJust xDecl = fromMaybe mempty xDecl
@@ -560,16 +567,9 @@ flatRenderResultCaseE ctx env s0 view nid resId tagE errId _tagO okId =
   if flatIsUnitEffect view errId && flatIsUnitEffect view okId
     then
       let
-        (s1, MkCode rDecl rRef _) = flatPureChild ctx s0 resId
-        (nObj, s2) = allocIdent s1
-        (nUnw, s3) = flatResultUnwrapIdent env s2 tagE
-        obj = identName s3 nObj
-        prelude =
-          fromMaybe mempty rDecl
-            $$ constBind s3 nObj (fromMaybe mempty rRef)
-            $$ constBind s3 nUnw (jsText obj <> ".value")
-        (s4, MkCode eDecl eRef _) = flatEffectChild ctx s3 errId
-        (s5, MkCode oDecl oRef _) = flatEffectChild ctx s4 okId
+        (s3, obj, prelude) = flatResultPrelude ctx env s0 resId tagE
+        (s4, MkCode eDecl eRef _) = flatChild ctx s3 errId
+        (s5, MkCode oDecl oRef _) = flatChild ctx s4 okId
        in
         ( s5
         , Code
@@ -578,18 +578,11 @@ flatRenderResultCaseE ctx env s0 view nid resId tagE errId _tagO okId =
         )
     else
       let
-        (s1, MkCode rDecl rRef _) = flatPureChild ctx s0 resId
-        (nObj, s2) = allocIdent s1
-        (nUnw, s3) = flatResultUnwrapIdent env s2 tagE
-        obj = identName s3 nObj
-        prelude =
-          fromMaybe mempty rDecl
-            $$ constBind s3 nObj (fromMaybe mempty rRef)
-            $$ constBind s3 nUnw (jsText obj <> ".value")
+        (s3, obj, prelude) = flatResultPrelude ctx env s0 resId tagE
         (resultN, s4) = flatPlanIdent ctx s3 nid
         resultVar = identName s4 resultN
-        (s5, MkCode eDecl eRef _) = flatEffectChild ctx s4 errId
-        (s6, MkCode oDecl oRef _) = flatEffectChild ctx s5 okId
+        (s5, MkCode eDecl eRef _) = flatChild ctx s4 errId
+        (s6, MkCode oDecl oRef _) = flatChild ctx s5 okId
         stmt =
           prelude
             $$ letResult resultVar
@@ -608,13 +601,13 @@ flatRenderStringCaseE ctx s0 view nid scrutId ai defId =
     unit =
       all (flatIsUnitEffect view . snd) arms
         && flatIsUnitEffect view defId
-    (s1, Code oDecl oRef) = flatPureChild ctx s0 scrutId
+    (s1, Code oDecl oRef) = flatChild ctx s0 scrutId
     (resultN, s2) =
       if unit then (0, s1) else flatPlanIdent ctx s1 nid
     resultVar = identName s2 resultN
     renderArm s e =
       let
-        (s', MkCode mDecl mRef _) = flatEffectChild ctx s e
+        (s', MkCode mDecl mRef _) = flatChild ctx s e
         body =
           if unit
             then asStmt mDecl mRef
@@ -679,7 +672,10 @@ flatPlanEnv plan nid =
 -- | Binders are pre-allocated in the plan; the hint is already baked in.
 flatPlanIdentHint ctx s nid _hint = flatPlanIdent ctx s nid
 
-flatEmitLambdaSpine ctx env0 s0 view nid0 tag0 bodyId0 =
+-- | Emit a nested chain of lambdas as one n-ary function.
+-- @step@ matches the pure ('Flat.FE_Lambda') or effect
+-- ('Flat.FX_LambdaE') constructor.
+flatEmitLambdaSpineWith step ctx env0 s0 view nid0 tag0 bodyId0 =
   withHintScope s0 $ \sScoped -> go sScoped env0 nid0 tag0 bodyId0 []
  where
   go s env nid tag bodyId acc =
@@ -688,36 +684,26 @@ flatEmitLambdaSpine ctx env0 s0 view nid0 tag0 bodyId0 =
       (nParam, s1) = flatPlanIdentHint ctx s nid hint
       env' = IM.insert tag nParam env
      in
-      case Flat.flatSoaNode view bodyId of
-        Flat.FE_Lambda tag2 body2
+      case step (Flat.flatSoaNode view bodyId) of
+        Just (tag2, body2)
           | isNothing (Flat.flatSoaHoistTag view bodyId) ->
               go s1 env' bodyId tag2 body2 (nParam : acc)
         _ ->
           let
-            (s2, MkCode d r _) = flatPureChild ctx s1 bodyId
+            (s2, MkCode d r _) = flatChild ctx s1 bodyId
             ids = reverse (nParam : acc)
            in
             (s2, renderFn s2 (map (nJS s2) ids) d r)
 
-flatEmitLambdaESpine ctx env0 s0 view nid0 tag0 bodyId0 =
-  withHintScope s0 $ \sScoped -> go sScoped env0 nid0 tag0 bodyId0 []
- where
-  go s env nid tag bodyId acc =
-    let
-      hint = Flat.flatSoaParamName view nid
-      (nParam, s1) = flatPlanIdentHint ctx s nid hint
-      env' = IM.insert tag nParam env
-     in
-      case Flat.flatSoaNode view bodyId of
-        Flat.FX_LambdaE tag2 body2
-          | isNothing (Flat.flatSoaHoistTag view bodyId) ->
-              go s1 env' bodyId tag2 body2 (nParam : acc)
-        _ ->
-          let
-            (s2, MkCode d r _) = flatEffectChild ctx s1 bodyId
-            ids = reverse (nParam : acc)
-           in
-            (s2, renderFn s2 (map (nJS s2) ids) d r)
+flatEmitLambdaSpine ctx =
+  flatEmitLambdaSpineWith
+    (\case Flat.FE_Lambda t b -> Just (t, b); _ -> Nothing)
+    ctx
+
+flatEmitLambdaESpine ctx =
+  flatEmitLambdaSpineWith
+    (\case Flat.FX_LambdaE t b -> Just (t, b); _ -> Nothing)
+    ctx
 
 -- | Apply-spine length that matches a hoisted peeled lambda. Opaque
 -- heads (params, @id@, FFI) stay curried: @f(a)(b)@, not @f(a, b)@.
@@ -750,75 +736,49 @@ flatCollectApplyE view fId argIds = case Flat.flatSoaNode view fId of
   Flat.FX_ApplyE f2 x2 -> flatCollectApplyE view f2 (x2 : argIds)
   _ -> (fId, argIds)
 
-flatEmitApply ctx s0 view fId argIds =
+-- | Emit an application spine. @wrap@ is 'Code' in expression position
+-- and 'fxCode' in effect position; @collect@ picks the matching apply
+-- constructor ('Flat.FE_Apply' vs 'Flat.FX_ApplyE').
+flatEmitApplyWith wrap collect ctx s0 view fId argIds =
   let
-    (headId, args) = flatCollectApply view fId argIds
+    (headId, args) = collect view fId argIds
     n = length args
    in
     if n > 1 && flatCallArity view headId == n
       then
         let
-          (s1, Code fDecl fRef) = flatPureChild ctx s0 headId
+          (s1, Code fDecl fRef) = flatChild ctx s0 headId
           (s2, argDecl, argRefs) = flatEmitApplyArgs ctx s1 args
          in
-          (s2, Code (fDecl $$ argDecl) (jsCallN fRef argRefs))
+          (s2, wrap (fDecl $$ argDecl) (jsCallN fRef argRefs))
       else
         let
           xId = case argIds of
             (x : _) -> x
             [] -> error "JShark.flatEmitApply: missing argument"
-          (s1, Code fDecl fRef) = flatPureChild ctx s0 fId
-          (s2, Code xDecl xRef) = flatPureChild ctx s1 xId
+          (s1, Code fDecl fRef) = flatChild ctx s0 fId
+          (s2, Code xDecl xRef) = flatChild ctx s1 xId
          in
-          (s2, Code (fDecl $$ xDecl) (jsCall fRef xRef))
+          (s2, wrap (fDecl $$ xDecl) (jsCall fRef xRef))
 
-flatEmitApplyE ctx s0 view fId argIds =
-  let
-    (headId, args) = flatCollectApplyE view fId argIds
-    n = length args
-   in
-    if n > 1 && flatCallArity view headId == n
-      then
-        let
-          (s1, Code fDecl fRef) = flatEffectChild ctx s0 headId
-          (s2, argDecl, argRefs) = flatEmitApplyArgsE ctx s1 args
-         in
-          (s2, fxCode (fDecl $$ argDecl) (jsCallN fRef argRefs))
-      else
-        let
-          xId = case argIds of
-            (x : _) -> x
-            [] -> error "JShark.flatEmitApplyE: missing argument"
-          (s1, Code fDecl fRef) = flatEffectChild ctx s0 fId
-          (s2, Code xDecl xRef) = flatEffectChild ctx s1 xId
-         in
-          (s2, fxCode (fDecl $$ xDecl) (jsCall fRef xRef))
+flatEmitApply ctx = flatEmitApplyWith Code flatCollectApply ctx
+
+flatEmitApplyE ctx = flatEmitApplyWith fxCode flatCollectApplyE ctx
 
 flatEmitApplyArgs ctx s0 xs =
   foldl'
     ( \(s, d, rs) xId ->
         let
-          (s', Code xd xr) = flatPureChild ctx s xId
+          (s', Code xd xr) = flatChild ctx s xId
          in
           (s', d $$ xd, rs ++ [xr])
     )
     (s0, mempty, [])
     xs
 
-flatEmitApplyArgsE ctx s0 xs =
-  foldl'
-    ( \(s, d, rs) xId ->
-        let
-          (s', Code xd xr) = flatEffectChild ctx s xId
-         in
-          (s', d $$ xd, rs ++ [xr])
-    )
-    (s0, mempty, [])
-    xs
-
-flatPureChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
-
-flatEffectChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
+-- | Emit a child node: a table lookup keyed by node id (layer order was
+-- fixed by 'Flat.flatSoaLayerBuckets', so children are already emitted).
+flatChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
 
 flatNodeKindEffect view nid =
   Flat.flatNodeIsEffect (Flat.flatSoaNode view nid)
@@ -1097,12 +1057,12 @@ flatPureASTGo !ctx !env !sIn view nid =
         case Flat.flatSoaNode view bodyId of
           Flat.FE_Var i
             | i == tag ->
-                flatPureChild ctx s0 xId
+                flatChild ctx s0 xId
           _ ->
             let
               (nBind, s1) = flatPlanIdent ctx s0 nid
-              (s2, MkCode xDecl xRef _) = flatPureChild ctx s1 xId
-              (s3, yCode) = flatPureChild ctx s2 bodyId
+              (s2, MkCode xDecl xRef _) = flatChild ctx s1 xId
+              (s3, yCode) = flatChild ctx s2 bodyId
              in
               ( s3
               , keepRef
@@ -1116,8 +1076,8 @@ flatPureASTGo !ctx !env !sIn view nid =
         let
           (nBind, s1) = flatPlanIdent ctx s0 nid
           n = nJS s1 nBind
-          (s2, MkCode rDecl rRef _) = flatPureChild ctx s1 rId
-          (s3, bCode) = flatPureChild ctx s2 bId
+          (s2, MkCode rDecl rRef _) = flatChild ctx s1 rId
+          (s3, bCode) = flatChild ctx s2 bId
          in
           ( s3
           , keepRef (recBindStmt n rDecl rRef $$ fromMaybe mempty (codeDecl bCode)) bCode
@@ -1135,17 +1095,17 @@ flatPureASTGo !ctx !env !sIn view nid =
               let
                 hint = Flat.flatSoaParamName view nid
                 (nParam, s1) = flatPlanIdentHint ctx sScoped nid hint
-                (s2, MkCode d r _) = flatPureChild ctx s1 bodyId
+                (s2, MkCode d r _) = flatChild ctx s1 bodyId
                in
                 (s2, Code mempty (renderFunction s2 nParam d r))
       Flat.FE_Apply fId xId ->
         flatEmitApply ctx s0 view fId [xId]
-      Flat.FE_EmbedEff eId -> flatEffectChild ctx s0 eId
+      Flat.FE_EmbedEff eId -> flatChild ctx s0 eId
       Flat.FE_If cId tId eId ->
         let
-          (s1, Code cDecl cRef) = flatPureChild ctx s0 cId
-          (s2, Code tDecl tRef) = flatPureChild ctx s1 tId
-          (s3, Code eDecl eRef) = flatPureChild ctx s2 eId
+          (s1, Code cDecl cRef) = flatChild ctx s0 cId
+          (s2, Code tDecl tRef) = flatChild ctx s1 tId
+          (s3, Code eDecl eRef) = flatChild ctx s2 eId
          in
           ( s3
           , Code
@@ -1154,11 +1114,11 @@ flatPureASTGo !ctx !env !sIn view nid =
           )
       Flat.FE_OptionCase oId nId _tag sId ->
         let
-          (s1, Code optDecl optRef) = flatPureChild ctx s0 oId
+          (s1, Code optDecl optRef) = flatChild ctx s0 oId
           (nBind, s2) = flatPlanIdent ctx s1 nid
           optVar = identName s2 nBind
-          (s3, Code noneDecl noneRef) = flatPureChild ctx s2 nId
-          (s4, Code someDecl someRef) = flatPureChild ctx s3 sId
+          (s3, Code noneDecl noneRef) = flatChild ctx s2 nId
+          (s4, Code someDecl someRef) = flatChild ctx s3 sId
          in
           ( s4
           , Code
@@ -1169,42 +1129,42 @@ flatPureASTGo !ctx !env !sIn view nid =
           )
       Flat.FE_ResultOk xId ->
         let
-          (s1, MkCode d r _) = flatPureChild ctx s0 xId
+          (s1, MkCode d r _) = flatChild ctx s0 xId
          in
           (s1, MkCode d (Just (resultObject True r)) False)
       Flat.FE_ResultErr xId ->
         let
-          (s1, MkCode d r _) = flatPureChild ctx s0 xId
+          (s1, MkCode d r _) = flatChild ctx s0 xId
          in
           (s1, MkCode d (Just (resultObject False r)) False)
       Flat.FE_ResultCase resId tagE errId tagO okId ->
         flatRenderResultCase ctx env s0 resId tagE errId tagO okId
       Flat.FE_Index arrId idxId ->
         let
-          (s1, Code aDecl aRef) = flatPureChild ctx s0 arrId
-          (s2, Code iDecl iRef) = flatPureChild ctx s1 idxId
+          (s1, Code aDecl aRef) = flatChild ctx s0 arrId
+          (s2, Code iDecl iRef) = flatChild ctx s1 idxId
           (s3, call) = emitCheckedIndex s2 aRef iRef
          in
           (s3, Code (aDecl $$ iDecl) call)
       Flat.FE_U8Index bufId idxId ->
         let
-          (s1, Code bDecl bRef) = flatPureChild ctx s0 bufId
-          (s2, Code iDecl iRef) = flatPureChild ctx s1 idxId
+          (s1, Code bDecl bRef) = flatChild ctx s0 bufId
+          (s2, Code iDecl iRef) = flatChild ctx s1 idxId
          in
           (s2, Code (bDecl $$ iDecl) (bRef <> brackets iRef))
       Flat.FE_Error msgId ->
         let
-          (s1, Code d r) = flatPureChild ctx s0 msgId
+          (s1, Code d r) = flatChild ctx s0 msgId
          in
           (s1, Code d ("(function(){throw new Error(" <> r <> ");}())"))
       Flat.FE_Fixed fixed -> flatRenderFixed ctx s0 view fixed
       Flat.FE_FnLit tags _names bodyId ->
         flatRenderFnLit ctx env s0 tags bodyId
-      Flat.FE_UnsafeNullable xId -> flatPureChild ctx s0 xId
+      Flat.FE_UnsafeNullable xId -> flatChild ctx s0 xId
       Flat.FE_FrozenLit gi -> flatRenderObjectLit ctx s0 view gi
       Flat.FE_GetField ti oId ->
         let
-          (s1, Code d r) = flatPureChild ctx s0 oId
+          (s1, Code d r) = flatChild ctx s0 oId
          in
           (s1, Code d (jsDotOrBracket r (Flat.flatSoaText view ti)))
       Flat.FE_Hvm2Ref ti ->
@@ -1224,7 +1184,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
     s0 = sIn
    in
     case Flat.flatSoaNode view nid of
-      Flat.FX_Lift eId -> flatPureChild ctx s0 eId
+      Flat.FX_Lift eId -> flatChild ctx s0 eId
       Flat.FX_FFI fi ai ->
         let
           (s1, argDecl, argRefs) = flatRenderArgList ctx s0 view ai
@@ -1238,19 +1198,19 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
         (s0, Code mempty (jsText (Flat.flatSoaText view ti)))
       Flat.FX_UnsafeObjectGet xId sId ->
         let
-          (s1, Code xDecl xRef) = flatEffectChild ctx s0 xId
+          (s1, Code xDecl xRef) = flatChild ctx s0 xId
          in
           (s1, Code xDecl $ jsDotOrBracket xRef (Flat.flatSoaText view sId))
       Flat.FX_UnsafeObjectAssign xId yId ->
         let
-          (s1, Code xDecl xRef) = flatEffectChild ctx s0 xId
-          (s2, Code yDecl yRef) = flatEffectChild ctx s1 yId
+          (s1, Code xDecl xRef) = flatChild ctx s0 xId
+          (s2, Code yDecl yRef) = flatChild ctx s1 yId
          in
           (s2, fxCode (xDecl $$ yDecl) $ xRef <> " = " <> yRef)
       Flat.FX_CallMethod recvId methodIdx ai ->
         let
           method = Flat.flatSoaText view methodIdx
-          (s1, Code rDecl rRef) = flatEffectChild ctx s0 recvId
+          (s1, Code rDecl rRef) = flatChild ctx s0 recvId
           (s2, argDecl, argRefs) = flatRenderArgList ctx s1 view ai
          in
           ( s2
@@ -1265,8 +1225,8 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
         let
           (nBind, s1) = flatPlanIdent ctx s0 nid
           n = nJS s1 nBind
-          (s2, MkCode rDecl rRef _) = flatEffectChild ctx s1 rId
-          (s3, MkCode bDecl bRef bFX) = flatEffectChild ctx s2 bId
+          (s2, MkCode rDecl rRef _) = flatChild ctx s1 rId
+          (s3, MkCode bDecl bRef bFX) = flatChild ctx s2 bId
          in
           ( s3
           , MkCode (Just (recBindStmt n rDecl rRef $$ fromMaybe mempty bDecl)) bRef bFX
@@ -1285,7 +1245,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
                 hint = Flat.flatSoaParamName view nid
                 (nParam, s1) = flatPlanIdentHint ctx sScoped nid hint
                 (s2, MkCode exprXDecl exprXRef _) =
-                  flatEffectChild ctx s1 bodyId
+                  flatChild ctx s1 bodyId
                 (s3, fnJs) =
                   emitHoistedFnValue
                     s2
@@ -1300,9 +1260,9 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
         let
           unit =
             flatIsUnitEffect view tId && flatIsUnitEffect view eId
-          (s1, MkCode cDecl cRef _) = flatEffectChild ctx s0 cId
-          (s2, MkCode tDecl tRef tFX) = flatEffectChild ctx s1 tId
-          (s3, MkCode eDecl eRef eFX) = flatEffectChild ctx s2 eId
+          (s1, MkCode cDecl cRef _) = flatChild ctx s0 cId
+          (s2, MkCode tDecl tRef tFX) = flatChild ctx s1 tId
+          (s3, MkCode eDecl eRef eFX) = flatChild ctx s2 eId
           cJs = fromMaybe mempty cRef
          in
           if unit
@@ -1346,8 +1306,8 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
                     )
       Flat.FX_While cId bId ->
         let
-          (s1, MkCode condDecl condRef _) = flatEffectChild ctx s0 cId
-          (s2, MkCode bodyDecl bodyRef _) = flatEffectChild ctx s1 bId
+          (s1, MkCode condDecl condRef _) = flatChild ctx s0 cId
+          (s2, MkCode bodyDecl bodyRef _) = flatChild ctx s1 bId
           bodyStmt = asStmt bodyDecl bodyRef
           whileStmt =
             "while"
@@ -1357,11 +1317,11 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
       Flat.FX_ForRange startId endId _tag bodyId ->
         let
-          (s1, MkCode startDecl startRef _) = flatPureChild ctx s0 startId
-          (s2, MkCode endDecl endRef _) = flatPureChild ctx s1 endId
+          (s1, MkCode startDecl startRef _) = flatChild ctx s0 startId
+          (s2, MkCode endDecl endRef _) = flatChild ctx s1 endId
           (loopN, s3) = flatPlanIdentHint ctx s2 nid (Just "i")
           loopVar = nJS s3 loopN
-          (s4, MkCode bodyDecl bodyRef _) = flatEffectChild ctx s3 bodyId
+          (s4, MkCode bodyDecl bodyRef _) = flatChild ctx s3 bodyId
           bodyStmt = asStmt bodyDecl bodyRef
           forInit =
             "let" <+> loopVar <+> "=" <+> fromMaybe mempty startRef
@@ -1384,16 +1344,16 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           )
       Flat.FX_U8Set bufId idxId valId ->
         let
-          (s1, Code bDecl bRef) = flatPureChild ctx s0 bufId
-          (s2, Code iDecl iRef) = flatPureChild ctx s1 idxId
-          (s3, Code vDecl vRef) = flatPureChild ctx s2 valId
+          (s1, Code bDecl bRef) = flatChild ctx s0 bufId
+          (s2, Code iDecl iRef) = flatChild ctx s1 idxId
+          (s3, Code vDecl vRef) = flatChild ctx s2 valId
           stmt = (bRef <> brackets iRef) <+> "=" <+> vRef
          in
           (s3, Code (bDecl $$ iDecl $$ vDecl $$ (stmt <> semi)) mempty)
       Flat.FX_U8Fill bufId valId ->
         let
-          (s1, Code bDecl bRef) = flatPureChild ctx s0 bufId
-          (s2, Code vDecl vRef) = flatPureChild ctx s1 valId
+          (s1, Code bDecl bRef) = flatChild ctx s0 bufId
+          (s2, Code vDecl vRef) = flatChild ctx s1 valId
           stmt = bRef <> ".fill" <> parens vRef
          in
           (s2, Code (bDecl $$ vDecl $$ (stmt <> semi)) mempty)
@@ -1405,15 +1365,15 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           s0
           ( \s ->
               let
-                (s1, Code oDecl oRef) = flatPureChild ctx s oId
+                (s1, Code oDecl oRef) = flatChild ctx s oId
                 (nBind, s2) = flatPlanIdent ctx s1 nid
                in
                 (s2, oDecl $$ constBind s2 nBind oRef, nBind)
           )
           ( \mRes nBind s ->
               let
-                (s1, MkCode nDecl nRef _) = flatEffectChild ctx s nId
-                (s2, MkCode sDecl sRef _) = flatEffectChild ctx s1 sId
+                (s1, MkCode nDecl nRef _) = flatChild ctx s nId
+                (s2, MkCode sDecl sRef _) = flatChild ctx s1 sId
                 cond = nJS s nBind <+> "===" <+> "null"
                in
                 (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
@@ -1424,7 +1384,7 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
         flatRenderStringCaseE ctx s0 view nid scrutId ai defId
       Flat.FX_Throw xId ->
         let
-          (s1, Code xDecl xRef) = flatPureChild ctx s0 xId
+          (s1, Code xDecl xRef) = flatChild ctx s0 xId
          in
           (s1, Code (xDecl $$ (("throw" <+> xRef) <> semi)) mempty)
       Flat.FX_Try aId _tag kId ->
@@ -1434,17 +1394,17 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           (\s -> (s, mempty, ()))
           ( \mRes () s ->
               let
-                (s1, MkCode aDecl aRef _) = flatEffectChild ctx s aId
+                (s1, MkCode aDecl aRef _) = flatChild ctx s aId
                 (catchN, s2) = flatPlanIdent ctx s1 nid
-                (s3, MkCode bDecl bRef _) = flatEffectChild ctx s2 kId
+                (s3, MkCode bDecl bRef _) = flatChild ctx s2 kId
                in
                 (s3, tryCatchStmt mRes (nJS s3 catchN) aDecl aRef bDecl bRef)
           )
       Flat.FX_ObjectLit gi -> flatRenderObjectLit ctx s0 view gi
       Flat.FX_DeleteProp oId kId ->
         let
-          (s1, Code oDecl oRef) = flatEffectChild ctx s0 oId
-          (s2, Code kDecl kRef) = flatPureChild ctx s1 kId
+          (s1, Code oDecl oRef) = flatChild ctx s0 oId
+          (s2, Code kDecl kRef) = flatChild ctx s1 kId
          in
           (s2, fxCode (oDecl $$ kDecl) (("delete" <+> oRef) <> brackets kRef))
       Flat.FX_ArrayLit es -> flatRenderArrayLit ctx s0 es

@@ -2075,11 +2075,11 @@ flatSoATests =
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number
-  kernelAndLambdaUse =
-    bindSyntax (fooE :: Effect f 'Number) $ \x ->
-      expr (x + Apply (lambda (\_ -> x * number 2)) (number 1))
+  kernelAndLambdaUse = bindSyntax (fooE :: Effect f 'Number) $ \x ->
+    expr (x + Apply (lambda (\_ -> x * number 2)) (number 1))
 
--- | Bind an effect and use its result in another effect.
+-- | Bind an effect and use its result in another effect ('with1' binds
+-- in expression position; this binds in effect position).
 bindSyntax :: Effect f a -> (Expr f a -> Effect f b) -> Effect f b
 bindSyntax e k = fromSyntax $ do
   x <- toSyntax e
@@ -2109,15 +2109,12 @@ compilerTests =
         createDirectoryIfMissing True dir
         let
           cfg =
-            CompilerConfig
-              Passthrough
-              (DiskCache dir)
-              False
-              Minified
-              False
-              False
-              False
-              Nothing
+            defaultCompilerConfig
+              { configBackend = Passthrough
+              , configCache = DiskCache dir
+              , configFallback = False
+              , configStyle = Minified
+              }
           src = "const x = 1 + 2;" :: Text
         a <- compileWith cfg src
         b <- compileWith cfg src
@@ -2134,15 +2131,12 @@ compilerTests =
         createDirectoryIfMissing True dir
         let
           cfg =
-            CompilerConfig
-              Passthrough
-              (DiskCache dir)
-              False
-              Minified
-              False
-              False
-              False
-              Nothing
+            defaultCompilerConfig
+              { configBackend = Passthrough
+              , configCache = DiskCache dir
+              , configFallback = False
+              , configStyle = Minified
+              }
         _ <- compileWith cfg "const a = 1;"
         files <- listDirectory dir
         mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
@@ -2160,15 +2154,12 @@ compilerTests =
               snippet = number 1 + number 2
               raw = renderJS (pureProgram snippet)
               cfg =
-                CompilerConfig
-                  (Esbuild defaultEsbuildConfig)
-                  NoCache
-                  False
-                  Minified
-                  False
-                  False
-                  False
-                  Nothing
+                defaultCompilerConfig
+                  { configBackend = Esbuild defaultEsbuildConfig
+                  , configCache = NoCache
+                  , configFallback = False
+                  , configStyle = Minified
+                  }
             out <- compilePure cfg snippet
             assertBool "non-empty" (not (T.null out))
             assertBool "minifier changed the IIFE" (out /= raw)
@@ -2183,15 +2174,12 @@ compilerTests =
           (Nothing, Nothing) -> do
             res <-
               tryCompileWith
-                ( CompilerConfig
-                    (Esbuild defaultEsbuildConfig)
-                    NoCache
-                    False
-                    Minified
-                    False
-                    False
-                    False
-                    Nothing
+                ( defaultCompilerConfig
+                    { configBackend = Esbuild defaultEsbuildConfig
+                    , configCache = NoCache
+                    , configFallback = False
+                    , configStyle = Minified
+                    }
                 )
                 "1+2;"
             case res of
@@ -2205,15 +2193,13 @@ compilerTests =
           Just _ -> do
             let
               cfg =
-                CompilerConfig
-                  (Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]})
-                  NoCache
-                  False
-                  Minified
-                  False
-                  False
-                  False
-                  Nothing
+                defaultCompilerConfig
+                  { configBackend =
+                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
+                  , configCache = NoCache
+                  , configFallback = False
+                  , configStyle = Minified
+                  }
             res <- tryCompileWith cfg "(() => { return 1; })();"
             case res of
               Left _ -> pure ()
@@ -2226,15 +2212,13 @@ compilerTests =
             let
               src = "(() => { return 1; })();" :: Text
               cfg =
-                CompilerConfig
-                  (Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]})
-                  NoCache
-                  True
-                  Minified
-                  False
-                  False
-                  False
-                  Nothing
+                defaultCompilerConfig
+                  { configBackend =
+                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
+                  , configCache = NoCache
+                  , configFallback = True
+                  , configStyle = Minified
+                  }
             out <- compileWith cfg src
             out @?= src
     , testCase "compileWith logs minifier fallback on stderr" $ do
@@ -2245,15 +2229,13 @@ compilerTests =
             let
               src = "(() => { return 1; })();" :: Text
               cfg =
-                CompilerConfig
-                  (Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]})
-                  NoCache
-                  True
-                  Minified
-                  False
-                  False
-                  False
-                  Nothing
+                defaultCompilerConfig
+                  { configBackend =
+                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
+                  , configCache = NoCache
+                  , configFallback = True
+                  , configStyle = Minified
+                  }
             (_, captured) <- captureStderr $ compileWith cfg src
             assertBool
               "fallback notice"
@@ -2266,15 +2248,13 @@ compilerTests =
             let
               src = "(() => { return 1; })();" :: Text
               cfg =
-                CompilerConfig
-                  (Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]})
-                  NoCache
-                  True
-                  Minified
-                  False
-                  False
-                  False
-                  Nothing
+                defaultCompilerConfig
+                  { configBackend =
+                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
+                  , configCache = NoCache
+                  , configFallback = True
+                  , configStyle = Minified
+                  }
             (out, captured) <- captureStderr $ compileWithPure cfg src
             out @?= src
             assertBool
@@ -2334,15 +2314,12 @@ compilerTests =
     , testCase "Readable style skips the minifier even when a backend is set" $ do
         out <-
           compileEffect
-            ( CompilerConfig
-                (Esbuild defaultEsbuildConfig)
-                NoCache
-                False
-                Readable
-                False
-                False
-                False
-                Nothing
+            ( defaultCompilerConfig
+                { configBackend = Esbuild defaultEsbuildConfig
+                , configCache = NoCache
+                , configFallback = False
+                , configStyle = Readable
+                }
             )
             fooE
         out @?= "foo();"
@@ -2350,15 +2327,12 @@ compilerTests =
         let
           src = "const x = 1 + 2;" :: Text
           cfg =
-            CompilerConfig
-              (Esbuild defaultEsbuildConfig)
-              NoCache
-              False
-              Readable
-              False
-              False
-              False
-              Nothing
+            defaultCompilerConfig
+              { configBackend = Esbuild defaultEsbuildConfig
+              , configCache = NoCache
+              , configFallback = False
+              , configStyle = Readable
+              }
         out <- compileWith cfg src
         out @?= src
     , testCase "prettyJS formats if/else when biome is on PATH" $ do

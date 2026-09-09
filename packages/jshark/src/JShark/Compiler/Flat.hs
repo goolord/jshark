@@ -27,6 +27,7 @@ module JShark.Compiler.Flat
   , encodeFlatNode
   , emptySoaSideAcc
   , flatNodeIsEffect
+  , irNodeIsEffect
   , flatNodeChildRefs
   , flatArgRef
   , flatFieldRef

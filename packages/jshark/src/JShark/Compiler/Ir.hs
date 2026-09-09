@@ -106,6 +106,7 @@ module JShark.Compiler.Ir
     )
   , irFieldName
   , irFieldChild
+  , irNodeChildren
   , SomeFixedOp (..)
   , data IrLiteral
   , metaIr
@@ -152,6 +153,7 @@ import JShark.Compiler.Evaluate
   , isCheapValue
   , isOrderableValue
   , jsShow
+  , keepLastByKey
   , parseBigIntString
   , tryEvalBigBin
   , typeOfValue
@@ -207,6 +209,89 @@ irFieldChild = \case
   IrFieldEff _ c -> c
   IrFieldExtra _ c -> c
   IrFieldExtraEff _ c -> c
+
+-- | Immediate children of a node, in evaluation order. The canonical
+-- list-based traversal: lint-style passes use it directly; the
+-- perf-sensitive optimizer walks constructors by hand (short-circuiting,
+-- allocation-free). A new constructor must extend this case (the
+-- exhaustiveness check enforces it).
+irNodeChildren :: IrNode -> [IrNode]
+irNodeChildren = \case
+  IrLiteral {} -> []
+  IrVar {} -> []
+  IrLet _ _ x b -> [x, b]
+  IrLetRec _ r b -> [r, b]
+  IrLambda _ _ b -> [b]
+  IrApply f x -> [f, x]
+  IrIf c t eF -> [c, t, eF]
+  IrOptionCase o n _ s -> [o, n, s]
+  IrResultOk x -> [x]
+  IrResultErr x -> [x]
+  IrResultCase o _ er _ ok -> [o, er, ok]
+  IrIndex x i -> [x, i]
+  IrU8Index x i -> [x, i]
+  IrError x -> [x]
+  IrFixed _ args -> args
+  IrFnLit _ _ b -> [b]
+  IrUnsafeNullable x -> [x]
+  IrFrozenLit fs -> map irFieldChild fs
+  IrGetField _ o -> [o]
+  IrHvm2Ref {} -> []
+  KConcat x y -> [x, y]
+  KPlus x y -> [x, y]
+  KTimes x y -> [x, y]
+  KMinus x y -> [x, y]
+  KNegate x -> [x]
+  KFracDiv x y -> [x, y]
+  KRem x y -> [x, y]
+  KBitAnd x y -> [x, y]
+  KBitOr x y -> [x, y]
+  KBitXor x y -> [x, y]
+  KShl x y -> [x, y]
+  KShr x y -> [x, y]
+  KUShr x y -> [x, y]
+  KBig _ x y -> [x, y]
+  KBigNeg x -> [x]
+  KAnd x y -> [x, y]
+  KOr x y -> [x, y]
+  KEq _ x y -> [x, y]
+  KNEq _ x y -> [x, y]
+  KGTh x y -> [x, y]
+  KLTh x y -> [x, y]
+  KGTEq x y -> [x, y]
+  KLTEq x y -> [x, y]
+  KShow x -> [x]
+  KTypeOf x -> [x]
+  IrMethMap x _ g -> [x, g]
+  IrMethFilter x _ g -> [x, g]
+  IrMethReduce x z _ _ g -> [x, z, g]
+  IrMethReduceRight x z _ _ g -> [x, z, g]
+  IrMethToSorted x _ _ g -> [x, g]
+  IrMethFrom n _ g -> [n, g]
+  IrLift x -> [x]
+  IrFFI _ args -> args
+  IrUnsafeObject {} -> []
+  IrUnsafeObjectGet x _ -> [x]
+  IrUnsafeObjectAssign x y -> [x, y]
+  IrCallMethod x _ args -> x : args
+  IrBind _ _ x b -> [x, b]
+  IrThenE x y -> [x, y]
+  IrBindRec _ r b -> [r, b]
+  IrLambdaE _ b -> [b]
+  IrApplyE f x -> [f, x]
+  IrIfE c t eF -> [c, t, eF]
+  IrWhile c b -> [c, b]
+  IrForRange s e _ b -> [s, e, b]
+  IrU8Set b i v -> [b, i, v]
+  IrU8Fill b v -> [b, v]
+  IrOptionCaseE o n _ s -> [o, n, s]
+  IrResultCaseE o _ er _ ok -> [o, er, ok]
+  IrStringCaseE s arms d -> s : map snd arms ++ [d]
+  IrThrow x -> [x]
+  IrTry a _ k -> [a, k]
+  IrObjectLit fs -> map irFieldChild fs
+  IrDeleteProp o k -> [o, k]
+  IrArrayLit es -> es
 
 -- | A 'Value' with its universe hidden. Opt-time literal folds and pack both
 -- consume values constructor-wise, so the index is never needed.
@@ -1630,13 +1715,7 @@ rfEq (RF isA na va) (RF isB nb vb) =
   valEq (SomeIrValue a) (SomeIrValue b) = sameFamilyEq a b
 
 lastWins :: [RF] -> [RF]
-lastWins = reverse . keep [] . reverse
- where
-  keep acc [] = acc
-  keep acc (f@(RF _ n _) : fs)
-    | any ((== n) . rfName) acc = keep acc fs
-    | otherwise = keep (f : acc) fs
-  rfName (RF _ n _) = n
+lastWins = keepLastByKey (\(RF _ n _) -> n)
 
 -- | Last-wins field lookup by name. Only plain declared fields project
 -- (mirrors the typed 'GetField' rule; extras stay unprojectable).
