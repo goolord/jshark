@@ -22,9 +22,11 @@ import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import Network.HTTP.Types
 
+-- | @new XMLHttpRequest()@, held so reuse references the object.
 new :: EffectSyntax f (Effect f ('MutableObject (XHR)))
 new = hold $ ffi "new XMLHttpRequest" RecNil
 
+-- | @xhr.open(method, url)@.
 open ::
   StdMethod
   -> BS.ByteString
@@ -43,9 +45,12 @@ open method url async x =
         )
     )
 
+-- | @xhr.send()@ — fires the request; results arrive via
+-- readyState/status polling.
 send :: Effect f ('MutableObject XHR) -> EffectSyntax f ()
 send x = toSyntax_ $ callMethod x "send" RecNil
 
+-- | @xhr.send(body)@ after opening a POST.
 sendPost :: Effect f ('MutableObject XHR) -> Expr f 'String -> EffectSyntax f ()
 sendPost x y = toSyntax_ $ callMethod x "send" (arg y <: RecNil)
 
@@ -53,9 +58,11 @@ data XHR
 
 type instance Field XHR "responseText" = 'String
 
+-- | @xhr.readyState === XMLHttpRequest.DONE@.
 readyStateDone :: Effect f 'Number
 readyStateDone = expr 4
 
+-- | @xhr.status === 200@ (or 0 for file://).
 statusOK :: Effect f 'Number
 statusOK = expr 200
 
@@ -70,6 +77,8 @@ type instance Field FetchResponse "ok" = 'Bool
 
 type instance Field FetchResponse "status" = 'Number
 
+-- | @fetch(url)@ — a 'FetchResponse' Promise; chain with
+-- JShark.Promise.promiseThen.
 fetch ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject FetchResponse))
 fetch url = hold $ ffi "fetch" (arg url <: RecNil)

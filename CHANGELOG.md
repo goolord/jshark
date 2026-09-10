@@ -73,6 +73,15 @@
   - `JShark.Api`'s module header documents the `_`/`S`/prime naming
     conventions.
 
+* Documentation: Haddock for the hot `JShark.Api` names (literals,
+  `lambda`/`lambdaE`, `let_`, control flow, `Option`/`Result`, FFI) and
+  the previously bare platform modules (`String`, `Promise`, `Ajax`,
+  `Math`); new `docs/tutorial.md` covering the two-tree model, the
+  `EffectSyntax` bridge, typed DOM events, `Generic` records/sums,
+  `Params` rows, `ffi` classification, and the headless test story;
+  README now points at `scripts/profile-life.sh` and
+  `scripts/capture-example-screenshots.sh`.
+
 * `CaptureStderr` (both copies) hoists its Windows `pipe` arity
   difference out of the do-block; fourmolu can now parse and format the
   whole repo (`scripts/format.sh` exits clean).

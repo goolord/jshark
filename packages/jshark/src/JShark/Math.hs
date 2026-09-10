@@ -34,9 +34,11 @@ import JShark.Api.Rec (Rec (..))
 import JShark.Api.Types
 import Prelude hiding (atan2, floor, max, min, round)
 
+-- | @x + 1@.
 inc :: Expr f ('Function 'Number 'Number)
 inc = lambda (+ 1)
 
+-- | @x - 1@.
 dec :: Expr f ('Function 'Number 'Number)
 dec = lambda (\x -> x - 1)
 

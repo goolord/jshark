@@ -222,7 +222,10 @@ cabal run exe:jshark-examples  # serves the examples at http://localhost:3000
 `cabal run exe:jshark-examples -- export DIR` writes a static copy of the site,
 which is how GitHub Pages is updated on `master`. `scripts/check-wasm.sh`
 rebuilds the vendored HVM2 WASM and compile-checks the Life example's Zig
-kernels.
+kernels. Two more helper scripts live in `scripts/`:
+`profile-life.sh` drives a Chrome headless-profiling run of the Life
+example, and `capture-example-screenshots.sh` regenerates the tracked
+`examples/static/img/*.png` screenshots used by the site.
 
 A Nix shell pins the whole toolchain (GHC, cabal, LLVM 20, bun, zig, Biome,
 Fourmolu, esbuild): `nix develop`.

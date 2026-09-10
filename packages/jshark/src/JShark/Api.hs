@@ -340,6 +340,8 @@ isUnparenthesizedArrow s =
     (_, '=' : '>' : _) -> True
     _ -> False
 
+-- | Call @object.method(args...)@ — the receiver is an
+-- Effect handle (e.g. a DOM element), the method a free-text name.
 callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
 callMethod o n = CallMethod o (T.pack n)
 
@@ -350,6 +352,8 @@ assign dst src = do
   toSyntax_ $ ffi "Object.assign" (ArgEffect dst <: ArgEffect src <: RecNil)
   done
 
+-- | Lift an Expr into effect position: @x + 1@ stays pure,
+-- @expr (x + 1)@ can appear where an Effect is expected.
 expr :: Expr f u -> Effect f u
 expr = Lift
 
@@ -383,6 +387,8 @@ applyNamed2 ::
   -> Expr f r
 applyNamed2 f x y = expr3 FixCall2 f x y
 
+-- | Re-embed a reified value (an EffectSyntax bind result) as an
+-- expression: @x <- toSyntax e; ... (var x + 1)@.
 var :: f u -> Expr f u
 var = Var
 
@@ -405,6 +411,8 @@ namedLambdaRow ::
   -> Expr f fn
 namedLambdaRow = namedLambdaFromRow
 
+-- | An Effect-valued function value: the body may bind and
+-- sequence effects; the last value becomes the @return@.
 lambdaE :: (Effect f u -> Effect f v) -> Effect f ('Function u v)
 lambdaE f = LambdaE (\x -> f (Lift (var x)))
 
@@ -430,6 +438,7 @@ loop0 rec body =
       (\f -> lambdaE (\_ -> stmts (rec f)))
       (\f -> stmts (body f))
 
+-- | A JS number literal (IEEE double).
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
 {-# INLINE number #-}
@@ -438,6 +447,7 @@ number = Literal . ValueNumber
 bigInt :: Integer -> Expr f 'BigInt
 bigInt = Literal . ValueBigInt
 
+-- | A JS boolean literal.
 bool :: Bool -> Expr f 'Bool
 bool = Literal . ValueBool
 {-# INLINE bool #-}
@@ -448,6 +458,7 @@ false_ = bool False
 {-# INLINE true_ #-}
 {-# INLINE false_ #-}
 
+-- | A JS string literal.
 string :: Text -> Expr f 'String
 string = Literal . ValueString
 {-# INLINE string #-}
@@ -491,6 +502,8 @@ u8Copy dst src =
 u8Len :: Expr f 'Uint8Array -> Expr f 'Number
 u8Len = expr1 FixU8Len
 
+-- | @for (let i = start; i < end; i++) body@ — the loop index is
+-- a number; the body is an Effect.
 forRange ::
   Expr f 'Number
   -> Expr f 'Number
@@ -517,6 +530,8 @@ arrayCallback ::
 arrayCallback name arr f =
   callMethod (expr arr) name (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
 
+-- | @arr.forEach(x => body)@ — iterate an array for effect; the
+-- callback is inlined.
 forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
 forEach = arrayCallback "forEach"
 
@@ -529,12 +544,16 @@ forEach_ arr f = toSyntax $ forEach arr (\x -> stmts (f x))
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
+-- | Const-bind inside a pure expression. Single-use lets inline;
+-- multi-use lets stay named, and the binder keeps the Haskell name of
+-- the enclosing function under readableConfig.
 let_ :: HasCallStack => Expr f u -> (Expr f u -> Expr f v) -> Expr f v
 let_ (Literal v) f = f (Literal v)
 let_ (Var x) f = f (Var x)
 let_ e f = Let (callerBinderHint) e (\x -> f (var x))
 {-# NOINLINE let_ #-}
 
+-- | The conditional operator @c ? t : e@ on pure values.
 if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ (Literal (ValueBool True)) t _ = t
 if_ (Literal (ValueBool False)) _ e = e
@@ -557,28 +576,39 @@ stringCaseE = StringCaseE
 discard :: Effect f u -> Effect f 'Unit
 discard e = ThenE e noOp
 
+-- | Run an effect only when the (effectful) condition holds —
+-- @if (c) { body }@.
 when_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
 when_ c t = IfE c (discard t) noOp
 
+-- | @while (c) { body }@ with effectful condition and body.
 while_ :: Effect f 'Bool -> Effect f 'Unit -> Effect f 'Unit
 while_ = While
 
+-- | @try { a } catch (e) { b }@ — both arms share the result type;
+-- the caught value stays unnamed.
 try_ :: Effect f u -> Effect f u -> Effect f u
 try_ a b = Try a (\_ -> b)
 
 catch_ :: Effect f u -> (Expr f 'String -> Effect f u) -> Effect f u
 catch_ a k = Try a (\e -> k (var e))
 
+-- | @throw msg@ — never returns; the result type is free.
 throw_ :: Expr f 'String -> Effect f v
 throw_ = Throw
 
+-- | Wrap a value: JS @null@ means missing, so @some x@ is just
+-- @x@ and none is @null@ (see fromOption).
 some :: Expr f u -> Expr f ('Option u)
 some (Literal v) = Literal (ValueOption (Just v))
 some x = UnsafeNullable x
 
+-- | The missing option: JS @null@.
 none :: Expr f ('Option u)
 none = Literal (ValueOption Nothing)
 
+-- | Branch on an Option in expression position:
+-- @o === null ? n : some@-style ternary.
 optionCase ::
   Expr f ('Option u) -> Expr f v -> (Expr f u -> Expr f v) -> Expr f v
 optionCase opt noneBranch someBranch = OptionCase opt noneBranch (\x -> someBranch (var x))
@@ -590,20 +620,25 @@ optionCaseE opt noneBranch someBranch = OptionCaseE opt noneBranch (\x -> someBr
 unsafeNullable :: Expr f u -> Expr f ('Option u)
 unsafeNullable = UnsafeNullable
 
+-- | @o ?? d@ — the option if present, the default otherwise.
 orElse :: Expr f ('Option u) -> Expr f u -> Expr f u
 orElse o d = optionCase o d id
 
 fromOption :: Expr f u -> Expr f ('Option u) -> Expr f u
 fromOption = flip orElse
 
+-- | The success side of a Result: @{ok: true, value: a}@.
 ok :: Expr f a -> Expr f ('Result e a)
 ok (Literal v) = Literal (ValueResult (Right v))
 ok x = ResultOk x
 
+-- | The failure side of a Result: @{ok: false, value: e}@.
 err :: Expr f e -> Expr f ('Result e a)
 err (Literal v) = Literal (ValueResult (Left v))
 err x = ResultErr x
 
+-- | Branch on a Result in expression position, reading @.ok@
+-- and unwrapping @.value@.
 resultCase ::
   Expr f ('Result e a)
   -> (Expr f e -> Expr f v)
