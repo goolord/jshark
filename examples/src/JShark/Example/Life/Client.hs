@@ -9,6 +9,7 @@
 
 module JShark.Example.Life.Client (mainJS) where
 
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, toObject)
@@ -1107,7 +1108,7 @@ wheelZoomFactor deltaY =
     ( toSyntax
         ( ffi
             ( "(d) => Math.exp(-d * "
-                <> show wheelZoomRate
+                <> T.pack (show wheelZoomRate)
                 <> ")"
             )
             (arg deltaY <: RecNil)

@@ -318,32 +318,32 @@ onClick_ el body = onClick el $ \_ -> stmts body
 -- | Raw JS call. Codegen appends @(...)@ for the argument list; with
 --   'RecNil' that is a trailing @()@ (e.g. @performance.now@ →
 --   @performance.now()@). Parenthesized callees (IIFEs) stay 'FFICall'.
-ffi :: String -> Rec (Arg f) us -> Effect f v
+ffi :: Text -> Rec (Arg f) us -> Effect f v
 ffi s = FFI (classifyFFI s)
 
 -- | Raw JS expression. With 'RecNil', codegen emits the string as-is (no
 --   trailing @()@). Use for comparisons, @typeof@, property reads, etc.
-ffiExpr :: String -> Rec (Arg f) us -> Effect f v
-ffiExpr s = FFI (FFIExpr (T.pack s))
+ffiExpr :: Text -> Rec (Arg f) us -> Effect f v
+ffiExpr s = FFI (FFIExpr s)
 
 -- | Classify a string for 'ffi'. Unparenthesized arrows become 'FFILambda';
 --   everything else (including parenthesized IIFEs) becomes 'FFICall'.
-classifyFFI :: String -> FFIForm
-classifyFFI s@('(' : _) = FFICall (T.pack s)
+classifyFFI :: Text -> FFIForm
 classifyFFI s
-  | isUnparenthesizedArrow s = FFILambda (T.pack s)
-  | otherwise = FFICall (T.pack s)
+  | T.head s == '(' = FFICall s
+  | isUnparenthesizedArrow s = FFILambda s
+  | otherwise = FFICall s
 
-isUnparenthesizedArrow :: String -> Bool
+isUnparenthesizedArrow :: Text -> Bool
 isUnparenthesizedArrow s =
-  case break (== '=') s of
-    (_, '=' : '>' : _) -> True
-    _ -> False
+  case T.findIndex (== '=') s of
+    Just i -> T.length s > i + 1 && T.index s (i + 1) == '>'
+    Nothing -> False
 
 -- | Call @object.method(args...)@ — the receiver is an
 -- Effect handle (e.g. a DOM element), the method a free-text name.
-callMethod :: Effect f object -> String -> Rec (Arg f) us -> Effect f u
-callMethod o n = CallMethod o (T.pack n)
+callMethod :: Effect f object -> Text -> Rec (Arg f) us -> Effect f u
+callMethod o n = CallMethod o n
 
 -- | @Object.assign(dst, src)@. In-place copy; @dst@ keeps its identity
 -- (needed when a closure already captured @dst@).
@@ -526,7 +526,7 @@ toString = Show
 
 -- | @arr.method(function(x){…})@ with an 'Effect' callback.
 arrayCallback ::
-  String -> Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f w
+  Text -> Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f w
 arrayCallback name arr f =
   callMethod (expr arr) name (ArgEffect (LambdaE (\x -> f (var x))) <: RecNil)
 
@@ -891,13 +891,13 @@ hvm2Kernel name k = Hvm2Kernel name k
 loadHvm2Wasm :: Expr f 'String -> EffectSyntax f ()
 loadHvm2Wasm url = toSyntax_ $ ffi hvm2LoadWasmFFI (arg url <: RecNil)
 
-hvm2LoadWasmFFI :: String
+hvm2LoadWasmFFI :: Text
 hvm2LoadWasmFFI =
   "url=>(async()=>{"
-    ++ "if(!globalThis.WebAssembly)throw new Error(\"WebAssembly unavailable\");"
-    ++ "const r=await fetch(url);"
-    ++ "if(!r.ok)throw new Error(\"HVM2 wasm fetch failed: \"+url);"
-    ++ "const b=await r.arrayBuffer();"
-    ++ "const{instance:i}=await WebAssembly.instantiate(b,{});"
-    ++ "globalThis.__jsharkHvm2={exports:i.exports}"
-    ++ "})()"
+    <> "if(!globalThis.WebAssembly)throw new Error(\"WebAssembly unavailable\");"
+    <> "const r=await fetch(url);"
+    <> "if(!r.ok)throw new Error(\"HVM2 wasm fetch failed: \"+url);"
+    <> "const b=await r.arrayBuffer();"
+    <> "const{instance:i}=await WebAssembly.instantiate(b,{});"
+    <> "globalThis.__jsharkHvm2={exports:i.exports}"
+    <> "})()"

@@ -28,6 +28,7 @@ module JShark.Example.Life.Pixi
   )
 where
 
+import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
@@ -49,7 +50,7 @@ lifeCellShaderUrl :: T.Text
 lifeCellShaderUrl = "js/shaders/cell.frag.glsl"
 
 -- | Fetch @cell.frag.glsl@ once; cached on @viewport.cellFragSrc@.
-prefetchLifeShaderJs :: String
+prefetchLifeShaderJs :: Text
 prefetchLifeShaderJs =
   "(viewport, url) => (async () => {"
     <> " if (viewport.cellFragSrc) return;"
@@ -77,7 +78,7 @@ pixiAvailable =
 --   Linux switch GPU process after the first context is created; Pixi then
 --   logs "WebGL context was lost" and we fall back to the 2D atlas blit.
 --   @default@ keeps the context on whatever GPU created it.
-newAppJs :: String
+newAppJs :: Text
 newAppJs =
   " const app = new PIXI.Application({"
     <> "   view, width, height, backgroundColor,"
@@ -105,7 +106,7 @@ newAppJs =
 
 -- | Drop onion-skin atlas RT while its creating renderer is still alive.
 --   Expects @viewport@.
-destroyPersistJs :: String
+destroyPersistJs :: Text
 destroyPersistJs =
   " if (viewport.atlasPrev && viewport.atlasPrev.destroy) {"
     <> "   try { viewport.atlasPrev.destroy(true); } catch (_) {}"
@@ -120,7 +121,7 @@ destroyPersistJs =
 
 -- | Build Pixi filter from @viewport.cellFragSrc@ (see 'prefetchLifeShader').
 --   Expects @app@, @viewport@, @sprite@, @currTex@, @texW@, @texH@, @bgHex@.
-installShaderJs :: String
+installShaderJs :: Text
 installShaderJs =
   " viewport.lifeShader = 0;"
     <> " var prevPrec;"
@@ -134,10 +135,10 @@ installShaderJs =
     <> " prevPrec = PIXI.settings.PRECISION_FRAGMENT;"
     <> " PIXI.settings.PRECISION_FRAGMENT = 'highp';"
     <> " const viewW = (app.renderer && app.renderer.width) || "
-    <> show (round canvasW :: Int)
+    <> T.pack (show (round canvasW :: Int))
     <> ";"
     <> " const viewH = (app.renderer && app.renderer.height) || "
-    <> show (round canvasH :: Int)
+    <> T.pack (show (round canvasH :: Int))
     <> ";"
     <> " let scratch = viewport._glScratch;"
     <> " if (!scratch) {"
@@ -205,7 +206,7 @@ installShaderJs =
 
 -- | Hot path: two-frame onion skin, outside glow SDF, then stage present.
 --   Expects @app@, @viewport@, @currTex@, @now@, @upload@, @stageDirty@.
-presentGridJs :: String
+presentGridJs :: Text
 presentGridJs =
   " if (!app || !app.renderer) return;"
     <> " if (app.renderer.gl && app.renderer.gl.isContextLost"

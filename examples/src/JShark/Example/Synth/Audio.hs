@@ -171,7 +171,7 @@ compressor :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 compressor = create "createDynamicsCompressor"
 
 create ::
-  IsCtx f a => String -> a -> EffectSyntax f (Expr f ('MutableObject Node))
+  IsCtx f a => Text -> a -> EffectSyntax f (Expr f ('MutableObject Node))
 create method ctx =
   fmap var (toSyntax (callMethod (ctxOf ctx) method RecNil))
 
@@ -296,7 +296,7 @@ scheduleAdsr amp t0 atk dec sus peak minAmp =
         )
     )
 
-scheduleAdsrJs :: String
+scheduleAdsrJs :: Text
 scheduleAdsrJs =
   "(amp,t0,atk,dec,sus,peak,floor)=>{"
     <> "const a=Math.max(0.001,atk),d=Math.max(0.001,dec);"
@@ -344,7 +344,7 @@ releaseVoice amp osc now rel minAmp t0 atk dec sus peak =
         )
     )
 
-releaseVoiceJs :: String
+releaseVoiceJs :: Text
 releaseVoiceJs =
   "(amp,osc,now,rel,floor,t0,atk,dec,sus,peak)=>{"
     <> "const r=Math.max(0.001,rel),a=Math.max(0.001,atk),d=Math.max(0.001,dec);"

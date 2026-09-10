@@ -18,12 +18,13 @@ module JShark.Timers
 where
 
 import Control.Monad (void)
+import Data.Text (Text)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 
 callbackFFI ::
-  String
+  Text
   -> Rec (Arg f) us
   -> (Expr f u -> Effect f a)
   -> EffectSyntax f (Expr f v)
@@ -32,7 +33,7 @@ callbackFFI name extra handler =
     ffi name (ArgEffect (LambdaE (\x -> handler (var x))) <: extra)
 
 timerCall ::
-  String
+  Text
   -> (Expr f 'Unit -> Effect f a)
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number)

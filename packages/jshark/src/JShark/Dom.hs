@@ -74,7 +74,7 @@ lookupSelector ::
 lookupSelector x = hold $ ffi "document.querySelectorAll" (arg x <: RecNil)
 
 classOp ::
-  String
+  Text
   -> Effect f ('MutableObject DomElement)
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)

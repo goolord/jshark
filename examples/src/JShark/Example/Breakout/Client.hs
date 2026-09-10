@@ -346,8 +346,8 @@ drawHud ctx state meter = do
     bindExpr $
       ffi
         ( "(fps,ms)=>"
-            ++ "'FPS '+String(Math.round(fps)).padStart(3,'\\u00a0')"
-            ++ "+' ('+String(Math.round(ms)).padStart(4,'\\u00a0')+'ms)'"
+            <> "'FPS '+String(Math.round(fps)).padStart(3,'\\u00a0')"
+            <> "+' ('+String(Math.round(ms)).padStart(4,'\\u00a0')+'ms)'"
         )
         (arg n <: arg ms <: RecNil)
   livesTxt <-

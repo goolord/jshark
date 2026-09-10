@@ -9,7 +9,6 @@ module JShark.Example.Life.EngineFinish
   )
 where
 
-import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
 import JShark.Api.Rec (Rec (..), (<:))
@@ -73,7 +72,7 @@ finishStep
         ffi
           ( "(function(a,sp,na,ns,ga,gb,L,w,h,x0,y0,x1,y1,live,changed,sc){"
               <> "var api="
-              <> T.unpack lifeLutGlobalJs
+              <> lifeLutGlobalJs
               <> ";"
               <> "if(!api||typeof api.finishStep!=='function')return 0;"
               <> "return api.finishStep("

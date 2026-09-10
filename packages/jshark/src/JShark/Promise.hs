@@ -10,6 +10,7 @@ module JShark.Promise
   )
 where
 
+import Data.Text (Text)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
@@ -17,7 +18,7 @@ import JShark.Api.Types
 data Promise (u :: Universe)
 
 promiseMethod ::
-  String
+  Text
   -> Effect f ('MutableObject (Promise u))
   -> (f u -> Effect f v)
   -> EffectSyntax f (f v)

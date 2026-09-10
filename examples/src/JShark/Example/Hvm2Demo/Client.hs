@@ -10,6 +10,7 @@
 -- | Mandelbrot zoom canvas driven by pure 'Kernels' and HVM2 WASM.
 module JShark.Example.Hvm2Demo.Client (mainJS) where
 
+import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
@@ -72,100 +73,100 @@ data LabState = LabState
   }
   deriving Generic
 
-wasmLoaderFFI :: String
+wasmLoaderFFI :: Text
 wasmLoaderFFI =
   "(url,workerUrl)=>{"
-    ++ "const load=globalThis.__jsharkHvm2Load;"
-    ++ "if(typeof load!=='function'){"
-    ++ "return Promise.reject(new Error('HVM2 loader missing (hvm2-wasm.js)'));"
-    ++ "}"
-    ++ "return load(url,workerUrl);"
-    ++ "}"
+    <> "const load=globalThis.__jsharkHvm2Load;"
+    <> "if(typeof load!=='function'){"
+    <> "return Promise.reject(new Error('HVM2 loader missing (hvm2-wasm.js)'));"
+    <> "}"
+    <> "return load(url,workerUrl);"
+    <> "}"
 
-initMandelJsFFI :: String
+initMandelJsFFI :: Text
 initMandelJsFFI =
-  "()=>{globalThis.__jsharkMandelJs=" ++ mandelJsSource ++ "}"
+  "()=>{globalThis.__jsharkMandelJs=" <> T.pack mandelJsSource <> "}"
 
-gridBackendLabelFFI :: String
+gridBackendLabelFFI :: Text
 gridBackendLabelFFI =
   "(mode)=>{"
-    ++ "const b=globalThis.__jsharkGridBackend||'js';"
-    ++ "const m=mode|0;"
-    ++ "const h=globalThis.__jsharkHvm2;"
-    ++ "let s;"
-    ++ "if(m===0){"
-    ++ "s=b==='js'?'JS ref':'JS ref (unexpected '+b+')';"
-    ++ "}else if(m===1){"
-    ++ "if(b==='wasm-simd')s='WASM SIMD';"
-    ++ "else if(b==='wasm-scalar')s='WASM requested · scalar fallback';"
-    ++ "else if(b==='wasm-simd-fail')s='WASM requested · grid failed';"
-    ++ "else s='WASM requested · JS fallback';"
-    ++ "}else{"
-    ++ "if(b==='hvm2')s='HVM2 net (f24)';"
-    ++ "else if(b==='hvm2-pending')s='HVM2 net · live JS';"
-    ++ "else if(b==='hvm2-fail:no-export')s='export missing';"
-    ++ "else if(b==='hvm2-fail:trap')s='wasm trap (OOB)';"
-    ++ "else if(b==='hvm2-fail:zero'){"
-    ++ "const lk=globalThis.__jsharkHvm2LastK??0;"
-    ++ "if(lk===-11)s='boot failed (book)';"
-    ++ "else if(lk===-12)s='boot failed (net)';"
-    ++ "else if(lk===-15)s='wasm trap (OOB)';"
-    ++ "else if(lk===-2)s='def jshark_grid missing';"
-    ++ "else if(lk===-13)s='normalize stuck';"
-    ++ "else if(lk===-14)s='normalize budget';"
-    ++ "else if(lk>0&&lk<999999)s='grid incomplete ('+lk+' cells)';"
-    ++ "else s='grid returned 0';"
-    ++ "}"
-    ++ "else if(b==='wasm-scalar')s='wasm scalar fallback';"
-    ++ "else s='JS fallback';"
-    ++ "}"
-    ++ "if(h?.loadNote)s+=' · '+h.loadNote;"
-    ++ "const gt=globalThis.__jsharkHvm2GridThreads|0;"
-    ++ "if(m===2&&gt>0)s+=' · '+gt+' workers';"
-    ++ "return s;"
-    ++ "}"
+    <> "const b=globalThis.__jsharkGridBackend||'js';"
+    <> "const m=mode|0;"
+    <> "const h=globalThis.__jsharkHvm2;"
+    <> "let s;"
+    <> "if(m===0){"
+    <> "s=b==='js'?'JS ref':'JS ref (unexpected '+b+')';"
+    <> "}else if(m===1){"
+    <> "if(b==='wasm-simd')s='WASM SIMD';"
+    <> "else if(b==='wasm-scalar')s='WASM requested · scalar fallback';"
+    <> "else if(b==='wasm-simd-fail')s='WASM requested · grid failed';"
+    <> "else s='WASM requested · JS fallback';"
+    <> "}else{"
+    <> "if(b==='hvm2')s='HVM2 net (f24)';"
+    <> "else if(b==='hvm2-pending')s='HVM2 net · live JS';"
+    <> "else if(b==='hvm2-fail:no-export')s='export missing';"
+    <> "else if(b==='hvm2-fail:trap')s='wasm trap (OOB)';"
+    <> "else if(b==='hvm2-fail:zero'){"
+    <> "const lk=globalThis.__jsharkHvm2LastK??0;"
+    <> "if(lk===-11)s='boot failed (book)';"
+    <> "else if(lk===-12)s='boot failed (net)';"
+    <> "else if(lk===-15)s='wasm trap (OOB)';"
+    <> "else if(lk===-2)s='def jshark_grid missing';"
+    <> "else if(lk===-13)s='normalize stuck';"
+    <> "else if(lk===-14)s='normalize budget';"
+    <> "else if(lk>0&&lk<999999)s='grid incomplete ('+lk+' cells)';"
+    <> "else s='grid returned 0';"
+    <> "}"
+    <> "else if(b==='wasm-scalar')s='wasm scalar fallback';"
+    <> "else s='JS fallback';"
+    <> "}"
+    <> "if(h?.loadNote)s+=' · '+h.loadNote;"
+    <> "const gt=globalThis.__jsharkHvm2GridThreads|0;"
+    <> "if(m===2&&gt>0)s+=' · '+gt+' workers';"
+    <> "return s;"
+    <> "}"
 
-gridBackendFallbackFFI :: String
+gridBackendFallbackFFI :: Text
 gridBackendFallbackFFI =
   "(mode)=>{"
-    ++ "const b=globalThis.__jsharkGridBackend||'js';"
-    ++ "const m=mode|0;"
-    ++ "if(m===2)return b!=='hvm2'&&b!=='hvm2-pending';"
-    ++ "if(m===1)return b!=='wasm-simd';"
-    ++ "return b!=='js';"
-    ++ "}"
+    <> "const b=globalThis.__jsharkGridBackend||'js';"
+    <> "const m=mode|0;"
+    <> "if(m===2)return b!=='hvm2'&&b!=='hvm2-pending';"
+    <> "if(m===1)return b!=='wasm-simd';"
+    <> "return b!=='js';"
+    <> "}"
 
-updateMetricsFFI :: String
+updateMetricsFFI :: Text
 updateMetricsFFI =
   "(k,f,fps,fn,sc,re,im,bk,err,warn)=>{"
-    ++ "const fix=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
-    ++ "fix('"
-    ++ T.unpack metricKernelId
-    ++ "',Number(k).toFixed(1));"
-    ++ "fix('"
-    ++ T.unpack metricFrameMsId
-    ++ "',Number(f).toFixed(1));"
-    ++ "fix('"
-    ++ T.unpack metricFpsId
-    ++ "',String(Math.round(fps)).padStart(3,'\\u00a0'));"
-    ++ "fix('"
-    ++ T.unpack metricFrameNumId
-    ++ "',String(Math.trunc(fn)).padStart(5,'\\u00a0'));"
-    ++ "fix('"
-    ++ T.unpack metricScaleId
-    ++ "',Number(sc).toExponential(3));"
-    ++ "fix('"
-    ++ T.unpack metricCenterId
-    ++ "',Number(re).toFixed(6)+'+'+Number(im).toFixed(6)+'i');"
-    ++ "const be=document.getElementById('"
-    ++ T.unpack metricBackendId
-    ++ "');"
-    ++ "if(be){"
-    ++ "be.textContent=bk;"
-    ++ "be.classList.toggle('error',!!err);"
-    ++ "be.classList.toggle('warn',!!warn&&!err);"
-    ++ "}"
-    ++ "}"
+    <> "const fix=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};"
+    <> "fix('"
+    <> metricKernelId
+    <> "',Number(k).toFixed(1));"
+    <> "fix('"
+    <> metricFrameMsId
+    <> "',Number(f).toFixed(1));"
+    <> "fix('"
+    <> metricFpsId
+    <> "',String(Math.round(fps)).padStart(3,'\\u00a0'));"
+    <> "fix('"
+    <> metricFrameNumId
+    <> "',String(Math.trunc(fn)).padStart(5,'\\u00a0'));"
+    <> "fix('"
+    <> metricScaleId
+    <> "',Number(sc).toExponential(3));"
+    <> "fix('"
+    <> metricCenterId
+    <> "',Number(re).toFixed(6)+'+'+Number(im).toFixed(6)+'i');"
+    <> "const be=document.getElementById('"
+    <> metricBackendId
+    <> "');"
+    <> "if(be){"
+    <> "be.textContent=bk;"
+    <> "be.classList.toggle('error',!!err);"
+    <> "be.classList.toggle('warn',!!warn&&!err);"
+    <> "}"
+    <> "}"
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
@@ -270,7 +271,7 @@ wireControls modeWasm modeHvm2 modeJs benchBtn canvas resSelect pauseBtn st stat
       ffi
         ( "(st,wasm,hvm2,js)=>{"
             <> "const m="
-            <> show (m :: Int)
+            <> T.pack (show (m :: Int))
             <> ";"
             <> "if(m>0&&!st.labWasmReady)return;"
             <> "st.labMode=m;"
@@ -480,7 +481,7 @@ blitGrid ctx grid blocksX blocksY blk w h = do
     ffi
       ( "(ctx,grid,bxN,byN,blk,w,h)=>{"
           <> "const max="
-          <> show maxIter
+          <> T.pack (show maxIter)
           <> ";"
           <> "const img=ctx.createImageData(w,h);"
           <> "const d=img.data;"
@@ -748,9 +749,9 @@ benchCompare cr ci scale w h =
   ffi
     ( "(cr,ci,scale,w,h)=>{"
         <> "const blk="
-        <> show blockPx
+        <> T.pack (show blockPx)
         <> ",reps="
-        <> show benchReps
+        <> T.pack (show benchReps)
         <> ";"
         <> "const bxN=Math.floor(w/blk),byN=Math.floor(h/blk);"
         <> "const js=globalThis.__jsharkMandelJs;"
@@ -802,7 +803,7 @@ benchHvm2Grid cr ci scale w h =
         <> "const bench=globalThis.__jsharkHvm2BenchGrid;"
         <> "if(typeof bench!=='function')return Promise.resolve(-1);"
         <> "const blk="
-        <> show blockPx
+        <> T.pack (show blockPx)
         <> ";"
         <> "const bxN=Math.floor(w/blk),byN=Math.floor(h/blk);"
         <> "return bench({centerRe:cr,centerIm:ci,scale,w,h,blk,bxN,byN});"

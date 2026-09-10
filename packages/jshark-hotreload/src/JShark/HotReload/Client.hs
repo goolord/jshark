@@ -53,8 +53,8 @@ hotStateGet key =
   bindExpr $
     ffiExpr
       ( "(window.__JSHARK_HOT_STATE__&&window.__JSHARK_HOT_STATE__["
-          ++ show (T.unpack key)
-          ++ "])"
+          <> T.pack (show key)
+          <> "])"
       )
       RecNil
 
@@ -64,7 +64,7 @@ hotStateSet key value = do
   toSyntax_ $
     ffi
       ( "(function(k,v){window.__JSHARK_HOT_STATE__=window.__JSHARK_HOT_STATE__||{};"
-          ++ "window.__JSHARK_HOT_STATE__[k]=v;})"
+          <> "window.__JSHARK_HOT_STATE__[k]=v;})"
       )
       (arg (string key) <: arg value <: RecNil)
   done
@@ -81,8 +81,8 @@ hotState key mkInitial = do
     bindExpr $
       ffi
         ( "(function(k,mk){var S=window.__JSHARK_HOT_STATE__="
-            ++ "window.__JSHARK_HOT_STATE__||{};"
-            ++ "if(S[k]==null)S[k]=mk();return S[k];})"
+            <> "window.__JSHARK_HOT_STATE__||{};"
+            <> "if(S[k]==null)S[k]=mk();return S[k];})"
         )
         ( arg (string key)
             <: ArgEffect

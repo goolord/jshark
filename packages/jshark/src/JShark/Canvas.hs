@@ -40,6 +40,7 @@ module JShark.Canvas
   )
 where
 
+import Data.Text (Text)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
@@ -122,18 +123,18 @@ setCanvasHeight el n = setProp el "height" n
 
 ctxCall ::
   Effect f ('MutableObject Context2D)
-  -> String
+  -> Text
   -> Rec (Arg f) us
   -> EffectSyntax f (f 'Unit)
 ctxCall ctx name args = toSyntax $ callMethod ctx name args
 
 ctxCall0 ::
-  Effect f ('MutableObject Context2D) -> String -> EffectSyntax f (f 'Unit)
+  Effect f ('MutableObject Context2D) -> Text -> EffectSyntax f (f 'Unit)
 ctxCall0 ctx name = ctxCall ctx name RecNil
 
 call2 ::
   Effect f ('MutableObject Context2D)
-  -> String
+  -> Text
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
@@ -141,7 +142,7 @@ call2 ctx name x y = ctxCall ctx name (arg x <: arg y <: RecNil)
 
 call3 ::
   Effect f ('MutableObject Context2D)
-  -> String
+  -> Text
   -> Expr f a
   -> Expr f b
   -> Expr f c
@@ -150,7 +151,7 @@ call3 ctx name a b c = ctxCall ctx name (arg a <: arg b <: arg c <: RecNil)
 
 call4 ::
   Effect f ('MutableObject Context2D)
-  -> String
+  -> Text
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
