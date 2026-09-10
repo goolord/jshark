@@ -1,9 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
@@ -298,16 +298,13 @@ irNodeChildren = \case
 data SomeIrValue where
   SomeIrValue :: Value u -> SomeIrValue
 
-pattern IrLiteral :: Value u -> IrNode
-pattern IrLiteral v = IrLiteralWrap (SomeIrValue v)
-
 -- | A 'FixedOp' with its universes hidden (the flat IR keeps the GADT; the
 -- untyped tree only needs it as an opaque opcode payload).
 data SomeFixedOp where
   SomeFixedOp :: FixedOp a b c u -> SomeFixedOp
 
 data IrNode
-  = IrLiteralWrap !SomeIrValue
+  = forall u. IrLiteral (Value u)
   | IrVar !Int
   | IrLet !Int !(Maybe Text) !IrNode !IrNode
   | IrLetRec !Int !IrNode !IrNode
@@ -383,88 +380,6 @@ data IrNode
   | IrDeleteProp !IrNode !IrNode
   | IrArrayLit ![IrNode]
 
--- | 'IrLiteral' (a pattern synonym over the hidden-value wrapper) plus every
--- real constructor covers 'IrNode'; without this the checker sees the
--- internal 'IrLiteralWrap' as unmatched in consumer cases.
-{-# COMPLETE
-  IrLiteral
-  , IrVar
-  , IrLet
-  , IrLetRec
-  , IrLambda
-  , IrApply
-  , IrIf
-  , IrOptionCase
-  , IrResultOk
-  , IrResultErr
-  , IrResultCase
-  , IrIndex
-  , IrU8Index
-  , IrError
-  , IrFixed
-  , IrFnLit
-  , IrUnsafeNullable
-  , IrFrozenLit
-  , IrGetField
-  , IrHvm2Ref
-  , KConcat
-  , KPlus
-  , KTimes
-  , KMinus
-  , KNegate
-  , KFracDiv
-  , KRem
-  , KBitAnd
-  , KBitOr
-  , KBitXor
-  , KShl
-  , KShr
-  , KUShr
-  , KBig
-  , KBigNeg
-  , KAnd
-  , KOr
-  , KEq
-  , KNEq
-  , KGTh
-  , KLTh
-  , KGTEq
-  , KLTEq
-  , KShow
-  , KTypeOf
-  , IrMethMap
-  , IrMethFilter
-  , IrMethReduce
-  , IrMethReduceRight
-  , IrMethToSorted
-  , IrMethFrom
-  , IrLift
-  , IrFFI
-  , IrUnsafeObject
-  , IrUnsafeObjectGet
-  , IrUnsafeObjectAssign
-  , IrCallMethod
-  , IrBind
-  , IrThenE
-  , IrBindRec
-  , IrLambdaE
-  , IrApplyE
-  , IrIfE
-  , IrWhile
-  , IrForRange
-  , IrU8Set
-  , IrU8Fill
-  , IrOptionCaseE
-  , IrResultCaseE
-  , IrStringCaseE
-  , IrThrow
-  , IrTry
-  , IrObjectLit
-  , IrDeleteProp
-  , IrArrayLit ::
-    IrNode
-  #-}
-
 -- | Structural metadata. Every child contributes, including the lazy
 -- ones: a free variable that occurs only inside a lambda body, a @?:@
 -- arm, or an FFI argument is still a use, and substitution keys its
@@ -501,7 +416,7 @@ metaIr !node = case node of
 -- child, lazy or not, contributes once.
 childMeta :: IrNode -> IrMeta
 childMeta node = case node of
-  IrLiteralWrap _ -> mempty
+  IrLiteral _ -> mempty
   IrVar {} -> mempty
   IrLet _ _ x g -> metaIr x <> metaIr g
   IrLetRec _ r b -> metaIr r <> metaIr b
@@ -587,7 +502,7 @@ occursIr !t node = case node of
 
 anyOccurs :: Int -> IrNode -> P.Bool
 anyOccurs !t = \case
-  IrLiteralWrap _ -> False
+  IrLiteral _ -> False
   IrVar {} -> False
   IrLet _ _ x g -> occursIr t x P.|| occursIr t g
   IrLetRec _ r b -> occursIr t r P.|| occursIr t b
@@ -676,7 +591,7 @@ lazyOccursIr !t node = case node of
 
 lazyChildren :: Int -> IrNode -> P.Bool
 lazyChildren !t = \case
-  IrLiteralWrap _ -> False
+  IrLiteral _ -> False
   IrVar {} -> False
   -- Strict positions recurse lazily; lazy positions count any use.
   IrLet _ _ x g -> lazyOccursIr t x P.|| lazyOccursIr t g
@@ -759,7 +674,7 @@ lazyChildren !t = \case
 -- and names are left untouched.
 rebuildIr :: (IrNode -> IrNode) -> IrNode -> IrNode
 rebuildIr f node = case node of
-  IrLiteralWrap _ -> node
+  IrLiteral _ -> node
   IrVar {} -> node
   IrLet t h x g -> IrLet t h (f x) (f g)
   IrLetRec t r b -> IrLetRec t (f r) (f b)

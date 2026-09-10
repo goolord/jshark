@@ -26,8 +26,8 @@ module JShark.Api.Generic
   , FieldU
   , GField
   , ViaGeneric
-  , ToJS (..)
   , ToValue (..)
+  , toJS
   , toObject
   , toObjectArray
   , newRecord
@@ -60,12 +60,10 @@ import GHC.TypeLits
   , type (+)
   )
 import JShark.Api
-  ( bool
-  , expr
+  ( expr
   , hold
   , ifE
   , none
-  , number
   , string
   , throw_
   , unsafeNullable
@@ -173,24 +171,19 @@ type family RowOfRep (a :: Type) (r :: Type -> Type) :: Type where
   RowOfRep a (_ :+: _) = Tagged a
   RowOfRep a _ = As a
 
--- | Host value as a pure 'Expr'. Primitives only; records use 'toObject'.
-class ToJS a where
-  toJS :: a -> Expr f (UniverseOf a)
+-- | Host value as a pure 'Expr'. Primitives and containers with a
+-- 'ToValue' instance; records use 'toObject'.
+toJS :: ToValue a => a -> Expr f (UniverseOf a)
+toJS = Literal . toValue
 
 -- | Host ↔ 'Value' for universes that 'evaluate' can inhabit.
-class ToJS a => ToValue a where
+class ToValue a where
   toValue :: a -> Value (UniverseOf a)
   fromValue :: Value (UniverseOf a) -> a
-
-instance ToJS Double where
-  toJS = number
 
 instance ToValue Double where
   toValue = ValueNumber
   fromValue (ValueNumber d) = d
-
-instance ToJS Float where
-  toJS = number . realToFrac
 
 instance ToValue Float where
   toValue = ValueNumber . realToFrac
@@ -199,64 +192,37 @@ instance ToValue Float where
 -- | IEEE 'Number'. Integers outside (-2^53, 2^53) round. 'fromValue'
 -- uses 'truncate' (toward 0), matching a host 'toJS' roundtrip, not
 -- JS ToInt32.
-instance ToJS Int where
-  toJS = number . fromIntegral
-
 instance ToValue Int where
   toValue = ValueNumber . fromIntegral
   fromValue (ValueNumber d) = truncate d
-
-instance ToJS Integer where
-  toJS = Literal . toValue
 
 instance ToValue Integer where
   toValue = ValueBigInt
   fromValue (ValueBigInt n) = n
 
-instance ToJS Text where
-  toJS = string
-
 instance ToValue Text where
   toValue = ValueString
   fromValue (ValueString s) = s
-
-instance ToJS Bool where
-  toJS = bool
 
 instance ToValue Bool where
   toValue = ValueBool
   fromValue (ValueBool b) = b
 
-instance ToJS () where
-  toJS _ = Literal ValueUnit
-
 instance ToValue () where
   toValue _ = ValueUnit
   fromValue ValueUnit = ()
-
-instance ToJS ByteArray where
-  toJS = Literal . toValue
 
 instance ToValue ByteArray where
   toValue = ValueUint8Array
   fromValue (ValueUint8Array ba) = ba
 
-instance ToValue a => ToJS [a] where
-  toJS = Literal . toValue
-
 instance ToValue a => ToValue [a] where
   toValue = ValueArray . map toValue
   fromValue (ValueArray xs) = map fromValue xs
 
-instance ToValue a => ToJS (Maybe a) where
-  toJS = Literal . toValue
-
 instance ToValue a => ToValue (Maybe a) where
   toValue = ValueOption . fmap toValue
   fromValue (ValueOption m) = fmap fromValue m
-
-instance (ToValue e, ToValue a) => ToJS (Either e a) where
-  toJS = Literal . toValue
 
 instance (ToValue e, ToValue a) => ToValue (Either e a) where
   toValue (Left e) = ValueResult (Left (toValue e))
