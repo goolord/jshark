@@ -1276,7 +1276,7 @@ packProgramDirect e = runST $ do
 optimizeFlatPack :: FlatSoA -> FlatSoA
 optimizeFlatPack soa0 =
   let
-    !(soa1, _folded) = optConstantFoldNumWithChanged soa0
+    !(soa1, _, _) = constantFoldWithStats soa0
    in
     soa1
 
@@ -1725,25 +1725,14 @@ soaSideLengthsEqual a b =
     && V.length (fsaLits a) == V.length (fsaLits b)
     && V.length (fsaFFIs a) == V.length (fsaFFIs b)
 
--- Sequential 'runST' scan. A parallel IO-per-node walk was ~100s on Life.
-optConstantFoldNumWithChanged :: FlatSoA -> (FlatSoA, Bool)
-optConstantFoldNumWithChanged soa =
-  let
-    (soa', _, folded) = constantFoldWithStats soa
-   in
-    (soa', folded)
-{-# NOINLINE optConstantFoldNumWithChanged #-}
-
+-- | Bottom-up numeric fold. Packing keeps children below parents and the
+-- scan runs in ascending id order, so a folded child is visible to its
+-- parent later in the same pass: one scan reaches the fixed point.
+-- Sequential 'runST' scan; a parallel IO-per-node walk was ~100s on Life.
 constantFoldWithStats :: FlatSoA -> (FlatSoA, Int, Bool)
 constantFoldWithStats soa0 =
   let
-    go soa passes didFold =
-      let
-        (soa', changed) = optConstantFoldNumOnce soa
-       in
-        if changed
-          then go soa' (passes + 1) True
-          else (soa, passes, didFold)
+    (soa', changed) = optConstantFoldNumOnce soa0
    in
-    go soa0 0 False
+    (soa', if changed then 1 else 0, changed)
 {-# NOINLINE constantFoldWithStats #-}

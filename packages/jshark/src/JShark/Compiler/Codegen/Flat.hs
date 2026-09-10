@@ -158,38 +158,10 @@ flatIsSimpleNode view nid = case Flat.flatSoaNode view nid of
   Flat.FE_KTypeOf _ -> True
   Flat.FE_KNegate _ -> True
   Flat.FE_KBigNeg _ -> True
-  Flat.FE_KConcat {} -> False
-  Flat.FE_KPlus {} -> False
-  Flat.FE_KTimes {} -> False
-  Flat.FE_KMinus {} -> False
-  Flat.FE_KFracDiv {} -> False
-  Flat.FE_KRem {} -> False
-  Flat.FE_KBitAnd {} -> False
-  Flat.FE_KBitOr {} -> False
-  Flat.FE_KBitXor {} -> False
-  Flat.FE_KShl {} -> False
-  Flat.FE_KShr {} -> False
-  Flat.FE_KUShr {} -> False
-  Flat.FE_KBig {} -> False
-  Flat.FE_KAnd {} -> False
-  Flat.FE_KOr {} -> False
-  Flat.FE_KEq {} -> False
-  Flat.FE_KNEq {} -> False
-  Flat.FE_KGTh {} -> False
-  Flat.FE_KLTh {} -> False
-  Flat.FE_KGTEq {} -> False
-  Flat.FE_KLTEq {} -> False
   Flat.FE_Fixed {} -> True
-  Flat.FE_MethMap {} -> False
-  Flat.FE_MethFilter {} -> False
-  Flat.FE_MethReduce {} -> False
-  Flat.FE_MethReduceRight {} -> False
-  Flat.FE_MethToSorted {} -> False
-  Flat.FE_MethFrom {} -> False
   Flat.FE_FnLit {} -> True
   Flat.FE_Index {} -> True
   Flat.FE_U8Index {} -> True
-  Flat.FE_Error {} -> False
   Flat.FE_UnsafeNullable x -> flatIsSimpleNode view x
   Flat.FE_FrozenLit {} -> True
   Flat.FE_Hvm2Ref {} -> True
@@ -217,15 +189,9 @@ flatRenderArgListSeq ctx s0 args =
   let
     go s = \case
       [] -> (s, [])
-      Flat.FlatArgExpr eid : rest ->
+      a : rest ->
         let
-          (s', c) = flatChild ctx s eid
-          (s'', cs') = go s' rest
-         in
-          (s'', c : cs')
-      Flat.FlatArgEffect eid : rest ->
-        let
-          (s', c) = flatChild ctx s eid
+          (s', c) = flatChild ctx s (Flat.flatArgRef a)
           (s'', cs') = go s' rest
          in
           (s'', c : cs')
@@ -236,37 +202,16 @@ flatRenderArgListSeq ctx s0 args =
 flatRenderArgList ctx s0 view ai =
   flatRenderArgListSeq ctx s0 (Flat.flatSoaArgGroup view ai)
 
-flatRenderField ctx s = \case
-  Flat.FlatField k eid ->
-    let
-      (s', Code d r) = flatChild ctx s eid
-     in
-      (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
-  Flat.FlatFieldExtra k eid ->
-    let
-      (s', Code d r) = flatChild ctx s eid
-     in
-      (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
-  Flat.FlatFieldEff k eid ->
-    let
-      (s', MkCode d r _) = flatChild ctx s eid
-     in
-      ( s'
-      ,
-        ( fromMaybe mempty d
-        , (jsPropKey (cgStyle s') k <> ":") <+> fromMaybe mempty r
-        )
-      )
-  Flat.FlatFieldExtraEff k eid ->
-    let
-      (s', MkCode d r _) = flatChild ctx s eid
-     in
-      ( s'
-      ,
-        ( fromMaybe mempty d
-        , (jsPropKey (cgStyle s') k <> ":") <+> fromMaybe mempty r
-        )
-      )
+flatRenderField ctx s f =
+  let
+    k = case f of
+      Flat.FlatField n _ -> n
+      Flat.FlatFieldEff n _ -> n
+      Flat.FlatFieldExtra n _ -> n
+      Flat.FlatFieldExtraEff n _ -> n
+    (s', Code d r) = flatChild ctx s (Flat.flatFieldRef f)
+   in
+    (s', (d, (jsPropKey (cgStyle s') k <> ":") <+> r))
 
 flatRenderObjectLit ctx s0 view gi =
   let
