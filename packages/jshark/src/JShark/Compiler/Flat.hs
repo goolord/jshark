@@ -1205,7 +1205,6 @@ data FlatSoA = FlatSoA
   , fsaC :: !(VU.Vector Int32)
   , fsaD :: !(VU.Vector Int32)
   , fsaE :: !(VU.Vector Int32)
-  , fsaPure :: !(VU.Vector Word8)
   , fsaFixed :: !(V.Vector FlatFixed)
   , fsaFnLit :: !(V.Vector ([Int], [Maybe Text]))
   , fsaArrayGroups :: !(V.Vector (V.Vector NodeId))
@@ -1246,7 +1245,6 @@ freezeSoaFromPackState root st = do
         , fsaC = cF
         , fsaD = dF
         , fsaE = eF
-        , fsaPure = VU.empty
         , fsaFixed = fx
         , fsaFnLit = fl
         , fsaArrayGroups = ag
@@ -1261,7 +1259,7 @@ freezeSoaFromPackState root st = do
         , fsaRoot = root
         }
    in
-    pure soa0 {fsaPure = computeFlatSoaPure soa0}
+    pure soa0
 
 -- | Pack an IR tree directly to SoA columns (no intermediate node vector).
 packProgramDirect :: IrNode -> FlatSoA
@@ -1634,10 +1632,10 @@ computeFlatSoaPure soa =
     | otherwise = op `elem` [FE_ERROR, FE_EMBEDEFF]
 
 soaPureCount :: FlatSoA -> Int
-soaPureCount = fromIntegral . VU.sum . fsaPure
+soaPureCount = fromIntegral . VU.sum . computeFlatSoaPure
 
 soaPureVector :: FlatSoA -> V.Vector Word8
-soaPureVector soa = unboxedToBoxedPure (fsaPure soa)
+soaPureVector soa = unboxedToBoxedPure (computeFlatSoaPure soa)
 
 litAsNumber :: FlatLit -> Maybe Double
 litAsNumber (FLit (ValueNumber d)) = Just d
@@ -1719,7 +1717,6 @@ soaUnboxedEqual a b =
     && fsaC a == fsaC b
     && fsaD a == fsaD b
     && fsaE a == fsaE b
-    && fsaPure a == fsaPure b
     && fsaRoot a == fsaRoot b
 
 soaSideLengthsEqual :: FlatSoA -> FlatSoA -> Bool

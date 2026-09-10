@@ -259,7 +259,6 @@ flatPrepareFromIr irOpt = do
   let
     !soa0 = FlatSoA.packProgramDirect irOpt
     !packNodes = FlatSoA.flatSoaNodeCount soa0
-    !_ = FlatSoA.soaPureCount soa0
   t1 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportPackPhase ctx 1 1
@@ -274,9 +273,8 @@ flatPrepareFromIr irOpt = do
     !soaOpt = FlatSoA.optimizeFlatPack soa0
   _ <-
     GHCIO.evaluate
-      ( packNodes
-          `seq` FlatSoA.soaPureCount soaOpt
-          `seq` FlatSoA.flatSoaNodeCount soaOpt
+      ( packNodes `seq`
+          FlatSoA.flatSoaNodeCount soaOpt
       )
   t3 <- getMonotonicTime
   case mCtx of

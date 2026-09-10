@@ -94,7 +94,6 @@ flatOpcodeRoundTripOk =
       , Flat.fsaC = VU.replicate n 3
       , Flat.fsaD = VU.replicate n 4
       , Flat.fsaE = VU.replicate n 5
-      , Flat.fsaPure = VU.replicate n 0
       , Flat.fsaFixed =
           V.fromList [Flat.FlatFixedU FixArrLen 0, Flat.FlatFixedU FixArrLen 0]
       , Flat.fsaFnLit = V.fromList [([0], [Nothing]), ([0], [Nothing])]
