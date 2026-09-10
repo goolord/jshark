@@ -33,7 +33,6 @@ import JShark
   , pureAST
   , pureProgram
   , renderJS
-  , renderJSCompact
   )
 import JShark.Compiler
   ( compileEffect
@@ -47,7 +46,7 @@ import Test.Tasty.Bench
 
 -- | Optimize, lower, and compact-render (the path 'compileEffect' uses).
 emit :: ClosedEffect u -> T.Text
-emit e = renderJSCompact (effectfulAST e)
+emit e = renderJS (effectfulAST e)
 {-# NOINLINE emit #-}
 
 emitLen :: ClosedEffect u -> Int
@@ -117,12 +116,12 @@ codepathStagesPure name prog =
     name
     [ bench "optimize" $ nfPure optExprNodes prog
     , bench "optNodes+emit/bytes" $
-        nfPure (\e -> (optExprNodes e, T.length (renderJSCompact (pureAST e)))) prog
+        nfPure (\e -> (optExprNodes e, T.length (renderJS (pureAST e)))) prog
     , bench "pureAST" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
-    , bench "emit" $ nfPure (\e -> renderJSCompact (pureAST e)) prog
-    , bench "emit/bytes" $ nfPure (\e -> T.length (renderJSCompact (pureAST e))) prog
+    , bench "emit" $ nfPure (\e -> renderJS (pureAST e)) prog
+    , bench "emit/bytes" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
     , bench "prettyJS/e2e" $
-        nfAppPure (\e -> prettyJS (renderJSCompact (pureAST e))) prog
+        nfAppPure (\e -> prettyJS (renderJS (pureAST e))) prog
     , bench "compilePure/readable/e2e" $ nfAppPure (compilePure readableConfig) prog
     ]
 
@@ -135,10 +134,10 @@ stageBenches name prog =
         nfClosed (\e -> (optEffectNodes e, emitLen e)) prog
     , bench "effectfulAST" $
         nfClosed (\e -> T.length (renderJS (effectfulAST e))) prog
-    , bench "renderJSCompact" $ nfClosed emit prog
+    , bench "renderJS" $ nfClosed emit prog
     , bench "emit/bytes" $ nfClosed emitLen prog
     , bench "effectfulProgram" $
-        nfClosed (\e -> renderJSCompact (effectfulProgram e)) prog
+        nfClosed (\e -> renderJS (effectfulProgram e)) prog
     , bench "prettyJS/e2e" $ nfAppClosed (\e -> prettyJS (emit e)) prog
     , env (pure (emit prog)) $ \js ->
         bench "prettyJS/precomputed" $ nfAppIO (\() -> prettyJS js) ()
@@ -156,14 +155,14 @@ stageBenchesPure name prog =
     name
     [ bench "optimize" $ nfPure optExprNodes prog
     , bench "optNodes+emit/bytes" $
-        nfPure (\e -> (optExprNodes e, T.length (renderJSCompact (pureAST e)))) prog
+        nfPure (\e -> (optExprNodes e, T.length (renderJS (pureAST e)))) prog
     , bench "pureAST" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
-    , bench "renderJSCompact" $ nfPure (\e -> renderJSCompact (pureAST e)) prog
-    , bench "emit/bytes" $ nfPure (\e -> T.length (renderJSCompact (pureAST e))) prog
-    , bench "pureProgram" $ nfPure (\e -> renderJSCompact (pureProgram e)) prog
+    , bench "renderJS" $ nfPure (\e -> renderJS (pureAST e)) prog
+    , bench "emit/bytes" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
+    , bench "pureProgram" $ nfPure (\e -> renderJS (pureProgram e)) prog
     , bench "prettyJS/e2e" $
-        nfAppPure (\e -> prettyJS (renderJSCompact (pureAST e))) prog
-    , env (pure (renderJSCompact (pureAST prog))) $ \js ->
+        nfAppPure (\e -> prettyJS (renderJS (pureAST e))) prog
+    , env (pure (renderJS (pureAST prog))) $ \js ->
         bench "prettyJS/precomputed" $ nfAppIO (\() -> prettyJS js) ()
     , bench "compilePure/readable/e2e" $ nfAppPure (compilePure readableConfig) prog
     , bench "compilePure/passthrough/e2e" $

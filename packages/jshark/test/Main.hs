@@ -2151,7 +2151,7 @@ compilerTests =
         out @?= src
     , testCase "compilePure passthrough emits an IIFE" $ do
         out <- compilePure passthroughConfig (number 1 + number 2)
-        out @?= renderJSCompact (pureProgram (number 1 + number 2))
+        out @?= renderJS (pureProgram (number 1 + number 2))
         assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
         assertBool
           "result is returned so minifiers cannot DCE it"

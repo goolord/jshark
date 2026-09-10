@@ -10,7 +10,7 @@
 
 -- | Post-process generated JavaScript and optional external minification.
 --
--- Codegen already emits compact JS ('renderJSCompact'). Default config wraps
+-- Codegen already emits compact JS ('renderJS'). Default config wraps
 -- an IIFE and skips external tools. Opt into esbuild / Terser / Closure via
 -- 'CompilerBackend'. 'readableConfig' emits a debug snippet (no IIFE, then
 -- Biome via 'finishReadableIO'). 'prettyJS' is @Text -> IO Text@; see CHANGELOG.
@@ -93,7 +93,7 @@ import JShark
   , effectfulProgram
   , pureAST
   , pureProgram
-  , renderJSCompact
+  , renderJS
   )
 import JShark.Api.Types (EffectSyntax, fromSyntax)
 import qualified JShark.Compiler.CompileProgress as CP
@@ -467,7 +467,7 @@ compileTreeEff cfg doc = do
     !style = configStyle cfg
   tCodegen0 <- liftIO getMonotonicTime
   let
-    !js = renderJSCompact (doc style)
+    !js = renderJS (doc style)
   tCodegen1 <- liftIO getMonotonicTime
   liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
   liftIO CP.finishEmitPhase

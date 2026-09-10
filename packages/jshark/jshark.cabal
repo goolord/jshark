@@ -98,7 +98,6 @@ library
     JShark.Compiler.JsNum
     JShark.Compiler.JsShim
     JShark.Compiler.Lower
-    JShark.Compiler.Optimize.Hvm2
     JShark.Compiler.Process
   build-depends:
     , ansi-terminal >= 1.0

@@ -15,7 +15,6 @@ import JShark
   , effectfulASTFromSoA
   , flatPrepareCore
   , renderJS
-  , renderJSCompact
   )
 import JShark.Api
 import JShark.Api.Generic (toObject)
@@ -129,7 +128,7 @@ lifeTests =
               let
                 life = stmts mainJS
               (soa, _, irNodes, _) <- flatPrepareCore life
-              js <- Ex.evaluate $ renderJSCompact (effectfulASTFromSoA soa)
+              js <- Ex.evaluate $ renderJS (effectfulASTFromSoA soa)
               irNodes @?= 69812
               T.length js @?= 872421
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $

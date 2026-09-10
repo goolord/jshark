@@ -12,7 +12,7 @@ import JShark
   ( effectfulASTFromSoA
   , flatPrepareCore
   , flatSoaNodeCount
-  , renderJSCompact
+  , renderJS
   )
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
@@ -41,7 +41,7 @@ main = do
   putStrLn $ "flatPrepare," ++ show fptTotalSec
   putStrLn $ "flatNodes," ++ show (flatSoaNodeCount soa)
   t2 <- getMonotonicTime
-  js <- evaluate $ renderJSCompact (effectfulASTFromSoA soa)
+  js <- evaluate $ renderJS (effectfulASTFromSoA soa)
   t3 <- getMonotonicTime
   putStrLn $ "flatEmit," ++ show (seconds t2 t3)
   putStrLn $ "jsBytes," ++ show (T.length js)

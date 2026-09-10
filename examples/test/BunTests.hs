@@ -271,7 +271,7 @@ bunEvalTests =
             , testCase "a non-terminating program hits the timeout" $ do
                 let
                   spin =
-                    T.unpack (renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp)))
+                    T.unpack (renderJS (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)

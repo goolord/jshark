@@ -157,7 +157,6 @@ idiomaticStyle =
 
 data CG = CG
   { cgIdent :: {-# UNPACK #-} !Int
-  , cgTag :: {-# UNPACK #-} !Int
   , cgPreamble :: !Preamble
   , cgStyle :: !EmitStyle
   , cgNames :: !(IM.IntMap Text)
@@ -211,14 +210,12 @@ codesRefs = map (\(MkCode _ b _) -> arrayElemRef b)
 -- dropped ref would shorten the literal.
 arrayElemRef = fromMaybe "undefined"
 
--- Codegen counters: `cgIdent` is the next emitted JS name (`n0`, `n1`, …);
--- `cgTag` is a decreasing negative id used only for use-counting/inlining
--- so nested Lets/Binds cannot collide (tags are never valid JS idents).
+-- Codegen counters: `cgIdent` is the next emitted JS name (`n0`, `n1`, …).
 -- `cgPreamble` is runtime shims + hoisted @$name@ bodies used by this program.
 startCG = startCGWith minifiedStyle
 
 startCGWith :: EmitStyle -> CG
-startCGWith style = CG 0 (-3) emptyPreamble style IM.empty [S.empty]
+startCGWith style = CG 0 emptyPreamble style IM.empty [S.empty]
 
 prepareFlatEffectProgram ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
@@ -488,8 +485,6 @@ flatPrepareExprCore keepLets e = do
   recordJobFlatPrepare timing
   pure (soa, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareExprCore #-}
-
-allocTag s = (cgTag s, s {cgTag = cgTag s - 2})
 
 allocIdent s = allocIdentHint s Nothing
 

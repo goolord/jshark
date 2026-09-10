@@ -29,7 +29,7 @@ where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark (effectfulProgram, escapeJsString, renderJSCompact)
+import JShark (effectfulProgram, escapeJsString, renderJS)
 import JShark.Api.Types (ClosedEffect)
 import JShark.Bun.Internal
   ( JSProgram (..)
@@ -120,7 +120,7 @@ evaluateEffectJSONWith :: BunConfig -> ClosedEffect u -> IO Text
 evaluateEffectJSONWith cfg e =
   runProgram (bunTimeout cfg) (envProgram (bunEnv cfg) js)
  where
-  js = T.unpack (renderJSCompact (effectfulProgram e))
+  js = T.unpack (renderJS (effectfulProgram e))
 
 envProgram :: BunEnv -> String -> JSProgram
 envProgram Sandbox js = plainProgram js

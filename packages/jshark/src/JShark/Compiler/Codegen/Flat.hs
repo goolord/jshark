@@ -648,7 +648,6 @@ flatTableLookup (FlatTableRead mv) i =
 data FlatEmitPlan = FlatEmitPlan
   { fepEnv :: !(V.Vector (Maybe Env))
   , fepBind :: !(V.Vector (Maybe Int))
-  , fepReach :: !(V.Vector Bool)
   , fepLayers :: !(V.Vector (V.Vector Flat.NodeId))
   }
 
@@ -792,11 +791,9 @@ buildFlatEmitPlan view root s0 =
     runST $ do
       envAt <- MV.replicate n Nothing
       bindAt <- MV.replicate n Nothing
-      reach <- MV.replicate n False
       sRef <- newSTRef s0
       let
         writeEnv i e = MV.write envAt i (Just e)
-        markReach i = MV.write reach i True
         planAlloc i = do
           s <- readSTRef sRef
           let
@@ -821,7 +818,6 @@ buildFlatEmitPlan view root s0 =
         planGo env nid
           | nid < 0 || nid >= n = pure ()
           | otherwise = do
-              markReach nid
               writeEnv nid env
               case Flat.flatSoaNode view nid of
                 Flat.FE_Let tag xId bodyId -> do
@@ -1006,13 +1002,11 @@ buildFlatEmitPlan view root s0 =
       planGo IM.empty root
       envF <- V.unsafeFreeze envAt
       bindF <- V.unsafeFreeze bindAt
-      reachF <- V.unsafeFreeze reach
       sFinal <- readSTRef sRef
       pure
         ( FlatEmitPlan
             { fepEnv = envF
             , fepBind = bindF
-            , fepReach = reachF
             , fepLayers = Flat.flatSoaLayerBuckets view root
             }
         , sFinal

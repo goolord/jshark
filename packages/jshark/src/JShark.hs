@@ -121,8 +121,6 @@ module JShark
   , evaluateBigInt
   , packUint8
   , uint8Elems
-  , closedEffectNodes
-  , closedExprNodes
   , optimizedExprSize
   , optimizedEffectSize
   , pureAST
@@ -141,11 +139,9 @@ module JShark
   , irExprFromClosed
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
-  , collectHvm2Kernels
   , pureProgram
   , effectfulProgram
   , renderJS
-  , renderJSCompact
   , escapeJsString
   , structuralEq
   , structuralNEq
@@ -174,7 +170,7 @@ import JShark.Compiler.Codegen.Flat
   , pureAST
   , pureASTWith
   )
-import JShark.Compiler.Emit (JS, renderJS, renderJSCompact)
+import JShark.Compiler.Emit (JS, renderJS)
 import JShark.Compiler.Evaluate
   ( escapeJsString
   , evaluate
@@ -185,16 +181,13 @@ import JShark.Compiler.Evaluate
   )
 import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
-  ( closedEffectNodes
-  , closedExprNodes
-  , irEffectFromClosed
+  ( irEffectFromClosed
   , irExprFromClosed
   , irOptimizedEffectFromClosed
   , irOptimizedExprFromClosed
   , optimizedEffectSize
   , optimizedExprSize
   )
-import JShark.Compiler.Optimize.Hvm2 (collectHvm2Kernels)
 
 pureProgram :: ClosedExpr u -> JS
 pureProgram e = uncurry renderIIFE (flatPureCodegen e)

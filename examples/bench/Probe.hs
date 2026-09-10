@@ -11,7 +11,7 @@ import Control.Monad (forM_)
 import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
-import JShark (ClosedEffect, effectfulAST, renderJSCompact)
+import JShark (ClosedEffect, effectfulAST, renderJS)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Api.Types as T
@@ -37,7 +37,7 @@ runOne :: Int -> IO ()
 runOne n = do
   start <- getMonotonicTime
   let
-    bytes = T.length (renderJSCompact (effectfulAST (progN n)))
+    bytes = T.length (renderJS (effectfulAST (progN n)))
   bytes `seq` pure ()
   end <- getMonotonicTime
   evaluate bytes
