@@ -47,8 +47,8 @@ console.log("hi");
 ```
 
 `readableConfig` emits the pretty snippet you see above;
-`defaultCompilerConfig` emits a minified IIFE (via esbuild/Closure/Terser
-when one is on `PATH`). `compileEffectSyntax` takes the do-notation form
+`defaultCompilerConfig` emits a compact IIFE (minify it with an external
+tool if you want). `compileEffectSyntax` takes the do-notation form
 directly; `compileEffect` takes a closed `Effect`.
 
 ## Two trees, one bridge

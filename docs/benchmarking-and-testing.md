@@ -15,7 +15,6 @@ Commands assume the repo root and Cabal v2 (`cabal build`, `cabal test`,
 |------|----------------|
 | GHC 9.14+ / Cabal 3.x | build, test, bench |
 | [Bun](https://bun.sh) on `PATH` | `jshark-examples-test` JS engine probes (`BunTests`, `LifeTests`, `ExampleTests`) |
-| `esbuild` / `terser` (optional) | compiler minifier tests (skipped if missing) |
 
 ## Testing
 
@@ -136,8 +135,8 @@ each bench dir):
 | `optimizeEffect` | `optimizeEffect` only |
 | `optNodes+emit/bytes` | node count + full emit length |
 | `effectfulAST` | `renderJS . effectfulAST` byte length |
-| `renderJSCompact` / `emit` | compact render |
-| `emit/bytes` | `T.length . renderJSCompact . effectfulAST` (full compile path used by `compileEffect` before pretty/minify) |
+| `renderJS` / `emit` | compact render |
+| `emit/bytes` | `T.length . renderJS . effectfulAST` (full compile path used by `compileEffect` before pretty) |
 | `effectfulProgram` | unoptimized `effectfulProgram` (slow; avoid for routine runs) |
 | `prettyJS/e2e` | emit + pretty printer |
 | `compileEffect/readable/e2e` | full `compileEffect readableConfig` in IO |

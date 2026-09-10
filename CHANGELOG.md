@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+* Dead compiler internals are gone: `JShark.Compiler.Optimize.Hvm2`
+  (`collectHvm2Kernels`, no callers), the unused `cgTag` codegen counter
+  and `allocTag`, the write-only `FlatEmitPlan` `fepReach` mask, and the
+  `renderJSCompact` alias of `renderJS`. The `closedEffectNodes` /
+  `closedExprNodes` aliases collapse into `optimizedEffectSize` /
+  `optimizedExprSize`. Emitted JS is byte-identical.
+
+* Core no longer owns external minification or the on-disk minify cache.
+  `CompilerBackend`/`ClosureLevel`/`CompilerClosureConfig`/
+  `CompilerEsbuildConfig`/`CompilerTerserConfig`/`CacheStrategy`, the
+  `compileWith`/`compileWithPure`/`tryCompileWith` post-processors, and the
+  named `compileClosure`/`compileEsbuild`/`compileTerser` helpers are removed.
+  `CompilerConfig` drops `configBackend`/`configCache`/`configFallback`.
+  Codegen still emits compact IIFEs; run esbuild/terser/Closure over the
+  output yourself. Emitted JS is byte-identical.
+
 * The flat IR collapses from three modules into one:
   `JShark.Compiler.Flat` now owns packing, the frozen SoA view, the bulk
   passes, and decode. The 78 hand-written opcode constants and the

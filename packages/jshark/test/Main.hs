@@ -46,14 +46,6 @@ import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import qualified JShark.Worker as Worker
 import Support
-import System.Directory
-  ( createDirectoryIfMissing
-  , findExecutable
-  , getTemporaryDirectory
-  , listDirectory
-  , removePathForcibly
-  )
-import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -2144,177 +2136,13 @@ compilerTests :: TestTree
 compilerTests =
   testGroup
     "compiler"
-    [ testCase "passthrough is identity" $ do
-        let
-          src = "const x = 1 + 2;" :: Text
-        out <- compileWith passthroughConfig src
-        out @?= src
-    , testCase "compilePure passthrough emits an IIFE" $ do
+    [ testCase "compilePure passthrough emits an IIFE" $ do
         out <- compilePure passthroughConfig (number 1 + number 2)
         out @?= renderJS (pureProgram (number 1 + number 2))
         assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
         assertBool
           "result is returned so minifiers cannot DCE it"
           ("return" `T.isInfixOf` out)
-    , testCase "disk cache roundtrips passthrough output" $ do
-        tmp <- getTemporaryDirectory
-        let
-          dir = tmp </> "jshark-compiler-disk-test"
-        removePathForcibly dir
-        createDirectoryIfMissing True dir
-        let
-          cfg =
-            defaultCompilerConfig
-              { configBackend = Passthrough
-              , configCache = DiskCache dir
-              , configFallback = False
-              , configStyle = Minified
-              }
-          src = "const x = 1 + 2;" :: Text
-        a <- compileWith cfg src
-        b <- compileWith cfg src
-        a @?= src
-        b @?= src
-        files <- listDirectory dir
-        assertBool "wrote a cache file" (not (null files))
-        removePathForcibly dir
-    , testCase "disk cache ignores a file whose stored key does not match" $ do
-        tmp <- getTemporaryDirectory
-        let
-          dir = tmp </> "jshark-compiler-disk-mismatch"
-        removePathForcibly dir
-        createDirectoryIfMissing True dir
-        let
-          cfg =
-            defaultCompilerConfig
-              { configBackend = Passthrough
-              , configCache = DiskCache dir
-              , configFallback = False
-              , configStyle = Minified
-              }
-        _ <- compileWith cfg "const a = 1;"
-        files <- listDirectory dir
-        mapM_ (\f -> writeFile (dir </> f) "not-a-cache-file") files
-        out <- compileWith cfg "const b = 2;"
-        out @?= "const b = 2;"
-        removePathForcibly dir
-    , testCase "esbuild minifies an IIFE when on PATH" $ do
-        m <- findExecutable "esbuild"
-        case m of
-          Nothing -> pure ()
-          Just _ -> do
-            -- Constant-folded to a pure literal IIFE; esbuild DCE's that
-            -- unless Compiler re-anchors via export default and strips it.
-            let
-              snippet = number 1 + number 2
-              raw = renderJS (pureProgram snippet)
-              cfg =
-                defaultCompilerConfig
-                  { configBackend = Esbuild defaultEsbuildConfig
-                  , configCache = NoCache
-                  , configFallback = False
-                  , configStyle = Minified
-                  }
-            out <- compilePure cfg snippet
-            assertBool "non-empty" (not (T.null out))
-            assertBool "minifier changed the IIFE" (out /= raw)
-            assertBool "stripped ESM export anchor" (not ("export" `T.isInfixOf` out))
-            assertBool
-              "result still an expression (no var binding left)"
-              (not ("var " `T.isPrefixOf` out))
-    , testCase "tryCompileWith reports missing esbuild" $ do
-        mExe <- findExecutable "esbuild"
-        mNpx <- findExecutable "npx"
-        case (mExe, mNpx) of
-          (Nothing, Nothing) -> do
-            res <-
-              tryCompileWith
-                ( defaultCompilerConfig
-                    { configBackend = Esbuild defaultEsbuildConfig
-                    , configCache = NoCache
-                    , configFallback = False
-                    , configStyle = Minified
-                    }
-                )
-                "1+2;"
-            case res of
-              Left _ -> pure ()
-              Right _ -> assertFailure "expected Left when esbuild is missing"
-          _ -> pure ()
-    , testCase "configFallback False surfaces minifier errors" $ do
-        m <- findExecutable "esbuild"
-        case m of
-          Nothing -> pure ()
-          Just _ -> do
-            let
-              cfg =
-                defaultCompilerConfig
-                  { configBackend =
-                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
-                  , configCache = NoCache
-                  , configFallback = False
-                  , configStyle = Minified
-                  }
-            res <- tryCompileWith cfg "(() => { return 1; })();"
-            case res of
-              Left _ -> pure ()
-              Right out -> assertFailure ("expected Left, got " <> T.unpack out)
-    , testCase "configFallback True returns the original source" $ do
-        m <- findExecutable "esbuild"
-        case m of
-          Nothing -> pure ()
-          Just _ -> do
-            let
-              src = "(() => { return 1; })();" :: Text
-              cfg =
-                defaultCompilerConfig
-                  { configBackend =
-                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
-                  , configCache = NoCache
-                  , configFallback = True
-                  , configStyle = Minified
-                  }
-            out <- compileWith cfg src
-            out @?= src
-    , testCase "compileWith logs minifier fallback on stderr" $ do
-        m <- findExecutable "esbuild"
-        case m of
-          Nothing -> pure ()
-          Just _ -> do
-            let
-              src = "(() => { return 1; })();" :: Text
-              cfg =
-                defaultCompilerConfig
-                  { configBackend =
-                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
-                  , configCache = NoCache
-                  , configFallback = True
-                  , configStyle = Minified
-                  }
-            (_, captured) <- captureStderr $ compileWith cfg src
-            assertBool
-              "fallback notice"
-              (T.isInfixOf "using unminified source" (T.pack captured))
-    , testCase "compileWithPure suppresses minifier fallback stderr" $ do
-        m <- findExecutable "esbuild"
-        case m of
-          Nothing -> pure ()
-          Just _ -> do
-            let
-              src = "(() => { return 1; })();" :: Text
-              cfg =
-                defaultCompilerConfig
-                  { configBackend =
-                      Esbuild defaultEsbuildConfig {esbuildExtraArgs = ["--definitely-not-a-flag"]}
-                  , configCache = NoCache
-                  , configFallback = True
-                  , configStyle = Minified
-                  }
-            (out, captured) <- captureStderr $ compileWithPure cfg src
-            out @?= src
-            assertBool
-              "no fallback notice"
-              (not (T.isInfixOf "using unminified source" (T.pack captured)))
     , testCase "compilePure ignores configProgress stderr" $ do
         let
           prog = number 1 + number 2
@@ -2366,30 +2194,6 @@ compilerTests =
         out <- compileEffect readableConfig (fromSyntax readableBindSample)
         out
           @?= "const readableBindSample = foo();\nreadableBindSample + readableBindSample;"
-    , testCase "Readable style skips the minifier even when a backend is set" $ do
-        out <-
-          compileEffect
-            ( defaultCompilerConfig
-                { configBackend = Esbuild defaultEsbuildConfig
-                , configCache = NoCache
-                , configFallback = False
-                , configStyle = Readable
-                }
-            )
-            fooE
-        out @?= "foo();"
-    , testCase "compileWith Readable skips the minifier even when a backend is set" $ do
-        let
-          src = "const x = 1 + 2;" :: Text
-          cfg =
-            defaultCompilerConfig
-              { configBackend = Esbuild defaultEsbuildConfig
-              , configCache = NoCache
-              , configFallback = False
-              , configStyle = Readable
-              }
-        out <- compileWith cfg src
-        out @?= src
     , testCase "prettyJS formats if/else when biome is on PATH" $ do
         requireBiome
         out <- prettyJS "if (cond()) {foo();} else {bar();}"

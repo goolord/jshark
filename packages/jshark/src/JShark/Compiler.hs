@@ -8,40 +8,26 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Post-process generated JavaScript and optional external minification.
+-- | Compile generated JavaScript: IIFE (minified style) or readable snippet,
+-- plus batch/progress plumbing.
 --
--- Codegen already emits compact JS ('renderJS'). Default config wraps
--- an IIFE and skips external tools. Opt into esbuild / Terser / Closure via
--- 'CompilerBackend'. 'readableConfig' emits a debug snippet (no IIFE, then
--- Biome via 'finishReadableIO'). 'prettyJS' is @Text -> IO Text@; see CHANGELOG.
+-- Codegen already emits compact JS ('renderJS'). Default config wraps an IIFE
+-- and does no external post-processing; run an external minifier over the
+-- output if you want more. 'readableConfig' emits a debug snippet (no IIFE,
+-- then Biome via 'finishReadableIO'). 'prettyJS' is @Text -> IO Text@; see
+-- CHANGELOG.
 --
 -- 'compileEffect' honors 'configProgress'. 'compileEffectPure' is silent;
--- 'compileEffectIO' always draws. 'compilePure' never draws. Minify helpers
--- have no progress bars; 'compileWithPure' also suppresses fallback stderr.
+-- 'compileEffectIO' always draws. 'compilePure' never draws.
 module JShark.Compiler
   ( -- * Compiler Configuration
     CompilerConfig (..)
   , defaultCompilerConfig
   , passthroughConfig
   , readableConfig
-  , CompilerBackend (..)
   , OutputStyle (..)
-  , ClosureLevel (..)
-  , CompilerClosureConfig (..)
-  , defaultClosureConfig
-  , CompilerEsbuildConfig (..)
-  , defaultEsbuildConfig
-  , CompilerTerserConfig (..)
-  , defaultTerserConfig
-  , CacheStrategy (..)
 
     -- * Compilation
-  , compileWith
-  , compileWithPure
-  , tryCompileWith
-  , compileClosure
-  , compileEsbuild
-  , compileTerser
   , compileEffect
   , compileEffectPure
   , compileEffectSyntax
@@ -63,27 +49,14 @@ module JShark.Compiler
 where
 
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Exception
-  ( IOException
-  , SomeException
-  , catch
-  , evaluate
-  , finally
-  , throwIO
-  )
-import Control.Monad (guard, unless, when)
+import Control.Exception (evaluate, finally)
+import Control.Monad (unless, when)
 import qualified Control.Monad.Catch as MC
 import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
-import Data.Bits (xor)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BC
 import Data.List (sortOn)
-import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
-import Data.Word (Word64)
 import Effectful (Eff, IOE, liftIO, runEff, (:>))
 import GHC.Clock (getMonotonicTime)
 import JShark
@@ -113,20 +86,7 @@ import JShark.Compiler.JsFormat
   , prettyJS
   , tryPrettyJSIO
   )
-import JShark.Compiler.Process (executeProcessStdin)
-import Numeric (showHex)
 import System.CPUTime (getCPUTime)
-import System.Directory
-  ( createDirectoryIfMissing
-  , doesFileExist
-  , findExecutable
-  , removeFile
-  , renameFile
-  )
-import System.Environment (lookupEnv)
-import System.FilePath (takeDirectory, (</>))
-import System.IO (hClose, openBinaryTempFile)
-import Text.Read (readMaybe)
 
 quietCfg :: CompilerConfig -> CompilerConfig
 quietCfg cfg = cfg {configProgress = False, configQuiet = True}
@@ -137,328 +97,45 @@ numberedEffectJob i eff = ("#" <> T.pack (show i), eff)
 numberedPureJob :: Int -> ClosedExpr u -> (Text, ClosedExpr u)
 numberedPureJob i e = ("#" <> T.pack (show i), e)
 
-closureCompilerConfig :: ClosureLevel -> CompilerConfig
-closureCompilerConfig lvl =
-  CompilerConfig
-    (Closure (CompilerClosureConfig lvl []))
-    NoCache
-    False
-    Minified
-    False
-    False
-    False
-    Nothing
-
-esbuildCompilerConfig :: CompilerConfig
-esbuildCompilerConfig =
-  CompilerConfig
-    (Esbuild defaultEsbuildConfig)
-    NoCache
-    False
-    Minified
-    False
-    False
-    False
-    Nothing
-
-terserCompilerConfig :: CompilerConfig
-terserCompilerConfig =
-  CompilerConfig
-    (Terser defaultTerserConfig)
-    NoCache
-    False
-    Minified
-    False
-    False
-    False
-    Nothing
-
--- | Compilation level for Google Closure Compiler.
--- Encoded as the long names ('SIMPLE_OPTIMIZATIONS' /
--- 'ADVANCED_OPTIMIZATIONS') that both old jars and current
--- @google-closure-compiler@ accept.
-data ClosureLevel
-  = WhitespaceOnly
-  | Simple
-  | Advanced
-  deriving (Show, Eq, Ord)
-
-closureLevelString :: ClosureLevel -> String
-closureLevelString = \case
-  WhitespaceOnly -> "WHITESPACE_ONLY"
-  Simple -> "SIMPLE_OPTIMIZATIONS"
-  Advanced -> "ADVANCED_OPTIMIZATIONS"
-
--- | Options for Google Closure Compiler.
-data CompilerClosureConfig = CompilerClosureConfig
-  { closureLevel :: ClosureLevel
-  , closureExtraArgs :: [String]
-  }
-  deriving (Show, Eq, Ord)
-
--- | Default Closure configuration: SIMPLE (not Advanced — Advanced
--- renames properties and will break DOM/FFI without externs).
-defaultClosureConfig :: CompilerClosureConfig
-defaultClosureConfig = CompilerClosureConfig Simple []
-
--- | Options for esbuild minification.
-data CompilerEsbuildConfig = CompilerEsbuildConfig
-  { esbuildMinify :: Bool
-  , esbuildTarget :: Maybe String
-  , esbuildExtraArgs :: [String]
-  }
-  deriving (Show, Eq, Ord)
-
-defaultEsbuildConfig :: CompilerEsbuildConfig
-defaultEsbuildConfig = CompilerEsbuildConfig True Nothing []
-
--- | Options for Terser minification.
-data CompilerTerserConfig = CompilerTerserConfig
-  { terserCompress :: Bool
-  , terserMangle :: Bool
-  , terserExtraArgs :: [String]
-  }
-  deriving (Show, Eq, Ord)
-
-defaultTerserConfig :: CompilerTerserConfig
-defaultTerserConfig = CompilerTerserConfig True True []
-
--- | Minifier backend. 'Auto' picks the first of esbuild, Closure, Terser
--- found on @PATH@. If none are present, 'tryCompileWith' returns 'Left';
--- 'compileWith' then honors 'configFallback' (unminified source vs throw).
-data CompilerBackend
-  = Auto
-  | Closure CompilerClosureConfig
-  | Esbuild CompilerEsbuildConfig
-  | Terser CompilerTerserConfig
-  | Passthrough
-  deriving (Show, Eq, Ord)
-
--- | Caching strategy for minified JavaScript artifacts.
-data CacheStrategy
-  = NoCache
-  | DiskCache FilePath
-  deriving (Show, Eq, Ord)
-
 -- | How to present compiled JavaScript.
 data OutputStyle
   = -- | Pretty-print, do not minify. Not wrapped in an IIFE.
     Readable
-  | -- | Wrap in an IIFE and run the configured minifier.
+  | -- | Wrap in an IIFE.
     Minified
   deriving (Show, Eq, Ord)
 
 -- | Top-level compiler configuration.
 data CompilerConfig = CompilerConfig
-  { configBackend :: CompilerBackend
-  , configCache :: CacheStrategy
-  , configFallback :: Bool
-  -- ^ When 'True', minifier failure (missing binary, crash, empty DCE'd
-  --     output) logs to stderr and returns the unminified source. When
-  --     'False', 'compileWith' throws. Named helpers ('compileEsbuild' etc.)
-  --     set this to 'False'.
-  , configStyle :: OutputStyle
+  { configStyle :: OutputStyle
   , configWarnHvm2Candidates :: Bool
   , configProgress :: Bool
   -- ^ Print a terminal progress bar for batch compiles and elapsed time when
   --     done. Off by default so tests stay quiet.
   , configQuiet :: Bool
-  -- ^ Suppress non-fatal compiler stderr (for example minifier fallback
-  --     notices) from concurrent batch workers.
+  -- ^ Suppress non-fatal compiler stderr from concurrent batch workers.
   , configProgressSlot :: Maybe Int
   -- ^ Active job index for sub-progress reporting during batch compiles.
   }
   deriving (Show, Eq, Ord)
 
--- | Passthrough backend: compact IIFE from codegen, no external minifier.
--- Set 'configBackend' to 'Esbuild', 'Terser', or 'Closure' for a second pass.
+-- | Compact IIFE output from codegen. Minify with an external tool if wanted.
 defaultCompilerConfig :: CompilerConfig
 defaultCompilerConfig =
-  CompilerConfig Passthrough NoCache True Minified False False False Nothing
+  CompilerConfig Minified False False False Nothing
 
--- | Skip minification entirely. Useful in tests of the IIFE wrapper.
+-- | Alias of 'defaultCompilerConfig', kept for call sites that previously
+-- skipped external minification.
 passthroughConfig :: CompilerConfig
-passthroughConfig =
-  CompilerConfig Passthrough NoCache False Minified False False False Nothing
+passthroughConfig = defaultCompilerConfig
 
--- | Human-readable JS: assignment elimination, no minifier, no IIFE.
+-- | Human-readable JS: no IIFE, formatted with Biome when available.
 readableConfig :: CompilerConfig
 readableConfig =
-  CompilerConfig Passthrough NoCache False Readable False False False Nothing
+  CompilerConfig Readable False False False Nothing
 
-cacheFormatVersion :: Text
-cacheFormatVersion = "jshark-minify-2"
-
-diskCacheMagic :: BS.ByteString
-diskCacheMagic = "jshark-cache-v1\n"
-
-fnv1a64 :: BS.ByteString -> Word64
-fnv1a64 = BS.foldl' step 14695981039346656037
- where
-  step !h !w = (h `xor` fromIntegral w) * 1099511628211
-
-hashText :: Text -> String
-hashText t = showHex (fnv1a64 (TE.encodeUtf8 t)) ""
-
-cacheKey :: CompilerConfig -> Text -> Text
-cacheKey cfg source =
-  cacheFormatVersion
-    <> ":"
-    <> T.pack (show (configBackend cfg))
-    <> ":"
-    <> T.pack (show (configStyle cfg))
-    <> ":"
-    <> source
-
--- | Post-process raw JavaScript using 'defaultCompilerConfig' (passthrough
--- by default — no external minifier). Set 'configBackend' to 'Esbuild',
--- 'Terser', or 'Auto' for an extra shrink pass.
---
--- | Minify using 'tryCompileWith'. On 'Left', either throw or (when
--- 'configFallback' is set) log to stderr and return the original source.
-compileWith :: CompilerConfig -> Text -> IO Text
-compileWith cfg source =
-  runEff $ CR.runCompileReportSilent (compileWithEff cfg source)
-
--- | Like 'compileWith' but suppresses minifier-fallback stderr.
-compileWithPure :: CompilerConfig -> Text -> IO Text
-compileWithPure cfg source =
-  runEff $ CR.runCompileReportSilent (compileWithEff (quietCfg cfg) source)
-
-compileWithEff ::
-  (CR.CompileReport :> es, IOE :> es) =>
-  CompilerConfig
-  -> Text
-  -> Eff es Text
-compileWithEff cfg source = do
-  res <- tryCompileWithEff cfg source
-  case res of
-    Right out -> finishReadableEff cfg out
-    Left err
-      | configFallback cfg -> do
-          unless (configQuiet cfg) (CR.logFallback err)
-          pure source
-      | otherwise ->
-          liftIO (throwIO (userError ("JShark.Compiler: compilation failed: " ++ err)))
-
--- | Minify without fallback or throwing on minifier failure.
--- Cache is consulted only for successful results (fallback source is
--- never stored). 'Readable' forces 'Passthrough' so a minifying backend
--- cannot run.
-tryCompileWith :: CompilerConfig -> Text -> IO (Either String Text)
-tryCompileWith cfg source = runEff (tryCompileWithEff cfg source)
-
-tryCompileWithEff ::
-  IOE :> es =>
-  CompilerConfig
-  -> Text
-  -> Eff es (Either String Text)
-tryCompileWithEff cfg0 source =
-  let
-    cfg = styleConfig cfg0
-   in
-    case configCache cfg of
-      NoCache -> tryRunCompileEff cfg source
-      DiskCache dir -> do
-        liftIO $ createDirectoryIfMissing True dir
-        let
-          key = cacheKey cfg source
-          cacheFile = dir </> (hashText key ++ ".js")
-        loaded <- liftIO $ loadDiskCache cacheFile key
-        case loaded of
-          Just cached -> pure (Right cached)
-          Nothing ->
-            compileAndStoreEff (tryRunCompileEff cfg source) $ \out -> do
-              liftIO $ atomicWriteFile cacheFile (encodeDiskCache key out)
-              pure (Right out)
-
-tryRunCompileEff ::
-  IOE :> es =>
-  CompilerConfig
-  -> Text
-  -> Eff es (Either String Text)
-tryRunCompileEff cfg source = liftIO (tryRunCompile cfg source)
-
-compileAndStoreEff ::
-  Eff es (Either String Text)
-  -> (Text -> Eff es (Either String Text))
-  -> Eff es (Either String Text)
-compileAndStoreEff compile persist = do
-  compiled <- compile
-  case compiled of
-    Right out -> persist out
-    left -> pure left
-
-encodeDiskCache :: Text -> Text -> BS.ByteString
-encodeDiskCache key compiled =
-  let
-    keyBs = TE.encodeUtf8 key
-    lenLine = TE.encodeUtf8 (T.pack (show (BS.length keyBs) <> "\n"))
-   in
-    diskCacheMagic <> lenLine <> keyBs <> TE.encodeUtf8 compiled
-
-loadDiskCache :: FilePath -> Text -> IO (Maybe Text)
-loadDiskCache path expectedKey = do
-  exists <- doesFileExist path
-  if not exists
-    then pure Nothing
-    else do
-      raw <- BS.readFile path
-      case decodeDiskCache raw of
-        Just (key, body) | key == expectedKey -> pure (Just body)
-        _ -> pure Nothing
-
-decodeDiskCache :: BS.ByteString -> Maybe (Text, Text)
-decodeDiskCache raw = do
-  rest0 <- BS.stripPrefix diskCacheMagic raw
-  let
-    (lenBs, rest) = BC.break (== '\n') rest0
-  rest1 <- BS.stripPrefix "\n" rest
-  n <- readMaybe (BC.unpack lenBs)
-  guard (n >= 0 && BS.length rest1 >= n)
-  let
-    (keyBs, body) = BS.splitAt n rest1
-  key <- either (const Nothing) Just (TE.decodeUtf8' keyBs)
-  compiled <- either (const Nothing) Just (TE.decodeUtf8' body)
-  pure (key, compiled)
-
-atomicWriteFile :: FilePath -> BS.ByteString -> IO ()
-atomicWriteFile dest bytes = do
-  let
-    dir = takeDirectory dest
-  createDirectoryIfMissing True dir
-  (tmp, h) <- openBinaryTempFile dir "jshark-cache.tmp"
-  let
-    cleanupTmp = removeFile tmp `catch` (\(_ :: IOException) -> pure ())
-    closeH = hClose h `catch` (\(_ :: IOException) -> pure ())
-  ( do
-      BS.hPut h bytes
-      hClose h
-      removeFile dest `catch` (\(_ :: IOException) -> pure ())
-      renameFile tmp dest
-    )
-    `catch` (\(e :: SomeException) -> closeH >> cleanupTmp >> throwIO e)
-
--- | Minify with Google Closure Compiler at the given level.
--- Throws if the compiler is missing or fails ('configFallback' is false).
-compileClosure :: ClosureLevel -> Text -> IO Text
-compileClosure lvl = compileWith (closureCompilerConfig lvl)
-
--- | Minify with esbuild. Throws if esbuild is missing or fails.
-compileEsbuild :: Text -> IO Text
-compileEsbuild = compileWith esbuildCompilerConfig
-
--- | Minify with Terser. Throws if terser is missing or fails.
-compileTerser :: Text -> IO Text
-compileTerser = compileWith terserCompilerConfig
-
--- | Compile an effectful JShark tree to text. 'Readable' emits a pretty
--- snippet (no IIFE, no minifier); 'Minified' wraps an IIFE then minifies.
---
--- Batch slot phases use 'JShark.Compiler.CompileProgress' directly (see
--- 'JShark.Compiler.CompileReport').
 compileTreeEff ::
-  (CR.CompileReport :> es, IOE :> es) =>
+  IOE :> es =>
   CompilerConfig
   -> (OutputStyle -> JS)
   -> Eff es Text
@@ -471,18 +148,8 @@ compileTreeEff cfg doc = do
   tCodegen1 <- liftIO getMonotonicTime
   liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
   liftIO CP.finishEmitPhase
-  let
-    postCfg = styleConfig cfg
-  out <- case configBackend postCfg of
-    Passthrough -> pure js
-    _ -> withJobPhase cfg CP.PhaseMinify $ do
-      tMin0 <- liftIO getMonotonicTime
-      minified <- compileWithEff postCfg js
-      tMin1 <- liftIO getMonotonicTime
-      liftIO $ CP.recordJobMinifySec (seconds tMin0 tMin1)
-      pure minified
-  liftIO $ CP.recordJobJsBytes (T.length out)
-  formatted <- finishReadableEff cfg out
+  liftIO $ CP.recordJobJsBytes (T.length js)
+  formatted <- finishReadableEff cfg js
   liftIO $ forceCompiled formatted
 
 finishReadableEff ::
@@ -545,7 +212,7 @@ compilePure cfg e =
   runEff $ CR.runCompileReportSilent (compilePureEff (quietCfg cfg) e)
 
 compilePureEff ::
-  (CR.CompileReport :> es, IOE :> es) =>
+  IOE :> es =>
   CompilerConfig
   -> ClosedExpr u
   -> Eff es Text
@@ -736,11 +403,6 @@ batchProgressCore total jobs = do
 forceCompiled :: Text -> IO Text
 forceCompiled t = t <$ evaluate (T.length t)
 
-styleConfig :: CompilerConfig -> CompilerConfig
-styleConfig cfg = case configStyle cfg of
-  Readable -> cfg {configBackend = Passthrough}
-  Minified -> cfg
-
 pureDoc :: OutputStyle -> ClosedExpr u -> JS
 pureDoc Readable e = pureAST e
 pureDoc Minified e = pureProgram e
@@ -748,186 +410,6 @@ pureDoc Minified e = pureProgram e
 effectDoc :: OutputStyle -> ClosedEffect u -> JS
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
-
-tryRunCompile :: CompilerConfig -> Text -> IO (Either String Text)
-tryRunCompile cfg source = case configBackend cfg of
-  Passthrough -> pure (Right source)
-  Esbuild ebCfg -> runEsbuild ebCfg source
-  Closure clCfg -> runClosure clCfg source
-  Terser tCfg -> runTerser tCfg source
-  Auto -> runAuto source
-
--- Prefer esbuild, then Closure, then Terser. Never shell out to npx in
--- Auto: npx may hit the network. Explicit backends may use npx --no-install.
-runAuto :: Text -> IO (Either String Text)
-runAuto source = go probes
- where
-  probes =
-    [ (hasExecutable "esbuild", runEsbuild defaultEsbuildConfig source)
-    ,
-      ( (||)
-          <$> hasExecutable "google-closure-compiler"
-          <*> hasExecutable "closure-compiler"
-      , runClosure defaultClosureConfig source
-      )
-    , (hasExecutable "terser", runTerser defaultTerserConfig source)
-    ]
-  go [] =
-    pure
-      (Left "no minifier on PATH (install esbuild, google-closure-compiler, or terser)")
-  go ((check, run) : rest) = do
-    ok <- check
-    if ok then run else go rest
-
-hasExecutable :: String -> IO Bool
-hasExecutable name = isJust <$> findExecutable name
-
-runEsbuild :: CompilerEsbuildConfig -> Text -> IO (Either String Text)
-runEsbuild cfg source = do
-  found <- lookupNamedTool "esbuild"
-  let
-    args =
-      ["--loader=js", "--log-level=error"]
-        ++ ["--minify" | esbuildMinify cfg]
-        ++ maybe [] (\t -> ["--target=" ++ t]) (esbuildTarget cfg)
-        ++ esbuildExtraArgs cfg
-  case found of
-    Left err -> pure (Left err)
-    Right (exe, wrap) -> run exe (wrap args)
- where
-  -- A pure IIFE (or bare expression) is an unused statement to esbuild, so
-  -- '--minify' can DCE it to empty — especially after constant folding turns
-  -- 'return 1+2' into 'return 3'. Re-run as 'export default (…)' / ESM so the
-  -- value is live, then strip the export to leave an expression again.
-  run exe args = do
-    first <- executeProcessRaw exe args source
-    case first of
-      Left err -> pure (Left err)
-      Right out
-        | not (T.null out) || T.null (T.strip source) -> pure (Right out)
-        | otherwise -> do
-            let
-              wrapped = "export default (" <> dropTrailingSemis (T.strip source) <> ")\n"
-              args' = args ++ ["--format=esm"]
-            second <- executeProcessRaw exe args' wrapped
-            case second of
-              Left err -> pure (Left err)
-              Right out' ->
-                let
-                  stripped = stripExportDefault out'
-                 in
-                  if T.null stripped
-                    then
-                      pure
-                        ( Left
-                            "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)"
-                        )
-                    else pure (Right stripped)
-
-dropTrailingSemis :: Text -> Text
-dropTrailingSemis =
-  T.dropWhileEnd
-    (\c -> c == ';' || c == ' ' || c == '\n' || c == '\r' || c == '\t')
-
--- | Undo the 'export default (…)' / ESM anchor. esbuild '--minify' often
--- rewrites 'export default EXPR' to 'var e=EXPR;export{e as default};'.
-stripExportDefault :: Text -> Text
-stripExportDefault t =
-  let
-    t' = T.strip t
-   in
-    case stripVarAsDefault t' of
-      Just v -> v
-      Nothing -> case T.stripPrefix "export default" t' of
-        Just rest -> dropTrailingSemis (T.strip rest)
-        Nothing -> t'
-
--- | 'var name=VALUE;export{name as default};' → VALUE
-stripVarAsDefault :: Text -> Maybe Text
-stripVarAsDefault t = do
-  afterVar <- T.stripPrefix "var " t
-  let
-    (name0, rest0) = T.break (== '=') afterVar
-  rest1 <- T.stripPrefix "=" rest0
-  let
-    name = T.strip name0
-    suffix = ";export{" <> name <> " as default}"
-    body = T.strip rest1
-  case T.stripSuffix (suffix <> ";") body of
-    Just v -> Just (dropTrailingSemis (T.strip v))
-    Nothing -> fmap (dropTrailingSemis . T.strip) (T.stripSuffix suffix body)
-
-runClosure :: CompilerClosureConfig -> Text -> IO (Either String Text)
-runClosure cfg source = do
-  mJar <- lookupEnv "CLOSURE_COMPILER_JAR"
-  mDirect <- findExecutable "google-closure-compiler"
-  mClosure <- findExecutable "closure-compiler"
-  mNpx <- findExecutable "npx"
-  let
-    args =
-      ["--compilation_level", closureLevelString (closureLevel cfg)]
-        ++ closureExtraArgs cfg
-  case mJar of
-    Just jar -> do
-      mJava <- findExecutable "java"
-      case mJava of
-        Just javaExe -> executeProcess javaExe (["-jar", jar] ++ args) source
-        Nothing -> pure (Left "java executable not found for CLOSURE_COMPILER_JAR")
-    Nothing -> case (mDirect, mClosure, mNpx) of
-      (Just exe, _, _) -> executeProcess exe args source
-      (Nothing, Just exe, _) -> executeProcess exe args source
-      (Nothing, Nothing, Just npxExe) ->
-        executeProcess
-          npxExe
-          (["--no-install", "google-closure-compiler"] ++ args)
-          source
-      (Nothing, Nothing, Nothing) -> pure (Left "Google Closure Compiler not found on PATH")
-
-lookupNamedTool :: String -> IO (Either String (FilePath, [String] -> [String]))
-lookupNamedTool name = do
-  mDirect <- findExecutable name
-  mNpx <- findExecutable "npx"
-  case (mDirect, mNpx) of
-    (Just exe, _) -> pure (Right (exe, id))
-    (Nothing, Just npxExe) ->
-      pure (Right (npxExe, (["--no-install", name] ++)))
-    (Nothing, Nothing) ->
-      pure (Left (name ++ " executable not found on PATH"))
-
-runNamedTool :: String -> [String] -> Text -> IO (Either String Text)
-runNamedTool name args source = do
-  found <- lookupNamedTool name
-  case found of
-    Left err -> pure (Left err)
-    Right (exe, wrap) -> executeProcess exe (wrap args) source
-
-runTerser :: CompilerTerserConfig -> Text -> IO (Either String Text)
-runTerser cfg source =
-  runNamedTool
-    "terser"
-    ( ["--compress" | terserCompress cfg]
-        ++ ["--mangle" | terserMangle cfg]
-        ++ terserExtraArgs cfg
-    )
-    source
-
-executeProcess :: FilePath -> [String] -> Text -> IO (Either String Text)
-executeProcess cmd args source = do
-  res <- executeProcessRaw cmd args source
-  case res of
-    Right out
-      | T.null out && not (T.null (T.strip source)) ->
-          pure
-            ( Left
-                "minifier produced empty output (possible DCE of a bare expression; use compilePure/compileEffect)"
-            )
-    _ -> pure res
-
--- | Like 'executeProcess' but allows empty stdout (used when esbuild may DCE
--- a pure expression and we want to retry with an ESM export anchor).
-executeProcessRaw :: FilePath -> [String] -> Text -> IO (Either String Text)
-executeProcessRaw cmd args source =
-  fmap (fmap T.strip) (executeProcessStdin cmd args source)
 
 compileForm :: CompilerConfig -> CompileForm
 compileForm cfg = case configStyle cfg of
