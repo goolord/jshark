@@ -12,68 +12,101 @@
 
 ---
 
-### The "Sweet Spot"
+## On "The JavaScript Problem"
 
-Traditional approaches to web development in Haskell often present an all-or-nothing choice:
+For over a decade, the Haskell community has wrestled with what the HaskellWiki famously codified as [**"The JavaScript Problem"**](https://wiki.haskell.org/The_JavaScript_Problem):
 
-- **Heavyweight Compilers (GHCJS, Asterius):** Bring along the full GHC runtime, multi-megabyte bundle sizes, and opaque minified blobs.
-- **Raw JavaScript or TypeScript:** Give up Haskell's type system, purity, algebraic data types, and compile-time correctness guarantees.
+> 1. **JavaScript, the language**, is rife with well-known hazards: weak typing, silent coercions, late binding, unpredictable `this` scoping, and a total lack of compile-time guarantees.
+> 2. **JavaScript, the platform**, is inescapable: it is the ubiquitous, non-negotiable runtime of the web browser.
 
-**JShark occupies the sweet spot:** it is designed for applications more complex than a static site, but not complex enough to justify hauling an entire GHC runtime into the browser. It generates slim, readable JavaScript with zero runtime overhead.
+Historically, functional programmers have attempted to navigate this tension from several distinct angles:
+
+- **The Heavyweight Emulators ([GHCJS](https://github.com/ghcjs/ghcjs), [Asterius](https://github.com/tweag/asterius)):**  
+  These compile whole Haskell programs by shipping a full simulated GHC runtime into JavaScript or WebAssembly—complete with a green-thread scheduler, laziness thunk evaluation, and garbage collection. While this preserves standard Haskell semantics, it comes at a steep price: multi-megabyte bundle sizes, sluggish cold starts, impedance mismatches with DOM APIs, and emitted output that is an impenetrable blob of machine code.
+
+- **The Separate Frontend Languages ([PureScript](https://www.purescript.org/), [Elm](https://elm-lang.org/)):**  
+  Rather than hauling GHC into the browser, these invent entirely new functional languages designed around browser execution models. While they generate clean JavaScript, they force you into a segregated ecosystem: distinct compilers, separate build tools, different package managers, and the chore of manually keeping frontend and backend data types in sync.
+
+- **The Untyped Macro Embeddings ([JMacro](https://wiki.haskell.org/JMacro)):**  
+  Quasiquoted templating systems that offer syntactic correctness checks in Haskell, but defer type safety to runtime or external linters.
+
+- **The Lightweight Subset Compilers ([Fay](https://github.com/faylang/fay/wiki)):**  
+  Compilers for a constrained subset of Haskell without the full GHC runtime, which pioneered the idea of lean emitted code but operated outside GHC's native typechecker.
+
+### JShark's Stance: Host the Types, Not the Runtime
+
+**JShark occupies the sweet spot:** it is designed for the broad band of web applications that are more complex than a static site, but not complex enough to justify dragging an entire GHC runtime into the client.
+
+Rather than teaching the JavaScript virtual machine how to evaluate lazy thunks and schedule lightweight threads, JShark flips the equation: **use Haskell's type system to discipline JavaScript.**
+
+1. **Standard GHC, Zero Forking:**  
+   JShark is an Embedded Domain-Specific Language (EDSL). JShark programs are plain Haskell values compiled with your regular GHC toolchain. Your backend and frontend can live in the same codebase, sharing records, combinators, and build infrastructure.
+
+2. **Zero Runtime Overhead:**  
+   There is no GHC runtime layer in the browser. JShark terms compile directly to slim, native JavaScript: Haskell functions become JS arrow functions, arrays become JS arrays, and `let` bindings become JS variables.
+
+3. **Mathematically Hygienic via PHOAS:**  
+   By modeling binders with **Parametric Higher-Order Abstract Syntax (PHOAS)**, a lambda in JShark is a native Haskell function. Unbound variables and variable capture bugs are impossible by construction.
+
+4. **Auditable, Human-Readable JavaScript:**  
+   Instead of generating an unreadable compiler artifact, JShark produces readable code that preserves your Haskell binder names and recovers temporary variable names from the callstack via `HasCallStack`. You can step through it cleanly in Chrome DevTools or inspect it in code review.
+
+In short, JShark solves "The JavaScript Problem" by giving you Haskell's compile-time peace of mind without saddling your users with a multi-megabyte runtime penalty.
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
-- [Key Features](#-key-features)
-- [Live Demos & Showcase](#-live-demos--showcase)
-- [Quick Start](#-quick-start)
+- [On "The JavaScript Problem"](#on-the-javascript-problem)
+- [Key Features](#key-features)
+- [Live Demos & Showcase](#live-demos--showcase)
+- [Quick Start](#quick-start)
   - [Pragmas and Setup](#pragmas-and-setup)
   - [1. Compiling an Effectful Program](#1-compiling-an-effectful-program)
   - [2. Evaluating Pure Expressions in GHCi](#2-evaluating-pure-expressions-in-ghci)
   - [3. The Core Mental Model (Two Typed ASTs)](#3-the-core-mental-model-two-typed-asts)
   - [4. Interoperating with JavaScript (FFI)](#4-interoperating-with-javascript-ffi)
-- [Monorepo Packages](#-monorepo-packages)
-- [Design Philosophy & Limitations](#-design-philosophy--limitations)
-- [Building & Development](#-building--development)
+- [Monorepo Packages](#monorepo-packages)
+- [Design Philosophy & Limitations](#design-philosophy--limitations)
+- [Building & Development](#building--development)
   - [Prerequisites](#prerequisites)
   - [Using Nix](#using-nix)
   - [Using Cabal](#using-cabal)
   - [Running the Test Suites](#running-the-test-suites)
   - [Running the Dev Server](#running-the-dev-server)
   - [Helper Scripts](#helper-scripts)
-- [Documentation & Resources](#-documentation--resources)
-- [License](#-license)
+- [Documentation & Resources](#documentation--resources)
+- [License](#license)
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- 📖 **JavaScript You Can Actually Read**  
+- **JavaScript You Can Actually Read**  
   Codegen preserves your program's structure and variable names instead of emitting an unreadable blob. Binders keep their original Haskell names, and `let`-bound temporaries infer readable names from the calling function via `HasCallStack`. For debugging, `readableConfig` emits pretty, formatted JavaScript; for production, `defaultCompilerConfig` emits a minified IIFE.
 
-- 🛡️ **Guaranteed Scope Safety with PHOAS**  
+- **Guaranteed Scope Safety with PHOAS**  
   Binders use **Parametric Higher-Order Abstract Syntax (PHOAS)**. A lambda is a native Haskell function: terms can never reference an unbound variable, variable capture is mathematically impossible, and substitution is plain function application.
 
-- ⚖️ **Two Typed ASTs (Pure vs. Effectful)**  
+- **Two Typed ASTs (Pure vs. Effectful)**  
   The API strictly separates pure computation (`Expr f u`) from side effects (`Effect f u`). Pure code (literals, math, lambdas, arrays, objects, `Option`, `Result`) forms a strict subset you can safely reason about. Effects (DOM updates, console logs, mutable state, timers, FFI) form a separate tree joined only at explicit, typed seams.
 
-- ⚡ **One Term, Dual Runtimes**  
+- **One Term, Dual Runtimes**  
   Pure expressions can be evaluated directly in Haskell with no JS engine required—enabling blazingly fast unit tests. Effectful programs can be executed headlessly under [Bun](https://bun.sh) (with optional browser globals via `happy-dom`), allowing DOM and storage code to be tested without launching a full browser.
 
-- 🔌 **Gradual, Type-Checked FFI**  
+- **Gradual, Type-Checked FFI**  
   When an API is not in the standard library, `ffi` lets you call arbitrary JavaScript while keeping arguments type-checked `Expr`s via heterogeneous records (`Rec`). Polymorphic calls can be easily locked down into type-safe wrappers using standard Haskell signatures.
 
-- 🧰 **Haskell as the Metaprogramming Engine**  
+- **Haskell as the Metaprogramming Engine**  
   Because JShark is an EDSL, libraries are just Haskell code. Combinators like `map`, `zipWith`, and `groupBy` are ordinary Haskell functions generating JavaScript ASTs. `GHC.Generics` records and sum types map automatically to JS objects, and `OverloadedRecordDot` allows natural record field access.
 
 ---
 
-## 🎮 Live Demos & Showcase
+## Live Demos & Showcase
 
 Explore live demonstrations built directly from the `master` branch:
 
-👉 **[Launch Live Demo Site](https://goolord.github.io/jshark/)**
+**[Launch Live Demo Site](https://goolord.github.io/jshark/)**
 
 > [!TIP]
 > On the demo site, open the **Details pane** to inspect the original Haskell source code side-by-side with the generated `Readable` JavaScript output.
@@ -88,7 +121,7 @@ Explore live demonstrations built directly from the `master` branch:
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Pragmas and Setup
 
@@ -211,7 +244,7 @@ console.log("max", 2, 9);
 
 ---
 
-## 📦 Monorepo Packages
+## Monorepo Packages
 
 This repository is organized as a Cabal multi-package project:
 
@@ -245,7 +278,7 @@ cabal run jshark-bindgen -- lib.d.ts --module JShark.Lib
 
 ---
 
-## 💡 Design Philosophy & Limitations
+## Design Philosophy & Limitations
 
 JShark deliberately makes specific pragmatic design choices:
 
@@ -263,7 +296,7 @@ JShark deliberately makes specific pragmatic design choices:
 
 ---
 
-## 🛠️ Building & Development
+## Building & Development
 
 ### Prerequisites
 
@@ -352,14 +385,14 @@ Located in the `scripts/` directory:
 
 ---
 
-## 📚 Documentation & Resources
+## Documentation & Resources
 
-- 📖 **[JShark Tutorial](docs/tutorial.md):** In-depth walkthrough covering syntax, AST primitives, lambdas, objects, and Lucid integration.
-- 🔬 **[Benchmarking & Testing Guide](docs/benchmarking-and-testing.md):** Detailed guide to RTS profiling flags, test suites, and performance benches.
-- 📋 **[Changelog](CHANGELOG.md):** Release history, breaking changes, and migration guides.
+- **[JShark Tutorial](docs/tutorial.md):** In-depth walkthrough covering syntax, AST primitives, lambdas, objects, and Lucid integration.
+- **[Benchmarking & Testing Guide](docs/benchmarking-and-testing.md):** Detailed guide to RTS profiling flags, test suites, and performance benches.
+- **[Changelog](CHANGELOG.md):** Release history, breaking changes, and migration guides.
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the **BSD-3-Clause License**. See the [LICENSE](LICENSE) file for details.
