@@ -148,7 +148,6 @@ data FlatOp
   | FE_MREDUCER
   | FE_MTOSORTED
   | FE_MFROM
-  | FE_HVM2REF
   | FX_LIFT
   | FX_EXTERN
   | FX_UNSAFEOBJ
@@ -260,7 +259,6 @@ data FlatNode
   | FE_UnsafeNullable NodeId
   | FE_FrozenLit Int
   | FE_GetField Int NodeId
-  | FE_Hvm2Ref Int
   | -- effect (IrEffect)
     FX_Lift NodeId
   | FX_FFI Int Int
@@ -386,7 +384,6 @@ encodeFlatNode node side = case node of
   FE_UnsafeNullable x -> (Enc FE_UNSAFENULL (encI32 x) 0 0 0 0, side)
   FE_FrozenLit gi -> (Enc FE_FROZEN (encI32 gi) 0 0 0 0, side)
   FE_GetField ti o -> (Enc FE_GETFIELD (encI32 ti) (encI32 o) 0 0 0, side)
-  FE_Hvm2Ref ti -> (Enc FE_HVM2REF (encI32 ti) 0 0 0 0, side)
   FE_KConcat x y -> (Enc FE_KCONCAT (encI32 x) (encI32 y) 0 0 0, side)
   FE_KPlus x y -> (Enc FE_KPLUS (encI32 x) (encI32 y) 0 0 0, side)
   FE_KTimes x y -> (Enc FE_KTIMES (encI32 x) (encI32 y) 0 0 0, side)
@@ -794,7 +791,6 @@ flatNodeChildRefs = \case
   FE_UnsafeNullable x -> [x]
   FE_FrozenLit _ -> []
   FE_GetField _ o -> [o]
-  FE_Hvm2Ref _ -> []
   FX_Lift x -> [x]
   FX_FFI _ _ -> []
   FX_UnsafeObject _ -> []
@@ -1025,9 +1021,6 @@ packNode node = case node of
     ti <- addText key
     n <- packExpr o
     addNode (FE_GetField ti n)
-  IrHvm2Ref name -> do
-    ti <- addText name
-    addNode (FE_Hvm2Ref ti)
   KConcat x y -> packBin2 FE_KConcat x y
   KPlus x y -> packBin2 FE_KPlus x y
   KTimes x y -> packBin2 FE_KTimes x y
@@ -1313,7 +1306,6 @@ decodeOp soa op ix iy iz iw iv = case op of
   FE_UNSAFENULL -> FE_UnsafeNullable ix
   FE_FROZEN -> FE_FrozenLit ix
   FE_GETFIELD -> FE_GetField ix iy
-  FE_HVM2REF -> FE_Hvm2Ref ix
   FE_KCONCAT -> FE_KConcat ix iy
   FE_KPLUS -> FE_KPlus ix iy
   FE_KTIMES -> FE_KTimes ix iy
@@ -1558,7 +1550,6 @@ computeFlatSoaPure soa =
             | op == FE_FIXED = pureFixed a
             | op == FE_FNLIT = ch b
             | op == FE_GETFIELD = ch b
-            | op == FE_HVM2REF = pure 1
             | op == FE_UNSAFENULL = ch a
             | op == FE_KNEG = ch a
             | op == FE_KBIGNEG = ch a

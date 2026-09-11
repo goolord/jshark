@@ -81,7 +81,6 @@ The details pane of each example shows the original Haskell source alongside the
 | **TodoMVC** | TodoMVC implementation using `jshark-lucid` for declarative DOM and local storage. | [TodoMvc](examples/src/JShark/Example/TodoMvc) |
 | **Synth** | Polyphonic Web Audio synthesizer with `AudioParam` scheduling and typed FFI bindings. | [Synth](examples/src/JShark/Example/Synth) |
 | **Life** | Conway's Game of Life with WebGL rendering (PixiJS) and web worker engine. | [Life](examples/src/JShark/Example/Life) |
-| **HVM2 Demo** | Mandelbrot zoom comparing JS, Zig SIMD WebAssembly, and HVM2 net reduction. | [Hvm2Demo](examples/src/JShark/Example/Hvm2Demo) |
 
 ---
 
@@ -300,7 +299,7 @@ cabal run exe:jshark-examples -- export ./dist
 
 ### Scripts
 
-- `scripts/check-wasm.sh`: Rebuilds vendored HVM2 WASM binaries and checks Zig kernels.
+- `scripts/check-wasm.sh`: Compile-checks Zig kernels.
 - `scripts/profile-life.sh`: Headless Chrome profiling for the Life example.
 - `scripts/capture-example-screenshots.sh`: Regenerates screenshot assets for documentation.
 

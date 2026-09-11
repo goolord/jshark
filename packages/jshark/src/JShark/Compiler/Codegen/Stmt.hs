@@ -17,7 +17,6 @@ module JShark.Compiler.Codegen.Stmt
   , renderFFIForm
   , renderFFIInvoke
   , isWholeParenthesized
-  , hvm2ExportRef
   )
 where
 
@@ -29,15 +28,12 @@ import JShark.Compiler.Codegen.Core
 import JShark.Compiler.Emit
   ( JS
   , blockBody
-  , dquotes
-  , jsString
   , jsText
   , parens
   , semi
   , ($$)
   , (<+>)
   )
-import JShark.Compiler.Evaluate (escapeJsString)
 
 -- | Turn a rendered effect into a statement. Unit values may still have a
 -- non-empty ref (@el.x = v@, @foo()@); those become statements, not
@@ -174,24 +170,3 @@ parenBalanced txt depth =
       | depth == 0 -> False
       | otherwise -> parenBalanced rest (depth - 1)
     Just (_, rest) -> parenBalanced rest depth
-
-hvm2ExportRef :: Text -> JS
-hvm2ExportRef name =
-  let
-    key = dquotes (jsString (escapeJsString (T.unpack name)))
-    err =
-      dquotes
-        (jsString (escapeJsString ("HVM2 kernel not loaded: " ++ T.unpack name)))
-   in
-    "((function(){var f=globalThis.__jsharkHvm2?.exports?.["
-      <> key
-      <> "];if(typeof f!==\"function\")return function(){throw new Error("
-      <> err
-      <> ")};"
-      <> "function toI64(x){var buf=new ArrayBuffer(8);"
-      <> "var f64=new Float64Array(buf);var i64=new BigInt64Array(buf);"
-      <> "f64[0]=+x;return i64[0];}"
-      <> "function fromOut(r){return typeof r===\"bigint\"?Number(r):r;}"
-      <> "if(f.length>=2){return function(a){return function(b){"
-      <> "return fromOut(f(toI64(a),toI64(b)));};};}"
-      <> "return function(a){return fromOut(f(toI64(a)));};})())"

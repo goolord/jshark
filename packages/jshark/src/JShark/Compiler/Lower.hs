@@ -169,8 +169,6 @@ lowerExprAt !t0 expr = case expr of
       (t1, o') = lowerExprAt t0 o
      in
       (t1, Ir.IrGetField (fieldKeyText @k) o')
-  Hvm2Kernel name _ ->
-    (t0, Ir.IrHvm2Ref name)
 
 lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrNode)
 lowerEffectAt !t0 eff = case eff of

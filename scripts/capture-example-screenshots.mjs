@@ -151,21 +151,6 @@ const jobs = [
       });
     },
   },
-  {
-    name: "hvm2-demo",
-    path: "/hvm2-demo",
-    viewport: { width: 1100, height: 980 },
-    scale: 2,
-    ready: async (page) => {
-      const backend = await page
-        .$eval("#hvm2-metric-backend", (el) => (el.textContent || "").trim())
-        .catch(() => "");
-      if (backend && backend !== "…" && backend !== "...") return true;
-      return canvasHasColor(page, "#hvm2-canvas");
-    },
-    shot: (page) =>
-      screenshotEl(page, "main.page.hvm2", path.join(OUT, "hvm2-demo.png")),
-  },
 ];
 
 const browser = await puppeteer.launch({

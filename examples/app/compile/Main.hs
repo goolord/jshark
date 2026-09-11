@@ -20,7 +20,6 @@ import JShark.Compiler
   , isCompilerFlag
   )
 import qualified JShark.Example.Breakout as Breakout
-import qualified JShark.Example.Hvm2Demo as Hvm2Demo
 import qualified JShark.Example.Life as Life
 import qualified JShark.Example.Synth as Synth
 import qualified JShark.Example.TodoMvc as TodoMvc
@@ -38,7 +37,7 @@ staticRoot :: Text
 staticRoot = "/static"
 
 allLabels :: [String]
-allLabels = ["breakout", "todo-mvc", "synth", "life", "hvm2-demo"]
+allLabels = ["breakout", "todo-mvc", "synth", "life"]
 
 main :: IO ()
 main = do
@@ -76,7 +75,6 @@ compileLabel cfg = \case
   "todo-mvc" -> compileEffect cfg (fromSyntax TodoMvc.mainJS)
   "synth" -> compileEffect cfg (fromSyntax Synth.mainJS)
   "life" -> compileEffect cfg (fromSyntax Life.mainJS)
-  "hvm2-demo" -> compileEffect cfg (fromSyntax Hvm2Demo.mainJS)
   other -> die ("jshark-compile: unknown example " <> other)
 
 -- | Hot-reload shells use empty source-pane slots; the live app script URL
@@ -87,6 +85,4 @@ pageLabel = \case
   "todo-mvc" -> \script -> TodoMvc.page staticRoot mempty mempty script
   "synth" -> \script -> Synth.page staticRoot mempty mempty script
   "life" -> \script -> Life.page staticRoot (Life.frameSrcFor script)
-  "hvm2-demo" -> \script ->
-    Hvm2Demo.page staticRoot "/hvm2-demo" mempty mempty script
   other -> \_ -> error ("jshark-compile: unknown page " <> other)

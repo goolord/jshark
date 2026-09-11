@@ -5,7 +5,6 @@ module Main (main) where
 import BunTests (bunEvalTests)
 import CatalogTests (catalogTests)
 import ExampleTests (exampleTests)
-import Hvm2Tests (hvm2Tests)
 import LifeTests (lifeTests)
 import LifeWorkerTests (lifeWorkerTests)
 import PerfTests (perfTests)
@@ -26,5 +25,4 @@ tests =
     , staticCssTests
     , exampleTests
     , perfTests
-    , hvm2Tests
     ]

@@ -34,7 +34,6 @@ import JShark.Compiler.Codegen.Stmt
   ( asStmt
   , assignResult
   , emitBranching
-  , hvm2ExportRef
   , ifAssignOrStmt
   , ifElseStmt
   , letResult
@@ -164,7 +163,6 @@ flatIsSimpleNode view nid = case Flat.flatSoaNode view nid of
   Flat.FE_U8Index {} -> True
   Flat.FE_UnsafeNullable x -> flatIsSimpleNode view x
   Flat.FE_FrozenLit {} -> True
-  Flat.FE_Hvm2Ref {} -> True
   Flat.FE_GetField {} -> True
   _ -> False
 
@@ -1106,8 +1104,6 @@ flatPureASTGo !ctx !env !sIn view nid =
           (s1, Code d r) = flatChild ctx s0 oId
          in
           (s1, Code d (jsDotOrBracket r (Flat.flatSoaText view ti)))
-      Flat.FE_Hvm2Ref ti ->
-        (s0, Code mempty (hvm2ExportRef (Flat.flatSoaText view ti)))
       knode ->
         case knode of
           Flat.FE_MethMap {} -> flatRenderMethod ctx env s0 view knode

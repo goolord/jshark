@@ -79,7 +79,6 @@ data LowerProfile = LowerProfile
 data CompileJobStats = CompileJobStats
   { cjsLabel :: !Text
   , cjsForm :: !CompileForm
-  , cjsLintSec :: !Double
   , cjsIrPrepareSec :: !Double
   , cjsPackSec :: !Double
   , cjsFlatOptSec :: !Double

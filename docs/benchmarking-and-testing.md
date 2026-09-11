@@ -66,7 +66,7 @@ cabal test all --test-options='-t 120s' --test-show-details=direct
 | `jshark-lucid` | `jshark-lucid-test` | Lucid → DOM codegen (happy-dom via bun) |
 | `jshark-bindgen` | `jshark-bindgen-test` | `.d.ts`/JSDoc parse + emit, CLI, golden `BindgenToy` |
 | `jshark-hotreload` | `jshark-hotreload-test` | SSE hub, WAI middleware, watcher mapping |
-| `examples` | `jshark-examples-test` | `LifeTests`, `CatalogTests`, `LifeWorkerTests`, `StaticCssTests`, `ExampleTests` (parse-every-example via bun), `BunTests`, `PerfTests`, `Hvm2Tests` |
+| `examples` | `jshark-examples-test` | `LifeTests`, `CatalogTests`, `LifeWorkerTests`, `StaticCssTests`, `ExampleTests` (parse-every-example via bun), `BunTests`, `PerfTests` |
 
 `ExampleTests` runs inside `jshark-examples-test` (gated on bun). Life's full
 emit is slow; always use `-t 120s` when iterating over `-p life` / `-p examples`.

@@ -33,14 +33,12 @@ import JShark.Api.Types
 import JShark.Compiler.CompileProgress
   ( newProgressBoard
   , recordJobFlatPrepare
-  , recordJobLintSec
   , snapshotJobStatsFromSlot
   , withActiveJob
   )
 import JShark.Compiler.CompileTiming
   ( FlatPrepareTiming (..)
   , cjsIrPrepareSec
-  , cjsLintSec
   )
 import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.Ir as Ir
@@ -181,7 +179,6 @@ expectedRows =
   , ("FE_MREDUCER", [1, 2, 3, 4, 5])
   , ("FE_MTOSORTED", [1, 2, 3, 4, 0])
   , ("FE_MFROM", [1, 2, 3, 0, 0])
-  , ("FE_HVM2REF", [1, 0, 0, 0, 0])
   , ("FX_LIFT", [1, 0, 0, 0, 0])
   , ("FX_EXTERN", [1, 2, 0, 0, 0])
   , ("FX_UNSAFEOBJ", [1, 0, 0, 0, 0])
@@ -252,7 +249,6 @@ batchJobSlotTimingOk = do
   board <- newProgressBoard 1
   _ <-
     withActiveJob 0 board $ do
-      recordJobLintSec 0.001
       recordJobFlatPrepare
         FlatPrepareTiming
           { fptIrPrepareSec = 0.01
@@ -262,4 +258,4 @@ batchJobSlotTimingOk = do
           }
       pure ()
   stats <- snapshotJobStatsFromSlot board 0 "test" 0.05
-  pure (cjsLintSec stats == 0.001 && cjsIrPrepareSec stats == 0.01)
+  pure (cjsIrPrepareSec stats == 0.01)

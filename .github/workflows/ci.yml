@@ -31,9 +31,6 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Install Bend
-        uses: hustcer/setup-bend@v1
-
       - uses: oven-sh/setup-bun@v2
 
       - name: Install Biome

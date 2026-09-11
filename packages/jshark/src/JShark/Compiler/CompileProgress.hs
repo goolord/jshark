@@ -38,7 +38,6 @@ module JShark.Compiler.CompileProgress
   , reportPackPhase
   , reportFlatOptPhase
   , reportIrPreparePhase
-  , recordJobLintSec
   , recordJobCodegenSec
   , recordJobMinifySec
   , recordJobJsBytes
@@ -84,8 +83,7 @@ import JShark.Compiler.CompileTiming
 
 -- | The ordered phases of a single compile, as shown on the progress bar.
 data CompilePhase
-  = PhaseLint
-  | PhaseIrPrepare
+  = PhaseIrPrepare
   | PhasePack
   | PhaseFlatOpt
   | PhaseEmit
@@ -126,7 +124,6 @@ data ProgressBoardHandle = ProgressBoardHandle
 
 data JobTiming = JobTiming
   { jtForm :: !(IORef CompileForm)
-  , jtLintSec :: !(IORef Double)
   , jtCodegenSec :: !(IORef Double)
   , jtMinifySec :: !(IORef Double)
   , jtJsBytes :: !(IORef Int)
@@ -165,7 +162,6 @@ emitCtxFromJob
 newJobTiming :: IO JobTiming
 newJobTiming = do
   form <- newIORef FormMinified
-  lint <- newIORef 0
   codegen <- newIORef 0
   minify <- newIORef 0
   bytes <- newIORef 0
@@ -173,7 +169,6 @@ newJobTiming = do
   pure
     JobTiming
       { jtForm = form
-      , jtLintSec = lint
       , jtCodegenSec = codegen
       , jtMinifySec = minify
       , jtJsBytes = bytes
@@ -187,14 +182,12 @@ resetJobTiming :: JobTiming -> IO ()
 resetJobTiming
   JobTiming
     { jtForm
-    , jtLintSec
     , jtCodegenSec
     , jtMinifySec
     , jtJsBytes
     , jtFlatPrepare
     } = do
     writeIORef jtForm FormMinified
-    writeIORef jtLintSec 0
     writeIORef jtCodegenSec 0
     writeIORef jtMinifySec 0
     writeIORef jtJsBytes 0
@@ -205,7 +198,6 @@ snapshotJobStatsFromTiming ::
 snapshotJobStatsFromTiming
   JobTiming
     { jtForm
-    , jtLintSec
     , jtCodegenSec
     , jtMinifySec
     , jtJsBytes
@@ -214,7 +206,6 @@ snapshotJobStatsFromTiming
   label
   totalSec = do
     form <- readIORef jtForm
-    lint <- readIORef jtLintSec
     codegen <- readIORef jtCodegenSec
     minify <- readIORef jtMinifySec
     bytes <- readIORef jtJsBytes
@@ -234,7 +225,6 @@ snapshotJobStatsFromTiming
         CompileJobStats
           { cjsLabel = label
           , cjsForm = form
-          , cjsLintSec = lint
           , cjsIrPrepareSec = irPrepare
           , cjsPackSec = pack
           , cjsFlatOptSec = flatOpt
@@ -253,7 +243,6 @@ snapshotJobStats label totalSec = do
         CompileJobStats
           { cjsLabel = label
           , cjsForm = FormMinified
-          , cjsLintSec = 0
           , cjsIrPrepareSec = 0
           , cjsPackSec = 0
           , cjsFlatOptSec = 0
@@ -270,13 +259,6 @@ snapshotJobStatsFromSlot board slot label totalSec =
   case pbhJobs board V.!? slot of
     Nothing -> snapshotJobStats label totalSec
     Just JobSlot {jsTiming} -> snapshotJobStatsFromTiming jsTiming label totalSec
-
-recordJobLintSec :: Double -> IO ()
-recordJobLintSec sec = do
-  m <- lookupJobTiming
-  case m of
-    Nothing -> pure ()
-    Just JobTiming {jtLintSec} -> writeIORef jtLintSec sec
 
 recordJobCodegenSec :: Double -> IO ()
 recordJobCodegenSec sec = do
@@ -422,28 +404,25 @@ lookupActiveJob = do
 
 phaseToInt :: CompilePhase -> Int
 phaseToInt = \case
-  PhaseLint -> 0
-  PhaseIrPrepare -> 1
-  PhasePack -> 2
-  PhaseFlatOpt -> 3
-  PhaseEmit -> 4
-  PhaseMinify -> 5
-  PhaseDone -> 6
+  PhaseIrPrepare -> 0
+  PhasePack -> 1
+  PhaseFlatOpt -> 2
+  PhaseEmit -> 3
+  PhaseMinify -> 4
+  PhaseDone -> 5
 
 phaseFromInt :: Int -> CompilePhase
 phaseFromInt = \case
-  0 -> PhaseLint
-  1 -> PhaseIrPrepare
-  2 -> PhasePack
-  3 -> PhaseFlatOpt
-  4 -> PhaseEmit
-  5 -> PhaseMinify
-  6 -> PhaseDone
-  _ -> PhaseLint
+  0 -> PhaseIrPrepare
+  1 -> PhasePack
+  2 -> PhaseFlatOpt
+  3 -> PhaseEmit
+  4 -> PhaseMinify
+  5 -> PhaseDone
+  _ -> PhaseIrPrepare
 
 phaseWeight :: CompilePhase -> Double
 phaseWeight = \case
-  PhaseLint -> 0.03
   PhaseIrPrepare -> 0.10
   PhasePack -> 0.05
   PhaseFlatOpt -> 0.05
@@ -456,7 +435,6 @@ phaseOrder = phaseToInt
 
 phaseLabel :: CompilePhase -> String
 phaseLabel = \case
-  PhaseLint -> "lint"
   PhaseIrPrepare -> "irprep"
   PhasePack -> "pack"
   PhaseFlatOpt -> "fopt"
@@ -469,8 +447,7 @@ completedPhaseWeight phase =
   sum
     [ phaseWeight p
     | p <-
-        [ PhaseLint
-        , PhaseIrPrepare
+        [ PhaseIrPrepare
         , PhasePack
         , PhaseFlatOpt
         , PhaseEmit
@@ -558,7 +535,7 @@ initJob ProgressBoardHandle {pbhJobs} slot label =
     Nothing -> pure ()
     Just slot' -> do
       writeIORef (jsLabel slot') label
-      writeJobPhase slot' PhaseLint 0 1
+      writeJobPhase slot' PhaseIrPrepare 0 1
       writeCounter (jsDone slot') 0
 
 reportJobPhase :: Int -> CompilePhase -> Int -> Int -> IO ()

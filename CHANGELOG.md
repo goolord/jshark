@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+* HVM2/Bend support is removed. The `Hvm2Kernel` expression constructor,
+  `Hvm2KernelEntry`, `JShark.Api.hvm2Kernel`, `JShark.Api.loadHvm2Wasm`,
+  and the `IrHvm2Ref` / `FE_Hvm2Ref` / `FE_HVM2REF` flat-IR nodes are gone;
+  the `JShark.Hvm2`, `JShark.Compiler.EmitBend`, and
+  `JShark.Compiler.Hvm2Lint` modules are deleted. `CompilerConfig` drops
+  `configWarnHvm2Candidates` and the `--warn-hvm2-candidates` flag, and the
+  compile-stats table drops the `lint` phase column. The HVM2 Lab
+  (Mandelbrot) example, its `build-hvm2-demo-wasm` tool, the `wasm/hvm2`
+  Zig pipeline, and its static worker assets are deleted. The remaining
+  examples are Breakout, TodoMVC, Synth, and Life.
+
 * Dead compiler internals are gone: `JShark.Compiler.Optimize.Hvm2`
   (`collectHvm2Kernels`, no callers), the unused `cgTag` codegen counter
   and `allocTag`, the write-only `FlatEmitPlan` `fepReach` mask, and the

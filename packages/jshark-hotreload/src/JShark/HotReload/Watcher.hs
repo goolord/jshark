@@ -86,7 +86,7 @@ exampleAppsForHs path
   | takeExtension path /= ".hs" = []
   | serverOrCompile path = []
   | isThemeHead path =
-      ["breakout", "todo-mvc", "synth", "life", "hvm2-demo"]
+      ["breakout", "todo-mvc", "synth", "life"]
   | otherwise =
       case matchDir path of
         Just app -> [app]
@@ -107,7 +107,6 @@ exampleAppsForHs path
     | "TodoMvc" `isInfixOf` p = Just "todo-mvc"
     | "Breakout" `isInfixOf` p = Just "breakout"
     | "Synth" `isInfixOf` p = Just "synth"
-    | "Hvm2Demo" `isInfixOf` p = Just "hvm2-demo"
     | "Life" `isInfixOf` p = Just "life"
     | otherwise = Nothing
 

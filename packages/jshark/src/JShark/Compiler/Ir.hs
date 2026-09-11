@@ -41,7 +41,6 @@ module JShark.Compiler.Ir
     , IrUnsafeNullable
     , IrFrozenLit
     , IrGetField
-    , IrHvm2Ref
     , KConcat
     , KPlus
     , KTimes
@@ -236,7 +235,6 @@ irNodeChildren = \case
   IrUnsafeNullable x -> [x]
   IrFrozenLit fs -> map irFieldChild fs
   IrGetField _ o -> [o]
-  IrHvm2Ref {} -> []
   KConcat x y -> [x, y]
   KPlus x y -> [x, y]
   KTimes x y -> [x, y]
@@ -323,7 +321,6 @@ data IrNode
   | IrUnsafeNullable !IrNode
   | IrFrozenLit ![IrField]
   | IrGetField !Text !IrNode
-  | IrHvm2Ref !Text
   | KConcat !IrNode !IrNode
   | KPlus !IrNode !IrNode
   | KTimes !IrNode !IrNode
@@ -435,7 +432,6 @@ childMeta node = case node of
   IrUnsafeNullable x -> metaIr x
   IrFrozenLit fs -> strictFoldMap (metaIr . irFieldChild) fs
   IrGetField _ o -> metaIr o
-  IrHvm2Ref {} -> mempty
   KConcat x y -> metaIr x <> metaIr y
   KPlus x y -> metaIr x <> metaIr y
   KTimes x y -> metaIr x <> metaIr y
@@ -521,7 +517,6 @@ anyOccurs !t = \case
   IrUnsafeNullable x -> occursIr t x
   IrFrozenLit fs -> any (occursIr t . irFieldChild) fs
   IrGetField _ o -> occursIr t o
-  IrHvm2Ref {} -> False
   KConcat x y -> occursIr t x P.|| occursIr t y
   KPlus x y -> occursIr t x P.|| occursIr t y
   KTimes x y -> occursIr t x P.|| occursIr t y
@@ -611,7 +606,6 @@ lazyChildren !t = \case
   IrUnsafeNullable x -> lazyOccursIr t x
   IrFrozenLit fs -> any (lazyOccursIr t . irFieldChild) fs
   IrGetField _ o -> lazyOccursIr t o
-  IrHvm2Ref {} -> False
   KConcat x y -> lazyOccursIr t x P.|| lazyOccursIr t y
   KPlus x y -> lazyOccursIr t x P.|| lazyOccursIr t y
   KTimes x y -> lazyOccursIr t x P.|| lazyOccursIr t y
@@ -694,7 +688,6 @@ rebuildIr f node = case node of
   IrUnsafeNullable x -> IrUnsafeNullable (f x)
   IrFrozenLit fs -> IrFrozenLit (map (rebuildField f) fs)
   IrGetField k o -> IrGetField k (f o)
-  IrHvm2Ref {} -> node
   KConcat x y -> KConcat (f x) (f y)
   KPlus x y -> KPlus (f x) (f y)
   KTimes x y -> KTimes (f x) (f y)
@@ -937,8 +930,6 @@ optIr !t0 node = case node of
         (e', md') = elimIrBind mdX hint tag x' body' mdBody
        in
         (t2, e', md')
-  IrHvm2Ref name ->
-    (t0, IrHvm2Ref name, IrMeta 1 IM.empty True True)
   n ->
     let
       (t1, e', md) = optIrNode t0 n

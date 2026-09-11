@@ -79,7 +79,6 @@ module JShark
       , UnsafeNullable
       , FrozenLit
       , GetField
-      , Hvm2Kernel
       )
   , FnBody (..)
   , LamInfo (..)
@@ -87,7 +86,6 @@ module JShark
   , Value (..)
   , GroupBy
   , Arg (..)
-  , Hvm2KernelEntry (..)
   , ClosedExpr
   , ClosedEffect
   , Effect

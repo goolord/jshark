@@ -40,8 +40,6 @@ module JShark.Compiler
   , compilePuresLabeled
   , prettyJS
   , biomeAvailable
-
-    -- * HVM2 lint
   , applyCompilerArgs
   , isCompilerFlag
   , CompileJobStats (..)
@@ -50,8 +48,7 @@ where
 
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (evaluate, finally)
-import Control.Monad (unless, when)
-import qualified Control.Monad.Catch as MC
+import Control.Monad (unless)
 import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
 import Data.List (sortOn)
 import Data.Text (Text)
@@ -77,10 +74,6 @@ import JShark.Compiler.CompileTiming
   , seconds
   )
 import JShark.Compiler.Emit (JS)
-import JShark.Compiler.Hvm2Lint
-  ( warnHvm2CandidatesEffect
-  , warnHvm2CandidatesExpr
-  )
 import JShark.Compiler.JsFormat
   ( biomeAvailable
   , prettyJS
@@ -108,7 +101,6 @@ data OutputStyle
 -- | Top-level compiler configuration.
 data CompilerConfig = CompilerConfig
   { configStyle :: OutputStyle
-  , configWarnHvm2Candidates :: Bool
   , configProgress :: Bool
   -- ^ Print a terminal progress bar for batch compiles and elapsed time when
   --     done. Off by default so tests stay quiet.
@@ -122,7 +114,7 @@ data CompilerConfig = CompilerConfig
 -- | Compact IIFE output from codegen. Minify with an external tool if wanted.
 defaultCompilerConfig :: CompilerConfig
 defaultCompilerConfig =
-  CompilerConfig Minified False False False Nothing
+  CompilerConfig Minified False False Nothing
 
 -- | Alias of 'defaultCompilerConfig', kept for call sites that previously
 -- skipped external minification.
@@ -132,7 +124,7 @@ passthroughConfig = defaultCompilerConfig
 -- | Human-readable JS: no IIFE, formatted with Biome when available.
 readableConfig :: CompilerConfig
 readableConfig =
-  CompilerConfig Readable False False False Nothing
+  CompilerConfig Readable False False Nothing
 
 compileTreeEff ::
   IOE :> es =>
@@ -195,12 +187,6 @@ compileEffectEff ::
 compileEffectEff cfg eff = do
   start <- liftIO getCPUTime
   liftIO $ CP.recordJobForm (compileForm cfg)
-  tLint0 <- liftIO getMonotonicTime
-  withJobPhase cfg CP.PhaseLint
-    $ when (configWarnHvm2Candidates cfg)
-    $ liftIO (warnHvm2CandidatesEffect eff)
-  tLint1 <- liftIO getMonotonicTime
-  liftIO $ CP.recordJobLintSec (seconds tLint0 tLint1)
   out <- compileTreeEff cfg (`effectDoc` eff)
   end <- liftIO getCPUTime
   CR.drawSingleDone (CR.picosecondsToSecs (end - start))
@@ -217,23 +203,7 @@ compilePureEff ::
   -> ClosedExpr u
   -> Eff es Text
 compilePureEff cfg e = do
-  withJobPhase cfg CP.PhaseLint
-    $ when (configWarnHvm2Candidates cfg)
-    $ liftIO (warnHvm2CandidatesExpr e)
   compileTreeEff cfg (`pureDoc` e)
-
-withJobPhase ::
-  IOE :> es =>
-  CompilerConfig
-  -> CP.CompilePhase
-  -> Eff es a
-  -> Eff es a
-withJobPhase cfg phase act =
-  case configProgressSlot cfg of
-    Nothing -> act
-    Just slot -> do
-      liftIO $ CP.reportJobPhase slot phase 0 1
-      act `MC.finally` liftIO (CP.reportJobPhase slot phase 1 1)
 
 -- | Compile many effectful programs concurrently (one capability per item).
 -- When 'configProgress' is set, prints a live progress bar and total time.
@@ -420,15 +390,12 @@ mergeJobConfig :: CompilerConfig -> CompilerConfig -> CompilerConfig
 mergeJobConfig base job =
   job
     { configProgress = configProgress base
-    , configWarnHvm2Candidates =
-        configWarnHvm2Candidates base || configWarnHvm2Candidates job
     , configQuiet = True
     }
 
 -- | Recognized compiler CLI flags (for example servers and build tools).
 isCompilerFlag :: String -> Bool
 isCompilerFlag = \case
-  "--warn-hvm2-candidates" -> True
   "--progress" -> True
   "--readable" -> True
   _ -> False
@@ -440,7 +407,6 @@ applyCompilerArgs args cfg =
 
 applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
 applyCompilerArg cfg = \case
-  "--warn-hvm2-candidates" -> cfg {configWarnHvm2Candidates = True}
   "--progress" -> cfg {configProgress = True}
   "--readable" -> cfg {configStyle = Readable}
   _ -> cfg

@@ -63,13 +63,10 @@ library
     JShark.Compiler.Codegen.Core
     JShark.Compiler.CompileProgress
     JShark.Compiler.CompileTiming
-    JShark.Compiler.EmitBend
     JShark.Compiler.Flat
-    JShark.Compiler.Hvm2Lint
     JShark.Compiler.Ir
     JShark.Console
     JShark.Dom
-    JShark.Hvm2
     JShark.Json
     JShark.Map
     JShark.Math

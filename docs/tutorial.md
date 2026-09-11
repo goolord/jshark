@@ -196,13 +196,12 @@ happy-dom, so DOM code is testable headlessly (see
 
 ## Where to go next
 
-- `examples/src/JShark/Example/` — five real apps: TodoMVC (with
-  `jshark-lucid` templates), a Canvas Breakout, a Web Audio synth, a
-  WebGL Game of Life, and the HVM2/WASM Mandelbrot lab.
+- `examples/src/JShark/Example/` — real apps: TodoMVC (with
+  `jshark-lucid` templates), a Canvas Breakout, a Web Audio synth, and a
+  WebGL Game of Life.
 - `packages/jshark-lucid` — describe DOM in Lucid syntax, compile to
   `createElement` calls.
 - `packages/jshark-bindgen` — generate typed `ffi` wrappers from
   TypeScript declarations.
-- `wasm/hvm2/` — the Bend/HVM2 kernel pipeline for numeric hot spots.
 - `docs/benchmarking-and-testing.md` — profiling and benchmarking the
   compiler itself.

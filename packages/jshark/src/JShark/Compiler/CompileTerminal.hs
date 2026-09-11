@@ -189,7 +189,6 @@ statsColumns :: [Column]
 statsColumns =
   [ programCol
   , secCol "job-total" 8 cjsTotalSec
-  , secCol "lint" 7 cjsLintSec
   , secCol "irprep" 7 cjsIrPrepareSec
   , secCol "pack" 7 cjsPackSec
   , secCol "fopt" 7 cjsFlatOptSec
@@ -278,7 +277,6 @@ wallValue c w
 
 phaseSec :: Column -> CompileJobStats -> Double
 phaseSec c = case colHeader c of
-  "lint" -> cjsLintSec
   "irprep" -> cjsIrPrepareSec
   "pack" -> cjsPackSec
   "fopt" -> cjsFlatOptSec

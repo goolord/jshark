@@ -1,6 +1,6 @@
 cabal-version: 2.4
 
--- jshark-examples: the five showcase apps, dev server, offline compiler,
+-- jshark-examples: the showcase apps, dev server, offline compiler,
 -- tests, and benchmarks.
 name: jshark-examples
 version: 0.1
@@ -63,11 +63,6 @@ library
     JShark.Example.Breakout.Client
     JShark.Example.Breakout.Page
     JShark.Example.Breakout.Types
-    JShark.Example.Hvm2Demo
-    JShark.Example.Hvm2Demo.Client
-    JShark.Example.Hvm2Demo.Kernels
-    JShark.Example.Hvm2Demo.Page
-    JShark.Example.Hvm2Demo.WasmBuild
     JShark.Example.Life
     JShark.Example.Life.Catalog
     JShark.Example.Life.Client
@@ -158,19 +153,6 @@ executable jshark-compile
   ghc-options:
     -threaded
     -with-rtsopts=-N
-
-executable build-hvm2-demo-wasm
-  import: warnings
-  main-is: Main.hs
-  hs-source-dirs: app/wasm
-  build-depends:
-    , base
-    , directory
-    , filepath
-    , jshark
-    , jshark-examples
-    , process
-  default-language: Haskell2010
 
 executable gen-life-catalog
   import: warnings
@@ -325,7 +307,6 @@ test-suite jshark-examples-test
     CaptureStderr
     CatalogTests
     ExampleTests
-    Hvm2Tests
     LifeTests
     LifeWorkerTests
     PerfTests

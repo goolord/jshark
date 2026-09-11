@@ -557,7 +557,6 @@ evalAlg rec apply = \case
   GetField @k o -> do
     ov <- rec o
     withFrozenField @k ov rec
-  Hvm2Kernel {} -> cannotEval "Hvm2Kernel (use WASM export)"
 
 -- | Force an array 'Value' and continue. Every array node is a
 -- 'ValueArray' constructor; the case is here so call sites stay linear.
