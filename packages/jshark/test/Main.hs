@@ -14,8 +14,7 @@ import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 import FlatTest
-  ( batchJobSlotTimingOk
-  , flatDirectPackDeterministic
+  ( flatDirectPackDeterministic
   , flatDirectPackForRangeOk
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
@@ -2157,8 +2156,6 @@ compilerTests =
           "effect timing line"
           (T.isInfixOf "compiled in" (T.pack capturedEffect))
         assertBool "pure silent" (not (T.isInfixOf "compiled in" (T.pack capturedPure)))
-    , testCase "batch job slot timing survives post-job snapshot" $
-        batchJobSlotTimingOk >>= (@?= True)
     , testCase "readableConfig compileEffect is a snippet, not an IIFE" $ do
         out <-
           compileEffect

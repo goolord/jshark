@@ -45,7 +45,7 @@ main = do
       , "synth"
       , "life"
       ]
-  (compiled, _stats) <-
+  compiled <-
     compileJobsLabeled
       cfg
       [ ("breakout", cfg, fromSyntax Breakout.mainJS)
@@ -57,16 +57,13 @@ main = do
     if configStyle cfg == Readable
       then pure compiled
       else
-        fmap
-          fst
-          ( compileJobsLabeled
-              paneCfg
-              [ ("breakout", paneCfg, fromSyntax Breakout.mainJS)
-              , ("todo-mvc", paneCfg, fromSyntax TodoMvc.mainJS)
-              , ("synth", paneCfg, fromSyntax Synth.mainJS)
-              , ("life", paneCfg, fromSyntax Life.mainJS)
-              ]
-          )
+        compileJobsLabeled
+          paneCfg
+          [ ("breakout", paneCfg, fromSyntax Breakout.mainJS)
+          , ("todo-mvc", paneCfg, fromSyntax TodoMvc.mainJS)
+          , ("synth", paneCfg, fromSyntax Synth.mainJS)
+          , ("life", paneCfg, fromSyntax Life.mainJS)
+          ]
   let
     lookupIn srcs label =
       case List.lookup label (zip labels srcs) of

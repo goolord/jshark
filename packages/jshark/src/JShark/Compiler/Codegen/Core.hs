@@ -32,7 +32,6 @@ import JShark.Compiler.Binder
 import JShark.Compiler.CompileProgress
   ( captureEmitCtx
   , initEmitCtxTotal
-  , recordJobFlatPrepare
   , reportFlatOptPhase
   , reportIrPreparePhase
   , reportPackPhase
@@ -438,7 +437,6 @@ flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
         , fptTotalSec = seconds tAll0 tAll1
         }
   reportFlatPrepareTiming timing
-  recordJobFlatPrepare timing
   pure (soa, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareCoreWith #-}
 
@@ -472,7 +470,6 @@ flatPrepareExprCore keepLets e = do
         , fptTotalSec = seconds tAll0 tAll1
         }
   reportFlatPrepareTiming timing
-  recordJobFlatPrepare timing
   pure (soa, timing, irNodes, irOpt)
 {-# NOINLINE flatPrepareExprCore #-}
 

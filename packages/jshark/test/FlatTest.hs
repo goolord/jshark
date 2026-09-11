@@ -14,7 +14,6 @@ module FlatTest
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
   , optIrEffectForRangeImpure
-  , batchJobSlotTimingOk
   )
 where
 
@@ -29,16 +28,6 @@ import JShark.Api.Types
   ( ClosedEffect
   , FixedOp (FixArrLen)
   , Value (..)
-  )
-import JShark.Compiler.CompileProgress
-  ( newProgressBoard
-  , recordJobFlatPrepare
-  , snapshotJobStatsFromSlot
-  , withActiveJob
-  )
-import JShark.Compiler.CompileTiming
-  ( FlatPrepareTiming (..)
-  , cjsIrPrepareSec
   )
 import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.Ir as Ir
@@ -242,20 +231,3 @@ optIrEffectForRangeImpure =
       (_, _, md) = Ir.optIr 0 forRangeU8SetLoop
      in
       not (Ir.irPure md)
-
--- | Slot-backed timing refs survive snapshot after 'withActiveJob' returns.
-batchJobSlotTimingOk :: IO Bool
-batchJobSlotTimingOk = do
-  board <- newProgressBoard 1
-  _ <-
-    withActiveJob 0 board $ do
-      recordJobFlatPrepare
-        FlatPrepareTiming
-          { fptIrPrepareSec = 0.01
-          , fptPackSec = 0
-          , fptFlatOptSec = 0
-          , fptTotalSec = 0.01
-          }
-      pure ()
-  stats <- snapshotJobStatsFromSlot board 0 "test" 0.05
-  pure (cjsIrPrepareSec stats == 0.01)

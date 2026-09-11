@@ -85,8 +85,6 @@ library
     JShark.Compiler.Binder
     JShark.Compiler.Codegen.Flat
     JShark.Compiler.Codegen.Stmt
-    JShark.Compiler.CompileReport
-    JShark.Compiler.CompileTerminal
     JShark.Compiler.Emit
     JShark.Compiler.Evaluate
     JShark.Compiler.Hoist

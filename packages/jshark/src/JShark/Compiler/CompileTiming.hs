@@ -1,16 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 -- | Wall-clock breakdown for flat and PHOAS compile prepare paths.
 --   Enable stderr logging with @JSHARK_COMPILE_TIMING=1@.
---   Batch compiles with @--progress@ print a summary table via
---   'JShark.Compiler.CompileTerminal.renderStatsTable'.
 module JShark.Compiler.CompileTiming
-  ( CompileForm (..)
-  , CompileJobStats (..)
-  , FlatPrepareTiming (..)
+  ( FlatPrepareTiming (..)
   , FlatOptProfile (..)
   , IrOptProfile (..)
   , LowerProfile (..)
@@ -19,14 +12,9 @@ module JShark.Compiler.CompileTiming
   )
 where
 
-import Data.Text (Text)
+import Control.Monad (when)
 import System.Environment (lookupEnv)
 import System.IO (hPutStrLn, stderr)
-
-data CompileForm
-  = FormReadable
-  | FormMinified
-  deriving (Eq, Show)
 
 data FlatPrepareTiming = FlatPrepareTiming
   { fptIrPrepareSec :: !Double
@@ -76,19 +64,6 @@ data LowerProfile = LowerProfile
   }
   deriving (Eq, Show)
 
-data CompileJobStats = CompileJobStats
-  { cjsLabel :: !Text
-  , cjsForm :: !CompileForm
-  , cjsIrPrepareSec :: !Double
-  , cjsPackSec :: !Double
-  , cjsFlatOptSec :: !Double
-  , cjsEmitSec :: !Double
-  , cjsMinifySec :: !Double
-  , cjsTotalSec :: !Double
-  , cjsJsBytes :: !Int
-  }
-  deriving (Eq, Show)
-
 timingEnabled :: IO Bool
 timingEnabled = maybe False (const True) <$> lookupEnv "JSHARK_COMPILE_TIMING"
 
@@ -107,6 +82,3 @@ reportFlatPrepareTiming t = do
 
 seconds :: Double -> Double -> Double
 seconds t0 t1 = t1 - t0
-
-when :: Bool -> IO () -> IO ()
-when b io = if b then io else pure ()

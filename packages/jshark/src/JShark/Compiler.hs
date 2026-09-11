@@ -32,30 +32,24 @@ module JShark.Compiler
   , compileEffectPure
   , compileEffectSyntax
   , compileEffectIO
-  , compileEffects
-  , compileEffectsLabeled
   , compileJobsLabeled
   , compilePure
-  , compilePures
-  , compilePuresLabeled
   , prettyJS
   , biomeAvailable
   , applyCompilerArgs
   , isCompilerFlag
-  , CompileJobStats (..)
   )
 where
 
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (evaluate, finally)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
 import Data.List (sortOn)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Effectful (Eff, IOE, liftIO, runEff, (:>))
-import GHC.Clock (getMonotonicTime)
 import JShark
   ( ClosedEffect
   , ClosedExpr
@@ -67,12 +61,6 @@ import JShark
   )
 import JShark.Api.Types (EffectSyntax, fromSyntax)
 import qualified JShark.Compiler.CompileProgress as CP
-import qualified JShark.Compiler.CompileReport as CR
-import JShark.Compiler.CompileTiming
-  ( CompileForm (..)
-  , CompileJobStats (..)
-  , seconds
-  )
 import JShark.Compiler.Emit (JS)
 import JShark.Compiler.JsFormat
   ( biomeAvailable
@@ -80,15 +68,14 @@ import JShark.Compiler.JsFormat
   , tryPrettyJSIO
   )
 import System.CPUTime (getCPUTime)
+import System.IO (hPutStrLn, stderr)
+
+-- | CPU-time seconds.
+picosecondsToSecs :: Integer -> Double
+picosecondsToSecs ps = fromIntegral ps / 1e12
 
 quietCfg :: CompilerConfig -> CompilerConfig
 quietCfg cfg = cfg {configProgress = False, configQuiet = True}
-
-numberedEffectJob :: Int -> ClosedEffect u -> (Text, ClosedEffect u)
-numberedEffectJob i eff = ("#" <> T.pack (show i), eff)
-
-numberedPureJob :: Int -> ClosedExpr u -> (Text, ClosedExpr u)
-numberedPureJob i e = ("#" <> T.pack (show i), e)
 
 -- | How to present compiled JavaScript.
 data OutputStyle
@@ -106,15 +93,12 @@ data CompilerConfig = CompilerConfig
   --     done. Off by default so tests stay quiet.
   , configQuiet :: Bool
   -- ^ Suppress non-fatal compiler stderr from concurrent batch workers.
-  , configProgressSlot :: Maybe Int
-  -- ^ Active job index for sub-progress reporting during batch compiles.
   }
   deriving (Show, Eq, Ord)
 
 -- | Compact IIFE output from codegen. Minify with an external tool if wanted.
 defaultCompilerConfig :: CompilerConfig
-defaultCompilerConfig =
-  CompilerConfig Minified False False Nothing
+defaultCompilerConfig = CompilerConfig Minified False False
 
 -- | Alias of 'defaultCompilerConfig', kept for call sites that previously
 -- skipped external minification.
@@ -123,8 +107,7 @@ passthroughConfig = defaultCompilerConfig
 
 -- | Human-readable JS: no IIFE, formatted with Biome when available.
 readableConfig :: CompilerConfig
-readableConfig =
-  CompilerConfig Readable False False Nothing
+readableConfig = CompilerConfig Readable False False
 
 compileTreeEff ::
   IOE :> es =>
@@ -133,14 +116,8 @@ compileTreeEff ::
   -> Eff es Text
 compileTreeEff cfg doc = do
   let
-    !style = configStyle cfg
-  tCodegen0 <- liftIO getMonotonicTime
-  let
-    !js = renderJS (doc style)
-  tCodegen1 <- liftIO getMonotonicTime
-  liftIO $ CP.recordJobCodegenSec (seconds tCodegen0 tCodegen1)
+    !js = renderJS (doc (configStyle cfg))
   liftIO CP.finishEmitPhase
-  liftIO $ CP.recordJobJsBytes (T.length js)
   formatted <- finishReadableEff cfg js
   liftIO $ forceCompiled formatted
 
@@ -156,13 +133,21 @@ finishReadableIO quiet src =
   tryPrettyJSIO src >>= \case
     Right out -> pure out
     Left err -> do
-      unless quiet (CR.logReadableFallbackIO err)
+      unless quiet
+        $ CP.withProgressIO
+        $ hPutStrLn stderr ("JShark.Compiler: " ++ err ++ "; using compact emit")
       pure (T.strip src)
 
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffect cfg eff =
-  runEff $
-    CR.runCompileReportFromConfig (configProgress cfg) (compileEffectEff cfg eff)
+compileEffect cfg eff = do
+  start <- getCPUTime
+  out <- runEff (compileEffectEff cfg eff)
+  when (configProgress cfg) $ do
+    end <- getCPUTime
+    style <- CP.terminalStyleIO
+    CP.withProgressIO $
+      hPutStrLn stderr (CP.renderDoneLine style (picosecondsToSecs (end - start)))
+  pure out
 
 -- | Compile a program written directly in 'JShark.Api.EffectSyntax'
 -- (absorbs the @fromSyntax@ wrap at the compile boundary).
@@ -171,203 +156,87 @@ compileEffectSyntax ::
 compileEffectSyntax cfg body = compileEffect cfg (fromSyntax body)
 
 compileEffectPure :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffectPure cfg eff =
-  runEff $ CR.runCompileReportSilent (compileEffectEff (quietCfg cfg) eff)
+compileEffectPure cfg eff = runEff (compileEffectEff (quietCfg cfg) eff)
 
 compileEffectIO :: CompilerConfig -> ClosedEffect u -> IO Text
-compileEffectIO cfg eff =
-  runEff $
-    CR.runCompileReportIO (compileEffectEff (cfg {configProgress = True}) eff)
+compileEffectIO cfg = compileEffect cfg {configProgress = True}
 
 compileEffectEff ::
-  (CR.CompileReport :> es, IOE :> es) =>
+  IOE :> es =>
   CompilerConfig
   -> ClosedEffect u
   -> Eff es Text
-compileEffectEff cfg eff = do
-  start <- liftIO getCPUTime
-  liftIO $ CP.recordJobForm (compileForm cfg)
-  out <- compileTreeEff cfg (`effectDoc` eff)
-  end <- liftIO getCPUTime
-  CR.drawSingleDone (CR.picosecondsToSecs (end - start))
-  pure out
+compileEffectEff cfg eff =
+  compileTreeEff cfg (`effectDoc` eff)
 
 -- | Compile a pure JShark expression. Never draws progress bars.
 compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
-compilePure cfg e =
-  runEff $ CR.runCompileReportSilent (compilePureEff (quietCfg cfg) e)
+compilePure cfg e = runEff (compilePureEff (quietCfg cfg) e)
 
 compilePureEff ::
   IOE :> es =>
   CompilerConfig
   -> ClosedExpr u
   -> Eff es Text
-compilePureEff cfg e = do
-  compileTreeEff cfg (`pureDoc` e)
+compilePureEff cfg e = compileTreeEff cfg (`pureDoc` e)
 
--- | Compile many effectful programs concurrently (one capability per item).
--- When 'configProgress' is set, prints a live progress bar and total time.
-compileEffects ::
-  CompilerConfig -> [ClosedEffect u] -> IO [Text]
-compileEffects cfg effs =
-  compileEffectsLabeled cfg (zipWith numberedEffectJob ([1 ..] :: [Int]) effs)
-
--- | Like 'compileEffects' but labels each job on the progress bar.
-compileEffectsLabeled ::
-  CompilerConfig -> [(Text, ClosedEffect u)] -> IO [Text]
-compileEffectsLabeled cfg jobs =
-  runEff $
-    CR.runCompileReportFromConfig
-      (configProgress cfg)
-      (compileBatchEff cfg compileEffectEff jobs)
-
--- | Mixed-config batch compile. When 'configProgress' is enabled, draws a
--- progress bar, prints per-job compile stats, and returns those stats.
+-- | Compile many labeled effectful programs concurrently (one capability per
+-- item). When 'configProgress' is set, prints a live progress bar and a total
+-- time line; otherwise runs quietly.
 compileJobsLabeled ::
   CompilerConfig
   -> [(Text, CompilerConfig, ClosedEffect u)]
-  -> IO ([Text], [CompileJobStats])
-compileJobsLabeled cfg jobs =
-  runEff $
-    CR.runCompileReportFromConfig
-      (configProgress cfg)
-      (compileMixedBatchEff cfg jobs)
-
--- | Compile many pure programs concurrently. Never draws progress bars.
-compilePures :: CompilerConfig -> [ClosedExpr u] -> IO [Text]
-compilePures cfg exprs =
-  compilePuresLabeled cfg (zipWith numberedPureJob ([1 ..] :: [Int]) exprs)
-
--- | Like 'compilePures' but labels each job on the progress bar.
-compilePuresLabeled ::
-  CompilerConfig -> [(Text, ClosedExpr u)] -> IO [Text]
-compilePuresLabeled cfg jobs =
-  runEff $
-    CR.runCompileReportSilent (compileBatchEff (quietCfg cfg) compilePureEff jobs)
-
-type CompileEff = '[CR.CompileReport, IOE]
-
-compileBatchEff ::
-  CompilerConfig
-  -> (CompilerConfig -> item -> Eff CompileEff Text)
-  -> [(Text, item)]
-  -> Eff CompileEff [Text]
-compileBatchEff cfg compileOne jobs
-  | configProgress cfg = do
-      let
-        total = length jobs
-        jobs' =
-          [ ( label
-            , \slot -> compileOneIO (quietCfg cfg {configProgressSlot = Just slot}) item
-            )
-          | (label, item) <- jobs
-          ]
-      (results, stats, secs) <- liftIO $ batchProgressCore total jobs'
-      CR.drawBatchDone total secs
-      CR.drawBatchStats secs stats
-      pure results
-  | otherwise =
-      liftIO $ mapConcurrently (\(_, item) -> compileOneIO cfg item) jobs
- where
-  compileOneIO c item =
-    runEff $ CR.runCompileReportSilent $ compileOne c item
-
-compileMixedBatchEff ::
-  CompilerConfig
-  -> [(Text, CompilerConfig, ClosedEffect u)]
-  -> Eff CompileEff ([Text], [CompileJobStats])
-compileMixedBatchEff baseCfg jobs
+  -> IO [Text]
+compileJobsLabeled baseCfg jobs
   | configProgress baseCfg = do
       let
         total = length jobs
-      (results, stats, secs) <-
-        liftIO $ batchProgressMixedIO baseCfg jobs
-      CR.drawBatchDone total secs
-      CR.drawBatchStats secs stats
-      pure (results, stats)
-  | otherwise = do
-      results <-
-        liftIO $
-          mapConcurrently
-            ( \(_label, jobCfg, eff) ->
-                compileEffectPure (mergeJobConfig baseCfg jobCfg) eff
-            )
-            jobs
-      pure (results, [])
-
--- | Mixed-config jobs as slot-keyed IO actions (the separate signature
--- keeps the rank-2 'ClosedEffect' polymorphism over the batch).
-batchProgressMixedIO ::
-  CompilerConfig
-  -> [(Text, CompilerConfig, ClosedEffect u)]
-  -> IO ([Text], [CompileJobStats], Double)
-batchProgressMixedIO baseCfg jobs =
-  batchProgressCore
-    (length jobs)
-    ( map
-        ( \(label, jobCfg, eff) ->
-            ( label
-            , \slot ->
-                compileEffectPure
-                  (mergeJobConfig baseCfg jobCfg {configProgressSlot = Just slot})
-                  eff
-            )
-        )
-        jobs
-    )
-
-batchProgressCore ::
-  Int
-  -> [(Text, Int -> IO Text)]
-  -> IO ([Text], [CompileJobStats], Double)
-batchProgressCore total jobs = do
-  start <- getCPUTime
-  board <- CP.newProgressBoard total
-  styleIO <- CR.progressStyleIO
-  lineCount <- newCounter 0
-  let
-    refresh = do
-      b <- CP.readProgressBoard board
-      prev <- readCounter lineCount
+      start <- getCPUTime
+      board <- CP.newProgressBoard total
+      styleIO <- CP.terminalStyleIO
+      lineCount <- newCounter 0
       let
-        block = CP.renderBatchProgress styleIO b prev
-        lineCount' =
-          1
-            + length
-              [ ()
-              | j <- V.toList (CP.pbJobs b)
-              , not (CP.jpDone j)
-              , not (T.null (CP.jpLabel j))
-              ]
-      writeCounter lineCount lineCount'
-      CR.writeProgressLine block
-  CP.setProgressRedraw refresh
-  indexed <-
-    ( mapConcurrently
-        ( \(slot, (label, compile)) -> do
-            tJob0 <- getMonotonicTime
-            CP.initJob board slot label
-            CP.withProgressIO refresh
-            out <- CP.withActiveJob slot board $ compile slot
-            tJob1 <- getMonotonicTime
-            jobStats <-
-              CP.snapshotJobStatsFromSlot board slot label (seconds tJob0 tJob1)
-            CP.markJobDone board slot
-            CP.withProgressIO refresh
-            pure (slot, out, jobStats)
-        )
-        (zip ([0 ..] :: [Int]) jobs)
-    )
-      `finally` do
-        CP.clearProgressRedraw
-  end <- getCPUTime
-  let
-    sorted = sortOn (\(s, _, _) -> s) indexed
-  pure
-    ( map (\(_, out, _) -> out) sorted
-    , map (\(_, _, st) -> st) sorted
-    , CR.picosecondsToSecs (end - start)
-    )
+        refresh = do
+          b <- CP.readProgressBoard board
+          prev <- readCounter lineCount
+          let
+            block = CP.renderBatchProgress styleIO b prev
+            lineCount' =
+              1
+                + length
+                  [ ()
+                  | j <- V.toList (CP.pbJobs b)
+                  , not (CP.jpDone j)
+                  , not (T.null (CP.jpLabel j))
+                  ]
+          writeCounter lineCount lineCount'
+          CP.writeProgressLine block
+      CP.setProgressRedraw refresh
+      CP.withProgressIO refresh
+      indexed <-
+        mapConcurrently
+          ( \(slot, (label, jobCfg, eff)) -> do
+              CP.initJob board slot label
+              out <-
+                CP.withActiveJob slot board $
+                  compileEffectPure (mergeJobConfig baseCfg jobCfg) eff
+              CP.markJobDone board slot
+              CP.withProgressIO refresh
+              pure (slot, out)
+          )
+          (zip ([0 ..] :: [Int]) jobs)
+          `finally` CP.clearProgressRedraw
+      end <- getCPUTime
+      CP.withProgressIO $ do
+        hPutStrLn stderr ""
+        hPutStrLn
+          stderr
+          (CP.renderBatchDoneLine styleIO total (picosecondsToSecs (end - start)))
+      pure (map snd (sortOn fst indexed))
+  | otherwise =
+      mapConcurrently
+        (\(_label, jobCfg, eff) -> compileEffectPure (mergeJobConfig baseCfg jobCfg) eff)
+        jobs
 
 -- | Banner-before-serve only means JS is ready if this ran.
 forceCompiled :: Text -> IO Text
@@ -381,15 +250,10 @@ effectDoc :: OutputStyle -> ClosedEffect u -> JS
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
 
-compileForm :: CompilerConfig -> CompileForm
-compileForm cfg = case configStyle cfg of
-  Readable -> FormReadable
-  Minified -> FormMinified
-
 mergeJobConfig :: CompilerConfig -> CompilerConfig -> CompilerConfig
-mergeJobConfig base job =
+mergeJobConfig _base job =
   job
-    { configProgress = configProgress base
+    { configProgress = False
     , configQuiet = True
     }
 
