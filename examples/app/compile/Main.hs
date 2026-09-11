@@ -11,7 +11,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
-import JShark.Api.Types (fromSyntax)
 import JShark.Compiler
   ( CompilerConfig
   , applyCompilerArgs
@@ -21,6 +20,7 @@ import JShark.Compiler
   )
 import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life
+import JShark.Example.Registry (exampleLabels, exampleMainJS)
 import qualified JShark.Example.Synth as Synth
 import qualified JShark.Example.TodoMvc as TodoMvc
 import Lucid (Html, renderText)
@@ -37,7 +37,7 @@ staticRoot :: Text
 staticRoot = "/static"
 
 allLabels :: [String]
-allLabels = ["breakout", "todo-mvc", "synth", "life"]
+allLabels = map T.unpack exampleLabels
 
 main :: IO ()
 main = do
@@ -70,12 +70,7 @@ main = do
     hFlush stdout
 
 compileLabel :: CompilerConfig -> String -> IO Text
-compileLabel cfg = \case
-  "breakout" -> compileEffect cfg (fromSyntax Breakout.mainJS)
-  "todo-mvc" -> compileEffect cfg (fromSyntax TodoMvc.mainJS)
-  "synth" -> compileEffect cfg (fromSyntax Synth.mainJS)
-  "life" -> compileEffect cfg (fromSyntax Life.mainJS)
-  other -> die ("jshark-compile: unknown example " <> other)
+compileLabel cfg lab = compileEffect cfg (exampleMainJS (T.pack lab))
 
 -- | Hot-reload shells use empty source-pane slots; the live app script URL
 -- still points at @/<name>/app.js@.

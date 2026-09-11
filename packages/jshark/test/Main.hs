@@ -44,7 +44,7 @@ import qualified JShark.Storage as Storage
 import qualified JShark.String as Str
 import qualified JShark.Timers as Timers
 import qualified JShark.Worker as Worker
-import Support
+import Test.Support
 import Test.Tasty
 import Test.Tasty.HUnit
 

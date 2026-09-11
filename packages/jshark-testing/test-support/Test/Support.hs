@@ -6,7 +6,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
-module Support
+module Test.Support
   ( LitRow
   , Person (..)
   , Packet (..)

@@ -1,5 +1,6 @@
 packages:
   packages/jshark
+  packages/jshark-testing
   packages/jshark-lucid
   packages/jshark-bindgen
   packages/jshark-hotreload

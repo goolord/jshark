@@ -6,7 +6,6 @@ import Data.List (partition)
 import qualified Data.List as List
 import qualified Data.Text as T
 import DevServer (Example (..), ServeMode (..), exportExamples, serveExamples)
-import JShark.Api.Types (fromSyntax)
 import JShark.Compiler
   ( CompilerConfig (..)
   , OutputStyle (..)
@@ -18,6 +17,7 @@ import JShark.Compiler
   )
 import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life
+import JShark.Example.Registry (exampleJobs, exampleLabels)
 import qualified JShark.Example.Synth as Synth
 import qualified JShark.Example.TodoMvc as TodoMvc
 import JShark.HotReload.Core (defaultHotReloadConfig)
@@ -39,31 +39,15 @@ main = do
     cfg =
       applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
     paneCfg = readableConfig {configProgress = configProgress cfg}
-    labels =
-      [ "breakout"
-      , "todo-mvc"
-      , "synth"
-      , "life"
-      ]
-  compiled <-
-    compileJobsLabeled
-      cfg
-      [ ("breakout", cfg, fromSyntax Breakout.mainJS)
-      , ("todo-mvc", cfg, fromSyntax TodoMvc.mainJS)
-      , ("synth", cfg, fromSyntax Synth.mainJS)
-      , ("life", cfg, fromSyntax Life.mainJS)
-      ]
+    labels = exampleLabels
+  compiled <- compileJobsLabeled cfg (exampleJobs cfg)
   paneCompiled <-
     if configStyle cfg == Readable
       then pure compiled
       else
         compileJobsLabeled
           paneCfg
-          [ ("breakout", paneCfg, fromSyntax Breakout.mainJS)
-          , ("todo-mvc", paneCfg, fromSyntax TodoMvc.mainJS)
-          , ("synth", paneCfg, fromSyntax Synth.mainJS)
-          , ("life", paneCfg, fromSyntax Life.mainJS)
-          ]
+          (exampleJobs paneCfg)
   let
     lookupIn srcs label =
       case List.lookup label (zip labels srcs) of

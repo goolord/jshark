@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 -- | Full-example compiler benches — the only target that exercises each
@@ -11,13 +12,9 @@
 --   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p 'life/compileEffect'
 module Main (main) where
 
-import JShark.Api (stmts)
+import Bench.Stages (emitLen, nfClosed, stageBenches)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
-import qualified JShark.Example.Breakout as Breakout
-import qualified JShark.Example.Life as Life
-import qualified JShark.Example.Synth as Synth
-import qualified JShark.Example.TodoMvc as TodoMvc
-import Stages (emitLen, nfClosed, stageBenches)
+import JShark.Example.Registry (exampleMainJS)
 import Test.Tasty.Bench
 
 main :: IO ()
@@ -37,7 +34,7 @@ main =
     ]
 
 breakout, todoMvc, synth, life :: ClosedEffect 'Unit
-breakout = stmts Breakout.mainJS
-todoMvc = stmts TodoMvc.mainJS
-synth = stmts Synth.mainJS
-life = stmts Life.mainJS
+breakout = exampleMainJS "breakout"
+todoMvc = exampleMainJS "todo-mvc"
+synth = exampleMainJS "synth"
+life = exampleMainJS "life"

@@ -4,13 +4,13 @@
 
 module Main (main) where
 
+import Bench.Stages (emitLen)
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect)
 import qualified JShark.Api.Types as T
 import JShark.Example.Life (mainJS)
-import Stages (emitLen)
 
 life :: ClosedEffect T.Unit
 life = stmts mainJS

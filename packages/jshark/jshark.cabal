@@ -125,8 +125,13 @@ test-suite jshark-test
   other-modules:
     CaptureStderr
     FlatTest
-    Support
-  hs-source-dirs: test
+    Test.Support
+  hs-source-dirs:
+    test
+    -- Shared test/bench sources live in the jshark-testing package; the
+    -- test-suite compiles them in place because depending on that
+    -- package here would be a cabal package cycle (it depends on jshark).
+    ../jshark-testing/test-support
   build-depends:
     , base
     , directory
@@ -149,8 +154,10 @@ benchmark jshark-compiler
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-    Stages
-  hs-source-dirs: bench
+    Bench.Stages
+  hs-source-dirs:
+    bench
+    ../jshark-testing/test-support
   build-depends:
     , base
     , deepseq >= 1.4

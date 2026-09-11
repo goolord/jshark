@@ -4,10 +4,10 @@
 
 module Main (main) where
 
+import Bench.Stages (codepathStages, codepathStagesPure)
 import JShark
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
-import Stages (codepathStages, codepathStagesPure)
 import Test.Tasty.Bench
 
 -- A long chain of binds:

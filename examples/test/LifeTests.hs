@@ -8,6 +8,7 @@
 
 module LifeTests (lifeTests) where
 
+import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import qualified Data.Text as T
 import JShark
@@ -51,16 +52,15 @@ import JShark.Example.Life.Types
   , zoomLevels
   )
 import qualified JShark.Math as Math
-import System.Directory (findExecutable)
 import Test.Tasty
 import Test.Tasty.HUnit
 
 lifeTests :: TestTree
 lifeTests =
-  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+  bunGated $ \getBun ->
     testGroup
       "life conway"
-      [ testCase "bun is on PATH" $ do
+      [ testCase bunPathTestName $ do
           m <- getBun
           case m of
             Nothing -> assertFailure "bun not found on PATH"

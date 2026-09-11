@@ -85,6 +85,7 @@ library
     JShark.Example.Life.Pixi
     JShark.Example.Life.Profile
     JShark.Example.Life.Types
+    JShark.Example.Registry
     JShark.Example.Synth
     JShark.Example.Synth.Audio
     JShark.Example.Synth.Client
@@ -236,28 +237,26 @@ executable jshark-life-lower
 executable jshark-life-full-emit
   import: bench
   main-is: LifeFullEmit.hs
-  other-modules:
-    Stages
   hs-source-dirs: bench
   build-depends:
     , base
     , deepseq >= 1.4
     , jshark
     , jshark-examples
+    , jshark-testing
     , tasty-bench >= 0.3.5
     , text
 
 executable jshark-life-emit
   import: bench
   main-is: LifeEmit.hs
-  other-modules:
-    Stages
   hs-source-dirs: bench
   build-depends:
     , base
     , deepseq >= 1.4
     , jshark
     , jshark-examples
+    , jshark-testing
     , tasty-bench >= 0.3.5
     , text
 
@@ -276,14 +275,13 @@ benchmark jshark-examples-bench
   import: bench
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules:
-    Stages
   hs-source-dirs: bench
   build-depends:
     , base
     , deepseq >= 1.4
     , jshark
     , jshark-examples
+    , jshark-testing
     , tasty-bench >= 0.3.5
     , text
 
@@ -303,15 +301,14 @@ test-suite jshark-examples-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+    BunGate
     BunTests
-    CaptureStderr
     CatalogTests
     ExampleTests
     LifeTests
     LifeWorkerTests
     PerfTests
     StaticCssTests
-    Support
   hs-source-dirs: test
   build-depends:
     , base
@@ -320,6 +317,7 @@ test-suite jshark-examples-test
     , filepath
     , jshark
     , jshark-examples
+    , jshark-testing
     , process
     , tasty
     , tasty-hunit

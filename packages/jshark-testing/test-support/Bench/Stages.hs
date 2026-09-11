@@ -9,7 +9,7 @@
 --   cabal bench jshark-compiler
 --   cabal bench jshark-compiler -- jshark-compiler -p 'stages/lifeStep'
 --   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p life
-module Stages
+module Bench.Stages
   ( emit
   , emitLen
   , nfClosed

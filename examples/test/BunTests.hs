@@ -9,6 +9,7 @@
 
 module BunTests (bunEvalTests) where
 
+import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import Data.List (intercalate)
 import Data.Text (Text)
@@ -38,14 +39,13 @@ import qualified JShark.Math as Math
 import qualified JShark.Object as Object
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
-import Support
-import System.Directory (findExecutable)
+import Test.Support
 import Test.Tasty
 import Test.Tasty.HUnit
 
 bunEvalTests :: TestTree
 bunEvalTests =
-  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+  bunGated $ \getBun ->
     testGroup
       "bun"
       [ testCase "bun is on PATH" $ do
@@ -54,7 +54,7 @@ bunEvalTests =
             Just _ -> pure ()
             Nothing ->
               assertFailure "bun not found on PATH; install https://bun.sh"
-      , after AllSucceed "bun is on PATH" $
+      , after AllSucceed bunPathTestName $
           testGroup
             "eval"
             [ bunCase "addition" (number 1 + number 2)
@@ -198,7 +198,7 @@ bunEvalTests =
                   "6"
                   got
             ]
-      , after AllSucceed "bun is on PATH" $
+      , after AllSucceed bunPathTestName $
           testGroup
             "evaluateEffectJSON"
             [ effectCase "Lift of addition" (expr (number 1 + number 2)) "3"
@@ -280,7 +280,7 @@ bunEvalTests =
                       ("expected a timeout error, got " <> show e)
                       ("timed out" `T.isInfixOf` T.pack (show e))
             ]
-      , after AllSucceed "bun is on PATH" $
+      , after AllSucceed bunPathTestName $
           testGroup
             "happy-dom"
             [ testCase "happy-dom is available" $ do
