@@ -77,10 +77,8 @@ bigIntTests =
         evaluateBigInt (bigInt 10 + bigInt 3) @?= 13
     , testCase "2^80+1 stays exact" $
         evaluateBigInt (bigInt (2 ^ (80 :: Int) + 1)) @?= 2 ^ (80 :: Int) + 1
-    , testCase "codegen emits 42n" $
-        renderJS (pureAST (bigInt 42)) @?= "42n"
-    , testCase "negative literal is parenthesized" $
-        renderJS (pureAST (bigInt (-42))) @?= "(-42n)"
+    , pureCodeCase "codegen emits 42n" (bigInt 42) "42n"
+    , pureCodeCase "negative literal is parenthesized" (bigInt (-42)) "(-42n)"
     , testCase "Number inference still defaults" $
         evaluateNumber (let_ (number 1) (\seqN -> seqN + 1)) @?= 2
     , testCase "quot_ truncates toward 0" $
@@ -255,13 +253,13 @@ evaluatorTests =
             ).x
           )
           @?= 2
-    , testCase "frozen records compare by last-wins fields" $
-        case evaluate
-          ( Eq
-              (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
-              (Object.frozen [Object.field @"x" (number 1)])
-          ) of
-          ValueBool b -> b @?= True
+    , evalBoolCase
+        "frozen records compare by last-wins fields"
+        ( Eq
+            (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
+            (Object.frozen [Object.field @"x" (number 1)])
+        )
+        True
     , testCase "Show of Result is JS String(object)" $
         case evaluate (Show (ok (number 5) :: Expr f ('Result 'String 'Number))) of
           ValueString s -> s @?= "[object Object]"
@@ -287,114 +285,109 @@ codegenTests :: TestTree
 codegenTests =
   testGroup
     "codegen"
-    [ testCase "nested single-use lets are both inlined" $
-        renderJS (effectfulAST (with2 fooE barE (\x y -> y + x)))
-          @?= "const n0 = foo();\nconst n1 = bar();\nn1 + n0"
-    , testCase "let used more than once renders as a const binding" $
-        renderJS (effectfulAST (with1 fooE (\x -> x + x)))
-          @?= "const n0 = foo();\nn0 + n0"
-    , testCase "let used once under a lambda is not inlined" $
-        renderJS (effectfulAST (with1 fooE (\x -> lambda (\_ -> x + number 1))))
-          @?= "const n0 = foo();\nn1 => n0 + 1"
-    , testCase "let used once in an if_ branch is not inlined" $
-        renderJS (effectfulAST (with2 fooE condE (\x c -> if_ c x (number 0))))
-          @?= "const n0 = foo();\nconst n1 = cond();\n(n1 ? n0 : 0)"
-    , testCase "let used once on the && RHS is not inlined" $
-        renderJS (effectfulAST (with2 condE barE (\x y -> And y x)))
-          @?= "const n0 = cond();\nconst n1 = bar();\nn1 && n0"
-    , testCase "let used once on the && LHS is inlined" $
-        renderJS (effectfulAST (with2 condE barE (\x y -> And x y)))
-          @?= "const n0 = cond();\nconst n1 = bar();\nn0 && n1"
-    , testCase "unknown function application renders as a direct call" $
-        renderJS (effectfulAST (ApplyE (ffi "f" RecNil) fooE))
-          @?= "(f())(foo())"
-    , testCase "ffiExpr with no args omits trailing call parens" $
-        renderJS
-          (effectfulAST (ffiExpr "globalThis.crossOriginIsolated===true" RecNil))
-          @?= "globalThis.crossOriginIsolated===true"
-    , testCase "call FFI with no args appends trailing call parens" $
-        renderJS (effectfulAST (ffi "performance.now" RecNil))
-          @?= "performance.now()"
-    , testCase "ffiExpr typeof omits trailing call parens" $
-        renderJS
-          ( effectfulAST
-              (ffiExpr "typeof PIXI !== 'undefined'" RecNil)
-          )
-          @?= "typeof PIXI !== 'undefined'"
-    , testCase "parenthesized IIFE FFI still invokes" $
-        renderJS (effectfulAST (ffi "(function(){return 1})" RecNil))
-          @?= "(function(){return 1})()"
+    [ effectCodeCase
+        "nested single-use lets are both inlined"
+        (with2 fooE barE (\x y -> y + x))
+        "const n0 = foo();\nconst n1 = bar();\nn1 + n0"
+    , effectCodeCase
+        "let used more than once renders as a const binding"
+        (with1 fooE (\x -> x + x))
+        "const n0 = foo();\nn0 + n0"
+    , effectCodeCase
+        "let used once under a lambda is not inlined"
+        (with1 fooE (\x -> lambda (\_ -> x + number 1)))
+        "const n0 = foo();\nn1 => n0 + 1"
+    , effectCodeCase
+        "let used once in an if_ branch is not inlined"
+        (with2 fooE condE (\x c -> if_ c x (number 0)))
+        "const n0 = foo();\nconst n1 = cond();\n(n1 ? n0 : 0)"
+    , effectCodeCase
+        "let used once on the && RHS is not inlined"
+        (with2 condE barE (\x y -> And y x))
+        "const n0 = cond();\nconst n1 = bar();\nn1 && n0"
+    , effectCodeCase
+        "let used once on the && LHS is inlined"
+        (with2 condE barE (\x y -> And x y))
+        "const n0 = cond();\nconst n1 = bar();\nn0 && n1"
+    , effectCodeCase
+        "unknown function application renders as a direct call"
+        (ApplyE (ffi "f" RecNil) fooE)
+        "(f())(foo())"
+    , effectCodeCase
+        "ffiExpr with no args omits trailing call parens"
+        (ffiExpr "globalThis.crossOriginIsolated===true" RecNil)
+        "globalThis.crossOriginIsolated===true"
+    , effectCodeCase
+        "call FFI with no args appends trailing call parens"
+        (ffi "performance.now" RecNil)
+        "performance.now()"
+    , effectCodeCase
+        "ffiExpr typeof omits trailing call parens"
+        (ffiExpr "typeof PIXI !== 'undefined'" RecNil)
+        "typeof PIXI !== 'undefined'"
+    , effectCodeCase
+        "parenthesized IIFE FFI still invokes"
+        (ffi "(function(){return 1})" RecNil)
+        "(function(){return 1})()"
     , testCase "effectfulProgram wraps decls and the result in a JS IIFE" $
         renderJS (effectfulProgram (with1 fooE (\x -> x + x)))
           @?= "(() => {\n  const n0 = foo();\n  return n0 + n0;\n})()"
-    , testCase "effectful console.log FFI call" $
-        renderJS
-          ( effectfulAST
-              (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
-          )
-          @?= "console.log(\"hi\");"
-    , testCase "OverloadedStrings Expr literal" $
-        renderJS (pureAST ("hi" :: Expr f 'String)) @?= "\"hi\""
-    , testCase "OverloadedStrings Value via Literal" $
-        renderJS (pureAST (Literal ("hi" :: Value 'String))) @?= "\"hi\""
-    , testCase "Num Value literal via Literal" $
-        renderJS (pureAST (Literal (3 :: Value 'Number))) @?= "3"
-    , testCase "Num Expr literal" $
-        renderJS (pureAST (3 :: Expr f 'Number)) @?= "3"
+    , effectCodeCase
+        "effectful console.log FFI call"
+        (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
+        "console.log(\"hi\");"
+    , pureCodeCase "OverloadedStrings Expr literal" ("hi" :: Expr f 'String) "\"hi\""
+    , pureCodeCase
+        "OverloadedStrings Value via Literal"
+        (Literal ("hi" :: Value 'String))
+        "\"hi\""
+    , pureCodeCase "Num Value literal via Literal" (Literal (3 :: Value 'Number)) "3"
+    , pureCodeCase "Num Expr literal" (3 :: Expr f 'Number) "3"
     , testCase "Num Value host arithmetic" $
         case ((1 + 2 * 3) :: Value 'Number) of
           ValueNumber n -> n @?= 7
-    , testCase "Fractional Value via Literal" $
-        renderJS (pureAST (Literal ((1 / 2) :: Value 'Number))) @?= "0.5"
-    , testCase "emptyArray renders as []" $
-        renderJS (pureAST (emptyArray :: Expr f ('Array 'Number))) @?= "[]"
-    , testCase "toString renders String(x)" $
-        renderJS (effectfulAST (with1 fooE toString))
-          @?= "const n0 = foo();\nString(n0)"
-    , testCase "assign is Object.assign" $
-        renderJS
-          (effectfulAST (fromSyntax (assign (UnsafeObject "dst") (UnsafeObject "src"))))
-          @?= "Object.assign(dst, src);"
-    , testCase "whenSomeE binds then option-cases" $ do
-        let
-          js =
-            renderJS
-              ( effectfulAST
-                  ( fromSyntax
-                      ( whenSomeE (ffi "opt" RecNil :: Effect f ('Option 'String)) $ \x ->
-                          Console.log x *> done
-                      )
-                  )
-              )
-        T.isInfixOf "opt()" js @?= True
-        T.isInfixOf "=== null" js @?= True
-    , testCase "loop0 is a recursive zero-arg function" $ do
-        let
-          js =
-            renderJS
-              ( effectfulAST
-                  ( fromSyntax
-                      ( loop0
-                          (\_ -> Console.log ("p" :: Expr f 'String) *> done)
-                          (\_ -> Console.log ("w" :: Expr f 'String) *> done)
-                      )
-                  )
-              )
-        T.isInfixOf "=>" js @?= True
-        T.isInfixOf "console.log(\"p\")" js @?= True
-        T.isInfixOf "console.log(\"w\")" js @?= True
+    , pureCodeCase
+        "Fractional Value via Literal"
+        (Literal ((1 / 2) :: Value 'Number))
+        "0.5"
+    , pureCodeCase
+        "emptyArray renders as []"
+        (emptyArray :: Expr f ('Array 'Number))
+        "[]"
+    , effectCodeCase
+        "toString renders String(x)"
+        (with1 fooE toString)
+        "const n0 = foo();\nString(n0)"
+    , effectCodeCase
+        "assign is Object.assign"
+        (fromSyntax (assign (UnsafeObject "dst") (UnsafeObject "src")))
+        "Object.assign(dst, src);"
+    , effectContains
+        "whenSomeE binds then option-cases"
+        ( fromSyntax
+            ( whenSomeE (ffi "opt" RecNil :: Effect f ('Option 'String)) $ \x ->
+                Console.log x *> done
+            )
+        )
+        ["opt()", "=== null"]
+    , effectContains
+        "loop0 is a recursive zero-arg function"
+        ( fromSyntax
+            ( loop0
+                (\_ -> Console.log ("p" :: Expr f 'String) *> done)
+                (\_ -> Console.log ("w" :: Expr f 'String) *> done)
+            )
+        )
+        ["=>", "console.log(\"p\")", "console.log(\"w\")"]
     , testCase "foreverFrame reschedules requestAnimationFrame" $
         T.count
           "requestAnimationFrame"
           (renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
           @?= 2
-    , testCase "foreverTick reschedules setTimeout" $
-        let
-          js =
-            renderJS (effectfulAST (fromSyntax (Timers.foreverTick (\_ -> done))))
-         in
-          and [T.isInfixOf needle js | needle <- ["setTimeout", "performance.now"]]
-            @?= True
+    , effectContains
+        "foreverTick reschedules setTimeout"
+        (fromSyntax (Timers.foreverTick (\_ -> done)))
+        ["setTimeout", "performance.now"]
     ]
 
 controlFlowTests :: TestTree
@@ -405,9 +398,10 @@ controlFlowTests =
         evaluateNumber (if_ (bool True) (number 1) (number 2)) @?= 1
     , testCase "if_ picks the false branch" $
         evaluateNumber (if_ (bool False) (number 1) (number 2)) @?= 2
-    , testCase "if_ renders as a ternary" $
-        renderJS (effectfulAST (with1 condE (\c -> if_ c (number 1) (number 2))))
-          @?= "const n0 = cond();\n(n0 ? 1 : 2)"
+    , effectCodeCase
+        "if_ renders as a ternary"
+        (with1 condE (\c -> if_ c (number 1) (number 2)))
+        "const n0 = cond();\n(n0 ? 1 : 2)"
     , testCase "optionCase on Some" $
         evaluateNumber
           ( optionCase
@@ -420,92 +414,64 @@ controlFlowTests =
         evaluateNumber
           (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1))
           @?= 0
-    , testCase "ifE renders an if/else statement with a shared result variable" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)
-              )
-          )
-          @?= "(cond() ? 1 : 2);"
-    , testCase "whileE re-emits an FFI condition" $ do
-        let
-          js =
-            renderJS
-              ( effectfulAST
-                  (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp))
-              )
-        assertJSContains "while (cond())" js
-        assertJSContains "foo();" js
-    , testCase "forRange_ emits a C-style for loop" $ do
-        let
-          js =
-            renderJS
-              ( effectfulAST
-                  ( fromSyntax
-                      ( toSyntax_
-                          ( forRange (number 0) (number 3) $ \i ->
-                              discard (u8Set (uint8Array (packUint8 [0])) i (number 1))
-                          )
-                          *> toSyntax noOp
-                      )
-                  )
-              )
-        assertJSContains "for (let n0 = 0; n0 < 3; n0++)" js
-        assertJSContains "new Uint8Array(1)[n0] = 1;" js
-    , testCase "flat forRange_ emits u8Set in loop body" $ do
-        let
-          js =
-            renderJS
-              ( effectfulASTWith
-                  minifiedStyle
-                  ( fromSyntax
-                      ( toSyntax_
-                          ( forRange (number 0) (number 3) $ \i ->
-                              discard (u8Set (uint8Array (packUint8 [0])) i (number 1))
-                          )
-                          *> toSyntax noOp
-                      )
-                  )
-              )
-        assertJSContains "for (let" js
-        assertJSContains "[n" js
-    , testCase "flat bindExpr forRange u8Set keeps loop" $ do
-        let
-          js =
-            renderJS
-              ( effectfulASTWith
-                  minifiedStyle
-                  ( fromSyntax $ do
-                      buf <- bindExpr (newByteArray (number 4))
-                      _ <-
-                        forRange_ (number 0) (number 4) $ \i -> do
-                          toSyntax_ (u8Set buf i (number 255))
-                          done
-                      toSyntax noOp
-                  )
-              )
-        assertJSContains "for (let" js
-        assertJSContains "[n" js
-        assertJSContains "= 255;" js
-    , testCase "flat initPaletteRgba pattern keeps fill loop" $ do
-        let
-          js =
-            renderJS
-              ( effectfulASTWith
-                  minifiedStyle
-                  ( fromSyntax $ do
-                      pal <- bindExpr (newByteArray (number 12))
-                      rgba <- bindExpr (newByteArray (number 16))
-                      _ <-
-                        forRange_ (number 0) (number 4) $ \s -> do
-                          toSyntax_ (u8Set rgba (s * number 4) (u8Index pal (s * number 3)))
-                          done
-                      toSyntax noOp
-                  )
-              )
-        assertJSContains "for (let" js
-        assertJSContains "[n" js
+    , effectCodeCase
+        "ifE renders an if/else statement with a shared result variable"
+        ( fromSyntax
+            (toSyntax (ifE condE (expr (number 1)) (expr (number 2))) *> toSyntax noOp)
+        )
+        "(cond() ? 1 : 2);"
+    , effectContains
+        "whileE re-emits an FFI condition"
+        (fromSyntax (toSyntax_ (while_ condE (ffi "foo" RecNil)) *> toSyntax noOp))
+        ["while (cond())", "foo();"]
+    , effectContains
+        "forRange_ emits a C-style for loop"
+        ( fromSyntax
+            ( toSyntax_
+                ( forRange (number 0) (number 3) $ \i ->
+                    discard (u8Set (uint8Array (packUint8 [0])) i (number 1))
+                )
+                *> toSyntax noOp
+            )
+        )
+        ["for (let n0 = 0; n0 < 3; n0++)", "new Uint8Array(1)[n0] = 1;"]
+    , effectContainsWith
+        minifiedStyle
+        "flat forRange_ emits u8Set in loop body"
+        ( fromSyntax
+            ( toSyntax_
+                ( forRange (number 0) (number 3) $ \i ->
+                    discard (u8Set (uint8Array (packUint8 [0])) i (number 1))
+                )
+                *> toSyntax noOp
+            )
+        )
+        ["for (let", "[n"]
+    , effectContainsWith
+        minifiedStyle
+        "flat bindExpr forRange u8Set keeps loop"
+        ( fromSyntax $ do
+            buf <- bindExpr (newByteArray (number 4))
+            _ <-
+              forRange_ (number 0) (number 4) $ \i -> do
+                toSyntax_ (u8Set buf i (number 255))
+                done
+            toSyntax noOp
+        )
+        ["for (let", "[n", "= 255;"]
+    , effectContainsWith
+        minifiedStyle
+        "flat initPaletteRgba pattern keeps fill loop"
+        ( fromSyntax $ do
+            pal <- bindExpr (newByteArray (number 12))
+            rgba <- bindExpr (newByteArray (number 16))
+            _ <-
+              forRange_ (number 0) (number 4) $ \s -> do
+                toSyntax_ (u8Set rgba (s * number 4) (u8Index pal (s * number 3)))
+                done
+            toSyntax noOp
+        )
+        ["for (let", "[n"]
     , testCase "flat nested forRange u8Set keeps both loops" $ do
         let
           w = number 3
@@ -526,128 +492,102 @@ controlFlowTests =
               )
         assertJSContains "for (let" js
         T.count "for (let" js @?= 2
-    , testCase "flat whenS u8Set keeps assignment" $ do
-        let
-          js =
-            renderJS
-              ( effectfulASTWith
-                  minifiedStyle
-                  ( fromSyntax $ do
-                      buf <- bindExpr (newByteArray (number 1))
-                      _ <-
-                        whenS (number 1 .== number 1) $ do
-                          toSyntax_ (u8Set buf (number 0) (number 42))
-                          done
-                      toSyntax noOp
-                  )
-              )
-        assertJSContains "= 42;" js
-    , testCase "multi-arg arrow FFI wraps IIFE" $
-        renderJS
-          ( effectfulAST
-              ( ffi
-                  ("(a,b)=>a+b")
-                  (arg (number 1) <: arg (number 2) <: RecNil)
-              )
-          )
-          @?= "((a,b)=>a+b)(1, 2)"
-    , testCase "flat multi-arg arrow FFI wraps IIFE" $
-        renderJS
-          ( effectfulASTWith
-              minifiedStyle
-              ( ffi
-                  ("(a,b)=>a+b")
-                  (arg (number 1) <: arg (number 2) <: RecNil)
-              )
-          )
-          @?= "((a,b)=>a+b)(1, 2)"
-    , testCase "u8Index renders direct Uint8Array indexing" $
-        renderJS (pureAST (u8Index (uint8Array (packUint8 [7, 8, 9])) (number 1)))
-          @?= "new Uint8Array([7, 8, 9])[1]"
-    , testCase "when_ of Unit skips the result bind" $
-        renderJS (effectfulAST (when_ condE (ffi "foo" RecNil)))
-          @?= "if (cond()) {foo();}"
-    , testCase "discarded do keeps the last assignment" $ do
-        let
-          js =
-            renderJS
-              ( effectfulAST
-                  ( when_
-                      condE
-                      ( fromSyntax $ do
-                          _ <- toSyntax $ UnsafeObjectAssign (UnsafeObject "o") (expr (number 1))
-                          toSyntax $ UnsafeObjectAssign (UnsafeObject "p") (expr (number 2))
-                      )
-                  )
-              )
-        T.isInfixOf "o = 1" js @?= True
-        T.isInfixOf "p = 2" js @?= True
-    , testCase "ifS of two CallMethods skips the result bind" $
-        renderJS
-          ( effectfulAST
-              ( ifE
-                  condE
-                  ( discard
-                      ( callMethod
-                          (UnsafeObject "el")
-                          "setAttribute"
-                          (arg (string "k") <: arg (string "a") <: RecNil)
-                      )
-                  )
-                  ( discard
-                      ( callMethod
-                          (UnsafeObject "el")
-                          "setAttribute"
-                          (arg (string "k") <: arg (string "b") <: RecNil)
-                      )
-                  )
-              )
-          )
-          @?= "if (cond()) {el.setAttribute(\"k\", \"a\");}\nelse {el.setAttribute(\"k\", \"b\");}"
-    , testCase "ifE keeps impure prelude when condition folds" $
-        let
-          js =
-            renderJS
-              ( effectfulAST
-                  ( fromSyntax $ do
-                      dst <- bindExpr (newByteArray (number 4))
-                      src <- bindExpr (newByteArray (number 4))
-                      toSyntax_ $
-                        ifE
-                          (expr (number 1 .== number 1))
-                          (u8Copy dst src)
-                          noOp
-                      toSyntax noOp
-                  )
-              )
-         in
-          T.isInfixOf ".set(" js @?= True
-    , testCase "ifE of two getAttributes keeps the result bind" $
-        renderJS
-          ( effectfulAST
-              ( ifE
-                  condE
-                  (callMethod (UnsafeObject "el") "getAttribute" (arg (string "a") <: RecNil))
-                  (callMethod (UnsafeObject "el") "getAttribute" (arg (string "b") <: RecNil))
-              )
-          )
-          @?= "let n0;\nif (cond()) {n0 = el.getAttribute(\"a\");}\nelse {n0 = el.getAttribute(\"b\");}\nn0"
-    , testCase "ifE of assign vs number keeps the result bind" $
-        renderJS
-          ( effectfulAST
-              ( ifE
-                  condE
-                  (UnsafeObjectAssign (UnsafeObject "x") (expr (number 1)))
-                  (expr (number 2))
-              )
-          )
-          @?= "let n0;\nif (cond()) {n0 = x = 1;}\nelse {n0 = 2;}\nn0"
-    , testCase "try_ of two Unit arms skips the result bind" $
-        renderJS (effectfulAST (try_ noOp noOp))
-          @?= "try {}\ncatch (n0) {}"
-    , testCase "try_ of FFI vs Unit keeps the result bind" $
-        renderJS (effectfulAST (try_ (ffi "foo" RecNil) noOp))
-          @?= "let n1;\ntry {n1 = foo();}\ncatch (n0) {}\nn1"
+    , effectContainsWith
+        minifiedStyle
+        "flat whenS u8Set keeps assignment"
+        ( fromSyntax $ do
+            buf <- bindExpr (newByteArray (number 1))
+            _ <-
+              whenS (number 1 .== number 1) $ do
+                toSyntax_ (u8Set buf (number 0) (number 42))
+                done
+            toSyntax noOp
+        )
+        ["= 42;"]
+    , effectCodeCase
+        "multi-arg arrow FFI wraps IIFE"
+        (ffi ("(a,b)=>a+b") (arg (number 1) <: arg (number 2) <: RecNil))
+        "((a,b)=>a+b)(1, 2)"
+    , effectCodeCaseWith
+        minifiedStyle
+        "flat multi-arg arrow FFI wraps IIFE"
+        (ffi ("(a,b)=>a+b") (arg (number 1) <: arg (number 2) <: RecNil))
+        "((a,b)=>a+b)(1, 2)"
+    , pureCodeCase
+        "u8Index renders direct Uint8Array indexing"
+        (u8Index (uint8Array (packUint8 [7, 8, 9])) (number 1))
+        "new Uint8Array([7, 8, 9])[1]"
+    , effectCodeCase
+        "when_ of Unit skips the result bind"
+        (when_ condE (ffi "foo" RecNil))
+        "if (cond()) {foo();}"
+    , effectContains
+        "discarded do keeps the last assignment"
+        ( when_
+            condE
+            ( fromSyntax $ do
+                _ <- toSyntax $ UnsafeObjectAssign (UnsafeObject "o") (expr (number 1))
+                toSyntax $ UnsafeObjectAssign (UnsafeObject "p") (expr (number 2))
+            )
+        )
+        ["o = 1", "p = 2"]
+    , effectCodeCase
+        "ifS of two CallMethods skips the result bind"
+        ( ifE
+            condE
+            ( discard
+                ( callMethod
+                    (UnsafeObject "el")
+                    "setAttribute"
+                    (arg (string "k") <: arg (string "a") <: RecNil)
+                )
+            )
+            ( discard
+                ( callMethod
+                    (UnsafeObject "el")
+                    "setAttribute"
+                    (arg (string "k") <: arg (string "b") <: RecNil)
+                )
+            )
+        )
+        "if (cond()) {el.setAttribute(\"k\", \"a\");}\nelse {el.setAttribute(\"k\", \"b\");}"
+    , effectContains
+        "ifE keeps impure prelude when condition folds"
+        ( fromSyntax $ do
+            dst <- bindExpr (newByteArray (number 4))
+            src <- bindExpr (newByteArray (number 4))
+            toSyntax_ $
+              ifE
+                (expr (number 1 .== number 1))
+                (u8Copy dst src)
+                noOp
+            toSyntax noOp
+        )
+        [".set("]
+    , effectCodeCase
+        "ifE of two getAttributes keeps the result bind"
+        ( ifE
+            condE
+            (callMethod (UnsafeObject "el") "getAttribute" (arg (string "a") <: RecNil))
+            (callMethod (UnsafeObject "el") "getAttribute" (arg (string "b") <: RecNil))
+        )
+        "let n0;\nif (cond()) {n0 = el.getAttribute(\"a\");}\nelse {n0 = el.getAttribute(\"b\");}\nn0"
+    , effectCodeCase
+        "ifE of assign vs number keeps the result bind"
+        ( ifE
+            condE
+            (UnsafeObjectAssign (UnsafeObject "x") (expr (number 1)))
+            (expr (number 2))
+        )
+        "let n0;\nif (cond()) {n0 = x = 1;}\nelse {n0 = 2;}\nn0"
+    , effectCodeCase
+        "try_ of two Unit arms skips the result bind"
+        (try_ noOp noOp)
+        "try {}\ncatch (n0) {}"
+    , effectCodeCase
+        "try_ of FFI vs Unit keeps the result bind"
+        (try_ (ffi "foo" RecNil) noOp)
+        "let n1;\ntry {n1 = foo();}\ncatch (n0) {}\nn1"
     , testCase "stringCaseE of Unit arms is a switch statement" $ do
         let
           js =
@@ -730,26 +670,24 @@ stdlibTests =
         assertThrows
           "evaluate: array index"
           (evaluateNumber (Array.index numArray (number (0 / 0))))
-    , testCase "Array.index truncates and throws out of bounds" $ do
-        let
-          js =
-            renderJS (effectfulAST (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index))
-        T.isInfixOf "$checkedIndex" js @?= True
-        T.isInfixOf "throw" js @?= True
-    , testCase "Array.map evaluates" $
-        case evaluate
-          ( Eq
-              (Array.map numArray (\x -> x + number 1))
-              (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
-          ) of
-          ValueBool b -> b @?= True
-    , testCase "Array.filter evaluates" $
-        case evaluate
-          ( Eq
-              (Array.filter numArray (\x -> x .> number 1))
-              (Literal (ValueArray [ValueNumber 2]))
-          ) of
-          ValueBool b -> b @?= True
+    , effectContains
+        "Array.index truncates and throws out of bounds"
+        (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index)
+        ["$checkedIndex", "throw"]
+    , evalBoolCase
+        "Array.map evaluates"
+        ( Eq
+            (Array.map numArray (\x -> x + number 1))
+            (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
+        )
+        True
+    , evalBoolCase
+        "Array.filter evaluates"
+        ( Eq
+            (Array.filter numArray (\x -> x .> number 1))
+            (Literal (ValueArray [ValueNumber 2]))
+        )
+        True
     , testCase "Array.groupBy is first-seen [{key, items}]" $ do
         let
           xs = Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 1])
@@ -801,23 +739,14 @@ stdlibTests =
         T.isInfixOf "const $zipWith =" js @?= True
         T.isInfixOf "=>" js @?= True
         T.isInfixOf "($zipWith)(n0)(n1)" js @?= False
-    , testCase "Array.toSorted hoists $toSorted helper" $ do
-        let
-          js =
-            renderJS
-              ( pureAST
-                  (Array.toSorted numArray (\a b -> if_ (a .> b) (number 1) (number (-1))))
-              )
-        T.isInfixOf "const $toSorted =" js @?= True
-        T.isInfixOf "=>" js @?= True
-        T.isInfixOf ".toSorted" js @?= True
-    , testCase "Array.reduce hoists $reduce helper" $ do
-        let
-          js =
-            renderJS
-              (pureAST (Array.reduce numArray (number 0) (\acc x -> acc + x)))
-        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
-        T.isInfixOf ".reduce" js @?= True
+    , pureContains
+        "Array.toSorted hoists $toSorted helper"
+        (Array.toSorted numArray (\a b -> if_ (a .> b) (number 1) (number (-1))))
+        ["const $toSorted =", "=>", ".toSorted"]
+    , pureContains
+        "Array.reduce hoists $reduce helper"
+        (Array.reduce numArray (number 0) (\acc x -> acc + x))
+        ["const $reduce = (seed, f) =>", ".reduce"]
     , testCase "Array.reduce hoists once when used twice" $ do
         let
           js =
@@ -830,24 +759,19 @@ stdlibTests =
               )
         T.count "const $reduce =" js @?= 1
         T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
-    , testCase "hoisted $reduce keeps seed/f after a seed binder" $ do
-        let
-          js =
-            renderJS
-              ( pureAST
-                  ( Let (Just "seed") (number 1) $ \s ->
-                      Array.reduce numArray (Var s) (\acc x -> acc + x)
-                  )
-              )
-        T.isInfixOf "const seed = 1" js @?= True
-        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
-    , testCase "Classes.fmap Array" $
-        case evaluate
-          ( Eq
-              (C.fmap (\x -> x + number 1) numArray)
-              (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
-          ) of
-          ValueBool b -> b @?= True
+    , pureContains
+        "hoisted $reduce keeps seed/f after a seed binder"
+        ( Let (Just "seed") (number 1) $ \s ->
+            Array.reduce numArray (Var s) (\acc x -> acc + x)
+        )
+        ["const seed = 1", "const $reduce = (seed, f) =>"]
+    , evalBoolCase
+        "Classes.fmap Array"
+        ( Eq
+            (C.fmap (\x -> x + number 1) numArray)
+            (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
+        )
+        True
     , testCase "Classes.liftA2 Option" $ do
         case evaluate (C.liftA2 (+) (some (number 2)) (some (number 3))) of
           ValueOption (Just (ValueNumber n)) -> n @?= 5
@@ -868,21 +792,21 @@ stdlibTests =
           (C.traverse pos (Literal (ValueArray [ValueNumber 1, ValueNumber (-1)]))) of
           ValueOption Nothing -> pure ()
           _ -> assertFailure "expected None"
-    , testCase "Classes.join Array" $
-        case evaluate
-          ( Eq
-              ( C.join
-                  ( Literal
-                      ( ValueArray
-                          [ ValueArray [ValueNumber 1]
-                          , ValueArray [ValueNumber 2, ValueNumber 3]
-                          ]
-                      )
-                  )
-              )
-              (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
-          ) of
-          ValueBool b -> b @?= True
+    , evalBoolCase
+        "Classes.join Array"
+        ( Eq
+            ( C.join
+                ( Literal
+                    ( ValueArray
+                        [ ValueArray [ValueNumber 1]
+                        , ValueArray [ValueNumber 2, ValueNumber 3]
+                        ]
+                    )
+                )
+            )
+            (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
+        )
+        True
     , testCase "Classes.fmap Function" $
         evaluateNumber (apply (C.fmap (\y -> y + 1) (lambda (\x -> x * 2))) (number 3))
           @?= 7
@@ -891,13 +815,13 @@ stdlibTests =
           (C.bimap id (\x -> x + 1) (ok (number 2) :: Expr f ('Result 'String 'Number))) of
           ValueResult (Right (ValueNumber n)) -> n @?= 3
           _ -> assertFailure "expected Ok 3"
-    , testCase "Classes Semigroup Array" $
-        case evaluate
-          ( Eq
-              (numArray C.<> Literal (ValueArray [ValueNumber 3]))
-              (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
-          ) of
-          ValueBool b -> b @?= True
+    , evalBoolCase
+        "Classes Semigroup Array"
+        ( Eq
+            (numArray C.<> Literal (ValueArray [ValueNumber 3]))
+            (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
+        )
+        True
     , testCase "Classes Category Function" $
         evaluateNumber
           ( apply
@@ -905,24 +829,24 @@ stdlibTests =
               (number 3)
           )
           @?= 9
-    , testCase "Classes.mzipWith Array" $
-        case evaluate
-          ( Eq
-              ( C.mzipWith
-                  (+)
-                  numArray
-                  (Literal (ValueArray [ValueNumber 10, ValueNumber 20, ValueNumber 30]))
-              )
-              (Literal (ValueArray [ValueNumber 11, ValueNumber 22]))
-          ) of
-          ValueBool b -> b @?= True
-    , testCase "Classes.foldMap Array String" $
-        case evaluate
-          ( Eq
-              (C.foldMap (\n -> if_ (n .== number 1) (string "a") (string "b")) numArray)
-              (string "ab")
-          ) of
-          ValueBool b -> b @?= True
+    , evalBoolCase
+        "Classes.mzipWith Array"
+        ( Eq
+            ( C.mzipWith
+                (+)
+                numArray
+                (Literal (ValueArray [ValueNumber 10, ValueNumber 20, ValueNumber 30]))
+            )
+            (Literal (ValueArray [ValueNumber 11, ValueNumber 22]))
+        )
+        True
+    , evalBoolCase
+        "Classes.foldMap Array String"
+        ( Eq
+            (C.foldMap (\n -> if_ (n .== number 1) (string "a") (string "b")) numArray)
+            (string "ab")
+        )
+        True
     , testCase "Classes.foldr is reduceRight" $ do
         evaluateNumber (C.foldr (-) (number 0) numArray) @?= -1
         evaluateNumber (C.foldl (-) (number 0) numArray) @?= -3
@@ -946,16 +870,18 @@ stdlibTests =
         case evaluate ((none :: Expr f ('Option 'String)) C.<> some (string "x")) of
           ValueOption (Just (ValueString s)) -> s @?= "x"
           _ -> assertFailure "expected Some \"x\""
-    , testCase "Classes.elem Array uses $valueEq" $
-        case evaluate (C.elem (number 2) numArray) of
-          ValueBool b -> b @?= True
+    , evalBoolCase
+        "Classes.elem Array uses $valueEq"
+        (C.elem (number 2) numArray)
+        True
     , testCase "Array.singleton is a one-element array" $ do
         evaluateNumber (Array.length (Array.singleton (number 7))) @?= 1
         T.isInfixOf "[]" (renderJS (pureAST (Array.singleton (number 7))))
           @?= False
-    , testCase "unit array literal keeps its slots" $
-        renderJS (pureAST (Literal (ValueArray [ValueUnit, ValueUnit])))
-          @?= "[undefined, undefined]"
+    , pureCodeCase
+        "unit array literal keeps its slots"
+        (Literal (ValueArray [ValueUnit, ValueUnit]))
+        "[undefined, undefined]"
     , testCase "Array.join renders null as the empty string" $ do
         let
           opts =
@@ -982,59 +908,58 @@ stdlibTests =
         T.count "const $deepEqual" js @?= 1
         T.count "const $uint8ArrayEq" js @?= 1
         T.count "$valueEq(n" js @?= 2
-    , testCase "Array.length of a literal folds" $
-        renderJS (pureAST (Array.length numArray)) @?= "2"
-    , testCase "Array.length of a binder renders as .length" $
-        renderJS (pureAST (lambda (\xs -> Array.length xs)))
-          @?= "n0 => n0.length"
-    , testCase "Array.map renders as .map with a callback" $
-        renderJS (pureAST (Array.map numArray (\x -> x + number 1)))
-          @?= "[1, 2].map(n0 => n0 + 1)"
-    , testCase "Array.filterE renders an effectful callback" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      toSyntax_ $ Array.filterE numArray (\x -> ffi "pred" (arg x <: RecNil))
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "[1, 2].filter(n0 => pred(n0));"
-    , testCase "Array.map callback with an internal let is inlined when used once" $
-        renderJS
-          (pureAST (Array.map numArray (\x -> let_ (x + number 1) (\y -> y * 2))))
-          @?= "[1, 2].map(n0 => {const n1 = n0 + 1;\nreturn n1 * 2})"
-    , testCase "Array.join renders as .join" $
-        renderJS (pureAST (Array.join numArray (string ",")))
-          @?= "[1, 2].join(\",\")"
-    , testCase "Array.push renders as a mutating .push call" $
-        renderJS
-          ( effectfulAST
-              (fromSyntax (toSyntax (Array.push numArray (number 3)) *> toSyntax noOp))
-          )
-          @?= "[1, 2].push(3);"
-    , testCase "Array.clear renders as length = 0" $
-        renderJS
-          ( effectfulAST
-              (fromSyntax (toSyntax (Array.clear numArray) *> toSyntax noOp))
-          )
-          @?= "[1, 2].length = 0;"
-    , testCase "Array.pushMany renders one call with every argument" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  (toSyntax (Array.pushMany numArray [number 3, number 4]) *> toSyntax noOp)
-              )
-          )
-          @?= "[1, 2].push(3, 4);"
-    , testCase "Array.fromEffects renders an array literal" $
-        renderJS (effectfulAST (Array.fromEffects [expr (number 1), expr (number 2)]))
-          @?= "[1, 2]"
-    , testCase "String.toUpper renders as .toUpperCase()" $
-        renderJS (pureAST (Str.toUpper (string "hi"))) @?= "\"hi\".toUpperCase()"
-    , testCase "Floating sin renders as Math.sin(x)" $
-        renderJS (effectfulAST (with1 fooE sin)) @?= "const n0 = foo();\nMath.sin(n0)"
+    , pureCodeCase "Array.length of a literal folds" (Array.length numArray) "2"
+    , pureCodeCase
+        "Array.length of a binder renders as .length"
+        (lambda (\xs -> Array.length xs))
+        "n0 => n0.length"
+    , pureCodeCase
+        "Array.map renders as .map with a callback"
+        (Array.map numArray (\x -> x + number 1))
+        "[1, 2].map(n0 => n0 + 1)"
+    , effectCodeCase
+        "Array.filterE renders an effectful callback"
+        ( fromSyntax
+            ( do
+                toSyntax_ $ Array.filterE numArray (\x -> ffi "pred" (arg x <: RecNil))
+                toSyntax noOp
+            )
+        )
+        "[1, 2].filter(n0 => pred(n0));"
+    , pureCodeCase
+        "Array.map callback with an internal let is inlined when used once"
+        (Array.map numArray (\x -> let_ (x + number 1) (\y -> y * 2)))
+        "[1, 2].map(n0 => {const n1 = n0 + 1;\nreturn n1 * 2})"
+    , pureCodeCase
+        "Array.join renders as .join"
+        (Array.join numArray (string ","))
+        "[1, 2].join(\",\")"
+    , effectCodeCase
+        "Array.push renders as a mutating .push call"
+        (fromSyntax (toSyntax (Array.push numArray (number 3)) *> toSyntax noOp))
+        "[1, 2].push(3);"
+    , effectCodeCase
+        "Array.clear renders as length = 0"
+        (fromSyntax (toSyntax (Array.clear numArray) *> toSyntax noOp))
+        "[1, 2].length = 0;"
+    , effectCodeCase
+        "Array.pushMany renders one call with every argument"
+        ( fromSyntax
+            (toSyntax (Array.pushMany numArray [number 3, number 4]) *> toSyntax noOp)
+        )
+        "[1, 2].push(3, 4);"
+    , effectCodeCase
+        "Array.fromEffects renders an array literal"
+        (Array.fromEffects [expr (number 1), expr (number 2)])
+        "[1, 2]"
+    , pureCodeCase
+        "String.toUpper renders as .toUpperCase()"
+        (Str.toUpper (string "hi"))
+        "\"hi\".toUpperCase()"
+    , effectCodeCase
+        "Floating sin renders as Math.sin(x)"
+        (with1 fooE sin)
+        "const n0 = foo();\nMath.sin(n0)"
     , testCase "Floating sqrt evaluates" $
         evaluateNumber (sqrt (number 9)) @?= 3
     , testCase "Math.round matches JS half-toward-+Infinity semantics" $ do
@@ -1042,76 +967,68 @@ stdlibTests =
         evaluateNumber (Math.round (number (-2.5))) @?= (-2)
     , testCase "Floating (**) evaluates as Math.pow" $
         evaluateNumber (number 2 ** number 10) @?= 1024
-    , testCase "Json.stringify renders as JSON.stringify(x)" $
-        renderJS (pureAST (Json.stringify (number 1))) @?= "JSON.stringify(1)"
-    , testCase "Console.log renders as console.log(x)" $
-        renderJS
-          ( effectfulAST
-              (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
-          )
-          @?= "console.log(\"hi\");"
-    , testCase "Dom appendChild inlines single-use handles" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      p <- Dom.lookupId (string "p")
-                      c <- Dom.createElement (string "div")
-                      _ <- Dom.appendChild p c
-                      toSyntax noOp
+    , pureCodeCase
+        "Json.stringify renders as JSON.stringify(x)"
+        (Json.stringify (number 1))
+        "JSON.stringify(1)"
+    , effectCodeCase
+        "Console.log renders as console.log(x)"
+        (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
+        "console.log(\"hi\");"
+    , effectCodeCase
+        "Dom appendChild inlines single-use handles"
+        ( fromSyntax
+            ( do
+                p <- Dom.lookupId (string "p")
+                c <- Dom.createElement (string "div")
+                _ <- Dom.appendChild p c
+                toSyntax noOp
+            )
+        )
+        "const n0 = document.getElementById(\"p\");\nconst n1 = document.createElement(\"div\");\nn0.appendChild(n1);"
+    , effectCodeCase
+        "Dom appendChild keeps a handle that is used more than once"
+        ( fromSyntax
+            ( do
+                p <- Dom.lookupId (string "p")
+                c1 <- Dom.createElement (string "div")
+                c2 <- Dom.createElement (string "span")
+                _ <- Dom.appendChild p c1
+                _ <- Dom.appendChild p c2
+                toSyntax noOp
+            )
+        )
+        "const n0 = document.getElementById(\"p\");\nconst n1 = document.createElement(\"div\");\nconst n2 = document.createElement(\"span\");\nn0.appendChild(n1);\nn0.appendChild(n2);"
+    , effectCodeCase
+        "Canvas.getContext2d is typed as an Option"
+        ( fromSyntax
+            ( do
+                c <- Dom.lookupId (string "c")
+                ctx <- Canvas.getContext2d c
+                toSyntax
+                  ( Bind
+                      Nothing
+                      ctx
+                      (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok")))
                   )
-              )
-          )
-          @?= "const n0 = document.getElementById(\"p\");\nconst n1 = document.createElement(\"div\");\nn0.appendChild(n1);"
-    , testCase "Dom appendChild keeps a handle that is used more than once" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      p <- Dom.lookupId (string "p")
-                      c1 <- Dom.createElement (string "div")
-                      c2 <- Dom.createElement (string "span")
-                      _ <- Dom.appendChild p c1
-                      _ <- Dom.appendChild p c2
-                      toSyntax noOp
+            )
+        )
+        "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, false);\nconst n2 = n1;\nconst n3 = n2;\n(n3 === null ? \"no\" : \"ok\")"
+    , effectCodeCase
+        "Canvas.getContext2dDesync requests desynchronized context"
+        ( fromSyntax
+            ( do
+                c <- Dom.lookupId (string "c")
+                ctx <- Canvas.getContext2dDesync c
+                toSyntax
+                  ( Bind
+                      Nothing
+                      ctx
+                      (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok")))
                   )
-              )
-          )
-          @?= "const n0 = document.getElementById(\"p\");\nconst n1 = document.createElement(\"div\");\nconst n2 = document.createElement(\"span\");\nn0.appendChild(n1);\nn0.appendChild(n2);"
-    , testCase "Canvas.getContext2d is typed as an Option" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      c <- Dom.lookupId (string "c")
-                      ctx <- Canvas.getContext2d c
-                      toSyntax
-                        ( Bind
-                            Nothing
-                            ctx
-                            (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok")))
-                        )
-                  )
-              )
-          )
-          @?= "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, false);\nconst n2 = n1;\nconst n3 = n2;\n(n3 === null ? \"no\" : \"ok\")"
-    , testCase "Canvas.getContext2dDesync requests desynchronized context" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      c <- Dom.lookupId (string "c")
-                      ctx <- Canvas.getContext2dDesync c
-                      toSyntax
-                        ( Bind
-                            Nothing
-                            ctx
-                            (\o -> Lift (optionCase (var o) (string "no") (\_ -> string "ok")))
-                        )
-                  )
-              )
-          )
-          @?= "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, true);\nconst n2 = n1;\nconst n3 = n2;\n(n3 === null ? \"no\" : \"ok\")"
+            )
+        )
+        "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, true);\nconst n2 = n1;\nconst n3 = n2;\n(n3 === null ? \"no\" : \"ok\")"
     , testCase
         "optionCaseE of getContext plus a large object array tests that context"
         $ do
@@ -1166,226 +1083,191 @@ stdlibTests =
               | otherwise = any (resolvesToCtx (fuel - 1)) (aliasOf i)
           T.isInfixOf "=;" js @?= False
           (not (null ctxIds) && resolvesToCtx 8 nullId) @?= True
-    , testCase "Canvas.fillRect renders a 2D call" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      _ <-
-                        Canvas.fillRect
-                          (UnsafeObject "ctx")
-                          (number 0)
-                          (number 0)
-                          (number 10)
-                          (number 20)
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "ctx.fillRect(0, 0, 10, 20);"
-    , testCase "Canvas.rect renders a 2D call" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      _ <-
-                        Canvas.rect
-                          (UnsafeObject "ctx")
-                          (number 1)
-                          (number 2)
-                          (number 3)
-                          (number 4)
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "ctx.rect(1, 2, 3, 4);"
-    , testCase "Canvas fillStyle is a Field" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      _ <-
-                        Object.set @"fillStyle"
-                          (UnsafeObject "ctx" :: Effect f ('MutableObject Canvas.Context2D))
-                          (string "#f00")
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "ctx.fillStyle = \"#f00\";"
-    , testCase "Storage.getItem is typed as an Option and dispatches via optionCase" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      v <- Storage.getItem Storage.localStorage (string "k")
-                      toSyntax (expr (optionCase v (string "missing") (\x -> x)))
-                  )
-              )
-          )
-          @?= "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\n(n1 === null ? \"missing\" : n1)"
-    , testCase "Map.lookup treats undefined as None" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Map.withMap $ \m ->
-                      do
-                        v <- Map.lookup m (string "k")
-                        toSyntax (expr (optionCase v (string "missing") (\x -> x)))
-                  )
-              )
-          )
-          @?= "const n0 = new Map();\nconst n1 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })(n0, \"k\");\nconst n2 = n1;\n(n2 === null ? \"missing\" : n2)"
-    , testCase "Map.insert emits set" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Map.withMap $ \m ->
-                      do
-                        _ <- Map.insert m (string "a") (number 1)
-                        toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = new Map();\nn0.set(\"a\", 1);"
-    , testCase "Set.insert emits add" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Set.withSet $ \s ->
-                      do
-                        _ <- Set.insert s (string "x")
-                        toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = new Set();\nn0.add(\"x\");"
-    , testCase "Map.mapM_ emits forEach with (k,v) callback order" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Map.withMap $ \m ->
-                      Map.mapM_ (\_ _ -> toSyntax noOp) m
-                  )
-              )
-          )
-          @?= "const n0 = new Map();\n((m, f) => { m.forEach((v, k) => f(k)(v)); })(n0, n1 => n2 => {})"
-    , testCase "multi-use Map.new stays one allocation (identity)" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Map.withMap $ \m ->
-                      do
-                        _ <- Map.insert m (string "a") (number 1)
-                        _ <- Map.insert m (string "b") (number 2)
-                        toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = new Map();\nn0.set(\"a\", 1);\nn0.set(\"b\", 2);"
-    , testCase "multi-use Set.new stays one allocation (identity)" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Set.withSet $ \s ->
-                      do
-                        _ <- Set.insert s (string "a")
-                        _ <- Set.insert s (string "b")
-                        toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = new Set();\nn0.add(\"a\");\nn0.add(\"b\");"
-    , testCase "Map.fromEntries emits new Map(entries)" $
-        renderJS
-          (effectfulAST (Map.fromEntries (emptyArray :: Expr f ('Array 'Number))))
-          @?= "new Map([])"
-    , testCase "Set.fromList emits new Set(values)" $
-        renderJS
-          (effectfulAST (Set.fromList (emptyArray :: Expr f ('Array 'String))))
-          @?= "new Set([])"
-    , testCase "Worker.newWorker emits new Worker(url)" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax $ do
-                  w <- Worker.newWorker (string "w.js")
-                  toSyntax_ w
+    , effectCodeCase
+        "Canvas.fillRect renders a 2D call"
+        ( fromSyntax
+            ( do
+                _ <-
+                  Canvas.fillRect
+                    (UnsafeObject "ctx")
+                    (number 0)
+                    (number 0)
+                    (number 10)
+                    (number 20)
+                toSyntax noOp
+            )
+        )
+        "ctx.fillRect(0, 0, 10, 20);"
+    , effectCodeCase
+        "Canvas.rect renders a 2D call"
+        ( fromSyntax
+            ( do
+                _ <-
+                  Canvas.rect
+                    (UnsafeObject "ctx")
+                    (number 1)
+                    (number 2)
+                    (number 3)
+                    (number 4)
+                toSyntax noOp
+            )
+        )
+        "ctx.rect(1, 2, 3, 4);"
+    , effectCodeCase
+        "Canvas fillStyle is a Field"
+        ( fromSyntax
+            ( do
+                _ <-
+                  Object.set @"fillStyle"
+                    (UnsafeObject "ctx" :: Effect f ('MutableObject Canvas.Context2D))
+                    (string "#f00")
+                toSyntax noOp
+            )
+        )
+        "ctx.fillStyle = \"#f00\";"
+    , effectCodeCase
+        "Storage.getItem is typed as an Option and dispatches via optionCase"
+        ( fromSyntax
+            ( do
+                v <- Storage.getItem Storage.localStorage (string "k")
+                toSyntax (expr (optionCase v (string "missing") (\x -> x)))
+            )
+        )
+        "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\n(n1 === null ? \"missing\" : n1)"
+    , effectCodeCase
+        "Map.lookup treats undefined as None"
+        ( fromSyntax
+            ( Map.withMap $ \m ->
+                do
+                  v <- Map.lookup m (string "k")
+                  toSyntax (expr (optionCase v (string "missing") (\x -> x)))
+            )
+        )
+        "const n0 = new Map();\nconst n1 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })(n0, \"k\");\nconst n2 = n1;\n(n2 === null ? \"missing\" : n2)"
+    , effectCodeCase
+        "Map.insert emits set"
+        ( fromSyntax
+            ( Map.withMap $ \m ->
+                do
+                  _ <- Map.insert m (string "a") (number 1)
                   toSyntax noOp
-              )
-          )
-          @?= "new Worker(\"w.js\");"
-    , testCase "multi-use UnsafeObject stays one const (identity)" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      o <- fmap (expr . Var) $ toSyntax $ UnsafeObject "{}"
-                      toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "a") (Lift (number 1))
-                      toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "b") (Lift (number 2))
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = {};\nn0.a = 1;\nn0.b = 2;"
+            )
+        )
+        "const n0 = new Map();\nn0.set(\"a\", 1);"
+    , effectCodeCase
+        "Set.insert emits add"
+        ( fromSyntax
+            ( Set.withSet $ \s ->
+                do
+                  _ <- Set.insert s (string "x")
+                  toSyntax noOp
+            )
+        )
+        "const n0 = new Set();\nn0.add(\"x\");"
+    , effectCodeCase
+        "Map.mapM_ emits forEach with (k,v) callback order"
+        ( fromSyntax
+            ( Map.withMap $ \m ->
+                Map.mapM_ (\_ _ -> toSyntax noOp) m
+            )
+        )
+        "const n0 = new Map();\n((m, f) => { m.forEach((v, k) => f(k)(v)); })(n0, n1 => n2 => {})"
+    , effectCodeCase
+        "multi-use Map.new stays one allocation (identity)"
+        ( fromSyntax
+            ( Map.withMap $ \m ->
+                do
+                  _ <- Map.insert m (string "a") (number 1)
+                  _ <- Map.insert m (string "b") (number 2)
+                  toSyntax noOp
+            )
+        )
+        "const n0 = new Map();\nn0.set(\"a\", 1);\nn0.set(\"b\", 2);"
+    , effectCodeCase
+        "multi-use Set.new stays one allocation (identity)"
+        ( fromSyntax
+            ( Set.withSet $ \s ->
+                do
+                  _ <- Set.insert s (string "a")
+                  _ <- Set.insert s (string "b")
+                  toSyntax noOp
+            )
+        )
+        "const n0 = new Set();\nn0.add(\"a\");\nn0.add(\"b\");"
+    , effectCodeCase
+        "Map.fromEntries emits new Map(entries)"
+        (Map.fromEntries (emptyArray :: Expr f ('Array 'Number)))
+        "new Map([])"
+    , effectCodeCase
+        "Set.fromList emits new Set(values)"
+        (Set.fromList (emptyArray :: Expr f ('Array 'String)))
+        "new Set([])"
+    , effectCodeCase
+        "Worker.newWorker emits new Worker(url)"
+        ( fromSyntax $ do
+            w <- Worker.newWorker (string "w.js")
+            toSyntax_ w
+            toSyntax noOp
+        )
+        "new Worker(\"w.js\");"
+    , effectCodeCase
+        "multi-use UnsafeObject stays one const (identity)"
+        ( fromSyntax
+            ( do
+                o <- fmap (expr . Var) $ toSyntax $ UnsafeObject "{}"
+                toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "a") (Lift (number 1))
+                toSyntax_ $ UnsafeObjectAssign (UnsafeObjectGet o "b") (Lift (number 2))
+                toSyntax noOp
+            )
+        )
+        "const n0 = {};\nn0.a = 1;\nn0.b = 2;"
     , -- A Uint8Array is mutable, so propagating the literal to each use
       -- would hand out separate arrays: whoever fills one would not be
       -- seen by whoever reads the other. Guarded by `isCheapValue`.
-      testCase "multi-use Uint8Array literal stays one array (identity)" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      b <- yield (uint8Array (packUint8 [0, 0]))
-                      toSyntax_ (ffi "fill" (arg (var b) <: RecNil))
-                      toSyntax_ (ffi "read" (arg (var b) <: RecNil))
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = new Uint8Array(2);\nfill(n0);\nread(n0);"
+      effectCodeCase
+        "multi-use Uint8Array literal stays one array (identity)"
+        ( fromSyntax
+            ( do
+                b <- yield (uint8Array (packUint8 [0, 0]))
+                toSyntax_ (ffi "fill" (arg (var b) <: RecNil))
+                toSyntax_ (ffi "read" (arg (var b) <: RecNil))
+                toSyntax noOp
+            )
+        )
+        "const n0 = new Uint8Array(2);\nfill(n0);\nread(n0);"
     , testCase "locationHash is window.location.hash, not a bracket key" $ do
         let
           js = renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
         T.isInfixOf "window.location.hash" js @?= True
         T.isInfixOf "[\"location.hash\"]" js @?= False
-    , testCase "forEach param name matches body uses" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      toSyntax_ $ forEach numArray (\x -> ffi "foo" (arg x <: RecNil))
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "[1, 2].forEach(n0 => foo(n0));"
-    , testCase "LambdaE of Unit does not emit return ()" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      toSyntax_ $ forEach numArray (\_ -> noOp)
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "[1, 2].forEach(n0 => {});"
-    , testCase "onClick assigns the DOM onclick property" $
-        T.isInfixOf
-          ".onclick ="
-          ( renderJS
-              ( effectfulAST
-                  ( fromSyntax
-                      ( do
-                          el <- Dom.lookupId (string "b")
-                          onClick el $ \_ -> noOp
-                          toSyntax noOp
-                      )
-                  )
-              )
-          )
-          @?= True
+    , effectCodeCase
+        "forEach param name matches body uses"
+        ( fromSyntax
+            ( do
+                toSyntax_ $ forEach numArray (\x -> ffi "foo" (arg x <: RecNil))
+                toSyntax noOp
+            )
+        )
+        "[1, 2].forEach(n0 => foo(n0));"
+    , effectCodeCase
+        "LambdaE of Unit does not emit return ()"
+        ( fromSyntax
+            ( do
+                toSyntax_ $ forEach numArray (\_ -> noOp)
+                toSyntax noOp
+            )
+        )
+        "[1, 2].forEach(n0 => {});"
+    , effectContains
+        "onClick assigns the DOM onclick property"
+        ( fromSyntax
+            ( do
+                el <- Dom.lookupId (string "b")
+                onClick el $ \_ -> noOp
+                toSyntax noOp
+            )
+        )
+        [".onclick ="]
     , testCase "NaN .== NaN is false" $ do
         case evaluate (number (0 / 0) .== number (0 / 0)) of
           ValueBool b -> b @?= False
@@ -1425,38 +1307,31 @@ stdlibTests =
           js = renderJS (effectfulAST (with2 fooE barE structuralEq))
         T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf " == " js @?= False
-    , testCase ".!= is !$valueEq" $ do
-        let
-          js = renderJS (effectfulAST (with2 fooE barE structuralNEq))
-        T.isInfixOf "$valueEq" js @?= True
-        T.isInfixOf "!($valueEq(" js @?= True
-    , testCase "ffi takes an effectful function via ArgEffect" $
-        renderJS
-          ( effectfulAST
-              ( ffi
-                  "setTimeout"
-                  (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)
-              )
-          )
-          @?= "setTimeout(n0 => tick(), 0)"
-    , testCase "requestAnimationFrame takes ArgEffect" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  (Timers.requestAnimationFrame (\_ -> ffi "tick" RecNil) *> toSyntax noOp)
-              )
-          )
-          @?= "requestAnimationFrame(n0 => tick());"
-    , testCase "send emits xhr.send()" $
-        renderJS
-          (effectfulAST (fromSyntax (Ajax.send (UnsafeObject "xhr") *> toSyntax noOp)))
-          @?= "xhr.send();"
-    , testCase "sendPost emits xhr.send(body)" $
-        renderJS
-          ( effectfulAST
-              (fromSyntax (Ajax.sendPost (UnsafeObject "xhr") (string "hi") *> toSyntax noOp))
-          )
-          @?= "xhr.send(\"hi\");"
+    , effectContains
+        ".!= is !$valueEq"
+        (with2 fooE barE structuralNEq)
+        ["$valueEq", "!($valueEq("]
+    , effectCodeCase
+        "ffi takes an effectful function via ArgEffect"
+        ( ffi
+            "setTimeout"
+            (ArgEffect (LambdaE (\_ -> ffi "tick" RecNil)) <: arg (number 0) <: RecNil)
+        )
+        "setTimeout(n0 => tick(), 0)"
+    , effectCodeCase
+        "requestAnimationFrame takes ArgEffect"
+        ( fromSyntax
+            (Timers.requestAnimationFrame (\_ -> ffi "tick" RecNil) *> toSyntax noOp)
+        )
+        "requestAnimationFrame(n0 => tick());"
+    , effectCodeCase
+        "send emits xhr.send()"
+        (fromSyntax (Ajax.send (UnsafeObject "xhr") *> toSyntax noOp))
+        "xhr.send();"
+    , effectCodeCase
+        "sendPost emits xhr.send(body)"
+        (fromSyntax (Ajax.sendPost (UnsafeObject "xhr") (string "hi") *> toSyntax noOp))
+        "xhr.send(\"hi\");"
     ]
 
 goodPartsTests :: TestTree
@@ -1479,22 +1354,18 @@ goodPartsTests =
               (\x -> x + 1)
           )
           @?= 6
-    , testCase "ok of Unit emits undefined, not an empty property" $
-        renderJS (pureAST (ok (Literal ValueUnit) :: Expr f ('Result 'String 'Unit)))
-          @?= "{ok: true, value: undefined}"
-    , testCase "resultCase picks .ok and unwraps .value" $
-        let
-          getR :: Effect f ('Result 'String 'Number)
-          getR = ffi "r" RecNil
-          js =
-            renderJS
-              ( effectfulAST
-                  (Bind Nothing getR (\r -> Lift (resultCase (var r) (\_ -> number 0) id)))
-              )
-         in
-          do
-            T.isInfixOf ".ok" js @?= True
-            T.isInfixOf ".value" js @?= True
+    , pureCodeCase
+        "ok of Unit emits undefined, not an empty property"
+        (ok (Literal ValueUnit) :: Expr f ('Result 'String 'Unit))
+        "{ok: true, value: undefined}"
+    , effectContains
+        "resultCase picks .ok and unwraps .value"
+        ( Bind
+            Nothing
+            (ffi "r" RecNil :: Effect f ('Result 'String 'Number))
+            (\r -> Lift (resultCase (var r) (\_ -> number 0) id))
+        )
+        [".ok", ".value"]
     , testCase "orElse on none" $
         evaluateNumber (orElse (none :: Expr f ('Option 'Number)) (number 3)) @?= 3
     , testCase "reduce evaluates" $
@@ -1515,89 +1386,87 @@ goodPartsTests =
               (number 2)
           )
           @?= 3
-    , testCase "try_ of two Unit arms still skips the result bind" $
-        renderJS (effectfulAST (try_ noOp noOp))
-          @?= "try {}\ncatch (n0) {}"
-    , testCase "throw_ renders throw" $
-        renderJS (effectfulAST (throw_ (string "boom") :: Effect f 'Unit))
-          @?= "throw \"boom\";"
-    , testCase "regex is new RegExp, not a literal" $
-        renderJS (pureAST (Regex.test (Regex.regex "ab") (string "xab")))
-          @?= "new RegExp(\"ab\").test(\"xab\")"
-    , testCase "regex source escapes quotes" $
-        renderJS (pureAST (Regex.test (Regex.regex "a\"b") (string "x")))
-          @?= "new RegExp(\"a\\\"b\").test(\"x\")"
-    , testCase "uint8Array is new Uint8Array, not a JS Array" $
-        renderJS (pureAST (uint8Array sampleArray))
-          @?= "new Uint8Array([1, 2, 3])"
-    , testCase "empty uint8Array is new Uint8Array(0)" $
-        renderJS (pureAST (uint8Array emptyArray8))
-          @?= "new Uint8Array(0)"
-    , testCase "zero-filled uint8Array uses length, not a literal" $
-        renderJS (pureAST (uint8Array (packUint8 [0, 0, 0])))
-          @?= "new Uint8Array(3)"
-    , testCase "newByteArray takes the size, not the bytes" $
-        renderJS (effectfulAST (newByteArray (number 4)))
-          @?= "(n => new Uint8Array(n))(4)"
+    , effectCodeCase
+        "try_ of two Unit arms still skips the result bind"
+        (try_ noOp noOp)
+        "try {}\ncatch (n0) {}"
+    , effectCodeCase
+        "throw_ renders throw"
+        (throw_ (string "boom") :: Effect f 'Unit)
+        "throw \"boom\";"
+    , pureCodeCase
+        "regex is new RegExp, not a literal"
+        (Regex.test (Regex.regex "ab") (string "xab"))
+        "new RegExp(\"ab\").test(\"xab\")"
+    , pureCodeCase
+        "regex source escapes quotes"
+        (Regex.test (Regex.regex "a\"b") (string "x"))
+        "new RegExp(\"a\\\"b\").test(\"x\")"
+    , pureCodeCase
+        "uint8Array is new Uint8Array, not a JS Array"
+        (uint8Array sampleArray)
+        "new Uint8Array([1, 2, 3])"
+    , pureCodeCase
+        "empty uint8Array is new Uint8Array(0)"
+        (uint8Array emptyArray8)
+        "new Uint8Array(0)"
+    , pureCodeCase
+        "zero-filled uint8Array uses length, not a literal"
+        (uint8Array (packUint8 [0, 0, 0]))
+        "new Uint8Array(3)"
+    , effectCodeCase
+        "newByteArray takes the size, not the bytes"
+        (newByteArray (number 4))
+        "(n => new Uint8Array(n))(4)"
     , -- Allocation has identity: folding two occurrences together would
       -- hand the writer and the reader different arrays.
-      testCase "multi-use newByteArray stays one allocation (identity)" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      b <- fmap var (toSyntax (newByteArray (number 2)))
-                      toSyntax_ (ffi "fill" (arg b <: RecNil))
-                      toSyntax_ (ffi "read" (arg b <: RecNil))
-                      toSyntax noOp
-                  )
-              )
-          )
-          @?= "const n0 = (n => new Uint8Array(n))(2);\nfill(n0);\nread(n0);"
-    , testCase "hasOwn uses Object.prototype.hasOwnProperty.call" $
-        T.isInfixOf
-          "Object.prototype.hasOwnProperty.call"
-          (renderJS (effectfulAST (Object.hasOwn (UnsafeObject "o") (string "k"))))
-          @?= True
-    , testCase "create is Object.create" $
-        renderJS
-          (effectfulAST (Object.create (UnsafeObject "p") :: Effect f ('MutableObject ())))
-          @?= "Object.create(p)"
-    , testCase "obj literal quotes keys" $
-        renderJS
-          ( effectfulAST
-              (Object.obj [Object.field @"x" (number 1)] :: Effect f ('MutableObject LitRow))
-          )
-          @?= "{x: 1}"
-    , testCase "frozen literal quotes keys" $
-        renderJS
-          ( pureAST
-              (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
-          )
-          @?= "{x: 1}"
-    , testCase "effectful frozen literal emits field values" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( Array.push_
-                      (mempty :: Expr f ('Array ('Object LitRow)))
-                      ( Object.frozen
-                          [Object.field @"x" (number 3), Object.field @"y" (number 7)] ::
-                          Expr f ('Object LitRow)
-                      )
-                  )
-              )
-          )
-          @?= "[].push({x: 3, y: 7})"
-    , testCase "typeof of FrozenLit parenthesizes the literal" $
-        renderJS
-          ( pureAST
-              (typeOf (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)))
-          )
-          @?= "typeof {x: 1}"
-    , testCase "sort emits a binary compare callback" $
-        renderJS (effectfulAST (Array.sort numArray (\a b -> a - b)))
-          @?= "[1, 2].sort((a, b) => a - b)"
+      effectCodeCase
+        "multi-use newByteArray stays one allocation (identity)"
+        ( fromSyntax
+            ( do
+                b <- fmap var (toSyntax (newByteArray (number 2)))
+                toSyntax_ (ffi "fill" (arg b <: RecNil))
+                toSyntax_ (ffi "read" (arg b <: RecNil))
+                toSyntax noOp
+            )
+        )
+        "const n0 = (n => new Uint8Array(n))(2);\nfill(n0);\nread(n0);"
+    , effectContains
+        "hasOwn uses Object.prototype.hasOwnProperty.call"
+        (Object.hasOwn (UnsafeObject "o") (string "k"))
+        ["Object.prototype.hasOwnProperty.call"]
+    , effectCodeCase
+        "create is Object.create"
+        (Object.create (UnsafeObject "p") :: Effect f ('MutableObject ()))
+        "Object.create(p)"
+    , effectCodeCase
+        "obj literal quotes keys"
+        (Object.obj [Object.field @"x" (number 1)] :: Effect f ('MutableObject LitRow))
+        "{x: 1}"
+    , pureCodeCase
+        "frozen literal quotes keys"
+        (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
+        "{x: 1}"
+    , effectCodeCase
+        "effectful frozen literal emits field values"
+        ( fromSyntax
+            ( Array.push_
+                (mempty :: Expr f ('Array ('Object LitRow)))
+                ( Object.frozen
+                    [Object.field @"x" (number 3), Object.field @"y" (number 7)] ::
+                    Expr f ('Object LitRow)
+                )
+            )
+        )
+        "[].push({x: 3, y: 7})"
+    , pureCodeCase
+        "typeof of FrozenLit parenthesizes the literal"
+        (typeOf (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)))
+        "typeof {x: 1}"
+    , effectCodeCase
+        "sort emits a binary compare callback"
+        (Array.sort numArray (\a b -> a - b))
+        "[1, 2].sort((a, b) => a - b)"
     , testCase "toSorted emits a binary compare callback" $ do
         let
           js = renderJS (pureAST (Array.toSorted numArray (\a b -> a - b)))
@@ -1609,50 +1478,43 @@ goodPartsTests =
         evaluateNumber
           (Array.index (Array.toSorted numArray (\a b -> a - b)) (number 1))
           @?= 2
-    , testCase "toFn emits a binary function value" $
-        renderJS
-          ( effectfulAST
-              ( ffi
-                  "f"
-                  (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b)) <: RecNil)
-              )
-          )
-          @?= "f((a, b) => a + b)"
-    , testCase "optimized toFn keeps param name hints" $
-        renderJS
-          ( pureAST
-              ( toFn
-                  ( \(a :: Expr f 'Number) (b :: Expr f 'Number) ->
-                      let_ (number 1) (\_ -> a + b)
-                  )
-              )
-          )
-          @?= "(a, b) => a + b"
-    , testCase "toFn emits a ternary function value" $
-        renderJS
-          ( effectfulAST
-              ( ffi
-                  "f"
-                  ( arg
-                      ( toFn
-                          (\(a :: Expr f 'Number) (b :: Expr f 'Number) (c :: Expr f 'Number) -> a + b + c)
-                      )
-                      <: RecNil
-                  )
-              )
-          )
-          @?= "f((a, b, c) => (a + b) + c)"
-    , testCase "lambdaRow emits a nested unary function value" $
-        renderJS
-          ( pureAST
-              ( lambdaRow @('[Param "x" 'Number, Param "y" 'Number]) $
-                  \p -> p.x + p.y
-              )
-          )
-          @?= "x => y => x + y"
-    , testCase "ifE of throw vs number keeps the result bind" $
-        renderJS (effectfulAST (ifE condE (throw_ "boom") (expr (number 1))))
-          @?= "let n0;\nif (cond()) {throw \"boom\";}\nelse {n0 = 1;}\nn0"
+    , effectCodeCase
+        "toFn emits a binary function value"
+        ( ffi
+            "f"
+            (arg (toFn (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b)) <: RecNil)
+        )
+        "f((a, b) => a + b)"
+    , pureCodeCase
+        "optimized toFn keeps param name hints"
+        ( toFn
+            ( \(a :: Expr f 'Number) (b :: Expr f 'Number) ->
+                let_ (number 1) (\_ -> a + b)
+            )
+        )
+        "(a, b) => a + b"
+    , effectCodeCase
+        "toFn emits a ternary function value"
+        ( ffi
+            "f"
+            ( arg
+                ( toFn
+                    (\(a :: Expr f 'Number) (b :: Expr f 'Number) (c :: Expr f 'Number) -> a + b + c)
+                )
+                <: RecNil
+            )
+        )
+        "f((a, b, c) => (a + b) + c)"
+    , pureCodeCase
+        "lambdaRow emits a nested unary function value"
+        ( lambdaRow @('[Param "x" 'Number, Param "y" 'Number]) $
+            \p -> p.x + p.y
+        )
+        "x => y => x + y"
+    , effectCodeCase
+        "ifE of throw vs number keeps the result bind"
+        (ifE condE (throw_ "boom") (expr (number 1)))
+        "let n0;\nif (cond()) {throw \"boom\";}\nelse {n0 = 1;}\nn0"
     ]
 
 genericTests :: TestTree
@@ -1668,83 +1530,86 @@ genericTests =
         G.fromValue (evaluate (G.toJS (Left "e" :: Either Text Double)))
           @?= (Left "e" :: Either Text Double)
         G.fromValue (evaluate (G.toJS sampleArray)) @?= sampleArray
-    , testCase "toObject renders record fields" $
-        renderJS (effectfulAST (G.toObject (Person "Ada" 36)))
-          @?= "{fullName: \"Ada\", years: 36}"
-    , testCase "toObject renders a ByteArray field as Uint8Array" $
-        renderJS (effectfulAST (G.toObject (Packet sampleArray)))
-          @?= "{octets: new Uint8Array([1, 2, 3])}"
-    , testCase "toObject renders list and Maybe fields" $
-        renderJS (effectfulAST (G.toObject (Tagged "x" ["a", "b"] Nothing)))
-          @?= "{label: \"x\", tags: [\"a\", \"b\"], nickname: null}"
-    , testCase "toObject Maybe record field is nullable object not Some wrapper" $
-        renderJS (effectfulAST (G.toObject (Team (Just (Person "Ada" 36)))))
-          @?= "const n0 = {fullName: \"Ada\", years: 36};\n{lead: n0}"
-    , testCase "get on a Generic object uses derived Field" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax $ do
-                  o <- hold (G.toObject (Person "Ada" 36))
-                  n <- Object.get @"fullName" o
-                  yieldString n
-              )
-          )
-          @?= "const n0 = {fullName: \"Ada\", years: 36};\nn0.fullName"
-    , testCase "record dot getField matches get" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax $ do
-                  o <- hold (G.toObject (Person "Ada" 36))
-                  n <- o.fullName
-                  yieldString n
-              )
-          )
-          @?= "const n0 = {fullName: \"Ada\", years: 36};\nn0.fullName"
-    , testCase "record dot getField on Expr" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax $ do
-                  o <- toSyntax (G.toObject (Person "Ada" 36))
-                  n <- (Var o).fullName
-                  yieldString n
-              )
-          )
-          @?= "const n0 = {fullName: \"Ada\", years: 36};\nn0.fullName"
-    , testCase "frozen record dot is a pure Expr" $
-        renderJS
-          ( pureAST
-              ((Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)).x)
-          )
-          @?= "1"
-    , testCase "newRecord is an empty object of the Generic row" $
-        renderJS (effectfulAST (G.newRecord @Person))
-          @?= "{}"
-    , testCase "toObjectArray is an array of records" $
-        renderJS (effectfulAST (G.toObjectArray [Person "Ada" 36, Person "Bob" 40]))
-          @?= "[{fullName: \"Ada\", years: 36}, {fullName: \"Bob\", years: 40}]"
-    , testCase "toObjectArray of [] is a literal empty array" $
-        renderJS (effectfulAST (G.toObjectArray ([] :: [Person])))
-          @?= "[]"
-    , testCase "record field of [Person] uses toObjectArray" $
-        renderJS (effectfulAST (G.toObject (Group [Person "Ada" 36])))
-          @?= "{members: [{fullName: \"Ada\", years: 36}]}"
-    , testCase "toSum nullary is a tagged object" $
-        renderJS (effectfulAST (G.toSum Red))
-          @?= "{tag: \"Red\"}"
-    , testCase "toSum unary payload is the value" $
-        renderJS (effectfulAST (G.toSum (Circle 1.5)))
-          @?= "{tag: \"Circle\", payload: 1.5}"
-    , testCase "toSum n-ary payload is a quoted object" $
-        renderJS (effectfulAST (G.toSum (Rect 2 3)))
-          @?= "{tag: \"Rect\", payload: {\"0\": 2, \"1\": 3}}"
-    , testCase "toSumArray is an array of sums" $
-        renderJS (effectfulAST (G.toSumArray [Red, Blue]))
-          @?= "[{tag: \"Red\"}, {tag: \"Blue\"}]"
-    , testCase "record field of a sum uses toSum" $
-        T.isInfixOf
-          "\"Red\""
-          (renderJS (effectfulAST (G.toObject (Badge Red))))
-          @?= True
+    , effectCodeCase
+        "toObject renders record fields"
+        (G.toObject (Person "Ada" 36))
+        "{fullName: \"Ada\", years: 36}"
+    , effectCodeCase
+        "toObject renders a ByteArray field as Uint8Array"
+        (G.toObject (Packet sampleArray))
+        "{octets: new Uint8Array([1, 2, 3])}"
+    , effectCodeCase
+        "toObject renders list and Maybe fields"
+        (G.toObject (Tagged "x" ["a", "b"] Nothing))
+        "{label: \"x\", tags: [\"a\", \"b\"], nickname: null}"
+    , effectCodeCase
+        "toObject Maybe record field is nullable object not Some wrapper"
+        (G.toObject (Team (Just (Person "Ada" 36))))
+        "const n0 = {fullName: \"Ada\", years: 36};\n{lead: n0}"
+    , effectCodeCase
+        "get on a Generic object uses derived Field"
+        ( fromSyntax $ do
+            o <- hold (G.toObject (Person "Ada" 36))
+            n <- Object.get @"fullName" o
+            yieldString n
+        )
+        "const n0 = {fullName: \"Ada\", years: 36};\nn0.fullName"
+    , effectCodeCase
+        "record dot getField matches get"
+        ( fromSyntax $ do
+            o <- hold (G.toObject (Person "Ada" 36))
+            n <- o.fullName
+            yieldString n
+        )
+        "const n0 = {fullName: \"Ada\", years: 36};\nn0.fullName"
+    , effectCodeCase
+        "record dot getField on Expr"
+        ( fromSyntax $ do
+            o <- toSyntax (G.toObject (Person "Ada" 36))
+            n <- (Var o).fullName
+            yieldString n
+        )
+        "const n0 = {fullName: \"Ada\", years: 36};\nn0.fullName"
+    , pureCodeCase
+        "frozen record dot is a pure Expr"
+        ((Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow)).x)
+        "1"
+    , effectCodeCase
+        "newRecord is an empty object of the Generic row"
+        (G.newRecord @Person)
+        "{}"
+    , effectCodeCase
+        "toObjectArray is an array of records"
+        (G.toObjectArray [Person "Ada" 36, Person "Bob" 40])
+        "[{fullName: \"Ada\", years: 36}, {fullName: \"Bob\", years: 40}]"
+    , effectCodeCase
+        "toObjectArray of [] is a literal empty array"
+        (G.toObjectArray ([] :: [Person]))
+        "[]"
+    , effectCodeCase
+        "record field of [Person] uses toObjectArray"
+        (G.toObject (Group [Person "Ada" 36]))
+        "{members: [{fullName: \"Ada\", years: 36}]}"
+    , effectCodeCase
+        "toSum nullary is a tagged object"
+        (G.toSum Red)
+        "{tag: \"Red\"}"
+    , effectCodeCase
+        "toSum unary payload is the value"
+        (G.toSum (Circle 1.5))
+        "{tag: \"Circle\", payload: 1.5}"
+    , effectCodeCase
+        "toSum n-ary payload is a quoted object"
+        (G.toSum (Rect 2 3))
+        "{tag: \"Rect\", payload: {\"0\": 2, \"1\": 3}}"
+    , effectCodeCase
+        "toSumArray is an array of sums"
+        (G.toSumArray [Red, Blue])
+        "[{tag: \"Red\"}, {tag: \"Blue\"}]"
+    , effectContains
+        "record field of a sum uses toSum"
+        (G.toObject (Badge Red))
+        ["\"Red\""]
     , testCase "whenTag on a nullary ctor compares .tag" $ do
         let
           js =
@@ -1756,34 +1621,24 @@ genericTests =
         T.isInfixOf "\"Red\"" js @?= True
         T.isInfixOf "===" js @?= True
         T.isInfixOf "$valueEq" js @?= False
-    , testCase "whenTag unary payload is the value" $
-        T.isInfixOf
-          ".payload"
-          ( renderJS
-              ( effectfulAST
-                  (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))
-              )
-          )
-          @?= True
-    , testCase "whenTag n-ary payload fields are gettable" $
-        T.isInfixOf
-          "[\"0\"]"
-          ( renderJS
-              ( effectfulAST
-                  ( fromSyntax $ do
-                      s <- hold (G.toSum (Rect 2 3))
-                      toSyntax $
-                        G.whenTag @"Rect"
-                          s
-                          ( \p -> fromSyntax $ do
-                              w <- Object.get @"0" (Lift p)
-                              yield w
-                          )
-                          (expr (number 0))
-                  )
-              )
-          )
-          @?= True
+    , effectContains
+        "whenTag unary payload is the value"
+        (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))
+        [".payload"]
+    , effectContains
+        "whenTag n-ary payload fields are gettable"
+        ( fromSyntax $ do
+            s <- hold (G.toSum (Rect 2 3))
+            toSyntax $
+              G.whenTag @"Rect"
+                s
+                ( \p -> fromSyntax $ do
+                    w <- Object.get @"0" (Lift p)
+                    yield w
+                )
+                (expr (number 0))
+        )
+        ["[\"0\"]"]
     , testCase "caseSum nullary checks every named tag" $ do
         let
           js =
@@ -1816,64 +1671,57 @@ genericTests =
         T.isInfixOf "\"Red\"" js @?= True
         T.isInfixOf "\"Green\"" js @?= False
         T.isInfixOf "\"Blue\"" js @?= False
-    , testCase "caseSum unary payload is the value" $
-        T.isInfixOf
-          ".payload"
-          ( renderJS
-              ( effectfulAST
-                  ( G.caseSum @Shape (ffi "shape" RecNil)
-                      $ G.on @"Circle" (\r -> expr r)
-                      $ G.on @"Rect" (\_ -> expr (number 0))
-                      $ G.CaseEnd
-                  )
-              )
-          )
-          @?= True
-    , testCase "caseSum n-ary payload fields are gettable" $
-        T.isInfixOf
-          "[\"0\"]"
-          ( renderJS
-              ( effectfulAST
-                  ( fromSyntax $ do
-                      s <- hold (ffi "shape" RecNil)
-                      toSyntax
-                        $ G.caseSum @Shape s
-                        $ G.on @"Circle" (\_ -> expr (number 0))
-                        $ G.on @"Rect"
-                          ( \p -> fromSyntax $ do
-                              w <- Object.get @"0" (Lift p)
-                              yield w
-                          )
-                        $ G.CaseEnd
-                  )
-              )
-          )
-          @?= True
+    , effectContains
+        "caseSum unary payload is the value"
+        ( G.caseSum @Shape (ffi "shape" RecNil)
+            $ G.on @"Circle" (\r -> expr r)
+            $ G.on @"Rect" (\_ -> expr (number 0))
+            $ G.CaseEnd
+        )
+        [".payload"]
+    , effectContains
+        "caseSum n-ary payload fields are gettable"
+        ( fromSyntax $ do
+            s <- hold (ffi "shape" RecNil)
+            toSyntax
+              $ G.caseSum @Shape s
+              $ G.on @"Circle" (\_ -> expr (number 0))
+              $ G.on @"Rect"
+                ( \p -> fromSyntax $ do
+                    w <- Object.get @"0" (Lift p)
+                    yield w
+                )
+              $ G.CaseEnd
+        )
+        ["[\"0\"]"]
     ]
 
 optimizeTests :: TestTree
 optimizeTests =
   testGroup
     "optimize"
-    [ testCase "literal arithmetic folds" $
-        renderJS (pureAST (number 1 + number 2)) @?= "3"
-    , testCase "nested single-use lets fold" $
-        renderJS (pureAST (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x))))
-          @?= "3"
-    , testCase "cheap multi-use let is propagated and folded" $
-        renderJS (pureAST (let_ (number 5) (\x -> x + x))) @?= "10"
-    , testCase "multi-use outer keeps inner folded let" $
-        renderJS
-          (effectfulAST (with1 fooE (\x -> let_ (number 1 + number 1) (\y -> x + x + y))))
-          @?= "const n0 = foo();\n(n0 + n0) + 2"
-    , testCase "letRec rhs folds" $
-        renderJS (pureAST (letRec (\_ -> number 1 + number 2) (\n -> n)))
-          @?= "const n0 = 3;\nn0"
-    , testCase "dead pure let is dropped" $
-        renderJS (pureAST (let_ (number 1) (\_ -> number 2))) @?= "2"
-    , testCase "unused FFI let is kept as a statement" $
-        renderJS (effectfulAST (Bind Nothing fooE (\_ -> Lift (number 1))))
-          @?= "foo();\n1"
+    [ pureCodeCase "literal arithmetic folds" (number 1 + number 2) "3"
+    , pureCodeCase
+        "nested single-use lets fold"
+        (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x)))
+        "3"
+    , pureCodeCase
+        "cheap multi-use let is propagated and folded"
+        (let_ (number 5) (\x -> x + x))
+        "10"
+    , effectCodeCase
+        "multi-use outer keeps inner folded let"
+        (with1 fooE (\x -> let_ (number 1 + number 1) (\y -> x + x + y)))
+        "const n0 = foo();\n(n0 + n0) + 2"
+    , pureCodeCase
+        "letRec rhs folds"
+        (letRec (\_ -> number 1 + number 2) (\n -> n))
+        "const n0 = 3;\nn0"
+    , pureCodeCase "dead pure let is dropped" (let_ (number 1) (\_ -> number 2)) "2"
+    , effectCodeCase
+        "unused FFI let is kept as a statement"
+        (Bind Nothing fooE (\_ -> Lift (number 1)))
+        "foo();\n1"
     , testCase "top-level do-notation bind chain compiles" $ do
         let
           chain =
@@ -1885,142 +1733,148 @@ optimizeTests =
         assertBool "emitted js" (T.length out > 20)
     , testCase "optIrEffect marks ForRange impure" $
         optIrEffectForRangeImpure @?= True
-    , testCase "lambda application of a literal folds" $
-        renderJS (pureAST (apply (lambda (\x -> x * 2)) (number 21)))
-          @?= "const n0 = 21;\nn0 * 2"
-    , testCase "if_ of True takes the true branch" $
-        renderJS (pureAST (if_ (bool True) (number 1) (number 2))) @?= "1"
-    , testCase "literal is propagated under a lambda" $
-        renderJS (pureAST (let_ (number 5) (\x -> lambda (\_ -> x + number 1))))
-          @?= "n0 => 6"
-    , testCase "let inside a lambda folds" $
-        renderJS (pureAST (lambda (\x -> let_ (number 1) (\y -> y + x))))
-          @?= "n0 => 1 + n0"
-    , testCase "multi-use let inside a lambda stays inside the function" $
-        renderJS (pureAST (lambda (\x -> let_ (x + x) (\y -> y + y))))
-          @?= "n0 => {const n1 = n0 + n0;\nreturn n1 + n1}"
-    , testCase "array index of a literal folds" $
-        renderJS (pureAST (Array.index numArray (number 0))) @?= "1"
-    , testCase "let-bound frozen field is cheap and folds" $
-        renderJS
-          ( pureAST
-              ( let_
-                  (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
-                  (\o -> o.x)
-              )
-          )
-          @?= "const n0 = {x: 1};\nn0.x"
-    , testCase "GetField does not DCE an impure sibling field" $
-        renderJS
-          ( pureAST
-              ( ( Object.frozen
-                    [ Object.field @"s" (Json.stringify (number 1))
-                    , Object.field @"y" (number 2)
-                    ] ::
-                    Expr f ('Object LitRow)
-                ).y
-              )
-          )
-          @?= "{s: JSON.stringify(1), y: 2}.y"
-    , testCase "duplicate frozen keys fold last-wins" $
-        renderJS
-          ( pureAST
-              ( ( Object.frozen [Object.field @"x" (number 1), Object.field @"x" (number 2)] ::
-                    Expr f ('Object LitRow)
-                ).x
-              )
-          )
-          @?= "2"
-    , testCase "sin of 0 folds" $
-        renderJS (pureAST (sin (number 0))) @?= "0"
-    , testCase "sin of a non-zero literal is left to JS" $
-        renderJS (pureAST (sin (number 1))) @?= "Math.sin(1)"
-    , testCase "sinh of 0 folds" $
-        renderJS (pureAST (sinh (number 0))) @?= "0"
-    , testCase "sinh of a non-zero literal is Math.sinh" $
-        renderJS (pureAST (sinh (number 1))) @?= "Math.sinh(1)"
-    , testCase "unused closed-name stdlib is dropped" $
-        renderJS (pureAST (let_ (Str.toUpper (string "hi")) (\_ -> number 1)))
-          @?= "1"
-    , testCase "unused stringify is kept (can throw)" $
-        renderJS (pureAST (let_ (Json.stringify (number 1)) (\_ -> number 2)))
-          @?= "const n0 = JSON.stringify(1);\n2"
-    , testCase "impure && false keeps stringify" $
-        T.isInfixOf
-          "JSON.stringify"
-          (renderJS (pureAST ((Json.stringify (number 1) .== string "1") .&& false_)))
-          @?= True
-    , testCase "impure || true keeps stringify" $
-        T.isInfixOf
-          "JSON.stringify"
-          (renderJS (pureAST ((Json.stringify (number 1) .== string "1") .|| true_)))
-          @?= True
-    , testCase "optionCase of a Literal ValueOption folds" $
-        renderJS
-          ( pureAST
-              ( optionCase
-                  (Literal (ValueOption (Just (ValueNumber 5))))
-                  (number 0)
-                  (\x -> x + 1)
-              )
-          )
-          @?= "const n0 = 5;\nn0 + 1"
-    , testCase "optionCase of some of a folded literal peels" $
-        renderJS
-          (pureAST (optionCase (some (number 1 + number 2)) (number 0) (\x -> x + 1)))
-          @?= "const n0 = 3;\nn0 + 1"
-    , testCase "if_ True takes the true branch" $
-        renderJS (pureAST (if_ (bool True) (number 1) (number 99)))
-          @?= "1"
-    , testCase "false && folds the RHS" $
-        renderJS (pureAST (And (bool False) (number 1 .== number 0)))
-          @?= "false"
-    , testCase "while false becomes a no-op" $
-        renderJS (effectfulAST (while_ (expr (bool False)) (ffi "foo" RecNil)))
-          @?= ""
-    , testCase "ifE of True takes the true branch" $
-        renderJS
-          (effectfulAST (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil)))
-          @?= "foo()"
-    , testCase "typeof of a literal folds" $
-        renderJS (pureAST (typeOf (number 1))) @?= "\"number\""
-    , testCase "typeof of Uint8Array folds to object" $
-        renderJS (pureAST (typeOf (uint8Array sampleArray))) @?= "\"object\""
-    , testCase "string Semigroup is Concat" $
-        renderJS (pureAST (("a" :: Expr f 'String) <> "b")) @?= "\"ab\""
-    , testCase "try_ renders try/catch" $
-        renderJS (effectfulAST (try_ (ffi "foo" RecNil) (expr (number 0))))
-          @?= "let n1;\ntry {n1 = foo();}\ncatch (n0) {n1 = 0;}\nn1"
-    , testCase "optionCaseE of none takes the none branch" $
-        renderJS
-          ( effectfulAST
-              ( optionCaseE
-                  (none :: Expr f ('Option 'Number))
-                  (ffi "missing" RecNil)
-                  (\x -> expr x)
-              )
-          )
-          @?= "missing()"
-    , testCase "stringCaseE of a literal takes the matching arm" $
-        renderJS
-          ( effectfulAST
-              ( stringCaseE
-                  (string "a")
-                  [("a", ffi "foo" RecNil), ("b", ffi "bar" RecNil)]
-                  (ffi "baz" RecNil)
-              )
-          )
-          @?= "foo()"
-    , testCase "stringCaseE of a literal miss takes default" $
-        renderJS
-          ( effectfulAST
-              ( stringCaseE
-                  (string "z")
-                  [("a", ffi "foo" RecNil)]
-                  (ffi "baz" RecNil)
-              )
-          )
-          @?= "baz()"
+    , pureCodeCase
+        "lambda application of a literal folds"
+        (apply (lambda (\x -> x * 2)) (number 21))
+        "const n0 = 21;\nn0 * 2"
+    , pureCodeCase
+        "if_ of True takes the true branch"
+        (if_ (bool True) (number 1) (number 2))
+        "1"
+    , pureCodeCase
+        "literal is propagated under a lambda"
+        (let_ (number 5) (\x -> lambda (\_ -> x + number 1)))
+        "n0 => 6"
+    , pureCodeCase
+        "let inside a lambda folds"
+        (lambda (\x -> let_ (number 1) (\y -> y + x)))
+        "n0 => 1 + n0"
+    , pureCodeCase
+        "multi-use let inside a lambda stays inside the function"
+        (lambda (\x -> let_ (x + x) (\y -> y + y)))
+        "n0 => {const n1 = n0 + n0;\nreturn n1 + n1}"
+    , pureCodeCase
+        "array index of a literal folds"
+        (Array.index numArray (number 0))
+        "1"
+    , pureCodeCase
+        "let-bound frozen field is cheap and folds"
+        ( let_
+            (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
+            (\o -> o.x)
+        )
+        "const n0 = {x: 1};\nn0.x"
+    , pureCodeCase
+        "GetField does not DCE an impure sibling field"
+        ( ( Object.frozen
+              [ Object.field @"s" (Json.stringify (number 1))
+              , Object.field @"y" (number 2)
+              ] ::
+              Expr f ('Object LitRow)
+          ).y
+        )
+        "{s: JSON.stringify(1), y: 2}.y"
+    , pureCodeCase
+        "duplicate frozen keys fold last-wins"
+        ( ( Object.frozen [Object.field @"x" (number 1), Object.field @"x" (number 2)] ::
+              Expr f ('Object LitRow)
+          ).x
+        )
+        "2"
+    , pureCodeCase "sin of 0 folds" (sin (number 0)) "0"
+    , pureCodeCase
+        "sin of a non-zero literal is left to JS"
+        (sin (number 1))
+        "Math.sin(1)"
+    , pureCodeCase "sinh of 0 folds" (sinh (number 0)) "0"
+    , pureCodeCase
+        "sinh of a non-zero literal is Math.sinh"
+        (sinh (number 1))
+        "Math.sinh(1)"
+    , pureCodeCase
+        "unused closed-name stdlib is dropped"
+        (let_ (Str.toUpper (string "hi")) (\_ -> number 1))
+        "1"
+    , pureCodeCase
+        "unused stringify is kept (can throw)"
+        (let_ (Json.stringify (number 1)) (\_ -> number 2))
+        "const n0 = JSON.stringify(1);\n2"
+    , pureContains
+        "impure && false keeps stringify"
+        ((Json.stringify (number 1) .== string "1") .&& false_)
+        ["JSON.stringify"]
+    , pureContains
+        "impure || true keeps stringify"
+        ((Json.stringify (number 1) .== string "1") .|| true_)
+        ["JSON.stringify"]
+    , pureCodeCase
+        "optionCase of a Literal ValueOption folds"
+        ( optionCase
+            (Literal (ValueOption (Just (ValueNumber 5))))
+            (number 0)
+            (\x -> x + 1)
+        )
+        "const n0 = 5;\nn0 + 1"
+    , pureCodeCase
+        "optionCase of some of a folded literal peels"
+        (optionCase (some (number 1 + number 2)) (number 0) (\x -> x + 1))
+        "const n0 = 3;\nn0 + 1"
+    , pureCodeCase
+        "if_ True takes the true branch"
+        (if_ (bool True) (number 1) (number 99))
+        "1"
+    , pureCodeCase
+        "false && folds the RHS"
+        (And (bool False) (number 1 .== number 0))
+        "false"
+    , effectCodeCase
+        "while false becomes a no-op"
+        (while_ (expr (bool False)) (ffi "foo" RecNil))
+        ""
+    , effectCodeCase
+        "ifE of True takes the true branch"
+        (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil))
+        "foo()"
+    , pureCodeCase
+        "typeof of a literal folds"
+        (typeOf (number 1))
+        "\"number\""
+    , pureCodeCase
+        "typeof of Uint8Array folds to object"
+        (typeOf (uint8Array sampleArray))
+        "\"object\""
+    , pureCodeCase
+        "string Semigroup is Concat"
+        (("a" :: Expr f 'String) <> "b")
+        "\"ab\""
+    , effectCodeCase
+        "try_ renders try/catch"
+        (try_ (ffi "foo" RecNil) (expr (number 0)))
+        "let n1;\ntry {n1 = foo();}\ncatch (n0) {n1 = 0;}\nn1"
+    , effectCodeCase
+        "optionCaseE of none takes the none branch"
+        ( optionCaseE
+            (none :: Expr f ('Option 'Number))
+            (ffi "missing" RecNil)
+            (\x -> expr x)
+        )
+        "missing()"
+    , effectCodeCase
+        "stringCaseE of a literal takes the matching arm"
+        ( stringCaseE
+            (string "a")
+            [("a", ffi "foo" RecNil), ("b", ffi "bar" RecNil)]
+            (ffi "baz" RecNil)
+        )
+        "foo()"
+    , effectCodeCase
+        "stringCaseE of a literal miss takes default"
+        ( stringCaseE
+            (string "z")
+            [("a", ffi "foo" RecNil)]
+            (ffi "baz" RecNil)
+        )
+        "baz()"
     , testCase "forRange array index uses the loop variable" $ do
         let
           eff =
@@ -2084,45 +1938,39 @@ ergonomicsTests :: TestTree
 ergonomicsTests =
   testGroup
     "ergonomics"
-    [ testCase "toNumber coerces a string via Number()" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      n <- toNumber (string "4.5")
-                      Console.log n
-                      done
-                  )
-              )
-          )
-          @?= "const n0 = Number(\"4.5\");\nconsole.log(n0);"
-    , testCase "whenNoneS runs the body only on none" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      v <- Storage.getItem Storage.localStorage (string "k")
-                      _ <- whenNoneS v (toSyntax_ (ffi "seed" RecNil) *> done)
-                      done
-                  )
-              )
-          )
-          @?= "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\nif (n1 === null) {seed();}"
-    , testCase "addEventListenerS + eventKey avoids stmts and annotations" $
-        renderJS
-          ( effectfulAST
-              ( fromSyntax
-                  ( do
-                      el <- Dom.byId "board"
-                      addEventListenerS "keydown" el $ \e -> do
-                        k <- eventKey e
-                        toSyntax_ (ffi "sink" (arg k <: RecNil))
-                        done
-                      done
-                  )
-              )
-          )
-          @?= "const n0 = document.getElementById(\"board\");\nn0.addEventListener(\"keydown\", n1 => {const n2 = n1.key;\nsink(n2);\nreturn});"
+    [ effectCodeCase
+        "toNumber coerces a string via Number()"
+        ( fromSyntax
+            ( do
+                n <- toNumber (string "4.5")
+                Console.log n
+                done
+            )
+        )
+        "const n0 = Number(\"4.5\");\nconsole.log(n0);"
+    , effectCodeCase
+        "whenNoneS runs the body only on none"
+        ( fromSyntax
+            ( do
+                v <- Storage.getItem Storage.localStorage (string "k")
+                _ <- whenNoneS v (toSyntax_ (ffi "seed" RecNil) *> done)
+                done
+            )
+        )
+        "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\nif (n1 === null) {seed();}"
+    , effectCodeCase
+        "addEventListenerS + eventKey avoids stmts and annotations"
+        ( fromSyntax
+            ( do
+                el <- Dom.byId "board"
+                addEventListenerS "keydown" el $ \e -> do
+                  k <- eventKey e
+                  toSyntax_ (ffi "sink" (arg k <: RecNil))
+                  done
+                done
+            )
+        )
+        "const n0 = document.getElementById(\"board\");\nn0.addEventListener(\"keydown\", n1 => {const n2 = n1.key;\nsink(n2);\nreturn});"
     , testCase "compileEffectSyntax absorbs fromSyntax" $ do
         out <-
           compileEffectSyntax
