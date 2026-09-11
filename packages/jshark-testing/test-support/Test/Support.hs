@@ -1,11 +1,12 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
-module Support
+module Test.Support
   ( LitRow
   , Person (..)
   , Packet (..)
@@ -27,25 +28,43 @@ module Support
   , prettyIfLambda
   , numArray
   , mulDiv
+  , effectCodeCase
+  , effectCodeCaseWith
+  , pureCodeCase
+  , effectContains
+  , effectContainsWith
+  , pureContains
+  , evalBoolCase
   , assertJSContains
+  , assertThrows
   , captureStderr
   , requireBiome
   )
 where
 
 import CaptureStderr (captureStderr)
+import qualified Control.Exception as E
 import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import JShark
+  ( effectfulAST
+  , effectfulASTWith
+  , evaluate
+  , pureAST
+  , renderJS
+  )
 import JShark.Api
 import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Compiler (biomeAvailable)
-import Test.Tasty.HUnit (assertFailure)
+import JShark.Compiler.Codegen.Core (EmitStyle)
+import Test.Tasty (TestTree)
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
 data LitRow
 
@@ -157,6 +176,52 @@ numArray = Literal (ValueArray [ValueNumber 1, ValueNumber 2])
 mulDiv :: forall f. Expr f 'Number
 mulDiv = number 6 * number 7 / number 2
 
+-- | Golden case for a closed effectful program.
+effectCodeCase :: String -> ClosedEffect u -> Text -> TestTree
+effectCodeCase name eff golden =
+  testCase name (renderJS (effectfulAST eff) @?= golden)
+
+-- | Golden case for a closed effectful program under an explicit emit style.
+effectCodeCaseWith :: EmitStyle -> String -> ClosedEffect u -> Text -> TestTree
+effectCodeCaseWith style name eff golden =
+  testCase name (renderJS (effectfulASTWith style eff) @?= golden)
+
+-- | Golden case for a closed pure expression.
+pureCodeCase :: String -> ClosedExpr u -> Text -> TestTree
+pureCodeCase name e golden =
+  testCase name (renderJS (pureAST e) @?= golden)
+
+-- | Smoke case: rendered effect must contain every needle.
+effectContains :: String -> ClosedEffect u -> [Text] -> TestTree
+effectContains name eff needles =
+  testCase name $ do
+    let
+      js = renderJS (effectfulAST eff)
+    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+
+-- | 'effectContains' under an explicit emit style.
+effectContainsWith ::
+  EmitStyle -> String -> ClosedEffect u -> [Text] -> TestTree
+effectContainsWith style name eff needles =
+  testCase name $ do
+    let
+      js = renderJS (effectfulASTWith style eff)
+    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+
+-- | Smoke case: rendered pure expression must contain every needle.
+pureContains :: String -> ClosedExpr u -> [Text] -> TestTree
+pureContains name e needles =
+  testCase name $ do
+    let
+      js = renderJS (pureAST e)
+    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+
+-- | Evaluate a closed pure Bool expression.
+evalBoolCase :: String -> ClosedExpr 'Bool -> Bool -> TestTree
+evalBoolCase name e expected =
+  testCase name $ case evaluate e of
+    ValueBool b -> b @?= expected
+
 -- | Assert emitted JS contains @needle@ (layout-independent smoke check).
 assertJSContains :: Text -> Text -> IO ()
 assertJSContains needle haystack =
@@ -166,6 +231,16 @@ assertJSContains needle haystack =
       <> T.unpack needle
       <> " in:\n"
       <> T.unpack haystack
+
+-- | Force @x@ to WHNF and assert it throws an 'ErrorCall' containing @needle@.
+assertThrows :: Show a => String -> a -> IO ()
+assertThrows needle x = do
+  r <- E.try (E.evaluate x)
+  case r of
+    Left (E.ErrorCall msg)
+      | T.pack needle `T.isInfixOf` T.pack msg -> pure ()
+      | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+    Right v -> assertFailure ("expected throw, got " <> show v)
 
 requireBiome :: IO ()
 requireBiome = do

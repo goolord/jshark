@@ -2,12 +2,13 @@
 
 module LifeWorkerTests (lifeWorkerTests) where
 
+import BunGate (bunGated)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import JShark.Bun (evaluateEffectJSON)
 import JShark.Example.Life (engineWorkerJs, lifeLutWorkerBootJs)
 import JShark.Example.Life.LifeTestSupport (blinkerLutStepJson)
-import System.Directory (doesFileExist, findExecutable, getCurrentDirectory)
+import System.Directory (doesFileExist, getCurrentDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.Process (readProcessWithExitCode)
@@ -33,7 +34,7 @@ repoRoot = getCurrentDirectory >>= go
 
 lifeWorkerTests :: TestTree
 lifeWorkerTests =
-  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+  bunGated $ \getBun ->
     testGroup
       "life worker bundle"
       [ testCase "EngineWorker.js matches Haskell engineWorkerJs" $ do

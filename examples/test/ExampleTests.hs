@@ -17,6 +17,7 @@
 -- share a setup hook, so a slow example like Life cannot block Breakout.
 module ExampleTests (exampleTests) where
 
+import BunGate (bunPathTestName)
 import qualified Data.Text as T
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
@@ -31,7 +32,7 @@ import Test.Tasty.HUnit
 
 exampleTests :: TestTree
 exampleTests =
-  after AllSucceed "bun is on PATH" $
+  after AllSucceed bunPathTestName $
     testGroup
       "examples emit parseable JS"
       [ parseExampleCase "breakout" (stmts Breakout.mainJS)

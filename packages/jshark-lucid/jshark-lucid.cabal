@@ -1,7 +1,6 @@
 cabal-version: 2.4
 
--- jshark-lucid: Lucid HTML DSL integration (see packages/jshark-lucid)
--- jshark-lucid: Lucid HTML DSL integration (see packages/jshark-lucid)
+-- jshark-lucid: Lucid HTML DSL integration.
 name: jshark-lucid
 version: 0.1
 synopsis: Lucid HTML templates that render to JShark DOM builders

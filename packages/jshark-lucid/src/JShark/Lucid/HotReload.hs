@@ -1,39 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Lucid helpers that emit the hot-reload client script tag.
+-- | Lucid helper that emits the hot-reload client script tag.
 module JShark.Lucid.HotReload
-  ( HotReloadClientConfig (..)
-  , defaultHotReloadClientConfig
-  , hotReloadClient
-  , hotReloadClientWith
+  ( hotReloadClient
+  , hotReloadClientDisabled
   )
 where
 
-import Data.Text (Text)
 import Lucid
 
-data HotReloadClientConfig = HotReloadClientConfig
-  { hrClientSrc :: Text
-  , hrEnabled :: Bool
-  }
-
-defaultHotReloadClientConfig :: HotReloadClientConfig
-defaultHotReloadClientConfig =
-  HotReloadClientConfig
-    { hrClientSrc = "/__jshark/client.js"
-    , hrEnabled = True
-    }
-
 -- | Emits the @<script>@ tag for the hot-reload client runtime.
--- In production, pass a config with 'hrEnabled' = False (renders nothing).
+-- No defer: it must run before body @app.js@ so rAF patches apply.
 hotReloadClient :: Html ()
-hotReloadClient = hotReloadClientWith defaultHotReloadClientConfig
+hotReloadClient =
+  script_ [src_ "/__jshark/client.js"] ("" :: Html ())
 
-hotReloadClientWith :: HotReloadClientConfig -> Html ()
-hotReloadClientWith cfg
-  | not (hrEnabled cfg) = mempty
-  | otherwise =
-      -- No defer: must run before body @app.js@ so rAF patches apply.
-      script_
-        [src_ (hrClientSrc cfg)]
-        ("" :: Html ())
+-- | @mempty@ — use in production shells that must not reference the
+-- dev-server client.
+hotReloadClientDisabled :: Html ()
+hotReloadClientDisabled = mempty

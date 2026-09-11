@@ -45,7 +45,6 @@ library
     , filepath
     , fsnotify >= 0.4 && < 0.5
     , http-types >= 0.8 && < 1
-    , jshark
     , streaming-bytestring >= 0.3.0 && < 0.4
     , stm >= 2.5 && < 2.6
     , template-haskell >= 2.16

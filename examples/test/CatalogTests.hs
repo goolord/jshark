@@ -2,6 +2,7 @@
 
 module CatalogTests (catalogTests) where
 
+import BunGate (bunGated, bunPathTestName)
 import Data.List (find)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -24,7 +25,7 @@ import JShark.Example.Life.Patterns
   , glider
   , speciesColor
   )
-import System.Directory (doesFileExist, findExecutable, getCurrentDirectory)
+import System.Directory (doesFileExist, getCurrentDirectory)
 import System.FilePath (takeDirectory, (</>))
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -145,10 +146,10 @@ catalogTests =
               cells
         rrAction res @?= 1
         rrSid res @?= sid
-    , withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+    , bunGated $ \getBun ->
         testGroup
           "runtime classifier parity"
-          [ testCase "bun is on PATH" $ do
+          [ testCase bunPathTestName $ do
               m <- getBun
               case m of
                 Nothing -> assertFailure "bun not found on PATH"

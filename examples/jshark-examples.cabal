@@ -1,8 +1,7 @@
 cabal-version: 2.4
 
--- jshark-examples: the five showcase apps, dev server, offline compiler,
--- tests, and benchmarks (see examples/)
--- tests, and benchmarks (see examples/)
+-- jshark-examples: the showcase apps, dev server, offline compiler,
+-- tests, and benchmarks.
 name: jshark-examples
 version: 0.1
 synopsis: JShark example apps, dev server, and static exporter
@@ -64,10 +63,6 @@ library
     JShark.Example.Breakout.Client
     JShark.Example.Breakout.Page
     JShark.Example.Breakout.Types
-    JShark.Example.Hvm2Demo
-    JShark.Example.Hvm2Demo.Client
-    JShark.Example.Hvm2Demo.Kernels
-    JShark.Example.Hvm2Demo.Page
     JShark.Example.Life
     JShark.Example.Life.Catalog
     JShark.Example.Life.Client
@@ -90,6 +85,7 @@ library
     JShark.Example.Life.Pixi
     JShark.Example.Life.Profile
     JShark.Example.Life.Types
+    JShark.Example.Registry
     JShark.Example.Synth
     JShark.Example.Synth.Audio
     JShark.Example.Synth.Client
@@ -104,8 +100,11 @@ library
     , array
     , base
     , containers
+    , directory
+    , filepath
     , jshark
     , jshark-lucid
+    , process
     , text
   hs-source-dirs: src
   default-language: Haskell2010
@@ -155,19 +154,6 @@ executable jshark-compile
   ghc-options:
     -threaded
     -with-rtsopts=-N
-
-executable build-hvm2-demo-wasm
-  import: warnings
-  main-is: Main.hs
-  hs-source-dirs: app/wasm
-  build-depends:
-    , base
-    , directory
-    , filepath
-    , jshark
-    , jshark-examples
-    , process
-  default-language: Haskell2010
 
 executable gen-life-catalog
   import: warnings
@@ -251,28 +237,26 @@ executable jshark-life-lower
 executable jshark-life-full-emit
   import: bench
   main-is: LifeFullEmit.hs
-  other-modules:
-    Stages
   hs-source-dirs: bench
   build-depends:
     , base
     , deepseq >= 1.4
     , jshark
     , jshark-examples
+    , jshark-testing
     , tasty-bench >= 0.3.5
     , text
 
 executable jshark-life-emit
   import: bench
   main-is: LifeEmit.hs
-  other-modules:
-    Stages
   hs-source-dirs: bench
   build-depends:
     , base
     , deepseq >= 1.4
     , jshark
     , jshark-examples
+    , jshark-testing
     , tasty-bench >= 0.3.5
     , text
 
@@ -286,28 +270,18 @@ executable jshark-probe
     , jshark-examples
     , text
 
-executable print-size
-  import: bench
-  main-is: PrintSize.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , jshark
-    , jshark-examples
-    , text
 
 benchmark jshark-examples-bench
   import: bench
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules:
-    Stages
   hs-source-dirs: bench
   build-depends:
     , base
     , deepseq >= 1.4
     , jshark
     , jshark-examples
+    , jshark-testing
     , tasty-bench >= 0.3.5
     , text
 
@@ -327,16 +301,14 @@ test-suite jshark-examples-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+    BunGate
     BunTests
-    CaptureStderr
     CatalogTests
     ExampleTests
-    Hvm2Tests
     LifeTests
     LifeWorkerTests
     PerfTests
     StaticCssTests
-    Support
   hs-source-dirs: test
   build-depends:
     , base
@@ -345,6 +317,7 @@ test-suite jshark-examples-test
     , filepath
     , jshark
     , jshark-examples
+    , jshark-testing
     , process
     , tasty
     , tasty-hunit

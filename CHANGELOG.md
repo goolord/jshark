@@ -1,6 +1,233 @@
 # Revision history for jshark
 
 ## Unreleased
+* Internal dead code and copy-paste are gone, ~3.3k LOC: the compiler drops
+  unused entries (`irExprFromClosed`, `irOptimized{Effect,Expr}FromClosed`,
+  `nestedDummy`, `renderFFIForm`, the unstyled `prepareFlat*Program`,
+  `fromOption`, `apply3`, `setProp'`, `ToExpr`, `ParamAt`, `sumTag`,
+  `mergeModules`), the 11 numeric smart constructors share one `numBinE`
+  combinator, the math lookup/match tables merged per arity, `Ir` exports
+  `IrNode (..)` instead of a 77-line constructor list, `childMeta` folds
+  over `irNodeChildren`, `elimIrLet`/`elimIrBind` share `elimBinder`,
+  `Hoist`/`Hoist.Canonical` fold into `JsShim`/`Codegen.Core`,
+  `flatNodeIsEffect` is an opcode range check, and the eight copy-pasted
+  emit-plan blocks share helpers. Emitted JS is byte-identical.
+
+* The compile-diagnostics cluster collapses to a minimal live progress bar.
+  `JShark.Compiler.CompileReport` and `JShark.Compiler.CompileTerminal` are
+  deleted; `CompileProgress` keeps the per-job board, phase sub-bars, and
+  done lines, and drops the per-job stats/timing machinery (the only
+  consumer discarded the stats and the stats table). `compileJobsLabeled`
+  returns `[Text]`; the unused `compileEffects`/`compilePures` (+`Labeled`)
+  batch entries and the `configProgressSlot` field are gone. `--progress`
+  output is unchanged apart from the removed stats table.
+
+* jshark-bindgen is TypeScript-extractor-only: the hand-written fallback
+  parser (`ParseDts`, `ParseJs`, ~1,050 LOC, `--no-ts`) and the unused
+  `--json` mode / `encodeModule` are deleted; the `Ty` folds share one
+  `tyAndChildren` traversal. CI already required bun.
+
+* jshark-hotreload drops the unused EDSL lifecycle hooks
+  (`onDispose`/`hotState*`) and no longer depends on `jshark`; the
+  unreachable `drainToLBS` branch is gone. jshark-lucid's
+  `JShark.Lucid.HotReload` keeps only `hotReloadClient`. The drifted
+  vendored copy `examples/static/js/jshark-reload.js` is deleted (pages
+  load `/__jshark/client.js`).
+
+* Shared test/bench support lives in the new `jshark-testing` package
+  (`Test.Support`, `CaptureStderr`, `Bench.Stages`), replacing the ~95%
+  and byte-identical copies under `examples/`; the four-example registry
+  is `JShark.Example.Registry` (was hand-written three times), and the
+  bun-gating scaffold is shared (`BunGate`). Core tests gain golden-case
+  combinators (`effectCodeCase`/`pureCodeCase`/`effectContains`/
+  `evalBoolCase`) used by 183 of 309 cases; test names and literals are
+  unchanged.
+
+
+* HVM2/Bend support is removed. The `Hvm2Kernel` expression constructor,
+  `Hvm2KernelEntry`, `JShark.Api.hvm2Kernel`, `JShark.Api.loadHvm2Wasm`,
+  and the `IrHvm2Ref` / `FE_Hvm2Ref` / `FE_HVM2REF` flat-IR nodes are gone;
+  the `JShark.Hvm2`, `JShark.Compiler.EmitBend`, and
+  `JShark.Compiler.Hvm2Lint` modules are deleted. `CompilerConfig` drops
+  `configWarnHvm2Candidates` and the `--warn-hvm2-candidates` flag, and the
+  compile-stats table drops the `lint` phase column. The HVM2 Lab
+  (Mandelbrot) example, its `build-hvm2-demo-wasm` tool, the `wasm/hvm2`
+  Zig pipeline, and its static worker assets are deleted. The remaining
+  examples are Breakout, TodoMVC, Synth, and Life.
+
+* Dead compiler internals are gone: `JShark.Compiler.Optimize.Hvm2`
+  (`collectHvm2Kernels`, no callers), the unused `cgTag` codegen counter
+  and `allocTag`, the write-only `FlatEmitPlan` `fepReach` mask, and the
+  `renderJSCompact` alias of `renderJS`. The `closedEffectNodes` /
+  `closedExprNodes` aliases collapse into `optimizedEffectSize` /
+  `optimizedExprSize`. Emitted JS is byte-identical.
+
+* Core no longer owns external minification or the on-disk minify cache.
+  `CompilerBackend`/`ClosureLevel`/`CompilerClosureConfig`/
+  `CompilerEsbuildConfig`/`CompilerTerserConfig`/`CacheStrategy`, the
+  `compileWith`/`compileWithPure`/`tryCompileWith` post-processors, and the
+  named `compileClosure`/`compileEsbuild`/`compileTerser` helpers are removed.
+  `CompilerConfig` drops `configBackend`/`configCache`/`configFallback`.
+  Codegen still emits compact IIFEs; run esbuild/terser/Closure over the
+  output yourself. Emitted JS is byte-identical.
+
+* The flat IR collapses from three modules into one:
+  `JShark.Compiler.Flat` now owns packing, the frozen SoA view, the bulk
+  passes, and decode. The 78 hand-written opcode constants and the
+  78-row `flatOpTable` (`FlatEnc`) become a `data FlatOp` deriving
+  `Enum`/`Bounded` (one constructor per `FlatNode`), stored as `Word16`
+  via `opCode`/`flatOpOf`. `decodeOp` becomes a `case`, so GHC proves
+  decode coverage at compile time — a new opcode without a decode arm is
+  a build error, not a runtime one. The unused subtree-size machinery
+  (`flatSoaSubtreeSizes`, `attachFlatSoaSubtreeSizes`,
+  `computeFlatSoaSubtreeSizes`, `flatSoaIdentBudget`) is deleted; it ran
+  on every pack and had no callers. Breaking: `JShark.Compiler.FlatEnc`
+  and `JShark.Compiler.FlatSoA` no longer exist; import
+  `JShark.Compiler.Flat`. Emitted JS is byte-identical.
+
+* The Mandelbrot demo's WASM payload moves out of the core library:
+  `emitKernelWasmBridge` (the SIMD128 fast path, HVM2 net-reduction
+  driver, and 8-ary `jshark_grid` bridge), the demo Bend module assembly
+  (`ParTree` prelude, `jshark_grid`, 4096-leaf `main`), and the
+  bend→C→zig orchestration (`compileHvm2GenC`/`compileHvm2Wasm`,
+  `Hvm2Config`) now live in `JShark.Example.Hvm2Demo.WasmBuild`
+  (examples package). Core `JShark.Hvm2` keeps the generic Bend emitter
+  surface (`bendKernel`, `bendDefNames`, `bendDefExports`,
+  `emitKernelExportsC`, `sanitizeKernelCForWasm`). `bendModule` is
+  renamed `demoBendModule` and `bendModuleFromTree` (unused) is deleted.
+
+* Sixteen compiler-internal modules (`Lower`, `Evaluate`, `Emit`,
+  `Hoist`, `Codegen.Flat`, `Codegen.Stmt`, `JsShim`, `JsNum`, `JsFormat`,
+  `Binder`, `CompileReport`, `CompileTerminal`, `Optimize.Hvm2`,
+  `Process`, `Hoist.Canonical`, `Api.Prim`) move from the library's
+  exposed-modules to other-modules: they compile the same but no longer
+  sit on the public Haddock surface. The `JShark` facade and
+  `JShark.Compiler` re-export the public entry points.
+
+* Dead code removed: `compileJS` (Compiler), `mapFixedArgs`/`foldFixed`
+  and the `sortByM` alias (Evaluate), `mergePreamble`/`assertDisjoint`
+  (JsShim), the identity wrapper `emitFlatSiblings` (Codegen.Flat), the
+  duplicate `peelLambdasFn` (EmitBend), and the PHOAS-optimizer timing
+  plumbing left behind by its deletion (`PhoasPrepareTiming`,
+  `recordJobPhoasPrepare`, the always-zero `phopt` stats column).
+
+* Internal dedup: Hvm2Lint's private `irKids`/`isEffectNode` become the
+  shared `Ir.irNodeChildren` + `Flat.irNodeIsEffect` (one child layout to
+  maintain per constructor); Codegen.Flat's `flatPureChild`/`flatEffectChild`
+  twins merge into `flatChild`, and the apply/lambda-spine emitters are
+  parameterized over expression vs effect position; the compiler batch
+  driver drops two adapter layers; `padLeft`/`padRight`, the digit-check
+  helpers, and the last-wins field dedup each collapse to one definition;
+  the test suite builds `CompilerConfig` via `defaultCompilerConfig{...}`
+  record updates instead of ten positional 8-field blocks.
+
+* New ergonomics surface (breaking, see the new `JShark.Prelude` for a
+  one-import quick start):
+  - `JShark.Prelude` re-exports `JShark.Api`, `JShark.Api.Rec`
+    (`Rec`/`<:`), the object-literal constructors, and `JShark.Compiler`;
+    a typical program drops from 4-8 imports to 1-2.
+  - The `addEventListener` callback now receives a typed
+    `Event` (`JShark.Api.Event`) instead of an untyped
+    `Expr f ('MutableObject ())`, and `addEventListenerS` takes the
+    handler directly in `EffectSyntax` (no `stmts` wrap, no inline
+    annotations). Typed field accessors `eventKey`, `eventCode`,
+    `eventRepeat`, `eventPointerId`, `eventButton`, `eventShiftKey`,
+    `eventClientX/Y`, `eventOffsetX/Y` (and `Dom.eventTarget` replacing
+    the old `getProp' e "..."` dances in the examples.
+  - New combinators filling gaps the examples kept re-implementing:
+    `toNumber` (JS `Number()` coercion), `whenNoneS` (the `whenSomeS`
+    complement), `argEffect` (smart constructor next to `arg`),
+    `Dom.byId` (literal-id element lookup), and `compileEffectSyntax`
+    (absorbs the `fromSyntax` wrap at the compile boundary).
+  - `JShark.Api`'s module header documents the `_`/`S`/prime naming
+    conventions.
+
+* Documentation: Haddock for the hot `JShark.Api` names (literals,
+  `lambda`/`lambdaE`, `let_`, control flow, `Option`/`Result`, FFI) and
+  the previously bare platform modules (`String`, `Promise`, `Ajax`,
+  `Math`); new `docs/tutorial.md` covering the two-tree model, the
+  `EffectSyntax` bridge, typed DOM events, `Generic` records/sums,
+  `Params` rows, `ffi` classification, and the headless test story;
+  README now points at `scripts/profile-life.sh` and
+  `scripts/capture-example-screenshots.sh`.
+
+* `CaptureStderr` (both copies) hoists its Windows `pipe` arity
+  difference out of the do-block; fourmolu can now parse and format the
+  whole repo (`scripts/format.sh` exits clean).
+
+* The IR GADT pair `IrExpr`/`IrEffect` merges into one untyped
+  `data IrNode` (`JShark.Compiler.Ir`). The type indices did no checking
+  post-lowering — the EDSL construction already type-checked the program —
+  so they carried only runtime data the flat IR already reifies. One
+  constructor per `FlatNode` opcode; kernel/method/fixed/fn-literal payloads
+  flatten onto `IrNode`, and object fields become `IrField` (name + child;
+  the `KnownSymbol`/`Typeable` per-field dictionaries reduce to `Text`
+  names). The optimizer is a single `optIr`/`metaIr`/`occursIr`/
+  `lazyOccursIr`; the `IrEmbedEff` bridge node and the sole `unsafeCoerce`
+  (`replaceIrVarExpr`) are gone. `Lower.hs`, `Flat.hs` (single `runPack`),
+  `FlatSoA.hs` (single `packProgramDirect`), `EmitBend.hs` (no
+  `SomeIrExpr`), `Hvm2Lint.hs` (single `IrNode` scan), and
+  `Codegen/Core.hs` (single `flatPrepareFromIr`) are updated to match.
+  Breaking: `IrExpr`, `IrEffect`, `optIrExpr`, `optIrEffect`,
+  `metaIrExpr`, `metaIrEffect`, and the `IrKernel`/`IrMethod`/`IrFnBody`/
+  `IrArg`/`IrFieldLit`/`IrFixedArgs` wrapper types no longer exist. The
+  `JShark.*` facade names are unchanged.
+
+  Emitted output is byte-identical to before: the merged optimizer keeps
+  two redundant single-use effect binds (`v <- e; pure v`) under `keepLets`
+  that the twin optimizer inlined, and `buildFlatEmitPlan` reserved a
+  phantom identifier for each (shifting later generated names by +2 in the
+  readable `life` output). The plan now skips binder names for binds that
+  codegen flattens into their RHS (`flatBindEffect`), restoring the
+  pre-merge numbering; readable and minified goldens are byte-identical.
+
+* Flat-opt purity computed once, at pack. `fsaPure` is filled by
+  `FlatSoA.computeFlatSoaPure` (one backward sweep in pack order) when
+  the SoA is frozen, instead of being zeroed at pack and re-derived by
+  the `propagatePureFlagsPar` fixpoint in `optimizeFlatPack` — purity was
+  computed twice (IR `IrMeta` at opt, SoA propagation after) with the IR
+  result discarded. The numeric constant fold stays in the flat pass: it
+  is a post-inline wave, not a duplicate (`elimIrLet` on the tree can
+  create `lit op lit` nodes after the kernel was visited; the single
+  bottom-up IR pass never revisits). `propagatePureFlagsPass` /
+  `propagatePureFlagsPar` / `propagatePureWithStats` are deleted, and
+  `FlatOptProfile` drops `fopPureSec` / `fopPurePasses`.
+  `JShark.Compiler.Optimize` (a thin re-export shim since the PHOAS
+  optimizer was deleted) is gone; its entry points moved to
+  `JShark.Compiler.Lower` (`collectHvm2Kernels` now comes from
+  `JShark.Compiler.Optimize.Hvm2` directly). No public `JShark.*` names
+  changed.
+
+* One compilation pipeline. Pure expressions and effectful programs now
+  share a single path — lower to the first-order IR (`JShark.Compiler.Ir`),
+  one IR optimizer (all constant/structural folds live in `optIrExpr` /
+  `optIrEffect`), pack to the flat SoA, one emitter (`Codegen.Flat`).
+  The PHOAS optimizer (`JShark.Compiler.Optimize` and its
+  `Analysis`/`Elim`/`Fold`/`Metadata` satellites) and the direct-PHOAS
+  emitter (`JShark.Compiler.Codegen.Phoas`) are deleted; its shared
+  statement helpers moved to `JShark.Compiler.Codegen.Stmt`.
+  `JShark.Compiler.FlatView` (a pure `FlatSoA` alias) is gone.
+
+  * `Stamp` is a plain `Int` binder tag again. `Embed`/`EmbedEff` PHOAS
+    inlining holes and the `Lower.reify*` inverse are removed; so is the
+    `JShark.Compiler.Flatten` module. `IrEmbedEff` remains as the IR node
+    for an inlined effect used in expression position.
+  * `IrLet` carries the source hint so readable mode keeps pure-let names.
+  * A single canonical opcode table (`FlatEnc.flatOpTable`) is round-tripped
+    by `FlatTest` (decode totality, tag bijection, pinned operand columns).
+  * Pure programs report through the flat timing hooks; the obsolete
+    `optIrLargeThreshold` routing is gone.
+  * Real programs compile faster (Life e2e ~9% on readable) and emit less
+    (folds); the adversarial 800-deep `longChain` IR-opt bench is ~25%
+    slower from per-node fold/hint work.
+
+  Breaking API: `pureAST`/`pureASTWith`/`pureProgram` output text changed
+  (one emitter), and these are gone: `optimize`, `optimizeWith`,
+  `optimizeEffect`, `optimizeEffectIr`, `optimizeEffectFromIr`,
+  `phoasNodeCountFromIr`, `optIrLargeThreshold`, `nodeCountExpr`,
+  `nodeCountEff`, `effectfulASTIr`, `effectfulASTFromFlat`,
+  `preparePureProgram*`. `effectfulASTFromSoA` stays. `Stamp` is a
+  single-constructor `Int` tag.
 
 * `jshark-bindgen` executable: generate JShark FFI wrappers from TypeScript
   `.d.ts` / `.ts` (and JS with JSDoc). `cabal run jshark-bindgen -- FILE`.

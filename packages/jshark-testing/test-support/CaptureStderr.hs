@@ -20,6 +20,11 @@ import System.IO
 foreign import ccall "msvcrt _pipe" c_pipe
   :: Ptr CInt -> CInt -> CInt -> IO CInt
 
+-- CPP inside the do-block defeats fourmolu's parser; keep the arity
+-- difference here at top level.
+cPipe :: Ptr CInt -> IO CInt
+cPipe pfds = c_pipe pfds 4096 0
+
 foreign import ccall "msvcrt _dup" c_dup :: CInt -> IO CInt
 
 foreign import ccall "msvcrt _dup2" c_dup2 :: CInt -> CInt -> IO CInt
@@ -27,6 +32,9 @@ foreign import ccall "msvcrt _dup2" c_dup2 :: CInt -> CInt -> IO CInt
 foreign import ccall "msvcrt _close" c_close :: CInt -> IO CInt
 #else
 foreign import ccall "pipe" c_pipe :: Ptr CInt -> IO CInt
+
+cPipe :: Ptr CInt -> IO CInt
+cPipe = c_pipe
 
 foreign import ccall "dup" c_dup :: CInt -> IO CInt
 
@@ -41,11 +49,7 @@ stdErrorFd = 2
 captureStderr :: IO a -> IO (a, String)
 captureStderr io =
   allocaArray 2 $ \pfds -> do
-#if defined(mingw32_HOST_OS)
-    rc <- c_pipe pfds 4096 0
-#else
-    rc <- c_pipe pfds
-#endif
+    rc <- cPipe pfds
     if rc /= 0
       then ioError (userError "captureStderr: pipe failed")
       else pure ()

@@ -9,6 +9,7 @@
 
 module BunTests (bunEvalTests) where
 
+import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import Data.List (intercalate)
 import Data.Text (Text)
@@ -38,14 +39,13 @@ import qualified JShark.Math as Math
 import qualified JShark.Object as Object
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
-import Support
-import System.Directory (findExecutable)
+import Test.Support
 import Test.Tasty
 import Test.Tasty.HUnit
 
 bunEvalTests :: TestTree
 bunEvalTests =
-  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+  bunGated $ \getBun ->
     testGroup
       "bun"
       [ testCase "bun is on PATH" $ do
@@ -54,7 +54,7 @@ bunEvalTests =
             Just _ -> pure ()
             Nothing ->
               assertFailure "bun not found on PATH; install https://bun.sh"
-      , after AllSucceed "bun is on PATH" $
+      , after AllSucceed bunPathTestName $
           testGroup
             "eval"
             [ bunCase "addition" (number 1 + number 2)
@@ -190,16 +190,15 @@ bunEvalTests =
             , bunCase
                 "Show Uint8Array"
                 (Show (uint8Array (packUint8 [1, 2, 3])))
-            , testCase "prettyJS compileEffect ifE+LambdaE" $ do
-                out <- compileEffect readableConfig prettyIfLambda
-                assertBool "indented if body" ("{\n" `T.isInfixOf` out)
-                got <- T.unpack <$> runJS (wrapReadableExpr out)
+            , testCase "compileEffect ifE+LambdaE evaluates" $ do
+                out <- compileEffect defaultCompilerConfig prettyIfLambda
+                got <- T.unpack <$> runJS (T.unpack out)
                 assertEqual
                   ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> T.unpack out)
                   "6"
                   got
             ]
-      , after AllSucceed "bun is on PATH" $
+      , after AllSucceed bunPathTestName $
           testGroup
             "evaluateEffectJSON"
             [ effectCase "Lift of addition" (expr (number 1 + number 2)) "3"
@@ -272,7 +271,7 @@ bunEvalTests =
             , testCase "a non-terminating program hits the timeout" $ do
                 let
                   spin =
-                    T.unpack (renderJSCompact (effectfulProgram (while_ (expr (bool True)) noOp)))
+                    T.unpack (renderJS (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)
@@ -281,7 +280,7 @@ bunEvalTests =
                       ("expected a timeout error, got " <> show e)
                       ("timed out" `T.isInfixOf` T.pack (show e))
             ]
-      , after AllSucceed "bun is on PATH" $
+      , after AllSucceed bunPathTestName $
           testGroup
             "happy-dom"
             [ testCase "happy-dom is available" $ do
@@ -456,37 +455,6 @@ domCanvas = fromSyntax $ do
   ctx <- Canvas.getContext2d el
   handle <- toSyntax ctx
   yield (optionCase (Var handle) (string "no 2d") (\_ -> string "2d"))
-
-wrapReadableExpr :: Text -> String
-wrapReadableExpr src =
-  let
-    t = T.strip src
-    ls = filter (not . T.null) (T.lines t)
-   in
-    case ls of
-      [] -> "undefined"
-      [one] -> wrapReturn one
-      many
-        | isStmtSnippet many ->
-            case reverse many of
-              result : revStmts ->
-                T.unpack
-                  $ T.unlines
-                  $ "(() => {" : reverse revStmts ++ ["return " <> result, "})()"]
-              [] -> "undefined"
-        | otherwise -> wrapReturn t
- where
-  wrapReturn x = "(() => { return " ++ T.unpack x ++ "; })()"
-  isStmtSnippet many =
-    case many of
-      (first : _)
-        | length many >= 2 ->
-            not ((";" `T.isSuffixOf`) (T.strip (last many)))
-              && case T.strip first of
-                stmt | "const " `T.isPrefixOf` stmt -> True
-                stmt | "let " `T.isPrefixOf` stmt -> True
-                _ -> False
-      _ -> False
 
 assertBunAgrees :: (forall f. Expr f u) -> IO ()
 assertBunAgrees e = do

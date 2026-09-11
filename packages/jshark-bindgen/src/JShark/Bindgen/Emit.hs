@@ -115,8 +115,9 @@ classFunSlots c =
        | f <- clMethods c
        ]
 
-globalUnique :: [Text] -> [Text]
-globalUnique = go []
+-- | Make each name distinct by suffixing @2@, @3@, … on repeats.
+uniques :: [Text] -> [Text]
+uniques = go []
  where
   go _ [] = []
   go seen (n : ns) =
@@ -129,6 +130,9 @@ globalUnique = go []
       cand = if k == 1 then n else n <> T.pack (show k)
      in
       if cand `elem` seen then pick n (k + 1) seen else cand
+
+globalUnique :: [Text] -> [Text]
+globalUnique = uniques
 
 lookupFun :: NamePlan -> FunKey -> Text
 lookupFun plan k =
@@ -194,22 +198,17 @@ phantoms ir =
     <> concatMap phantomNamed (extraNamedTypes ir)
 
 phantomClass :: ClassDecl -> [Text]
-phantomClass c =
-  [ "-- | JS @" <> clFfi c <> "@."
-  , "data " <> hsTypeName (clName c)
-  , ""
-  ]
+phantomClass c = phantomTy ("JS @" <> clFfi c <> "@.") (clName c)
 
 phantomEnum :: EnumDecl -> [Text]
-phantomEnum e =
-  [ "-- | JS enum @" <> enName e <> "@."
-  , "data " <> hsTypeName (enName e)
-  , ""
-  ]
+phantomEnum e = phantomTy ("JS enum @" <> enName e <> "@.") (enName e)
 
 phantomNamed :: Text -> [Text]
-phantomNamed n =
-  [ "-- | JS @" <> n <> "@ (referenced type)."
+phantomNamed n = phantomTy ("JS @" <> n <> "@ (referenced type).") n
+
+phantomTy :: Text -> Text -> [Text]
+phantomTy comment n =
+  [ "-- | " <> comment
   , "data " <> hsTypeName n
   , ""
   ]
@@ -244,17 +243,7 @@ moduleTypes ir =
   funTypes f = fnRet f : fmap pTy (fnParams f)
 
 tyNamed :: Ty -> [Text]
-tyNamed = \case
-  TyNamed n -> [n]
-  TyArray t -> tyNamed t
-  TyOption t -> tyNamed t
-  TySet t -> tyNamed t
-  TyPromise t -> tyNamed t
-  TyMap k v -> tyNamed k <> tyNamed v
-  TyFun as r -> concatMap tyNamed as <> tyNamed r
-  _ -> []
-
--- Fields / enums --------------------------------------------------------
+tyNamed t = [n | TyNamed n <- tyAndChildren t] -- Fields / enums --------------------------------------------------------
 
 fieldInsts :: ModuleIr -> [Text]
 fieldInsts ir =
@@ -374,20 +363,8 @@ requiredParams :: [Param] -> [Param]
 requiredParams = filter (not . pOptional)
 
 uniqueParamNames :: [Param] -> [(Param, Text)]
-uniqueParamNames = go []
- where
-  go _ [] = []
-  go seen (p : ps) =
-    let
-      base = hsVarName (pName p)
-      n' = pick base (1 :: Int) seen
-     in
-      (p, n') : go (n' : seen) ps
-  pick n k seen =
-    let
-      cand = if k == 1 then n else n <> T.pack (show k)
-     in
-      if cand `elem` seen then pick n (k + 1) seen else cand
+uniqueParamNames params =
+  zip params (uniques (fmap (hsVarName . pName) params))
 
 emitCall :: Maybe ClassDecl -> Fun -> [(Param, Text)] -> Text
 emitCall owner f paramNames
@@ -446,16 +423,17 @@ isUnit TyUnit = True
 isUnit _ = False
 
 isHandle :: Ty -> Bool
-isHandle = \case
-  TyNamed _ -> True
-  TyUnknown _ -> True
-  TyPromise _ -> True
-  TyArray t -> isHandle t
-  TyOption t -> isHandle t
-  TyMap _ _ -> True
-  TySet _ -> True
-  TyUint8Array -> False
-  _ -> False
+isHandle =
+  any
+    ( \case
+        TyNamed _ -> True
+        TyUnknown _ -> True
+        TyPromise _ -> True
+        TyMap _ _ -> True
+        TySet _ -> True
+        _ -> False
+    )
+    . tyAndChildren
 
 isOptionHandle :: Ty -> Bool
 isOptionHandle (TyOption t) = isHandle t

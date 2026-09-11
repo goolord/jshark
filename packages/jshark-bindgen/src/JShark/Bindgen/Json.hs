@@ -1,10 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Closed JSON codec for 'ModuleIr'. Not a general JSON library.
+-- | Decoder for the @extract.mjs@ JSON IR emitted by the TypeScript
+-- extractor. Not a general JSON library.
 module JShark.Bindgen.Json
-  ( encodeModule
-  , decodeModule
+  ( decodeModule
   )
 where
 
@@ -12,135 +12,6 @@ import Data.Char (isDigit, isSpace)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Bindgen.Ir
-
-encodeModule :: ModuleIr -> Text
-encodeModule ir =
-  obj
-    [ ("module", js (irModule ir))
-    , ("prefix", js (irPrefix ir))
-    , ("source", js (irSource ir))
-    , ("classes", arr (map encClass (irClasses ir)))
-    , ("funs", arr (map encFun (irFuns ir)))
-    , ("consts", arr (map encConst (irConsts ir)))
-    , ("enums", arr (map encEnum (irEnums ir)))
-    , ("skipped", arr (map encSkip (irSkipped ir)))
-    ]
-
-encClass :: ClassDecl -> Text
-encClass c =
-  obj
-    [ ("name", js (clName c))
-    , ("ffi", js (clFfi c))
-    , ("ctors", arr (map encFun (clCtors c)))
-    , ("props", arr (map encProp (clProps c)))
-    , ("methods", arr (map encFun (clMethods c)))
-    ]
-
-encFun :: Fun -> Text
-encFun f =
-  obj
-    [ ("name", js (fnName f))
-    , ("ffi", js (fnFfi f))
-    , ("params", arr (map encParam (fnParams f)))
-    , ("ret", encTy (fnRet f))
-    , ("ctor", jbool (fnIsCtor f))
-    , ("static", jbool (fnStatic f))
-    ]
-
-encParam :: Param -> Text
-encParam p =
-  obj
-    [ ("name", js (pName p))
-    , ("ty", encTy (pTy p))
-    , ("optional", jbool (pOptional p))
-    ]
-
-encProp :: Prop -> Text
-encProp p =
-  obj
-    [ ("name", js (prName p))
-    , ("ty", encTy (prTy p))
-    , ("readonly", jbool (prReadonly p))
-    ]
-
-encConst :: ConstDecl -> Text
-encConst c =
-  obj
-    [ ("name", js (cnName c))
-    , ("ffi", js (cnFfi c))
-    , ("ty", encTy (cnTy c))
-    ]
-
-encEnum :: EnumDecl -> Text
-encEnum e =
-  obj
-    [ ("name", js (enName e))
-    , ("members", arr (map encMember (enMembers e)))
-    ]
-
-encMember :: EnumMember -> Text
-encMember m =
-  obj
-    [ ("name", js (emName m))
-    , ("value", maybe jnull js (emValue m))
-    , ("numeric", jbool (emNumeric m))
-    ]
-
-encSkip :: Skipped -> Text
-encSkip s = obj [("name", js (skName s)), ("reason", js (skReason s))]
-
-encTy :: Ty -> Text
-encTy = \case
-  TyNumber -> tag "num"
-  TyBigInt -> tag "bigint"
-  TyString -> tag "str"
-  TyBool -> tag "bool"
-  TyUnit -> tag "unit"
-  TyUint8Array -> tag "u8"
-  TyArray t -> obj [("k", js "arr"), ("el", encTy t)]
-  TyOption t -> obj [("k", js "opt"), ("el", encTy t)]
-  TyMap k v -> obj [("k", js "map"), ("key", encTy k), ("val", encTy v)]
-  TySet t -> obj [("k", js "set"), ("el", encTy t)]
-  TyPromise t -> obj [("k", js "promise"), ("el", encTy t)]
-  TyFun as r ->
-    obj [("k", js "fn"), ("args", arr (map encTy as)), ("ret", encTy r)]
-  TyNamed n -> obj [("k", js "named"), ("n", js n)]
-  TyUnknown n -> obj [("k", js "unk"), ("note", js n)]
- where
-  tag k = obj [("k", js k)]
-
--- JSON helpers ----------------------------------------------------------
-
-js :: Text -> Text
-js t = T.singleton '"' <> T.concatMap esc t <> T.singleton '"'
- where
-  esc c = case c of
-    '"' -> "\\\""
-    '\\' -> "\\\\"
-    '\n' -> "\\n"
-    '\r' -> "\\r"
-    '\t' -> "\\t"
-    _ -> T.singleton c
-
-jbool :: Bool -> Text
-jbool True = "true"
-jbool False = "false"
-
-jnull :: Text
-jnull = "null"
-
-obj :: [(Text, Text)] -> Text
-obj kvs =
-  "{"
-    <> T.intercalate
-      ","
-      [ js k <> ":" <> v
-      | (k, v) <- kvs
-      ]
-    <> "}"
-
-arr :: [Text] -> Text
-arr xs = "[" <> T.intercalate "," xs <> "]"
 
 -- Decode ----------------------------------------------------------------
 

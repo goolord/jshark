@@ -227,7 +227,7 @@ exampleAppMapOk = do
     (exampleAppForHs "examples/app/server/DevServer.hs")
   assertEqual
     "theme all"
-    ["breakout", "todo-mvc", "synth", "life", "hvm2-demo"]
+    ["breakout", "todo-mvc", "synth", "life"]
     (exampleAppsForHs "examples/src/JShark/Example/Theme.hs")
   assertBool
     "lucid shell"

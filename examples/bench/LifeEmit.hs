@@ -6,13 +6,13 @@
 -- | Wall-clock timing for lifeStep emit (not CAF-safe for tasty-bench).
 module Main (main) where
 
+import Bench.Stages (emitLen)
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark.Api
 import JShark.Api.Types (ClosedEffect)
 import qualified JShark.Api.Types as T
 import JShark.Example.Life.LifeTestSupport (runStepGridOnce, seedBlock)
-import Stages (emitLen)
 
 lifeStep :: ClosedEffect T.Unit
 lifeStep = fromSyntax $ do

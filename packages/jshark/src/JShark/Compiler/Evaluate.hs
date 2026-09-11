@@ -18,11 +18,8 @@ module JShark.Compiler.Evaluate
   ( evaluate
   , evaluateNumber
   , evaluateBigInt
-  , evaluateCached
   , valueEq
   , isCheapValue
-  , mapFixedArgs
-  , foldFixed
   , isFiniteDouble
   , escapeJsString
   , jsQuote
@@ -35,6 +32,7 @@ module JShark.Compiler.Evaluate
   , isOrderableValue
   , eqFoldableValue
   , jsShow
+  , keepLastByKey
   , typeOfValue
   , valueCompare
   , parseBigIntString
@@ -149,13 +147,18 @@ frozenEq as bs =
    in
     length as' == length bs' && all (\fa -> any (fieldLitEq fa) bs') as'
 
-lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
-lastWinsFields = reverse . keep [] . reverse
+-- | Keep the last occurrence of each key (first-wins after the reverse
+-- pair, so later fields shadow earlier ones).
+keepLastByKey :: Eq k => (a -> k) -> [a] -> [a]
+keepLastByKey key = reverse . keep [] . reverse
  where
   keep acc [] = acc
-  keep acc (f : fs)
-    | fieldKey f `elem` map fieldKey acc = keep acc fs
-    | otherwise = keep (f : acc) fs
+  keep acc (x : xs)
+    | key x `elem` map key acc = keep acc xs
+    | otherwise = keep (x : acc) xs
+
+lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
+lastWinsFields = keepLastByKey fieldKey
 
 evalFieldLit ::
   Monad m =>
@@ -295,19 +298,9 @@ jsParseInt s r
           '+' : xs -> (False, xs)
           xs -> (False, xs)
        in
-        case readInt (fromIntegral r :: Integer) okDigit digitToInt t1 of
+        case readInt (fromIntegral r :: Integer) (digitBelowBase r) digitToInt t1 of
           (n, _) : _ -> fromInteger (if neg then negate n else n)
           [] -> 0 / 0
- where
-  okDigit c =
-    let
-      v
-        | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
-        | c >= 'a' && c <= 'z' = Char.ord c - Char.ord 'a' + 10
-        | c >= 'A' && c <= 'Z' = Char.ord c - Char.ord 'A' + 10
-        | otherwise = 99
-     in
-      v < r
 
 numberToBigInt :: Double -> Integer
 numberToBigInt d
@@ -344,12 +337,13 @@ parseBigIntString raw =
     case digits of
       [] -> Nothing
       _ ->
-        case readInt (fromIntegral base :: Integer) (okBigDigit base) digitToInt digits of
+        case readInt (fromIntegral base :: Integer) (digitBelowBase base) digitToInt digits of
           (n, []) : _ -> Just (if neg then negate n else n)
           _ -> Nothing
 
-okBigDigit :: Int -> Char -> Bool
-okBigDigit base c =
+-- | Digit value under @base@ (letters carry 10+; anything else fails).
+digitBelowBase :: Int -> Char -> Bool
+digitBelowBase base c =
   let
     v
       | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
@@ -563,7 +557,6 @@ evalAlg rec apply = \case
   GetField @k o -> do
     ov <- rec o
     withFrozenField @k ov rec
-  Hvm2Kernel {} -> cannotEval "Hvm2Kernel (use WASM export)"
 
 -- | Force an array 'Value' and continue. Every array node is a
 -- 'ValueArray' constructor; the case is here so call sites stay linear.
@@ -588,9 +581,6 @@ evalAsUint8Array rec buf k = do
   arr <- rec buf
   case arr of
     ValueUint8Array ba -> k ba
-
-sortByM :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
-sortByM cmp xs = mergeSort cmp xs
 
 mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
 mergeSort _ [] = pure []
@@ -693,7 +683,7 @@ evalMethod rec = \case
   MethToSorted xs f ->
     evalAsArray rec xs $ \vs ->
       ValueArray
-        <$> sortByM (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
+        <$> mergeSort (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
   MethFrom n f -> do
     nv <- rec n
     let
@@ -762,29 +752,6 @@ evalFixed rec op args = case (op, args) of
   -- String/regex fixed ops are codegen-only (same as old Un/Bin/Tern gaps).
   _ -> cannotEval "a fixed stdlib op"
 
-mapFixedArgs ::
-  forall f a b c.
-  (forall v. Expr f v -> Expr f v)
-  -> FixedArgs f a b c
-  -> FixedArgs f a b c
-mapFixedArgs ge a = case a of
-  ArgsU x -> ArgsU (ge x)
-  ArgsB x y -> ArgsB (ge x) (ge y)
-  ArgsT x y z -> ArgsT (ge x) (ge y) (ge z)
-
-foldFixed ::
-  forall f m a b c u.
-  Monoid m =>
-  (forall v. f v)
-  -> (forall v. Expr f v -> m)
-  -> FixedOp a b c u
-  -> FixedArgs f a b c
-  -> m
-foldFixed _ se _ a = case a of
-  ArgsU x -> se x
-  ArgsB x y -> se x <> se y
-  ArgsT x y z -> se x <> se y <> se z
-
 lookupFrozenField ::
   forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
 lookupFrozenField = findLit . reverse
@@ -806,7 +773,3 @@ withFrozenField (ValueFrozen fs) k =
   case lookupFrozenField @k fs of
     Just e -> k e
     Nothing -> cannotEval "GetField of a frozen object with effectful fields"
-
--- | 'evaluate' in 'IO'. Same semantics as 'evaluate'.
-evaluateCached :: ClosedExpr u -> IO (Value u)
-evaluateCached e = pure (evaluate e)
