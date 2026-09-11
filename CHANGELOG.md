@@ -1,6 +1,48 @@
 # Revision history for jshark
 
 ## Unreleased
+* Internal dead code and copy-paste are gone, ~3.3k LOC: the compiler drops
+  unused entries (`irExprFromClosed`, `irOptimized{Effect,Expr}FromClosed`,
+  `nestedDummy`, `renderFFIForm`, the unstyled `prepareFlat*Program`,
+  `fromOption`, `apply3`, `setProp'`, `ToExpr`, `ParamAt`, `sumTag`,
+  `mergeModules`), the 11 numeric smart constructors share one `numBinE`
+  combinator, the math lookup/match tables merged per arity, `Ir` exports
+  `IrNode (..)` instead of a 77-line constructor list, `childMeta` folds
+  over `irNodeChildren`, `elimIrLet`/`elimIrBind` share `elimBinder`,
+  `Hoist`/`Hoist.Canonical` fold into `JsShim`/`Codegen.Core`,
+  `flatNodeIsEffect` is an opcode range check, and the eight copy-pasted
+  emit-plan blocks share helpers. Emitted JS is byte-identical.
+
+* The compile-diagnostics cluster collapses to a minimal live progress bar.
+  `JShark.Compiler.CompileReport` and `JShark.Compiler.CompileTerminal` are
+  deleted; `CompileProgress` keeps the per-job board, phase sub-bars, and
+  done lines, and drops the per-job stats/timing machinery (the only
+  consumer discarded the stats and the stats table). `compileJobsLabeled`
+  returns `[Text]`; the unused `compileEffects`/`compilePures` (+`Labeled`)
+  batch entries and the `configProgressSlot` field are gone. `--progress`
+  output is unchanged apart from the removed stats table.
+
+* jshark-bindgen is TypeScript-extractor-only: the hand-written fallback
+  parser (`ParseDts`, `ParseJs`, ~1,050 LOC, `--no-ts`) and the unused
+  `--json` mode / `encodeModule` are deleted; the `Ty` folds share one
+  `tyAndChildren` traversal. CI already required bun.
+
+* jshark-hotreload drops the unused EDSL lifecycle hooks
+  (`onDispose`/`hotState*`) and no longer depends on `jshark`; the
+  unreachable `drainToLBS` branch is gone. jshark-lucid's
+  `JShark.Lucid.HotReload` keeps only `hotReloadClient`. The drifted
+  vendored copy `examples/static/js/jshark-reload.js` is deleted (pages
+  load `/__jshark/client.js`).
+
+* Shared test/bench support lives in the new `jshark-testing` package
+  (`Test.Support`, `CaptureStderr`, `Bench.Stages`), replacing the ~95%
+  and byte-identical copies under `examples/`; the four-example registry
+  is `JShark.Example.Registry` (was hand-written three times), and the
+  bun-gating scaffold is shared (`BunGate`). Core tests gain golden-case
+  combinators (`effectCodeCase`/`pureCodeCase`/`effectContains`/
+  `evalBoolCase`) used by 183 of 309 cases; test names and literals are
+  unchanged.
+
 
 * HVM2/Bend support is removed. The `Hvm2Kernel` expression constructor,
   `Hvm2KernelEntry`, `JShark.Api.hvm2Kernel`, `JShark.Api.loadHvm2Wasm`,

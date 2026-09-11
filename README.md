@@ -203,7 +203,8 @@ console.log("max", 2, 9);
 | `jshark-lucid` | [`packages/jshark-lucid`](packages/jshark-lucid) | Declarative DOM using Lucid syntax, compiled to `createElement` and event bindings. |
 | `jshark-bindgen` | [`packages/jshark-bindgen`](packages/jshark-bindgen) | Generates Haskell `ffi` wrapper modules from TypeScript `.d.ts` or JSDoc. |
 | `jshark-hotreload` | [`packages/jshark-hotreload`](packages/jshark-hotreload) | SSE dev-server middleware and file watcher for live reloading. |
-| `jshark-examples` | [`examples`](examples) | Five showcase apps, dev server, and static exporter. |
+| `jshark-examples` | [`examples`](examples) | Four showcase apps, dev server, and static exporter. |
+| `jshark-testing` | [`packages/jshark-testing`](packages/jshark-testing) | Shared test/bench support (golden-case helpers, compiler-stage benches). |
 
 ### `jshark-lucid`
 
