@@ -527,7 +527,6 @@ resolveExampleHtml mHub ex fallback =
 staticFiles :: [FilePath]
 staticFiles =
   [ "js/source-pane.js"
-  , "js/jshark-reload.js"
   , "css/tokens.css"
   , "css/base.css"
   , "pico/pico.min.css"
