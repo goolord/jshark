@@ -14,11 +14,11 @@ module JShark.Bindgen.Ir
   , Skipped (..)
   , ModuleIr (..)
   , emptyModule
+  , tyAndChildren
   , tyUsesUnknown
   , tyUsesPromise
   , moduleUsesUnknown
   , moduleUsesPromise
-  , mergeModules
   )
 where
 
@@ -129,26 +129,34 @@ emptyModule name source =
     , irSkipped = []
     }
 
+-- | @t@ and all its descendants, pre-order. Single traversal shared by
+-- the 'Ty' predicates ('tyUsesUnknown', 'tyUsesPromise', and Emit's
+-- @tyNamed@ / @isHandle@).
+tyAndChildren :: Ty -> [Ty]
+tyAndChildren t = t : children t
+ where
+  children = \case
+    TyArray a -> tyAndChildren a
+    TyOption a -> tyAndChildren a
+    TySet a -> tyAndChildren a
+    TyPromise a -> tyAndChildren a
+    TyMap k v -> tyAndChildren k <> tyAndChildren v
+    TyFun as r -> concatMap tyAndChildren as <> tyAndChildren r
+    _ -> []
+
 tyUsesUnknown :: Ty -> Bool
-tyUsesUnknown = \case
-  TyUnknown _ -> True
-  TyArray t -> tyUsesUnknown t
-  TyOption t -> tyUsesUnknown t
-  TySet t -> tyUsesUnknown t
-  TyPromise t -> tyUsesUnknown t
-  TyMap k v -> tyUsesUnknown k || tyUsesUnknown v
-  TyFun as r -> any tyUsesUnknown as || tyUsesUnknown r
-  _ -> False
+tyUsesUnknown = any isUnknown . tyAndChildren
+ where
+  isUnknown = \case
+    TyUnknown _ -> True
+    _ -> False
 
 tyUsesPromise :: Ty -> Bool
-tyUsesPromise = \case
-  TyPromise _ -> True
-  TyArray t -> tyUsesPromise t
-  TyOption t -> tyUsesPromise t
-  TySet t -> tyUsesPromise t
-  TyMap k v -> tyUsesPromise k || tyUsesPromise v
-  TyFun as r -> any tyUsesPromise as || tyUsesPromise r
-  _ -> False
+tyUsesPromise = any isPromise . tyAndChildren
+ where
+  isPromise = \case
+    TyPromise _ -> True
+    _ -> False
 
 walkFuns :: (Fun -> Bool) -> ModuleIr -> Bool
 walkFuns p ir =
@@ -176,19 +184,3 @@ moduleUsesPromise ir =
  where
   funP f =
     tyUsesPromise (fnRet f) || any (tyUsesPromise . pTy) (fnParams f)
-
--- | Concatenate declarations; later module/prefix/source win when non-empty.
-mergeModules :: ModuleIr -> ModuleIr -> ModuleIr
-mergeModules a b =
-  ModuleIr
-    { irModule = pick (irModule b) (irModule a)
-    , irPrefix = pick (irPrefix b) (irPrefix a)
-    , irSource = pick (irSource b) (irSource a)
-    , irClasses = irClasses a <> irClasses b
-    , irFuns = irFuns a <> irFuns b
-    , irConsts = irConsts a <> irConsts b
-    , irEnums = irEnums a <> irEnums b
-    , irSkipped = irSkipped a <> irSkipped b
-    }
- where
-  pick x y = if T.null x then y else x

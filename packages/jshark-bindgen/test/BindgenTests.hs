@@ -12,12 +12,9 @@ import JShark.Api
 import JShark.Bindgen
 import JShark.Bindgen.Cli
   ( Cli (..)
-  , Mode (..)
   , parseCliArgs
   )
 import JShark.Bindgen.Extract (tsExtractorAvailable)
-import JShark.Bindgen.Ir
-import JShark.Bindgen.Json (decodeModule, encodeModule)
 import JShark.Compiler (compileEffect, readableConfig)
 import System.Directory (doesFileExist, getCurrentDirectory)
 import System.Environment (getExecutablePath)
@@ -65,30 +62,24 @@ pkgFileAbs rel = do
   root <- repoRoot
   pure (root </> "packages/jshark-bindgen" </> rel)
 
-noTs :: BindgenOpts
-noTs = defaultBindgenOpts {optNoTs = True}
+mustGenWith :: BindgenOpts -> FilePath -> IO Text
+mustGenWith opts name = do
+  fx <- fixtureAbs name
+  r <- generateFromFile opts fx
+  either fail pure r
 
 mustGen :: FilePath -> IO Text
-mustGen name = do
-  fx <- fixtureAbs name
-  src <- TIO.readFile fx
-  case generateFromSource noTs (fixture name) src of
-    Left e -> fail e
-    Right t -> pure t
-
-mustParse :: FilePath -> IO ModuleIr
-mustParse name = do
-  fx <- fixtureAbs name
-  src <- TIO.readFile fx
-  case parseSource noTs (fixture name) src of
-    Left e -> fail e
-    Right ir -> pure ir
+mustGen = mustGenWith defaultBindgenOpts
 
 bindgenTests :: TestTree
 bindgenTests =
   testGroup
     "bindgen"
-    [ testCase "toy.d.ts emits greet / Widget / util.clamp" $ do
+    [ testCase "bun and jshark-bindgen/extract.mjs are available" $ do
+        ready <- tsExtractorAvailable
+        unless ready $
+          fail "bun and jshark-bindgen/extract.mjs required (with typescript installed)"
+    , testCase "toy.d.ts emits greet / Widget / util.clamp" $ do
         hs <- mustGen "toy.d.ts"
         assertBool "module" ("module JShark.Toy" `T.isInfixOf` hs)
         assertBool "greet ffi" ("ffi \"toy.greet\"" `T.isInfixOf` hs)
@@ -103,22 +94,19 @@ bindgenTests =
         assertBool "VERSION" ("ffiExpr \"toy.VERSION\"" `T.isInfixOf` hs)
         assertBool "version name" ("version ::" `T.isInfixOf` hs)
     , testCase "plain.d.ts --prefix acme qualifies globals" $ do
-        fx <- fixtureAbs "plain.d.ts"
-        src <- TIO.readFile fx
-        let
-          opts = noTs {optPrefix = Just "acme"}
-        case generateFromSource opts (fixture "plain.d.ts") src of
-          Left e -> fail e
-          Right hs -> do
-            assertBool
-              "prefixed greet"
-              ("ffi \"acme.greet\"" `T.isInfixOf` hs)
-            assertBool
-              "prefixed add"
-              ("ffi \"acme.add\"" `T.isInfixOf` hs)
-            assertBool
-              "no double prefix"
-              (not ("acme.acme.greet" `T.isInfixOf` hs))
+        hs <-
+          mustGenWith
+            defaultBindgenOpts {optPrefix = Just "acme"}
+            "plain.d.ts"
+        assertBool
+          "prefixed greet"
+          ("ffi \"acme.greet\"" `T.isInfixOf` hs)
+        assertBool
+          "prefixed add"
+          ("ffi \"acme.add\"" `T.isInfixOf` hs)
+        assertBool
+          "no double prefix"
+          (not ("acme.acme.greet" `T.isInfixOf` hs))
     , testCase "ms.d.ts (real lib shape) emits ms / ms2" $ do
         hs <- mustGen "ms.d.ts"
         assertBool "module" ("module JShark.Ms" `T.isInfixOf` hs)
@@ -135,53 +123,32 @@ bindgenTests =
         assertBool "log_" ("log_" `T.isInfixOf` hs)
         assertBool "JSDoc string" ("Expr f ('String)" `T.isInfixOf` hs)
         assertBool "JSDoc number" ("Expr f ('Number)" `T.isInfixOf` hs)
-    , testCase "JSON IR round-trips" $ do
-        ir <- mustParse "toy.d.ts"
-        case decodeModule (encodeModule ir) of
-          Left e -> fail e
-          Right ir' ->
-            assertEqual "roundtrip" (irFuns ir) (irFuns ir')
     , testCase "CLI-shaped opts set module name" $ do
-        fx <- fixtureAbs "toy.d.ts"
-        src <- TIO.readFile fx
-        let
-          opts = noTs {optModuleName = Just "JShark.Demo.Toy"}
-        case generateFromSource opts (fixture "toy.d.ts") src of
-          Left e -> fail e
-          Right hs ->
-            assertBool
-              "module name"
-              ("module JShark.Demo.Toy" `T.isInfixOf` hs)
+        hs <-
+          mustGenWith
+            defaultBindgenOpts {optModuleName = Just "JShark.Demo.Toy"}
+            "toy.d.ts"
+        assertBool
+          "module name"
+          ("module JShark.Demo.Toy" `T.isInfixOf` hs)
     , testCase "generated BindgenToy.hs is a golden of toy.d.ts" $ do
-        fx <- fixtureAbs "toy.d.ts"
-        src <- TIO.readFile fx
+        hs <-
+          mustGenWith
+            defaultBindgenOpts {optModuleName = Just "BindgenToy"}
+            "toy.d.ts"
+        root <- repoRoot
         let
-          opts = noTs {optModuleName = Just "BindgenToy"}
-        case generateFromSource opts (fixture "toy.d.ts") src of
-          Left e -> fail e
-          Right hs -> do
-            golden <- TIO.readFile =<< pkgFileAbs "test/BindgenToy.hs"
-            assertEqual
-              "golden"
-              (T.strip golden)
-              (T.strip hs)
-    , testCase "TypeScript extractor requires bun + extract.mjs" $ do
-        ready <- tsExtractorAvailable
-        unless ready $
-          fail "bun and jshark-bindgen/extract.mjs required for TS extractor test"
-        hs <- generateFromFile defaultBindgenOpts =<< fixtureAbs "toy.d.ts"
-        case hs of
-          Left e -> fail e
-          Right t -> do
-            assertBool "greet" ("ffi \"toy.greet\"" `T.isInfixOf` t)
-            assertBool "Widget ctor" ("newWidget" `T.isInfixOf` t)
-            assertBool
-              "resize"
-              ("callMethod self \"resize\"" `T.isInfixOf` t)
-    , testCase "CLI parses module / prefix / no-ts flags" $ do
+          -- the golden records the package-relative source path
+          normalized =
+            T.replace (T.pack (root </> "packages/jshark-bindgen/")) "" hs
+        golden <- TIO.readFile =<< pkgFileAbs "test/BindgenToy.hs"
+        assertEqual
+          "golden"
+          (T.strip golden)
+          (T.strip normalized)
+    , testCase "CLI parses module / prefix flags" $ do
         case parseCliArgs
-          [ "--no-ts"
-          , "-m"
+          [ "-m"
           , "JShark.Demo.Toy"
           , "-p"
           , "acme"
@@ -190,7 +157,6 @@ bindgenTests =
           Left e -> fail e
           Right cli -> do
             assertEqual "file" (fixture "toy.d.ts") (cliFile cli)
-            assertEqual "mode" Haskell (cliMode cli)
             assertEqual
               "module"
               (Just "JShark.Demo.Toy")
@@ -199,7 +165,6 @@ bindgenTests =
               "prefix"
               (Just "acme")
               (optPrefix (cliOpts cli))
-            assertBool "no-ts" (optNoTs (cliOpts cli))
     , testCase "CLI rejects unknown flag with usage" $ do
         case parseCliArgs ["--nope", fixture "toy.d.ts"] of
           Left msg ->
@@ -207,8 +172,7 @@ bindgenTests =
           Right _ -> fail "expected unknown-flag parse error"
     , testCase "CLI rejects extra positional argument" $ do
         case parseCliArgs
-          [ "--no-ts"
-          , fixture "toy.d.ts"
+          [ fixture "toy.d.ts"
           , "extra.d.ts"
           ] of
           Left msg ->

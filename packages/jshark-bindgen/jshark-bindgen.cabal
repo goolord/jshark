@@ -44,8 +44,6 @@ library
     JShark.Bindgen.Ir
     JShark.Bindgen.Json
     JShark.Bindgen.Emit
-    JShark.Bindgen.ParseDts
-    JShark.Bindgen.ParseJs
     JShark.Bindgen.Extract
   autogen-modules:
     Paths_jshark_bindgen

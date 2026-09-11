@@ -7,15 +7,16 @@
 -- @
 -- cabal run jshark-bindgen -- widget.d.ts --module JShark.Widget
 -- @
+--
+-- Extraction runs the bundled @extract.mjs@ through @bun@ (with
+-- @typescript@ installed), which handles the full TS grammar; the Haskell
+-- side decodes its JSON IR and emits bindings.
 module JShark.Bindgen
   ( BindgenOpts (..)
   , defaultBindgenOpts
   , generateFromFile
-  , generateFromSource
-  , generateFromIr
-  , generateFromJson
   , parseIrFromFile
-  , parseSource
+  , generateFromIr
   , applyOpts
   )
 where
@@ -23,7 +24,6 @@ where
 import Data.Char (isAlpha, toUpper)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.IO as TIO (readFile)
 import JShark.Bindgen.Emit (emitModule)
 import JShark.Bindgen.Extract
   ( extractWithTs
@@ -31,14 +31,11 @@ import JShark.Bindgen.Extract
   )
 import JShark.Bindgen.Ir
 import JShark.Bindgen.Json (decodeModule)
-import JShark.Bindgen.ParseDts (parseDts)
-import JShark.Bindgen.ParseJs (parseJs)
-import System.FilePath (takeBaseName, takeExtension)
+import System.FilePath (takeBaseName)
 
 data BindgenOpts = BindgenOpts
   { optModuleName :: Maybe Text
   , optPrefix :: Maybe Text
-  , optNoTs :: Bool
   }
 
 defaultBindgenOpts :: BindgenOpts
@@ -46,7 +43,6 @@ defaultBindgenOpts =
   BindgenOpts
     { optModuleName = Nothing
     , optPrefix = Nothing
-    , optNoTs = False
     }
 
 generateFromFile :: BindgenOpts -> FilePath -> IO (Either String Text)
@@ -55,60 +51,23 @@ generateFromFile opts path =
 
 parseIrFromFile :: BindgenOpts -> FilePath -> IO (Either String ModuleIr)
 parseIrFromFile opts path = do
-  src <- TIO.readFile path
-  parseIrFromFileSrc opts path src
-
-parseIrFromFileSrc ::
-  BindgenOpts -> FilePath -> Text -> IO (Either String ModuleIr)
-parseIrFromFileSrc opts path src
-  | optNoTs opts = pure (parseSource opts path src)
-  | otherwise = do
-      script <- findExtractScript
-      case script of
-        Nothing -> pure (parseSource opts path src)
-        Just s -> do
-          ts <-
-            extractWithTs
-              s
-              (optModuleName opts)
-              (optPrefix opts)
-              path
-          case ts of
-            Right json -> do
-              pure $ do
-                ir <- decodeModule json
-                Right (applyOpts opts path ir)
-            Left err -> pure (Left err)
-
-generateFromSource ::
-  BindgenOpts -> FilePath -> Text -> Either String Text
-generateFromSource opts path src = do
-  ir <- parseSource opts path src
-  Right (generateFromIr ir)
-
-parseSource :: BindgenOpts -> FilePath -> Text -> Either String ModuleIr
-parseSource opts path src =
-  fmap (applyOpts opts path) (parseByExt path src)
-
-parseByExt :: FilePath -> Text -> Either String ModuleIr
-parseByExt path src =
-  let
-    name = moduleFromPath path
-    srcName = T.pack path
-   in
-    case takeExtension path of
-      ".js" -> parseJs name srcName src
-      ".mjs" -> parseJs name srcName src
-      ".cjs" -> parseJs name srcName src
-      _ -> parseDts name srcName src
+  script <- findExtractScript
+  case script of
+    Nothing ->
+      pure
+        ( Left
+            "bun and jshark-bindgen/extract.mjs are required (with typescript installed)"
+        )
+    Just s -> do
+      ts <- extractWithTs s (optModuleName opts) (optPrefix opts) path
+      case ts of
+        Left err -> pure (Left err)
+        Right json -> pure $ do
+          ir <- decodeModule json
+          Right (applyOpts opts path ir)
 
 generateFromIr :: ModuleIr -> Text
 generateFromIr = emitModule
-
-generateFromJson :: BindgenOpts -> FilePath -> Text -> Either String Text
-generateFromJson opts path json = do
-  ir <- decodeModule json
-  Right (generateFromIr (applyOpts opts path ir))
 
 applyOpts :: BindgenOpts -> FilePath -> ModuleIr -> ModuleIr
 applyOpts opts path ir =

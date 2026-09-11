@@ -223,7 +223,7 @@ Extracts typed Haskell wrappers from TypeScript declarations:
 cabal run jshark-bindgen -- lib.d.ts --module JShark.Lib
 ```
 
-Uses `bun` and `@typescript` by default; pass `--no-ts` to use the built-in fallback parser.
+Requires `bun` with `@typescript` installed to run the extractor.
 
 ---
 

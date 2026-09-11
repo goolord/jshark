@@ -2,8 +2,7 @@
 
 -- | Command-line interface for @jshark-bindgen@.
 module JShark.Bindgen.Cli
-  ( Mode (..)
-  , Cli (..)
+  ( Cli (..)
   , parserInfo
   , parserPrefs
   , parseCliArgs
@@ -12,12 +11,10 @@ module JShark.Bindgen.Cli
   )
 where
 
-import Control.Applicative ((<|>))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import JShark.Bindgen
-import JShark.Bindgen.Json (encodeModule)
 import Options.Applicative
   ( Parser
   , ParserInfo
@@ -26,7 +23,6 @@ import Options.Applicative
   , argument
   , customExecParser
   , execParserPure
-  , flag'
   , fullDesc
   , header
   , help
@@ -42,19 +38,12 @@ import Options.Applicative
   , showHelpOnError
   , str
   , strOption
-  , switch
   )
 import System.Exit (die)
-
-data Mode
-  = Haskell
-  | JsonOut
-  deriving (Eq, Show)
 
 data Cli = Cli
   { cliOpts :: BindgenOpts
   , cliOut :: Maybe FilePath
-  , cliMode :: Mode
   , cliFile :: FilePath
   }
 
@@ -83,7 +72,6 @@ cliParser =
               <> help "Write to FILE instead of stdout"
           )
       )
-    <*> modeParser
     <*> argument
       str
       ( metavar "FILE"
@@ -112,19 +100,6 @@ bindgenOptsParser =
                 <> help "JS global prefix (PIXI, toy, …)"
             )
       )
-    <*> switch
-      ( long "no-ts"
-          <> help "Skip the TypeScript extractor; parse in Haskell"
-      )
-
-modeParser :: Parser Mode
-modeParser =
-  flag'
-    JsonOut
-    ( long "json"
-        <> help "Emit jshark-bindgen IR JSON instead of Haskell"
-    )
-    <|> pure Haskell
 
 parseCliArgs :: [String] -> Either String Cli
 parseCliArgs args =
@@ -139,15 +114,10 @@ runMain =
 
 runCli :: Cli -> IO ()
 runCli cli = do
-  let
-    opts = cliOpts cli
-  ir <- parseIrFromFile opts (cliFile cli)
+  ir <- parseIrFromFile (cliOpts cli) (cliFile cli)
   case ir of
     Left e -> die e
-    Right x ->
-      case cliMode cli of
-        JsonOut -> writeOut (cliOut cli) (encodeModule x <> "\n")
-        Haskell -> writeOut (cliOut cli) (generateFromIr x)
+    Right x -> writeOut (cliOut cli) (generateFromIr x)
 
 writeOut :: Maybe FilePath -> Text -> IO ()
 writeOut Nothing t = TIO.putStr t
