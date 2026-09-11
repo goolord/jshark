@@ -217,10 +217,6 @@ startCG = startCGWith minifiedStyle
 startCGWith :: EmitStyle -> CG
 startCGWith style = CG 0 emptyPreamble style IM.empty [S.empty]
 
-prepareFlatEffectProgram ::
-  ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
-prepareFlatEffectProgram = prepareFlatEffectProgramWith minifiedStyle
-
 prepareFlatEffectProgramWith ::
   EmitStyle -> ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
 prepareFlatEffectProgramWith style e = do
@@ -232,10 +228,6 @@ prepareFlatEffectProgramWith style e = do
       initEmitCtxTotal ctx (flatSoaNodeCount soa)
       pure (soa, startCGWith style)
 {-# NOINLINE prepareFlatEffectProgramWith #-}
-
-prepareFlatPureProgram ::
-  ClosedExpr u -> IO (FlatSoA.FlatSoA, CG)
-prepareFlatPureProgram = prepareFlatPureProgramWith minifiedStyle
 
 prepareFlatPureProgramWith ::
   EmitStyle -> ClosedExpr u -> IO (FlatSoA.FlatSoA, CG)

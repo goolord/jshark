@@ -24,7 +24,7 @@
 --   'whenSomeS'\/'whenNoneS' branch on an 'Option' inside a do-block,
 --   'addEventListenerS' takes a do-block handler. The un-suffixed names
 --   compose 'Effect' values (see "JShark.Api.Types" for the two trees).
--- - Prime variants ('getProp'', 'setProp'') are the row-untyped forms:
+-- - The prime variant ('getProp'') is the row-untyped form:
 --   any property name, unchecked field type.
 module JShark.Api
   ( -- * Types
@@ -68,7 +68,6 @@ module JShark.Api
   , arg
   , argEffect
   , ToEffect (..)
-  , ToExpr (..)
 
     -- * Functions and binding
   , lambda
@@ -81,7 +80,6 @@ module JShark.Api
   , lambdaE
   , apply
   , apply2
-  , apply3
   , applyNamed2
   , let_
   , letRec
@@ -115,7 +113,6 @@ module JShark.Api
   , whenSomeE
   , unsafeNullable
   , orElse
-  , fromOption
 
     -- * Result
   , ok
@@ -138,7 +135,6 @@ module JShark.Api
   , getProp
   , setProp
   , getProp'
-  , setProp'
 
     -- * Events / window
   , Event
@@ -367,14 +363,6 @@ apply2 ::
   Expr f ('Function a ('Function b c)) -> Expr f a -> Expr f b -> Expr f c
 apply2 f x y = apply (apply f x) y
 
-apply3 ::
-  Expr f ('Function a ('Function b ('Function c d)))
-  -> Expr f a
-  -> Expr f b
-  -> Expr f c
-  -> Expr f d
-apply3 f x y z = apply (apply2 f x y) z
-
 -- | Uncurried call for hoisted two-arg helpers (@f(x, y)@, not @f(x)(y)@).
 --
 -- Use with helpers from 'namedLambdaRow' only; 'apply2' emits curried JS.
@@ -596,7 +584,7 @@ throw_ :: Expr f 'String -> Effect f v
 throw_ = Throw
 
 -- | Wrap a value: JS @null@ means missing, so @some x@ is just
--- @x@ and none is @null@ (see fromOption).
+-- @x@ and none is @null@ (see 'orElse').
 some :: Expr f u -> Expr f ('Option u)
 some (Literal v) = Literal (ValueOption (Just v))
 some x = UnsafeNullable x
@@ -621,9 +609,6 @@ unsafeNullable = UnsafeNullable
 -- | @o ?? d@ — the option if present, the default otherwise.
 orElse :: Expr f ('Option u) -> Expr f u -> Expr f u
 orElse o d = optionCase o d id
-
-fromOption :: Expr f u -> Expr f ('Option u) -> Expr f u
-fromOption = flip orElse
 
 -- | The success side of a Result: @{ok: true, value: a}@.
 ok :: Expr f a -> Expr f ('Result e a)
@@ -706,15 +691,6 @@ instance ToEffect f u (Expr f u) where
 instance {-# OVERLAPPABLE #-} ToEffect f u (f u) where
   toEffect = Lift . Var
 
-class ToExpr f u a where
-  toExpr :: a -> Expr f u
-
-instance ToExpr f u (Expr f u) where
-  toExpr = id
-
-instance ToExpr f u (f u) where
-  toExpr = Var
-
 hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold = fmap Lift . bindExpr
 
@@ -757,12 +733,6 @@ getProp' ::
   forall f o u.
   ToEffect f ('MutableObject ()) o => o -> String -> EffectSyntax f (Expr f u)
 getProp' o name = getProp (toEffect o :: Effect f ('MutableObject ())) name
-
-setProp' ::
-  forall f o u.
-  ToEffect f ('MutableObject ()) o =>
-  o -> String -> Expr f u -> EffectSyntax f (f 'Unit)
-setProp' o name v = setProp (toEffect o :: Effect f ('MutableObject ())) name v
 
 stmts :: EffectSyntax f (f 'Unit) -> Effect f 'Unit
 stmts = fromSyntax

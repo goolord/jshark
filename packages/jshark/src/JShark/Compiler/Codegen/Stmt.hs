@@ -14,7 +14,6 @@ module JShark.Compiler.Codegen.Stmt
   , emitBranching
   , ifAssignOrStmt
   , tryCatchStmt
-  , renderFFIForm
   , renderFFIInvoke
   , isWholeParenthesized
   )
@@ -122,12 +121,6 @@ tryCatchStmt mRes catchJs aDecl aRef bDecl bRef =
         "try"
           <+> blockBody (fromMaybe mempty aDecl $$ assignResult rv aRef)
           $$ (catchHead <+> blockBody (fromMaybe mempty bDecl $$ assignResult rv bRef))
-
-renderFFIForm :: FFIForm -> JS
-renderFFIForm = \case
-  FFICall s -> jsText s
-  FFILambda s -> parens (jsText s)
-  FFIExpr s -> jsText s
 
 -- | Multi-parameter arrow lambdas are invalid IIFEs as @(...=>{...})(a,b)@;
 --   wrap the lambda in an extra pair of parens so the call applies cleanly.

@@ -39,7 +39,6 @@ module JShark.Api.Generic
   , on
   , caseSum
   , whenTag
-  , sumTag
   )
 where
 
@@ -524,9 +523,6 @@ toSum = gtoSum . from
 toSumArray ::
   (Generic a, GToSum a (Rep a)) => [a] -> Effect f ('Array (SumOf a))
 toSumArray = fromEffects . map toSum
-
-sumTag :: Effect f (SumOf a) -> EffectSyntax f (Expr f 'String)
-sumTag = get @"tag"
 
 -- | Constructor names of @a@ in declaration order.
 type family CtorNames a :: [Symbol] where

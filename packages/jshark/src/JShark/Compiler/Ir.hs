@@ -22,92 +22,12 @@
 -- 'IrEmbedEff') reduce to pack-time wrapper rows.
 module JShark.Compiler.Ir
   ( IrMeta (..)
-  , IrNode
-    ( IrVar
-    , IrLet
-    , IrLetRec
-    , IrLambda
-    , IrApply
-    , IrIf
-    , IrOptionCase
-    , IrResultOk
-    , IrResultErr
-    , IrResultCase
-    , IrIndex
-    , IrU8Index
-    , IrError
-    , IrFixed
-    , IrFnLit
-    , IrUnsafeNullable
-    , IrFrozenLit
-    , IrGetField
-    , KConcat
-    , KPlus
-    , KTimes
-    , KMinus
-    , KNegate
-    , KFracDiv
-    , KRem
-    , KBitAnd
-    , KBitOr
-    , KBitXor
-    , KShl
-    , KShr
-    , KUShr
-    , KBig
-    , KBigNeg
-    , KAnd
-    , KOr
-    , KEq
-    , KNEq
-    , KGTh
-    , KLTh
-    , KGTEq
-    , KLTEq
-    , KShow
-    , KTypeOf
-    , IrMethMap
-    , IrMethFilter
-    , IrMethReduce
-    , IrMethReduceRight
-    , IrMethToSorted
-    , IrMethFrom
-    , IrLift
-    , IrFFI
-    , IrUnsafeObject
-    , IrUnsafeObjectGet
-    , IrUnsafeObjectAssign
-    , IrCallMethod
-    , IrBind
-    , IrThenE
-    , IrBindRec
-    , IrLambdaE
-    , IrApplyE
-    , IrIfE
-    , IrWhile
-    , IrForRange
-    , IrU8Set
-    , IrU8Fill
-    , IrOptionCaseE
-    , IrResultCaseE
-    , IrStringCaseE
-    , IrThrow
-    , IrTry
-    , IrObjectLit
-    , IrDeleteProp
-    , IrArrayLit
-    )
-  , IrField
-    ( IrField
-    , IrFieldEff
-    , IrFieldExtra
-    , IrFieldExtraEff
-    )
+  , IrNode (..)
+  , IrField (..)
   , irFieldName
   , irFieldChild
   , irNodeChildren
   , SomeFixedOp (..)
-  , data IrLiteral
   , metaIr
   , optIr
   , occursIr

@@ -4,7 +4,7 @@
 
 module Main (main) where
 
-import JShark (irOptimizedEffectFromClosed, profileFlatOptFromIr)
+import JShark (irEffectFromClosed, profileFlatOptFromIr)
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import JShark.Compiler.CompileTiming (FlatOptProfile (..))
@@ -31,6 +31,6 @@ printProfile FlatOptProfile {..} = do
 main :: IO ()
 main = do
   let
-    !irOpt = irOptimizedEffectFromClosed life
+    !irOpt = irEffectFromClosed life
   profile <- profileFlatOptFromIr irOpt
   printProfile profile

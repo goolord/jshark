@@ -12,8 +12,6 @@ module JShark.Compiler.Binder
   , pattern Stamp
   , pattern Name
   , stampId
-  , nestedDummyId
-  , nestedDummy
   , strictFoldMap
   )
 where
@@ -40,12 +38,6 @@ pattern Name i = Stamp i
 
 stampId :: Stamp u -> Int
 stampId = getConst
-
-nestedDummyId :: Int
-nestedDummyId = minBound
-
-nestedDummy :: Stamp u
-nestedDummy = Name nestedDummyId
 
 -- | Strict left fold. Lazy 'foldMap' thunks IntMap unions on IR metadata.
 strictFoldMap :: Monoid m => (a -> m) -> [a] -> m

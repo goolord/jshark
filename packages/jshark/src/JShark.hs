@@ -134,9 +134,6 @@ module JShark
   , profileIrOptFromIr
   , profileLowerFromClosed
   , flatSoaNodeCount
-  , irExprFromClosed
-  , irOptimizedEffectFromClosed
-  , irOptimizedExprFromClosed
   , pureProgram
   , effectfulProgram
   , renderJS
@@ -180,9 +177,6 @@ import JShark.Compiler.Evaluate
 import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
   ( irEffectFromClosed
-  , irExprFromClosed
-  , irOptimizedEffectFromClosed
-  , irOptimizedExprFromClosed
   , optimizedEffectSize
   , optimizedExprSize
   )

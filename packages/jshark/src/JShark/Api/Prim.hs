@@ -40,83 +40,50 @@ data MathBinary (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) 
     FixedOp 'Number 'Number 'Unit 'Number
     -> MathBinary 'Number 'Number 'Unit 'Number
 
--- | JS @Math.*@ unary names. Keep in sync with 'matchMathUnary'.
-lookupMathUnary ::
-  FixedOp a b c u -> Maybe (FixedOp 'Number 'Unit 'Unit 'Number, Text)
+-- | JS @Math.*@ unary ops: index witness + JS name.
+lookupMathUnary :: FixedOp a b c u -> Maybe (MathUnary a b c u, Text)
 lookupMathUnary = \case
-  FixAbs -> Just (FixAbs, "abs")
-  FixSign -> Just (FixSign, "sign")
-  FixSin -> Just (FixSin, "sin")
-  FixCos -> Just (FixCos, "cos")
-  FixTan -> Just (FixTan, "tan")
-  FixAsin -> Just (FixAsin, "asin")
-  FixAcos -> Just (FixAcos, "acos")
-  FixAtan -> Just (FixAtan, "atan")
-  FixSinh -> Just (FixSinh, "sinh")
-  FixCosh -> Just (FixCosh, "cosh")
-  FixTanh -> Just (FixTanh, "tanh")
-  FixAsinh -> Just (FixAsinh, "asinh")
-  FixAcosh -> Just (FixAcosh, "acosh")
-  FixAtanh -> Just (FixAtanh, "atanh")
-  FixSqrt -> Just (FixSqrt, "sqrt")
-  FixCbrt -> Just (FixCbrt, "cbrt")
-  FixExp -> Just (FixExp, "exp")
-  FixLog -> Just (FixLog, "log")
-  FixLog2 -> Just (FixLog2, "log2")
-  FixLog10 -> Just (FixLog10, "log10")
-  FixFloor -> Just (FixFloor, "floor")
-  FixCeil -> Just (FixCeil, "ceil")
-  FixRound -> Just (FixRound, "round")
-  FixTrunc -> Just (FixTrunc, "trunc")
+  FixAbs -> Just (MathUnary FixAbs, "abs")
+  FixSign -> Just (MathUnary FixSign, "sign")
+  FixSin -> Just (MathUnary FixSin, "sin")
+  FixCos -> Just (MathUnary FixCos, "cos")
+  FixTan -> Just (MathUnary FixTan, "tan")
+  FixAsin -> Just (MathUnary FixAsin, "asin")
+  FixAcos -> Just (MathUnary FixAcos, "acos")
+  FixAtan -> Just (MathUnary FixAtan, "atan")
+  FixSinh -> Just (MathUnary FixSinh, "sinh")
+  FixCosh -> Just (MathUnary FixCosh, "cosh")
+  FixTanh -> Just (MathUnary FixTanh, "tanh")
+  FixAsinh -> Just (MathUnary FixAsinh, "asinh")
+  FixAcosh -> Just (MathUnary FixAcosh, "acosh")
+  FixAtanh -> Just (MathUnary FixAtanh, "atanh")
+  FixSqrt -> Just (MathUnary FixSqrt, "sqrt")
+  FixCbrt -> Just (MathUnary FixCbrt, "cbrt")
+  FixExp -> Just (MathUnary FixExp, "exp")
+  FixLog -> Just (MathUnary FixLog, "log")
+  FixLog2 -> Just (MathUnary FixLog2, "log2")
+  FixLog10 -> Just (MathUnary FixLog10, "log10")
+  FixFloor -> Just (MathUnary FixFloor, "floor")
+  FixCeil -> Just (MathUnary FixCeil, "ceil")
+  FixRound -> Just (MathUnary FixRound, "round")
+  FixTrunc -> Just (MathUnary FixTrunc, "trunc")
   _ -> Nothing
 
--- | JS @Math.*@ binary names. Keep in sync with 'matchMathBinary'.
-lookupMathBinary ::
-  FixedOp a b c u -> Maybe (FixedOp 'Number 'Number 'Unit 'Number, Text)
+-- | JS @Math.*@ binary ops: index witness + JS name.
+lookupMathBinary :: FixedOp a b c u -> Maybe (MathBinary a b c u, Text)
 lookupMathBinary = \case
-  FixPow -> Just (FixPow, "pow")
-  FixAtan2 -> Just (FixAtan2, "atan2")
-  FixMax -> Just (FixMax, "max")
-  FixMin -> Just (FixMin, "min")
-  FixHypot -> Just (FixHypot, "hypot")
+  FixPow -> Just (MathBinary FixPow, "pow")
+  FixAtan2 -> Just (MathBinary FixAtan2, "atan2")
+  FixMax -> Just (MathBinary FixMax, "max")
+  FixMin -> Just (MathBinary FixMin, "min")
+  FixHypot -> Just (MathBinary FixHypot, "hypot")
   _ -> Nothing
 
 matchMathUnary :: FixedOp a b c u -> Maybe (MathUnary a b c u)
-matchMathUnary = \case
-  FixAbs -> Just (MathUnary FixAbs)
-  FixSign -> Just (MathUnary FixSign)
-  FixSin -> Just (MathUnary FixSin)
-  FixCos -> Just (MathUnary FixCos)
-  FixTan -> Just (MathUnary FixTan)
-  FixAsin -> Just (MathUnary FixAsin)
-  FixAcos -> Just (MathUnary FixAcos)
-  FixAtan -> Just (MathUnary FixAtan)
-  FixSinh -> Just (MathUnary FixSinh)
-  FixCosh -> Just (MathUnary FixCosh)
-  FixTanh -> Just (MathUnary FixTanh)
-  FixAsinh -> Just (MathUnary FixAsinh)
-  FixAcosh -> Just (MathUnary FixAcosh)
-  FixAtanh -> Just (MathUnary FixAtanh)
-  FixSqrt -> Just (MathUnary FixSqrt)
-  FixCbrt -> Just (MathUnary FixCbrt)
-  FixExp -> Just (MathUnary FixExp)
-  FixLog -> Just (MathUnary FixLog)
-  FixLog2 -> Just (MathUnary FixLog2)
-  FixLog10 -> Just (MathUnary FixLog10)
-  FixFloor -> Just (MathUnary FixFloor)
-  FixCeil -> Just (MathUnary FixCeil)
-  FixRound -> Just (MathUnary FixRound)
-  FixTrunc -> Just (MathUnary FixTrunc)
-  _ -> Nothing
+matchMathUnary = fmap fst . lookupMathUnary
 
 matchMathBinary :: FixedOp a b c u -> Maybe (MathBinary a b c u)
-matchMathBinary = \case
-  FixPow -> Just (MathBinary FixPow)
-  FixAtan2 -> Just (MathBinary FixAtan2)
-  FixMax -> Just (MathBinary FixMax)
-  FixMin -> Just (MathBinary FixMin)
-  FixHypot -> Just (MathBinary FixHypot)
-  _ -> Nothing
+matchMathBinary = fmap fst . lookupMathBinary
 
 math1Name :: FixedOp a b c u -> Maybe Text
 math1Name op = fmap snd (lookupMathUnary op)
