@@ -26,7 +26,7 @@ module JShark.Compiler.Flat
   , freezePackColumns
   , encodeFlatNode
   , emptySoaSideAcc
-  , flatNodeIsEffect
+  , flatOpIsEffect
   , irNodeIsEffect
   , flatNodeChildRefs
   , flatArgRef
@@ -828,37 +828,14 @@ flatFieldRef = \case
   FlatFieldExtra _ j -> j
   FlatFieldExtraEff _ j -> j
 
-flatNodeIsEffect :: FlatNode -> Bool
-flatNodeIsEffect = \case
-  FX_Lift {} -> True
-  FX_FFI {} -> True
-  FX_UnsafeObject {} -> True
-  FX_UnsafeObjectGet {} -> True
-  FX_UnsafeObjectAssign {} -> True
-  FX_CallMethod {} -> True
-  FX_Bind {} -> True
-  FX_ThenE {} -> True
-  FX_BindRec {} -> True
-  FX_LambdaE {} -> True
-  FX_ApplyE {} -> True
-  FX_IfE {} -> True
-  FX_While {} -> True
-  FX_ForRange {} -> True
-  FX_U8Set {} -> True
-  FX_U8Fill {} -> True
-  FX_OptionCaseE {} -> True
-  FX_ResultCaseE {} -> True
-  FX_StringCaseE {} -> True
-  FX_Throw {} -> True
-  FX_Try {} -> True
-  FX_ObjectLit {} -> True
-  FX_DeleteProp {} -> True
-  FX_ArrayLit {} -> True
-  _ -> False
+-- | Effectness by opcode range: @FX_LIFT@ is the first effect opcode, so
+-- no node decode is needed.
+flatOpIsEffect :: FlatOp -> Bool
+flatOpIsEffect op = op >= FX_LIFT
 
 -- | Classify a subtree by its top constructor: expression-producing or
 -- effect-producing. Mirrors the 'FlatNode' @FE_\/FX_@ split (and
--- 'flatNodeIsEffect').
+-- 'flatOpIsEffect').
 irNodeIsEffect :: IrNode -> Bool
 irNodeIsEffect = \case
   IrLift {} -> True
@@ -1273,9 +1250,6 @@ optimizeFlatPack soa0 =
    in
     soa1
 
-i32 :: Int -> Int32
-i32 = fromIntegral
-
 unboxedToBoxedPure :: VU.Vector Word8 -> V.Vector Word8
 unboxedToBoxedPure = GV.convert
 {-# INLINE unboxedToBoxedPure #-}
@@ -1511,14 +1485,14 @@ computeFlatSoaPure soa =
             pure (x .&. y)
           andNodes ns =
             foldM
-              (\acc j -> do p <- ch (i32 j); pure (acc .&. p))
+              (\acc j -> do p <- ch (encI32 j); pure (acc .&. p))
               (1 :: Word8)
               ns
           pureFixed fi =
             case fsaFixed soa V.! fromIntegral fi of
-              FlatFixedU _ j -> ch (i32 j)
-              FlatFixedB _ j k -> bin (i32 j) (i32 k)
-              FlatFixedT _ j k l -> tri (i32 j) (i32 k) (i32 l)
+              FlatFixedU _ j -> ch (encI32 j)
+              FlatFixedB _ j k -> bin (encI32 j) (encI32 k)
+              FlatFixedT _ j k l -> tri (encI32 j) (encI32 k) (encI32 l)
           pureArray gi =
             andNodes (V.toList (fsaArrayGroups soa V.! fromIntegral gi))
           pureFields gi =
@@ -1655,7 +1629,7 @@ optConstantFoldNumOnce soa0 = runST $ do
       litsM' <- GM.unsafeGrow litsM 1
       GM.unsafeWrite litsM' li (FLit (ValueNumber d))
       writeSTRef litsRef litsM'
-      pure (i32 li)
+      pure (encI32 li)
     tryFold i = do
       op <- readOp i
       case () of

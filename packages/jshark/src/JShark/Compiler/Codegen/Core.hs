@@ -16,6 +16,7 @@
 -- | Codegen state ('CG'), snippet assembly ('Code'), and compile prep.
 module JShark.Compiler.Codegen.Core where
 
+import Control.Exception (evaluate)
 import qualified Data.Char as Char
 import qualified Data.IntMap.Strict as IM
 import Data.Maybe (fromMaybe, mapMaybe)
@@ -68,6 +69,8 @@ import JShark.Compiler.JsShim
   ( Builtin (CheckedIndex, ValueEq)
   , Preamble
   , emptyPreamble
+  , hoistTagName
+  , insertHoisted
   , renderPreambleStyled
   , useShim
   )
@@ -216,29 +219,20 @@ startCG = startCGWith minifiedStyle
 startCGWith :: EmitStyle -> CG
 startCGWith style = CG 0 emptyPreamble style IM.empty [S.empty]
 
-prepareFlatEffectProgramWith ::
-  EmitStyle -> ClosedEffect u -> IO (FlatSoA.FlatSoA, CG)
-prepareFlatEffectProgramWith style e = do
+-- | Pack a lowered, optimized tree and start codegen. The effect and pure
+-- entry points pass their lowered tree (the thunk carries the lowering, so
+-- it runs inside 'flatPrepareScaffolding').
+prepareFlatProgramWith ::
+  EmitStyle -> (Ir.IrNode, Int) -> IO (FlatSoA.FlatSoA, CG)
+prepareFlatProgramWith style lowered = do
   mCtx <- captureEmitCtx
-  (soa, _timing, _irNodes, _ir) <- flatPrepareCoreWith (esKeepLets style) e
+  (soa, _timing, _irNodes, _ir) <- flatPrepareScaffolding lowered
   case mCtx of
     Nothing -> pure (soa, startCGWith style)
     Just ctx -> do
-      initEmitCtxTotal ctx (flatSoaNodeCount soa)
+      initEmitCtxTotal ctx (FlatSoA.flatSoaNodeCount soa)
       pure (soa, startCGWith style)
-{-# NOINLINE prepareFlatEffectProgramWith #-}
-
-prepareFlatPureProgramWith ::
-  EmitStyle -> ClosedExpr u -> IO (FlatSoA.FlatSoA, CG)
-prepareFlatPureProgramWith style e = do
-  mCtx <- captureEmitCtx
-  (soa, _timing, _irNodes, _ir) <- flatPrepareExprCore (esKeepLets style) e
-  case mCtx of
-    Nothing -> pure (soa, startCGWith style)
-    Just ctx -> do
-      initEmitCtxTotal ctx (flatSoaNodeCount soa)
-      pure (soa, startCGWith style)
-{-# NOINLINE prepareFlatPureProgramWith #-}
+{-# NOINLINE prepareFlatProgramWith #-}
 
 flatPrepareFromIr :: Ir.IrNode -> IO (FlatSoA.FlatSoA, FlatPrepareTiming)
 flatPrepareFromIr irOpt = do
@@ -409,19 +403,20 @@ flatPrepareCore ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
 flatPrepareCore = flatPrepareCoreWith False
 
-flatPrepareCoreWith ::
-  Bool
-  -> ClosedEffect u
-  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
-flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
+-- | Lower, IR-opt, pack, and bulk-optimize a closed program onto the flat
+-- SoA, with the shared phase/timing scaffolding. The effect and pure paths
+-- differ only in the lowering call, passed as @lowered@ and forced inside
+-- the ir-prepare timing window.
+flatPrepareScaffolding ::
+  (Ir.IrNode, Int) -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
+flatPrepareScaffolding lowered = do
   mCtx <- captureEmitCtx
   tAll0 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportIrPreparePhase ctx 0 1
     Nothing -> pure ()
   t0 <- getMonotonicTime
-  let
-    !(irOpt, irNodes) = lowerOptEffectIrWith keepLets e
+  !(irOpt, irNodes) <- evaluate lowered
   t1 <- getMonotonicTime
   case mCtx of
     Just ctx -> reportIrPreparePhase ctx 1 1
@@ -438,40 +433,6 @@ flatPrepareCoreWith keepLets (e :: ClosedEffect u) = do
         }
   reportFlatPrepareTiming timing
   pure (soa, timing, irNodes, irOpt)
-{-# NOINLINE flatPrepareCoreWith #-}
-
--- | Pure-program variant of 'flatPrepareCoreWith': lower, IR-opt, pack,
--- and bulk-optimize a closed expression onto the same flat SoA.
-flatPrepareExprCore ::
-  Bool
-  -> ClosedExpr u
-  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
-flatPrepareExprCore keepLets e = do
-  mCtx <- captureEmitCtx
-  tAll0 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportIrPreparePhase ctx 0 1
-    Nothing -> pure ()
-  t0 <- getMonotonicTime
-  let
-    !(irOpt, irNodes) = lowerOptExprIr keepLets e
-  t1 <- getMonotonicTime
-  case mCtx of
-    Just ctx -> reportIrPreparePhase ctx 1 1
-    Nothing -> pure ()
-  (soa, packTiming) <- flatPrepareFromIr irOpt
-  tAll1 <- getMonotonicTime
-  let
-    timing =
-      FlatPrepareTiming
-        { fptIrPrepareSec = seconds t0 t1
-        , fptPackSec = fptPackSec packTiming
-        , fptFlatOptSec = fptFlatOptSec packTiming
-        , fptTotalSec = seconds tAll0 tAll1
-        }
-  reportFlatPrepareTiming timing
-  pure (soa, timing, irNodes, irOpt)
-{-# NOINLINE flatPrepareExprCore #-}
 
 allocIdent s = allocIdentHint s Nothing
 
@@ -639,20 +600,15 @@ renderArrow params mDecl mRef =
       (Nothing, Just r) -> headJs <+> arrowExpr r
       (Just d, Nothing) -> headJs <+> blockBody (d $$ "return")
       (Just d, Just r) ->
-        headJs <+> blockBody (d $$ ("return" <+> returnExpr r))
+        headJs <+> blockBody (d $$ ("return" <+> arrowExpr r))
 
 arrowParams [p] = p
 arrowParams ps = parens (hcat (punctuate ", " ps))
 
+-- | Operand / return expression. Parenthesize only object-literal
+-- returns \/ arrow bodies. Other expressions stay bare so @return n1 * 2@
+-- is idiomatic.
 arrowExpr r =
-  let
-    t = T.strip (renderJS r)
-   in
-    if needsObjectParens t then parens r else r
-
--- | Parenthesize only object-literal returns / arrow bodies. Other
--- expressions stay bare so @return n1 * 2@ is idiomatic.
-returnExpr r =
   let
     t = T.strip (renderJS r)
    in
@@ -679,4 +635,44 @@ allocNIdentsHints s (h : hs) =
    in
     (i : is, s2)
 
-flatSoaNodeCount = FlatSoA.flatSoaNodeCount
+-- Named-lambda hoisting -------------------------------------------------------
+
+-- | Register a shared @$tag@ binding in the preamble, deduplicating by
+-- canonical (alpha-renamed) source.
+registerHoistedTag :: CG -> Text -> Text -> (CG, Text)
+registerHoistedTag s tag src =
+  let
+    name = hoistTagName tag
+   in
+    (s {cgPreamble = insertHoisted name src (cgPreamble s)}, name)
+
+-- | If the node carries a hoist tag, render its function body as a shared
+-- @$tag@ binding and reference the binding by name.
+emitHoistedFnValue ::
+  CG -> FlatSoA.FlatSoA -> FlatSoA.NodeId -> JS -> (CG, JS)
+emitHoistedFnValue s view nid fnJs =
+  case FlatSoA.flatSoaHoistTag view nid of
+    Nothing -> (s, fnJs)
+    Just tag ->
+      let
+        src = renderJS fnJs
+        (s', name) = registerHoistedTag s tag src
+       in
+        (s', jsText name)
+
+flatPrepareCoreWith ::
+  Bool
+  -> ClosedEffect u
+  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
+flatPrepareCoreWith keepLets e =
+  flatPrepareScaffolding (lowerOptEffectIrWith keepLets e)
+{-# NOINLINE flatPrepareCoreWith #-}
+
+-- | Pure-program variant of 'flatPrepareCoreWith'.
+flatPrepareExprCore ::
+  Bool
+  -> ClosedExpr u
+  -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
+flatPrepareExprCore keepLets e =
+  flatPrepareScaffolding (lowerOptExprIr keepLets e)
+{-# NOINLINE flatPrepareExprCore #-}

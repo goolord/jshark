@@ -26,15 +26,13 @@
 --       v
 -- Codegen.Flat -> JS                  -- 'JShark.Compiler.Codegen.Flat' (pure + effectful)
 --
--- Hoist    ('JShark.Compiler.Hoist')          -- named @$tag@ registration
---           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
--- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
+-- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper,
+--           named @$tag@ hoisting (dedup by alpha-renamed source)
 -- Codegen.Stmt ('JShark.Compiler.Codegen.Stmt') -- shared statement renderers
 -- @
 --
--- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings via
--- 'JShark.Compiler.Hoist.registerHoistedTag' (see 'JShark.Api.namedLambda',
--- 'namedLambdaRow', 'applyNamed2').
+-- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings
+-- (see 'JShark.Api.namedLambda', 'namedLambdaRow', 'applyNamed2').
 module JShark
   ( Expr
       ( Literal
@@ -149,13 +147,13 @@ import JShark.Api.Types
 import JShark.Compiler.Codegen.Core
   ( flatPrepareCore
   , flatPrepareFromIr
-  , flatSoaNodeCount
   , profileFlatOptFromIr
   , profileIrOptFromClosed
   , profileIrOptFromIr
   , profileLowerFromClosed
   , renderIIFE
   )
+import JShark.Compiler.Flat (flatSoaNodeCount)
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
   , effectfulASTFromSoA

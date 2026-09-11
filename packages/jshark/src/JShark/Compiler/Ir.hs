@@ -330,84 +330,10 @@ metaIr !node = case node of
   impure = IrMeta 1 IM.empty False False
 
 -- | Metadata of the immediate children (list children included), so every
--- child, lazy or not, contributes once.
+-- child, lazy or not, contributes once. 'irNodeChildren' already encodes the
+-- per-constructor child layout, so this is a plain fold over it.
 childMeta :: IrNode -> IrMeta
-childMeta node = case node of
-  IrLiteral _ -> mempty
-  IrVar {} -> mempty
-  IrLet _ _ x g -> metaIr x <> metaIr g
-  IrLetRec _ r b -> metaIr r <> metaIr b
-  IrLambda _ _ g -> metaIr g
-  IrApply f x -> metaIr f <> metaIr x
-  IrIf c t e -> metaIr c <> metaIr t <> metaIr e
-  IrOptionCase o n _ s -> metaIr o <> metaIr n <> metaIr s
-  IrResultOk x -> metaIr x
-  IrResultErr x -> metaIr x
-  IrResultCase o _ er _ ok -> metaIr o <> metaIr er <> metaIr ok
-  IrIndex x i -> metaIr x <> metaIr i
-  IrU8Index x i -> metaIr x <> metaIr i
-  IrError x -> metaIr x
-  IrFixed _ args -> strictFoldMap metaIr args
-  IrFnLit _ _ b -> metaIr b
-  IrUnsafeNullable x -> metaIr x
-  IrFrozenLit fs -> strictFoldMap (metaIr . irFieldChild) fs
-  IrGetField _ o -> metaIr o
-  KConcat x y -> metaIr x <> metaIr y
-  KPlus x y -> metaIr x <> metaIr y
-  KTimes x y -> metaIr x <> metaIr y
-  KMinus x y -> metaIr x <> metaIr y
-  KNegate x -> metaIr x
-  KFracDiv x y -> metaIr x <> metaIr y
-  KRem x y -> metaIr x <> metaIr y
-  KBitAnd x y -> metaIr x <> metaIr y
-  KBitOr x y -> metaIr x <> metaIr y
-  KBitXor x y -> metaIr x <> metaIr y
-  KShl x y -> metaIr x <> metaIr y
-  KShr x y -> metaIr x <> metaIr y
-  KUShr x y -> metaIr x <> metaIr y
-  KBig _ x y -> metaIr x <> metaIr y
-  KBigNeg x -> metaIr x
-  KAnd x y -> metaIr x <> metaIr y
-  KOr x y -> metaIr x <> metaIr y
-  KEq _ x y -> metaIr x <> metaIr y
-  KNEq _ x y -> metaIr x <> metaIr y
-  KGTh x y -> metaIr x <> metaIr y
-  KLTh x y -> metaIr x <> metaIr y
-  KGTEq x y -> metaIr x <> metaIr y
-  KLTEq x y -> metaIr x <> metaIr y
-  KShow x -> metaIr x
-  KTypeOf x -> metaIr x
-  IrMethMap x _ g -> metaIr x <> metaIr g
-  IrMethFilter x _ g -> metaIr x <> metaIr g
-  IrMethReduce x z _ _ g -> metaIr x <> metaIr z <> metaIr g
-  IrMethReduceRight x z _ _ g -> metaIr x <> metaIr z <> metaIr g
-  IrMethToSorted x _ _ g -> metaIr x <> metaIr g
-  IrMethFrom n _ g -> metaIr n <> metaIr g
-  IrLift x -> metaIr x
-  IrFFI _ args -> strictFoldMap metaIr args
-  IrUnsafeObject {} -> mempty
-  IrUnsafeObjectGet x _ -> metaIr x
-  IrUnsafeObjectAssign x y -> metaIr x <> metaIr y
-  IrCallMethod x _ args -> metaIr x <> strictFoldMap metaIr args
-  IrBind _ _ x g -> metaIr x <> metaIr g
-  IrThenE x y -> metaIr x <> metaIr y
-  IrBindRec _ r b -> metaIr r <> metaIr b
-  IrLambdaE _ g -> metaIr g
-  IrApplyE f x -> metaIr f <> metaIr x
-  IrIfE c t e -> metaIr c <> metaIr t <> metaIr e
-  IrWhile c b -> metaIr c <> metaIr b
-  IrForRange s e _ b -> metaIr s <> metaIr e <> metaIr b
-  IrU8Set b i v -> metaIr b <> metaIr i <> metaIr v
-  IrU8Fill b v -> metaIr b <> metaIr v
-  IrOptionCaseE o n _ s -> metaIr o <> metaIr n <> metaIr s
-  IrResultCaseE o _ er _ ok -> metaIr o <> metaIr er <> metaIr ok
-  IrStringCaseE s arms d ->
-    metaIr s <> strictFoldMap (metaIr . snd) arms <> metaIr d
-  IrThrow x -> metaIr x
-  IrTry a _ k -> metaIr a <> metaIr k
-  IrObjectLit fs -> strictFoldMap (metaIr . irFieldChild) fs
-  IrDeleteProp o k -> metaIr o <> metaIr k
-  IrArrayLit es -> strictFoldMap metaIr es
+childMeta = strictFoldMap metaIr . irNodeChildren
 
 -- | Does @t@ occur anywhere in @node@? Unlike a free-variable map this
 -- short-circuits on the first hit and allocates nothing.
@@ -718,6 +644,55 @@ isIdentityEffect tag = \case
   IrLift x -> isIdentityIr tag x
   _ -> False
 
+-- | Shared let\/bind eliminator. 'IrLet' and 'IrBind' differ in how a kept
+-- binding is rebuilt, how a dead one is rebuilt (@IrThenE@ drops the
+-- binder), and which right-hand sides count as aliases.
+elimBinder ::
+  (?keepLets :: P.Bool) =>
+  (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
+  -> -- rebuild a kept binding
+  (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
+  -> -- rebuild a dead binding
+  (IrNode -> P.Bool)
+  -> -- extra guard on the pure dead-drop
+  (IrNode -> P.Bool)
+  -> -- extra @once@ condition
+  (IrNode -> Int -> IrNode -> P.Bool)
+  -> -- @preserve@ predicate
+  IrMeta
+  -> Maybe Text
+  -> Int
+  -> IrNode
+  -> IrNode
+  -> IrMeta
+  -> (IrNode, IrMeta)
+elimBinder ctorKeep ctorDead dropPure extraOnce preserve !mdX !hint !tag !x !body !mdBody =
+  let
+    uses = IM.findWithDefault 0 tag (irFree mdBody)
+    closed = bindMeta tag mdBody
+    spliced = closed <> mdX
+    once = extraOnce x P.|| irCheap mdX P.|| not (lazyOccursIr tag body)
+    keep = preserve x tag body
+   in
+    case uses of
+      0
+        | irPure mdX
+        , not (dropPure x) ->
+            (body, closed)
+      0 -> (ctorDead tag hint x body, nodeMeta mdX closed)
+      1
+        | ?keepLets && keep ->
+            (ctorKeep tag hint x body, nodeMeta mdX closed)
+      1
+        | irSize mdBody <= optSmall
+        , once ->
+            (inlineIr tag x body, spliced)
+      _
+        | irCheap mdX
+        , irSize mdBody <= optSmall ->
+            (inlineIr tag x body, spliced)
+      _ -> (ctorKeep tag hint x body, nodeMeta mdX closed)
+
 elimIrLet ::
   (?keepLets :: P.Bool) =>
   IrMeta
@@ -727,30 +702,13 @@ elimIrLet ::
   -> IrNode
   -> IrMeta
   -> (IrNode, IrMeta)
-elimIrLet !mdX !hint !tag !x !body !mdBody =
-  let
-    uses = IM.findWithDefault 0 tag (irFree mdBody)
-    closed = bindMeta tag mdBody
-    spliced = closed <> mdX
-    once = irCheap mdX P.|| not (lazyOccursIr tag body)
-    preserve =
-      not (isIrLambda x) && not (isIdentityIr tag body)
-   in
-    case uses of
-      0 | irPure mdX -> (body, closed)
-      0 -> (IrLet tag hint x body, nodeMeta mdX closed)
-      1
-        | ?keepLets && preserve ->
-            (IrLet tag hint x body, nodeMeta mdX closed)
-      1
-        | irSize mdBody <= optSmall
-        , once ->
-            (inlineIr tag x body, spliced)
-      _
-        | irCheap mdX
-        , irSize mdBody <= optSmall ->
-            (inlineIr tag x body, spliced)
-      _ -> (IrLet tag hint x body, nodeMeta mdX closed)
+elimIrLet =
+  elimBinder
+    IrLet
+    IrLet
+    (const False)
+    (const False)
+    (\x' t b -> not (isIrLambda x') && not (isIdentityIr t b))
 
 elimIrBind ::
   (?keepLets :: P.Bool) =>
@@ -761,35 +719,15 @@ elimIrBind ::
   -> IrNode
   -> IrMeta
   -> (IrNode, IrMeta)
-elimIrBind !mdX !hint !tag !x !body !mdBody =
-  let
-    uses = IM.findWithDefault 0 tag (irFree mdBody)
-    closed = bindMeta tag mdBody
-    spliced = closed <> mdX
-    once =
-      isAliasEffect x
-        P.|| irCheap mdX
-        P.|| not (lazyOccursIr tag body)
-    preserve =
-      not (isIrLambdaE x)
-        && not (isIdentityEffect tag body)
-        && not (isAliasEffect x)
-   in
-    case uses of
-      0 | irPure mdX, not (isAliasEffect x) -> (body, closed)
-      0 -> (IrThenE x body, nodeMeta mdX closed)
-      1
-        | ?keepLets && preserve ->
-            (IrBind tag hint x body, nodeMeta mdX closed)
-      1
-        | irSize mdBody <= optSmall
-        , once ->
-            (inlineIr tag x body, spliced)
-      _
-        | irCheap mdX
-        , irSize mdBody <= optSmall ->
-            (inlineIr tag x body, spliced)
-      _ -> (IrBind tag hint x body, nodeMeta mdX closed)
+elimIrBind =
+  elimBinder
+    IrBind
+    (\_ _ x b -> IrThenE x b)
+    isAliasEffect
+    isAliasEffect
+    ( \x' t b ->
+        not (isIrLambdaE x') && not (isIdentityEffect t b) && not (isAliasEffect x')
+    )
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta
 nodeMeta !mdX !mdY =

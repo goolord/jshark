@@ -23,6 +23,7 @@ import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.STRef (modifySTRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Unboxed as VU
 import GHC.IO.Unsafe (unsafePerformIO)
 import qualified JShark.Api.Prim as Prim
 import JShark.Api.Types
@@ -30,6 +31,7 @@ import JShark.Compiler.Binder
   ( pattern Name
   )
 import JShark.Compiler.Codegen.Core
+import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
 import JShark.Compiler.Codegen.Stmt
   ( asStmt
   , assignResult
@@ -65,7 +67,6 @@ import JShark.Compiler.Evaluate
   , jsUint8ArrayLit
   )
 import qualified JShark.Compiler.Flat as Flat
-import JShark.Compiler.Hoist (emitHoistedFnValue)
 
 resultPayloadRef :: Maybe JS -> JS
 resultPayloadRef = fromMaybe "undefined"
@@ -723,7 +724,7 @@ flatEmitApplyArgs ctx s0 xs =
 flatChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
 
 flatNodeKindEffect view nid =
-  Flat.flatNodeIsEffect (Flat.flatSoaNode view nid)
+  Flat.flatOpIsEffect (Flat.flatOpOf (Flat.fsaOpcodes view VU.! nid))
 
 buildFlatEmitPlan ::
   Flat.FlatSoA -> Flat.NodeId -> CG -> (FlatEmitPlan, CG)
@@ -762,6 +763,37 @@ buildFlatEmitPlan view root s0 =
           | nid < 0 || nid >= n = pure ()
           | otherwise = do
               writeEnv nid env
+              -- Method-callback bodies: allocate @k@ idents in a hint scope,
+              -- bind @tags@ to the last @length tags@ of them (earlier slots
+              -- are reserved but unbound, e.g. 'FE_MethFrom'’s array ident),
+              -- and emit the body under that env.
+              let
+                scopedBody tags k bodyId =
+                  planInScope $ do
+                    s <- readSTRef sRef
+                    let
+                      (ids, s') = allocNIdents s k
+                    writeSTRef sRef s'
+                    let
+                      bound = drop (k - length tags) ids
+                      env' = foldr (uncurry IM.insert) env (zip tags bound)
+                    writeEnv nid env'
+                    planGo env' bodyId
+                -- Both result-case shapes share one plan: the result ident is
+                -- shared by the error and ok branches (err binds first).
+                resultCase resId tagE errId tagO okId = do
+                  planGo env resId
+                  _ <- planAlloc nid
+                  s <- readSTRef sRef
+                  let
+                    (identUnw, s') = allocIdent s
+                  writeSTRef sRef s'
+                  let
+                    envE = IM.insert tagE identUnw env
+                    envO = IM.insert tagO identUnw envE
+                  writeEnv nid envO
+                  planGo envE errId
+                  planGo envO okId
               case Flat.flatSoaNode view nid of
                 Flat.FE_Let tag xId bodyId -> do
                   planGo env xId
@@ -784,19 +816,8 @@ buildFlatEmitPlan view root s0 =
                     env' = IM.insert tag ident env
                   planGo env nId
                   planGo env' sId
-                Flat.FE_ResultCase resId tagE errId tagO okId -> do
-                  planGo env resId
-                  _ <- planAlloc nid
-                  s <- readSTRef sRef
-                  let
-                    (identUnw, s') = allocIdent s
-                  writeSTRef sRef s'
-                  let
-                    envE = IM.insert tagE identUnw env
-                    envO = IM.insert tagO identUnw envE
-                  writeEnv nid envO
-                  planGo envE errId
-                  planGo envO okId
+                Flat.FE_ResultCase resId tagE errId tagO okId ->
+                  resultCase resId tagE errId tagO okId
                 Flat.FE_FnLit tags names bodyId ->
                   planInScope $ do
                     s <- readSTRef sRef
@@ -807,81 +828,18 @@ buildFlatEmitPlan view root s0 =
                       env' = foldr (\(tag, i) -> IM.insert tag i) env (zip tags ids)
                     writeEnv nid env'
                     planGo env' bodyId
-                Flat.FE_MethMap arr tag bodyId -> do
-                  planGo env arr
-                  planInScope $ do
-                    s <- readSTRef sRef
-                    let
-                      (ident, s') = allocIdent s
-                    writeSTRef sRef s'
-                    let
-                      env' = IM.insert tag ident env
-                    writeEnv nid env'
-                    planGo env' bodyId
-                Flat.FE_MethFilter arr tag bodyId -> do
-                  planGo env arr
-                  planInScope $ do
-                    s <- readSTRef sRef
-                    let
-                      (ident, s') = allocIdent s
-                    writeSTRef sRef s'
-                    let
-                      env' = IM.insert tag ident env
-                    writeEnv nid env'
-                    planGo env' bodyId
-                Flat.FE_MethReduce arr z tagA tagB bodyId -> do
-                  planGo env arr
-                  planGo env z
-                  planInScope $ do
-                    s <- readSTRef sRef
-                    let
-                      (ids, s') = allocNIdents s 2
-                    writeSTRef sRef s'
-                    let
-                      nAcc = ids !! 0
-                      nElem = ids !! 1
-                      env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
-                    writeEnv nid env'
-                    planGo env' bodyId
-                Flat.FE_MethReduceRight arr z tagA tagB bodyId -> do
-                  planGo env arr
-                  planGo env z
-                  planInScope $ do
-                    s <- readSTRef sRef
-                    let
-                      (ids, s') = allocNIdents s 2
-                    writeSTRef sRef s'
-                    let
-                      nAcc = ids !! 0
-                      nElem = ids !! 1
-                      env' = IM.insert tagA nAcc $ IM.insert tagB nElem env
-                    writeEnv nid env'
-                    planGo env' bodyId
-                Flat.FE_MethToSorted arr tagA tagB bodyId -> do
-                  planGo env arr
-                  planInScope $ do
-                    s <- readSTRef sRef
-                    let
-                      (ids, s') = allocNIdents s 2
-                    writeSTRef sRef s'
-                    let
-                      nA = ids !! 0
-                      nB = ids !! 1
-                      env' = IM.insert tagA nA $ IM.insert tagB nB env
-                    writeEnv nid env'
-                    planGo env' bodyId
-                Flat.FE_MethFrom lenId tag bodyId -> do
-                  planGo env lenId
-                  planInScope $ do
-                    s <- readSTRef sRef
-                    let
-                      (ids, s') = allocNIdents s 2
-                    writeSTRef sRef s'
-                    let
-                      nI = ids !! 1
-                      env' = IM.insert tag nI env
-                    writeEnv nid env'
-                    planGo env' bodyId
+                Flat.FE_MethMap arr tag bodyId ->
+                  planGo env arr Prelude.>> scopedBody [tag] 1 bodyId
+                Flat.FE_MethFilter arr tag bodyId ->
+                  planGo env arr Prelude.>> scopedBody [tag] 1 bodyId
+                Flat.FE_MethReduce arr z tagA tagB bodyId ->
+                  planGo env arr Prelude.>> planGo env z Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                Flat.FE_MethReduceRight arr z tagA tagB bodyId ->
+                  planGo env arr Prelude.>> planGo env z Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                Flat.FE_MethToSorted arr tagA tagB bodyId ->
+                  planGo env arr Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                Flat.FE_MethFrom lenId tag bodyId ->
+                  planGo env lenId Prelude.>> scopedBody [tag] 2 bodyId
                 Flat.FX_Bind tag xId bodyId -> do
                   planGo env xId
                   -- A bind whose body is just @Lift (Var tag)@ (@v <- e; pure v@)
@@ -914,19 +872,8 @@ buildFlatEmitPlan view root s0 =
                     env' = IM.insert tag ident env
                   planGo env nId
                   planGo env' sId
-                Flat.FX_ResultCaseE resId tagE errId tagO okId -> do
-                  planGo env resId
-                  _ <- planAlloc nid
-                  s <- readSTRef sRef
-                  let
-                    (identUnw, s') = allocIdent s
-                  writeSTRef sRef s'
-                  let
-                    envE = IM.insert tagE identUnw env
-                    envO = IM.insert tagO identUnw envE
-                  writeEnv nid envO
-                  planGo envE errId
-                  planGo envO okId
+                Flat.FX_ResultCaseE resId tagE errId tagO okId ->
+                  resultCase resId tagE errId tagO okId
                 Flat.FX_Try aId tag kId -> do
                   planGo env aId
                   ident <- planAlloc nid
@@ -1370,7 +1317,9 @@ flatEffectfulCodegenWith ::
   EmitStyle -> ClosedEffect u -> (CG, Code)
 flatEffectfulCodegenWith style (e :: ClosedEffect u) =
   let
-    !(soa, s0) = unsafePerformIO (prepareFlatEffectProgramWith style e)
+    !(soa, s0) =
+      unsafePerformIO
+        (prepareFlatProgramWith style (lowerOptEffectIrWith (esKeepLets style) e))
    in
     flatEffectfulCodegenFromViewWith s0 soa
 {-# NOINLINE flatEffectfulCodegenWith #-}
@@ -1382,7 +1331,9 @@ flatPureCodegenWith ::
   EmitStyle -> ClosedExpr u -> (CG, Code)
 flatPureCodegenWith style (e :: ClosedExpr u) =
   let
-    !(soa, s0) = unsafePerformIO (prepareFlatPureProgramWith style e)
+    !(soa, s0) =
+      unsafePerformIO
+        (prepareFlatProgramWith style (lowerOptExprIr (esKeepLets style) e))
    in
     flatEffectfulCodegenFromViewWith s0 soa
 {-# NOINLINE flatPureCodegenWith #-}

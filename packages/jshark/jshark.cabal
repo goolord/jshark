@@ -87,8 +87,6 @@ library
     JShark.Compiler.Codegen.Stmt
     JShark.Compiler.Emit
     JShark.Compiler.Evaluate
-    JShark.Compiler.Hoist
-    JShark.Compiler.Hoist.Canonical
     JShark.Compiler.JsFormat
     JShark.Compiler.JsNum
     JShark.Compiler.JsShim

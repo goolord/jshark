@@ -6,10 +6,11 @@
 --
 -- Shims are a closed catalog ('Builtin'). 'useShim' records a constructor
 -- and returns the @$name(… )@ call. Named-lambda hoist ('insertHoisted')
--- is a separate bag on 'Preamble' — those bodies are program-specific.
--- 'renderPreambleStyled' prints both, name-sorted, as @const $name = …;@ so
--- call-time order does not matter (function expressions close over the
--- bindings).
+-- is a separate bag on 'Preamble' — those bodies are program-specific, and
+-- dedup compares them after alpha-renaming ('canonicalHoistSrc') so binder
+-- ids do not matter. 'renderPreambleStyled' prints both, name-sorted, as
+-- @const $name = …;@ so call-time order does not matter (function
+-- expressions close over the bindings).
 module JShark.Compiler.JsShim
   ( Builtin (..)
   , Preamble
@@ -18,13 +19,17 @@ module JShark.Compiler.JsShim
   , insertHoisted
   , renderPreambleStyled
   , builtinSrc
+  , hoistTagName
   )
 where
 
+import Data.Char (isDigit)
+import qualified Data.Char as Char
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.List (nub, sortBy)
 import JShark.Compiler.Emit
   ( JS
   , hcat
@@ -35,7 +40,6 @@ import JShark.Compiler.Emit
   , vcat
   , (<+>)
   )
-import JShark.Compiler.Hoist.Canonical (canonicalHoistSrc)
 
 -- | Closed runtime shims. 'ValueEq' pulls the whole eq clique
 -- ('ArrayEq', 'DeepEqual', 'Uint8ArrayEq') because those bodies call
@@ -100,6 +104,49 @@ mergeHoistedSrc name existing incoming
       error $
         "JShark.mergeHoistedSrc: conflicting body for "
           <> T.unpack name
+
+-- | Name of a hoisted shared lambda binding.
+hoistTagName :: Text -> Text
+hoistTagName tag = "$" <> tag
+
+-- | Alpha-rename @n0@, @n1@, … so the same hoisted lambda compares equal
+-- across codegen sites that picked different binder ids.
+canonicalHoistSrc :: Text -> Text
+canonicalHoistSrc src =
+  foldl' (\t (from, to) -> T.replace from to t) src renames
+ where
+  renames =
+    sortBy (\(a, _) (b, _) -> compare (T.length b) (T.length a)) $
+      zip ids (map (\i -> "p" <> T.pack (show (i :: Int))) [0 .. length ids - 1])
+  ids = nub (hoistNIdents src)
+
+hoistNIdents :: Text -> [Text]
+hoistNIdents src = go 0 []
+ where
+  len = T.length src
+  go i acc
+    | i >= len = acc
+    | otherwise =
+        case T.uncons (T.drop i src) of
+          Nothing -> acc
+          Just ('n', rest) ->
+            case span isDigit (T.unpack rest) of
+              ([], _) -> go (i + 1) acc
+              (ds, _) ->
+                let
+                  ident = "n" <> T.pack ds
+                  prev = if i > 0 then Just (T.index src (i - 1)) else Nothing
+                 in
+                  if isIdentCont prev
+                    then go (i + 1) acc
+                    else
+                      go (i + 1 + length ds) $
+                        if ident `elem` acc
+                          then acc
+                          else acc ++ [ident]
+          Just _ -> go (i + 1) acc
+  isIdentCont (Just c) = Char.isAlphaNum c || c == '_'
+  isIdentCont Nothing = False
 
 -- | Render preamble bindings. The @sourceNames@ flag is reserved for codegen
 -- ('esSourceNames'); shim bodies stay compact and Biome formats the full emit.
