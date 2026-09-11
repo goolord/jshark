@@ -1,7 +1,6 @@
 cabal-version: 2.4
 
--- jshark core: safe JS EDSL + compiler pipeline (see packages/jshark/jshark.cabal)
-
+-- jshark core: safe JS EDSL + compiler pipeline.
 name: jshark
 version: 0.1
 synopsis: Safe Javascript EDSL
@@ -52,49 +51,22 @@ library
     JShark.Api.Classes
     JShark.Api.Generic
     JShark.Api.Params
-    JShark.Api.Prim
     JShark.Api.Rec
     JShark.Api.Types
+    JShark.Prelude
     JShark.Ajax
     JShark.Array
     JShark.Bun
     JShark.Bun.Internal
     JShark.Canvas
     JShark.Compiler
-    JShark.Compiler.Binder
     JShark.Compiler.Codegen.Core
-    JShark.Compiler.Codegen.Flat
-    JShark.Compiler.Codegen.Phoas
     JShark.Compiler.CompileProgress
-    JShark.Compiler.CompileReport
-    JShark.Compiler.CompileTerminal
     JShark.Compiler.CompileTiming
-    JShark.Compiler.Emit
-    JShark.Compiler.EmitBend
-    JShark.Compiler.Evaluate
     JShark.Compiler.Flat
-    JShark.Compiler.FlatEnc
-    JShark.Compiler.FlatSoA
-    JShark.Compiler.Flatten
-    JShark.Compiler.FlatView
-    JShark.Compiler.Hoist
-    JShark.Compiler.Hoist.Canonical
-    JShark.Compiler.Hvm2Lint
     JShark.Compiler.Ir
-    JShark.Compiler.JsFormat
-    JShark.Compiler.JsNum
-    JShark.Compiler.JsShim
-    JShark.Compiler.Lower
-    JShark.Compiler.Optimize
-    JShark.Compiler.Optimize.Analysis
-    JShark.Compiler.Optimize.Elim
-    JShark.Compiler.Optimize.Fold
-    JShark.Compiler.Optimize.Hvm2
-    JShark.Compiler.Process
     JShark.Console
     JShark.Dom
-    JShark.FlatTest
-    JShark.Hvm2
     JShark.Json
     JShark.Map
     JShark.Math
@@ -107,7 +79,19 @@ library
     JShark.Timers
     JShark.Worker
   other-modules:
-    JShark.Compiler.Metadata
+    -- compiler internals: compiled with the library but not exposed
+    -- (the JShark facade and JShark.Compiler carry the public surface)
+    JShark.Api.Prim
+    JShark.Compiler.Binder
+    JShark.Compiler.Codegen.Flat
+    JShark.Compiler.Codegen.Stmt
+    JShark.Compiler.Emit
+    JShark.Compiler.Evaluate
+    JShark.Compiler.JsFormat
+    JShark.Compiler.JsNum
+    JShark.Compiler.JsShim
+    JShark.Compiler.Lower
+    JShark.Compiler.Process
   build-depends:
     , ansi-terminal >= 1.0
     , async >= 2.2 && < 2.4
@@ -121,6 +105,7 @@ library
     , filepath
     , http-types >= 0.8 && < 1
     , mtl >= 2.2
+    , transformers
     , process
     , streaming-bytestring >= 0.3.0 && < 0.4
     , text >= 1.2 && < 3
@@ -139,8 +124,14 @@ test-suite jshark-test
   main-is: Main.hs
   other-modules:
     CaptureStderr
-    Support
-  hs-source-dirs: test
+    FlatTest
+    Test.Support
+  hs-source-dirs:
+    test
+    -- Shared test/bench sources live in the jshark-testing package; the
+    -- test-suite compiles them in place because depending on that
+    -- package here would be a cabal package cycle (it depends on jshark).
+    ../jshark-testing/test-support
   build-depends:
     , base
     , directory
@@ -149,6 +140,7 @@ test-suite jshark-test
     , tasty
     , tasty-hunit
     , text
+    , vector
   default-language: Haskell2010
   ghc-options:
     -Wno-deprecations
@@ -162,8 +154,10 @@ benchmark jshark-compiler
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-    Stages
-  hs-source-dirs: bench
+    Bench.Stages
+  hs-source-dirs:
+    bench
+    ../jshark-testing/test-support
   build-depends:
     , base
     , deepseq >= 1.4

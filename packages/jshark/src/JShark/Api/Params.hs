@@ -26,7 +26,6 @@ module JShark.Api.Params
   , ParamRec (..)
   , RowUs
   , RowFn
-  , ParamAt
   , UniqueRow
   , NamedLambdaRow (..)
   , FnFromRow (..)
@@ -73,10 +72,6 @@ type family RowFn (row :: [Type]) (r :: Universe) :: Universe where
   RowFn (Param sym u ': rs) r = 'Function u (RowFn rs r)
 
 -- | Universe of the parameter named @sym@ in row @row@.
-type family ParamAt (row :: [Type]) (sym :: Symbol) :: Universe where
-  ParamAt (Param sym u ': rs) sym = u
-  ParamAt (Param sym' u' ': rs) sym = ParamAt rs sym
-
 type family LookupParam (row :: [Type]) (sym :: Symbol) :: Universe where
   LookupParam (Param sym u ': rs) sym = u
   LookupParam (Param sym' u' ': rs) sym = LookupParam rs sym

@@ -21,15 +21,15 @@ jobs:
 
       - name: Install LLVM 20
         run: |
+          # dl.google.com's apt repo is flaky on hosted runners (Hash Sum
+          # mismatch); CI never needs Chrome, so drop it before updating.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y llvm-20
 
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.16.0
-
-      - name: Install Bend
-        uses: hustcer/setup-bend@v1
 
       - uses: oven-sh/setup-bun@v2
 
@@ -58,10 +58,7 @@ jobs:
           ./scripts/gen-life-tool-preview-css.sh
 
       - name: Rebuild vendored WASM
-        run: ./scripts/check-wasm.sh --build-only
-
-      # - name: Verify WASM checksums
-      #   run: sha256sum -c wasm/checksums.sha256
+        run: ./scripts/check-wasm.sh
 
       # ghcup has no fourmolu bindist for ubuntu-24.04; the action
       # fetches the GitHub release zip instead.
@@ -105,6 +102,9 @@ jobs:
 
       - name: Install LLVM 20
         run: |
+          # dl.google.com's apt repo is flaky on hosted runners (Hash Sum
+          # mismatch); CI never needs Chrome, so drop it before updating.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y llvm-20
 

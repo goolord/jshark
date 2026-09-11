@@ -12,7 +12,6 @@ module JShark.Example.Life.Lut
   )
 where
 
-import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Example.Life.Grid (cellIdx, inBounds, setU8, u8Get)
@@ -22,7 +21,7 @@ bootLifeLut :: EffectSyntax f (f 'Unit)
 bootLifeLut = do
   toSyntax_ $
     ffi
-      (T.unpack lifeLutInstallJs)
+      lifeLutInstallJs
       RecNil
   done
 
@@ -32,7 +31,7 @@ createLifeLUT = do
   bindExpr $
     ffi
       ( "(function(){return "
-          <> T.unpack lifeLutGlobalJs
+          <> lifeLutGlobalJs
           <> ".createLifeLUT();})"
       )
       RecNil
@@ -98,7 +97,7 @@ stepRegionLUT lut gridA gridB w h y0 y1 = do
   toSyntax_ $
     ffi
       ( "(function(L,a,b,w,h,y0,y1){"
-          <> T.unpack lifeLutGlobalJs
+          <> lifeLutGlobalJs
           <> ".stepRegionLUT(L,a,b,w,h,y0,y1);})"
       )
       ( arg lut

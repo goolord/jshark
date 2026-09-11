@@ -7,7 +7,7 @@ Commands assume the repo root and Cabal v2 (`cabal build`, `cabal test`,
 - `packages/jshark-lucid` — Lucid DOM integration (suite `jshark-lucid-test`, bench `jshark-lucid-bench`)
 - `packages/jshark-bindgen` — TypeScript/JS FFI generator (suite `jshark-bindgen-test`)
 - `packages/jshark-hotreload` — hot-reload hub/WAI/watcher (suite `jshark-hotreload-test`)
-- `examples` — the five showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`, plus `jshark-life-*` profiling executables)
+- `examples` — the four showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`, plus `jshark-life-*` profiling executables)
 
 ## Prerequisites
 
@@ -15,7 +15,6 @@ Commands assume the repo root and Cabal v2 (`cabal build`, `cabal test`,
 |------|----------------|
 | GHC 9.14+ / Cabal 3.x | build, test, bench |
 | [Bun](https://bun.sh) on `PATH` | `jshark-examples-test` JS engine probes (`BunTests`, `LifeTests`, `ExampleTests`) |
-| `esbuild` / `terser` (optional) | compiler minifier tests (skipped if missing) |
 
 ## Testing
 
@@ -67,7 +66,7 @@ cabal test all --test-options='-t 120s' --test-show-details=direct
 | `jshark-lucid` | `jshark-lucid-test` | Lucid → DOM codegen (happy-dom via bun) |
 | `jshark-bindgen` | `jshark-bindgen-test` | `.d.ts`/JSDoc parse + emit, CLI, golden `BindgenToy` |
 | `jshark-hotreload` | `jshark-hotreload-test` | SSE hub, WAI middleware, watcher mapping |
-| `examples` | `jshark-examples-test` | `LifeTests`, `CatalogTests`, `LifeWorkerTests`, `StaticCssTests`, `ExampleTests` (parse-every-example via bun), `BunTests`, `PerfTests`, `Hvm2Tests` |
+| `examples` | `jshark-examples-test` | `LifeTests`, `CatalogTests`, `LifeWorkerTests`, `StaticCssTests`, `ExampleTests` (parse-every-example via bun), `BunTests`, `PerfTests` |
 
 `ExampleTests` runs inside `jshark-examples-test` (gated on bun). Life's full
 emit is slow; always use `-t 120s` when iterating over `-p life` / `-p examples`.
@@ -93,7 +92,7 @@ Benchmarks use **tasty-bench**. They are for **manual** compiler investigation; 
 
 | Cabal target | Package | Purpose |
 |--------------|---------|---------|
-| `jshark-compiler` | `jshark` | Synthetic compiler microbenchmarks (`packages/jshark/bench/Main.hs`, `Stages.hs`). Best for attributing **which compiler stage** is slow on synthetic trees. |
+| `jshark-compiler` | `jshark` | Synthetic compiler microbenchmarks (`packages/jshark/bench/Main.hs`, `Bench.Stages`). Best for attributing **which compiler stage** is slow on synthetic trees. |
 | `jshark-examples-bench` | `examples` | Full example ASTs (`examples/bench/Main.hs`: Breakout, TodoMvc, Synth, Life). Life `emit` is very slow. |
 | `jshark-forced` | `examples` | `NFData` / forcing costs on Life |
 | `jshark-life-*` | `examples` | `jshark-life-phases`, `jshark-life-metrics`, `jshark-life-flatopt`, `jshark-life-iropt`, `jshark-life-lower`, `jshark-life-emit`, `jshark-life-full-emit` — Life-only stage profiling executables |
@@ -128,7 +127,7 @@ A `TIMEOUT` after 120s still means “this path is too slow for the budget”; u
 
 ### Stage names
 
-Each effectful microprogram gets a `stages/<name>/` group (see `Stages.hs` in
+Each effectful microprogram gets a `stages/<name>/` group (see `Bench.Stages` in
 each bench dir):
 
 | Bench | Meaning |
@@ -136,8 +135,8 @@ each bench dir):
 | `optimizeEffect` | `optimizeEffect` only |
 | `optNodes+emit/bytes` | node count + full emit length |
 | `effectfulAST` | `renderJS . effectfulAST` byte length |
-| `renderJSCompact` / `emit` | compact render |
-| `emit/bytes` | `T.length . renderJSCompact . effectfulAST` (full compile path used by `compileEffect` before pretty/minify) |
+| `renderJS` / `emit` | compact render |
+| `emit/bytes` | `T.length . renderJS . effectfulAST` (full compile path used by `compileEffect` before pretty) |
 | `effectfulProgram` | unoptimized `effectfulProgram` (slow; avoid for routine runs) |
 | `prettyJS/e2e` | emit + pretty printer |
 | `compileEffect/readable/e2e` | full `compileEffect readableConfig` in IO |
@@ -282,7 +281,7 @@ cabal bench jshark-examples-bench -- jshark-examples-bench -t 120s -p 'life.opti
 | Path | Role |
 |------|------|
 | `packages/jshark/test/Main.hs` | core test tree |
-| `packages/jshark/bench/Main.hs`, `Stages.hs` | synthetic `jshark-compiler` bench |
+| `packages/jshark/bench/Main.hs`, `Bench.Stages` (in `jshark-testing`) | synthetic `jshark-compiler` bench |
 | `examples/test/Main.hs` | example/Life test tree |
 | `examples/test/ExampleTests.hs` | Bun parse tests for every example |
 | `examples/test/LifeTests.hs`, `BunTests.hs` | runtime JS checks |

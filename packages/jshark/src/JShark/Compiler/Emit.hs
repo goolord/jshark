@@ -4,7 +4,6 @@
 module JShark.Compiler.Emit
   ( JS
   , renderJS
-  , renderJSCompact
   , ($$)
   , (<+>)
   , parens
@@ -40,9 +39,6 @@ type JS = TextBuilder
 -- | Materialize a codegen tree to strict 'Text'.
 renderJS :: JS -> Text
 renderJS = TB.toText
-
-renderJSCompact :: JS -> Text
-renderJSCompact = renderJS
 
 infixl 5 $$
 

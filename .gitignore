@@ -4,8 +4,6 @@ dist*
 *.swp
 result
 result-*
-dist
-dist-*
 cabal-dev
 *.o
 *.hi
@@ -49,3 +47,10 @@ profile/
 # Hot-reload Mode B JS cache
 .jshark-cache/
 .zed/settings.json
+
+# Zig build output
+zig-out/
+.zig-cache/
+
+# Editor debug logs
+.cursor/*.log

@@ -51,7 +51,6 @@ data Settings = Settings
 
 -- | A DOM event. Its fields are read with 'getProp'', which needs the
 -- universe pinned, so handlers name this rather than leaving it open.
-type Event f = Expr f ('MutableObject ())
 
 -- | Absence of a note, as the key table reports it.
 noNote :: Expr f 'String
@@ -61,31 +60,19 @@ noNote = ""
 meterBins :: Int
 meterBins = 32
 
-byId :: Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-byId = Dom.lookupId . string
-
--- | @Number(x)@: a slider's @value@ arrives as a string.
-numberOf :: Expr f 'String -> EffectSyntax f (Expr f 'Number)
-numberOf s = fmap var (toSyntax (ffi "Number" (arg s <: RecNil)))
-
 -- | Paint the filled portion of a range input via @--range-fill@.
 syncRangeFill ::
   Effect f ('MutableObject Dom.DomElement) -> EffectSyntax f (f 'Unit)
 syncRangeFill el = do
-  v <- Dom.getValue el >>= numberOf
-  lo <- getProp el "min" >>= numberOf
-  hi <- getProp el "max" >>= numberOf
+  v <- Dom.getValue el >>= toNumber
+  lo <- getProp el "min" >>= toNumber
+  hi <- getProp el "max" >>= toNumber
   whenS (hi .== lo) (setProp el "style.--range-fill" (string "0%"))
   whenS (hi .!= lo) $
     setProp
       el
       "style.--range-fill"
       (toString (((v - lo) / (hi - lo)) * number 100) <> string "%")
-
--- | Run the block only when the option is empty.
-whenNoneS ::
-  Expr f ('Option u) -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
-whenNoneS opt body = toSyntax (optionCaseE opt (discard (stmts body)) (\_ -> noOp))
 
 -- | Which note a computer key plays, or @""@. A switch over the table the
 -- Haskell side already has, so the mapping cannot drift from 'Keys.keys'.
@@ -108,16 +95,16 @@ freqForNote n =
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
-  keyboard <- byId idKeyboard
-  meterBar <- byId idMeterBar
-  status <- byId idStatus
-  cutoffEl <- byId idCutoff
-  resonanceEl <- byId idResonance
-  attackEl <- byId idAttack
-  decayEl <- byId idDecay
-  sustainEl <- byId idSustain
-  releaseEl <- byId idRelease
-  waveEls <- traverse (\w -> (,) w <$> byId ("wave-" <> waveName w)) waves
+  keyboard <- Dom.byId idKeyboard
+  meterBar <- Dom.byId idMeterBar
+  status <- Dom.byId idStatus
+  cutoffEl <- Dom.byId idCutoff
+  resonanceEl <- Dom.byId idResonance
+  attackEl <- Dom.byId idAttack
+  decayEl <- Dom.byId idDecay
+  sustainEl <- Dom.byId idSustain
+  releaseEl <- Dom.byId idRelease
+  waveEls <- traverse (\w -> (,) w <$> Dom.byId ("wave-" <> waveName w)) waves
 
   st <- hold (newRecord @Settings)
   set @"wave" st (string (waveName defaultWave))
@@ -150,16 +137,16 @@ mainJS = do
   -- the bottom of it.
   Audio.setFftSize ana (Audio.fftSizeFor meterBins)
 
-  cutoff0 <- Dom.getValue cutoffEl >>= numberOf
+  cutoff0 <- Dom.getValue cutoffEl >>= toNumber
   Audio.setValue (Audio.param filt "frequency") cutoff0
-  resonance0 <- Dom.getValue resonanceEl >>= numberOf
+  resonance0 <- Dom.getValue resonanceEl >>= toNumber
   Audio.setValue (Audio.param filt "Q") resonance0
   -- Browsers restore range values; Settings must match the sliders, not
   -- the HTML defaults, or the envelope ignores the restored thumbs.
-  Dom.getValue attackEl >>= numberOf >>= set @"attack" st
-  Dom.getValue decayEl >>= numberOf >>= set @"decay" st
-  Dom.getValue sustainEl >>= numberOf >>= set @"sustainLevel" st
-  Dom.getValue releaseEl >>= numberOf >>= set @"release" st
+  Dom.getValue attackEl >>= toNumber >>= set @"attack" st
+  Dom.getValue decayEl >>= toNumber >>= set @"decay" st
+  Dom.getValue sustainEl >>= toNumber >>= set @"sustainLevel" st
+  Dom.getValue releaseEl >>= toNumber >>= set @"release" st
 
   let
     voiceOf :: Expr f 'String -> Effect f ('Option ('MutableObject Audio.Voice))
@@ -260,24 +247,24 @@ mainJS = do
 
   -- Pointer: press a key, release wherever the pointer ends up. Keyed by
   -- pointerId so a second finger does not evict the first note.
-  addEventListener "pointerdown" keyboard $ \(ev :: Event f) -> stmts $ do
-    target <- getProp' ev "target"
+  addEventListenerS "pointerdown" keyboard $ \ev -> do
+    target <- Dom.eventTarget ev
     hit <-
-      toSyntax (callMethod (expr target) "closest" (arg (string ".key") <: RecNil))
+      toSyntax (callMethod target "closest" (arg (string ".key") <: RecNil))
     whenSomeS (unsafeNullable (var hit)) $ \el -> do
       note <-
         toSyntax
           (callMethod (expr el) "getAttribute" (arg (string dataNote) <: RecNil))
-      pid <- getProp' ev "pointerId"
+      pid <- eventPointerId ev
       Audio.dictSet pointers (toString pid) (var note)
       noteOn (var note)
 
   let
     -- A pointer can also be cancelled (gesture taken over, touch lost),
     -- which must release the note as surely as a clean release does.
-    releasePointer :: Event f -> Effect f 'Unit
+    releasePointer :: Expr f ('MutableObject Event) -> Effect f 'Unit
     releasePointer ev = stmts $ do
-      pid <- getProp' ev "pointerId"
+      pid <- eventPointerId ev
       found <-
         toSyntax (Audio.dictGet pointers (toString pid) :: Effect f ('Option 'String))
       whenSomeS (var found) $ \note -> do
@@ -293,48 +280,48 @@ mainJS = do
     done
 
   -- Auto-repeat would retrigger a note that is already sounding.
-  addEventListener "keydown" window $ \(ev :: Event f) -> stmts $ do
-    repeated <- getProp' ev "repeat"
-    key <- getProp' ev "key"
+  addEventListenerS "keydown" window $ \ev -> do
+    repeated <- eventRepeat ev
+    key <- eventKey ev
     note <- toSyntax (noteForKey key)
     whenS (repeated .!= true_ .&& var note .!= noNote) $ do
       toSyntax_ (callMethod (expr ev) "preventDefault" RecNil)
       noteOn (var note)
 
-  addEventListener "keyup" window $ \(ev :: Event f) -> stmts $ do
-    key <- getProp' ev "key"
+  addEventListenerS "keyup" window $ \ev -> do
+    key <- eventKey ev
     note <- toSyntax (noteForKey key)
     whenS (var note .!= noNote) (noteOff (var note))
 
   -- Live edits land on the shared filter, so held notes follow them.
   addEventListener_ "input" cutoffEl $ do
     syncRangeFill cutoffEl
-    v <- Dom.getValue cutoffEl >>= numberOf
+    v <- Dom.getValue cutoffEl >>= toNumber
     Audio.setValue (Audio.param filt "frequency") v
 
   addEventListener_ "input" resonanceEl $ do
     syncRangeFill resonanceEl
-    v <- Dom.getValue resonanceEl >>= numberOf
+    v <- Dom.getValue resonanceEl >>= toNumber
     Audio.setValue (Audio.param filt "Q") v
 
   addEventListener_ "input" attackEl $ do
     syncRangeFill attackEl
-    v <- Dom.getValue attackEl >>= numberOf
+    v <- Dom.getValue attackEl >>= toNumber
     set @"attack" st v
 
   addEventListener_ "input" decayEl $ do
     syncRangeFill decayEl
-    v <- Dom.getValue decayEl >>= numberOf
+    v <- Dom.getValue decayEl >>= toNumber
     set @"decay" st v
 
   addEventListener_ "input" sustainEl $ do
     syncRangeFill sustainEl
-    v <- Dom.getValue sustainEl >>= numberOf
+    v <- Dom.getValue sustainEl >>= toNumber
     set @"sustainLevel" st v
 
   addEventListener_ "input" releaseEl $ do
     syncRangeFill releaseEl
-    v <- Dom.getValue releaseEl >>= numberOf
+    v <- Dom.getValue releaseEl >>= toNumber
     set @"release" st v
 
   mapM_

@@ -40,7 +40,6 @@ module JShark.Example.Life.Grid
   )
 where
 
-import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf)
@@ -299,7 +298,7 @@ refreshPackedRegion grid w h x0 y0 x1 y1 = do
   toSyntax_ $
     ffi
       ( "(function(grid,w,h,x0,y0,x1,y1){"
-          <> T.unpack lifeLutGlobalJs
+          <> lifeLutGlobalJs
           <> ".refreshPackedRegion(grid,w,h,x0,y0,x1,y1);})"
       )
       ( arg grid

@@ -57,7 +57,7 @@ main = do
 
       timeIt "  unoptimized" $ do
         let
-          !js = renderJSCompact (effectfulAST (benchmarkTemplate n))
+          !js = renderJS (effectfulAST (benchmarkTemplate n))
         printf "    js length: %d\n" (T.length js)
 
   test 1

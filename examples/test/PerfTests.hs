@@ -13,11 +13,9 @@ import Data.Int (Int64)
 import qualified Data.Text as T
 import JShark
   ( ClosedEffect
-  , closedEffectNodes
   , effectfulAST
-  , nodeCountEff
-  , optimizeEffect
-  , renderJSCompact
+  , optimizedEffectSize
+  , renderJS
   )
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
@@ -91,12 +89,12 @@ perfTests =
   testGroup
     "perf"
     [ testCase "Life raw IR nodes" $ do
-        n <- evaluate (closedEffectNodes life)
+        n <- evaluate (optimizedEffectSize life)
         assertCeiling "rawNodes" n maxLifeRawNodes
     , testCase "Life optimize nodes and alloc" $ do
         (n, bytes) <-
           allocated $
-            evaluate (nodeCountEff (optimizeEffect life))
+            evaluate (optimizedEffectSize life)
         assertCeiling "optNodes" n maxLifeOptNodes
         assertCeiling "optAlloc" bytes maxLifeOptAlloc
     , probeCase 16 maxProbe16Chars maxProbe16Alloc
@@ -108,6 +106,6 @@ probeCase n maxChars maxAlloc =
   testCase ("probe " ++ show n ++ " JS size and alloc") $ do
     (chars, bytes) <-
       allocated $
-        evaluate (T.length (renderJSCompact (effectfulAST (probeN n))))
+        evaluate (T.length (renderJS (effectfulAST (probeN n))))
     assertCeiling ("probe" ++ show n ++ "Chars") chars maxChars
     assertCeiling ("probe" ++ show n ++ "Alloc") bytes maxAlloc

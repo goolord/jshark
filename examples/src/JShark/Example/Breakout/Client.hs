@@ -87,34 +87,31 @@ wire ::
   -> Effect f (MutableObjectOf Game)
   -> EffectSyntax f (f 'Unit)
 wire canvas state = do
-  addEventListener "keydown" window $ \(e :: Expr f ('MutableObject ())) ->
-    stmts $ do
-      code <- getProp' e "code"
-      toSyntax $
-        stringCaseE
-          code
-          [
-            ( "Space"
-            , discard
-                ( stmts $ do
-                    toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                    tryRestart state
-                )
-            )
-          ]
-          (stmts $ bindArrows state code true_)
-  addEventListener "keyup" window $ \(e :: Expr f ('MutableObject ())) ->
-    stmts $ do
-      code <- getProp' e "code"
-      bindArrows state code false_
-  addEventListener "mousemove" canvas $ \(e :: Expr f ('MutableObject ())) ->
-    stmts $ do
-      cx <- getProp' e "clientX"
-      rect <- hold $ callMethod canvas "getBoundingClientRect" RecNil
-      left <- getProp rect "left"
-      whenPlay state $ do
-        pad <- state.paddle
-        set @"px" pad (clampPaddle ((cx - left) - number (paddleW / 2)))
+  addEventListenerS "keydown" window $ \e -> do
+    code <- eventCode e
+    toSyntax $
+      stringCaseE
+        code
+        [
+          ( "Space"
+          , discard
+              ( stmts $ do
+                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+                  tryRestart state
+              )
+          )
+        ]
+        (stmts $ bindArrows state code true_)
+  addEventListenerS "keyup" window $ \e -> do
+    code <- eventCode e
+    bindArrows state code false_
+  addEventListenerS "mousemove" canvas $ \e -> do
+    cx <- eventClientX e
+    rect <- hold $ callMethod canvas "getBoundingClientRect" RecNil
+    left <- getProp rect "left"
+    whenPlay state $ do
+      pad <- state.paddle
+      set @"px" pad (clampPaddle ((cx - left) - number (paddleW / 2)))
   done
 
 bindArrows ::
@@ -349,8 +346,8 @@ drawHud ctx state meter = do
     bindExpr $
       ffi
         ( "(fps,ms)=>"
-            ++ "'FPS '+String(Math.round(fps)).padStart(3,'\\u00a0')"
-            ++ "+' ('+String(Math.round(ms)).padStart(4,'\\u00a0')+'ms)'"
+            <> "'FPS '+String(Math.round(fps)).padStart(3,'\\u00a0')"
+            <> "+' ('+String(Math.round(ms)).padStart(4,'\\u00a0')+'ms)'"
         )
         (arg n <: arg ms <: RecNil)
   livesTxt <-

@@ -4,7 +4,7 @@
 
 module Main (main) where
 
-import JShark (irOptimizedEffectFromClosed, profileFlatOptFromIr)
+import JShark (irEffectFromClosed, profileFlatOptFromIr)
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import JShark.Compiler.CompileTiming (FlatOptProfile (..))
@@ -25,18 +25,12 @@ printProfile FlatOptProfile {..} = do
       ++ show fopFolded
   putStrLn $ "constantFoldSeq," ++ show fopFoldSeqSec ++ ",one pass"
   putStrLn $
-    "propagatePure,"
-      ++ show fopPureSec
-      ++ ",passes="
-      ++ show fopPurePasses
-      ++ " pure="
-      ++ show fopPureCount
-  putStrLn $ "attachPure," ++ show fopAttachSec ++ ",nodes=" ++ show fopNodeCount
+    "attachPure," ++ show fopAttachSec ++ ",pure=" ++ show fopPureCount
   putStrLn $ "flatOptTotal," ++ show fopTotalSec ++ ",nodes=" ++ show fopNodeCount
 
 main :: IO ()
 main = do
   let
-    !irOpt = irOptimizedEffectFromClosed life
+    !irOpt = irEffectFromClosed life
   profile <- profileFlatOptFromIr irOpt
   printProfile profile

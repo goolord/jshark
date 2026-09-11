@@ -10,31 +10,29 @@
 -- == Pipeline (read top to bottom)
 --
 -- @
--- ClosedExpr / ClosedEffect          -- 'JShark.Api.Types'
+-- ClosedExpr / ClosedEffect           -- 'JShark.Api.Types'
+--       |
+--       +--> Evaluate                 -- 'JShark.Compiler.Evaluate' (tests, REPL)
 --       |
 --       v
--- Flatten  ('JShark.Compiler.Flatten')        -- tree normalize before lower/opt
+-- Lower                               -- 'JShark.Compiler.Lower' (PHOAS -> first-order Ir)
 --       |
 --       v
--- Lower    ('JShark.Compiler.Lower')          -- PHOAS -> first-order IR
+-- Ir optimize                         -- 'JShark.Compiler.Ir' (one optimizer: folds + elim)
 --       |
 --       v
--- Optimize ('JShark.Compiler.Optimize')      -- PHOAS + IR passes
+-- Flat (pack + SoA bulk opts)         -- 'JShark.Compiler.Flat'
 --       |
---       +-- pure:  Codegen.Phoas     -- direct PHOAS -> JS ('pureAST')
---       |
---       +-- effect: Flat -> SoA -> Codegen.Flat
---                 ('JShark.Compiler.Flat', 'JShark.Compiler.FlatSoA', 'JShark.Compiler.Codegen.Flat')
+--       v
+-- Codegen.Flat -> JS                  -- 'JShark.Compiler.Codegen.Flat' (pure + effectful)
 --
--- Evaluate ('JShark.Compiler.Evaluate')      -- reference interpreter (tests, REPL)
--- Hoist    ('JShark.Compiler.Hoist')         -- named @$tag@ registration
---           ('JShark.Compiler.Hoist.Canonical') -- dedup by alpha-renamed source
--- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper
+-- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper,
+--           named @$tag@ hoisting (dedup by alpha-renamed source)
+-- Codegen.Stmt ('JShark.Compiler.Codegen.Stmt') -- shared statement renderers
 -- @
 --
--- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings via
--- 'JShark.Compiler.Hoist.registerHoistedTag' (see 'JShark.Api.namedLambda',
--- 'namedLambdaRow', 'applyNamed2').
+-- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings
+-- (see 'JShark.Api.namedLambda', 'namedLambdaRow', 'applyNamed2').
 module JShark
   ( Expr
       ( Literal
@@ -79,7 +77,6 @@ module JShark
       , UnsafeNullable
       , FrozenLit
       , GetField
-      , Hvm2Kernel
       )
   , FnBody (..)
   , LamInfo (..)
@@ -87,7 +84,6 @@ module JShark
   , Value (..)
   , GroupBy
   , Arg (..)
-  , Hvm2KernelEntry (..)
   , ClosedExpr
   , ClosedEffect
   , Effect
@@ -119,30 +115,15 @@ module JShark
   , evaluate
   , evaluateNumber
   , evaluateBigInt
-  , evaluateCached
   , packUint8
   , uint8Elems
-  , optimize
-  , optimizeWith
-  , optimizeEffect
-  , optimizeEffectFromIr
-  , phoasNodeCountFromIr
-  , optimizeEffectIr
-  , nodeCountExpr
-  , nodeCountEff
-  , closedEffectNodes
-  , closedExprNodes
-  , lowerOptEffectIr
-  , optIrLargeThreshold
   , optimizedExprSize
   , optimizedEffectSize
   , pureAST
   , pureASTWith
   , effectfulAST
   , effectfulASTWith
-  , effectfulASTFromFlat
   , effectfulASTFromSoA
-  , effectfulASTIr
   , irEffectFromClosed
   , flatPrepareCore
   , flatPrepareFromIr
@@ -151,16 +132,9 @@ module JShark
   , profileIrOptFromIr
   , profileLowerFromClosed
   , flatSoaNodeCount
-  , flatSoaParallelThreshold
-  , irExprFromClosed
-  , irOptimizedEffectFromClosed
-  , irOptimizedExprFromClosed
-  , collectHvm2Kernels
   , pureProgram
   , effectfulProgram
-  , printComputation
   , renderJS
-  , renderJSCompact
   , escapeJsString
   , structuralEq
   , structuralNEq
@@ -169,37 +143,31 @@ module JShark
   )
 where
 
-import qualified Data.IntMap.Strict as IM
-import GHC.IO.Unsafe (unsafePerformIO)
 import JShark.Api.Types
 import JShark.Compiler.Codegen.Core
   ( flatPrepareCore
   , flatPrepareFromIr
-  , flatSoaNodeCount
-  , flatSoaParallelThreshold
-  , preparePureProgram
-  , printComputation
   , profileFlatOptFromIr
   , profileIrOptFromClosed
   , profileIrOptFromIr
   , profileLowerFromClosed
   , renderIIFE
   )
+import JShark.Compiler.Flat (flatSoaNodeCount)
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
-  , effectfulASTFromFlat
   , effectfulASTFromSoA
-  , effectfulASTIr
   , effectfulASTWith
   , flatEffectfulCodegen
+  , flatPureCodegen
+  , pureAST
+  , pureASTWith
   )
-import JShark.Compiler.Codegen.Phoas (pureAST, pureAST', pureASTWith)
-import JShark.Compiler.Emit (JS, renderJS, renderJSCompact)
+import JShark.Compiler.Emit (JS, renderJS)
 import JShark.Compiler.Evaluate
   ( escapeJsString
   , evaluate
   , evaluateBigInt
-  , evaluateCached
   , evaluateNumber
   , packUint8
   , uint8Elems
@@ -207,34 +175,12 @@ import JShark.Compiler.Evaluate
 import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
   ( irEffectFromClosed
-  , irExprFromClosed
-  , lowerOptEffectIr
-  )
-import JShark.Compiler.Optimize
-  ( closedEffectNodes
-  , closedExprNodes
-  , collectHvm2Kernels
-  , irOptimizedEffectFromClosed
-  , irOptimizedExprFromClosed
-  , nodeCountEff
-  , nodeCountExpr
-  , optIrLargeThreshold
-  , optimize
-  , optimizeEffect
-  , optimizeEffectFromIr
-  , optimizeEffectIr
-  , optimizeWith
   , optimizedEffectSize
   , optimizedExprSize
-  , phoasNodeCountFromIr
   )
 
 pureProgram :: ClosedExpr u -> JS
-pureProgram e =
-  let
-    !(s0, expr) = unsafePerformIO (preparePureProgram e)
-   in
-    uncurry renderIIFE (pureAST' s0 IM.empty expr)
+pureProgram e = uncurry renderIIFE (flatPureCodegen e)
 
 effectfulProgram :: ClosedEffect u -> JS
 effectfulProgram e = uncurry renderIIFE (flatEffectfulCodegen e)

@@ -92,7 +92,6 @@ module JShark.Api.Types
   , ClosedEffect
   , LamInfo (..)
   , noLamInfo
-  , Hvm2KernelEntry (..)
   , Comparable
   , KnownScalar
   , NumericU (..)
@@ -489,15 +488,6 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     Expr f ('Object r)
     -> Expr f (Field r k)
     -- ^ Pure @o.k@. Folded by 'sameSymbol' against 'FrozenLit'.
-  Hvm2Kernel ::
-    Text
-    -> ClosedExpr u
-    -> Expr f u
-    -- ^ Closed pure subtree compiled to Bend for the HVM2 pipeline
-    -- (Bend → HVM2 → C → WASM via Zig). Codegen emits a call to
-    -- @globalThis.__jsharkHvm2.exports@; load the module with
-    -- 'JShark.Api.loadHvm2Wasm' and build with 'JShark.Hvm2.bendModule' /
-    -- 'JShark.Hvm2.compileHvm2Wasm'.
 
 -- | Closed fixed-arity pure JS names (@Math.sin@, @arr.length@, …).
 -- Higher-order stdlib (@map@, @reduce@, …) stays on 'Std' separately.
@@ -909,9 +899,6 @@ pattern TypeOf x <- Std (Kernel (KTypeOf x))
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
 
--- | Existential wrapper for kernels collected from an open 'Expr' tree.
-data Hvm2KernelEntry = forall u. Hvm2KernelEntry !Text !(ClosedExpr u)
-
 -- | Closed effectful term: no free PHOAS binders. The end @forall f. 'Effect' f u@.
 type ClosedEffect (u :: Universe) = forall (f :: Universe -> Type). Effect f u
 
@@ -1008,28 +995,31 @@ liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 -- | Smart constructors fold literal-literal cases. INCOHERENT 'Num'
 -- often inlines '(+)' past a named wrapper; these equations still
 -- match. @INLINE [1]@ unfolds to the kernel after the match.
+numBinE ::
+  (Double -> Double -> Double)
+  -> (Expr f 'Number -> Expr f 'Number -> Kernel f 'Number)
+  -> Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Number
+numBinE f _ (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal (ValueNumber (f x y))
+numBinE _ op x y = Std (Kernel (op x y))
+{-# INLINE [1] numBinE #-}
+
 plusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (x + y))
-plusE x y = Std (Kernel (KPlus x y))
+plusE = numBinE (+) KPlus
 {-# INLINE [1] plusE #-}
 
 timesE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-timesE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (x * y))
-timesE x y = Std (Kernel (KTimes x y))
+timesE = numBinE (*) KTimes
 {-# INLINE [1] timesE #-}
 
 minusE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-minusE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (x - y))
-minusE x y = Std (Kernel (KMinus x y))
+minusE = numBinE (-) KMinus
 {-# INLINE [1] minusE #-}
 
 fracDivE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-fracDivE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (x / y))
-fracDivE x y = Std (Kernel (KFracDiv x y))
+fracDivE = numBinE (/) KFracDiv
 {-# INLINE [1] fracDivE #-}
 
 negateE :: Expr f 'Number -> Expr f 'Number
@@ -1061,45 +1051,31 @@ concatE x y = Std (Kernel (KConcat x y))
 {-# INLINE [1] concatE #-}
 
 remE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-remE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsRem x y))
-remE x y = Std (Kernel (KRem x y))
+remE = numBinE jsRem KRem
 {-# INLINE [1] remE #-}
 
 bitAndE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-bitAndE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsBit2 (.&.) x y))
-bitAndE x y = Std (Kernel (KBitAnd x y))
+bitAndE = numBinE (jsBit2 (.&.)) KBitAnd
 {-# INLINE [1] bitAndE #-}
 
 bitOrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-bitOrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsBit2 (.|.) x y))
-bitOrE x y = Std (Kernel (KBitOr x y))
+bitOrE = numBinE (jsBit2 (.|.)) KBitOr
 {-# INLINE [1] bitOrE #-}
 
 bitXorE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-bitXorE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsBit2 xor x y))
-bitXorE x y = Std (Kernel (KBitXor x y))
+bitXorE = numBinE (jsBit2 xor) KBitXor
 {-# INLINE [1] bitXorE #-}
 
 shlE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-shlE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsShl x y))
-shlE x y = Std (Kernel (KShl x y))
+shlE = numBinE jsShl KShl
 {-# INLINE [1] shlE #-}
 
 shrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-shrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsShr x y))
-shrE x y = Std (Kernel (KShr x y))
+shrE = numBinE jsShr KShr
 {-# INLINE [1] shrE #-}
 
 ushrE :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-ushrE (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueNumber (jsUShr x y))
-ushrE x y = Std (Kernel (KUShr x y))
+ushrE = numBinE jsUShr KUShr
 {-# INLINE [1] ushrE #-}
 
 -- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.

@@ -35,7 +35,6 @@ import JShark.HotReload.Core
   )
 import Network.HTTP.Types
   ( HeaderName
-  , Status
   , hContentType
   , methodGet
   , status200
@@ -170,26 +169,13 @@ injectHotReloadClient cfg resp =
     ResponseBuilder status headers builder ->
       rewrite status headers (B.toLazyByteString builder)
     ResponseRaw _ original -> injectHotReloadClient cfg original
-    other ->
-      -- Streaming / file responses: leave untouched (use Lucid helper).
-      case drainToLBS other of
-        Just (status, headers, body) -> rewrite status headers body
-        Nothing -> other
+    -- Streaming / file responses: leave untouched (use Lucid helper).
+    _ -> resp
  where
   rewrite status headers body
     | isHtml headers && not (alreadyInjected body) =
         responseLBS status headers (injectScriptIntoHtml (scriptTag cfg) body)
     | otherwise = resp
-
-drainToLBS ::
-  Response -> Maybe (Status, [(HeaderName, BS.ByteString)], LBS.ByteString)
-drainToLBS resp =
-  case resp of
-    ResponseBuilder status headers builder ->
-      Just (status, headers, B.toLazyByteString builder)
-    _ ->
-      -- Avoid blocking on streams/files in middleware.
-      Nothing
 
 isHtml :: [(HeaderName, BS.ByteString)] -> Bool
 isHtml hdrs =

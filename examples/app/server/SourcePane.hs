@@ -5,7 +5,6 @@ module SourcePane
   , sourceHead
   , sourceHeadLite
   , sourcePane
-  , hvm2SourcePanes
   , sourcePanes
   )
 where
@@ -36,22 +35,14 @@ sourcePane staticRoot js =
     staticRoot
     [SourcePaneSpec "Source" "javascript" js]
 
--- | HVM2 demo: client JS, Bend kernel, and per-pixel JS fallback.
-hvm2SourcePanes :: T.Text -> T.Text -> T.Text -> T.Text -> Html ()
-hvm2SourcePanes staticRoot js bend mandelJs =
-  sourcePanes
-    staticRoot
-    [ SourcePaneSpec "Client" "javascript" js
-    , SourcePaneSpec "Bend" "python" bend
-    , SourcePaneSpec "JS fallback" "javascript" mandelJs
-    ]
-
 -- | Stack of collapsible highlighted source panes (one highlight/copy setup).
 sourcePanes :: T.Text -> [SourcePaneSpec] -> Html ()
 sourcePanes staticRoot specs = do
   div_ [class_ "source-stack"] $
     mapM_ (pane staticRoot) specs
-  script_ [type_ "module", src_ (staticRoot <> "/js/source-pane.js")] ("" :: Html ())
+  script_
+    [type_ "module", src_ (staticRoot <> "/js/source-pane.js")]
+    ("" :: Html ())
 
 pane :: T.Text -> SourcePaneSpec -> Html ()
 pane _ (SourcePaneSpec label lang body) = do
@@ -71,6 +62,5 @@ pane _ (SourcePaneSpec label lang body) = do
 
 shjLang :: T.Text -> T.Text
 shjLang "javascript" = "js"
-shjLang "python" = "py"
 shjLang "plaintext" = "plain"
 shjLang other = other

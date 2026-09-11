@@ -8,6 +8,7 @@
 
 module LifeTests (lifeTests) where
 
+import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import qualified Data.Text as T
 import JShark
@@ -15,7 +16,6 @@ import JShark
   , effectfulASTFromSoA
   , flatPrepareCore
   , renderJS
-  , renderJSCompact
   )
 import JShark.Api
 import JShark.Api.Generic (toObject)
@@ -52,16 +52,15 @@ import JShark.Example.Life.Types
   , zoomLevels
   )
 import qualified JShark.Math as Math
-import System.Directory (findExecutable)
 import Test.Tasty
 import Test.Tasty.HUnit
 
 lifeTests :: TestTree
 lifeTests =
-  withResource (findExecutable "bun") (const (pure ())) $ \getBun ->
+  bunGated $ \getBun ->
     testGroup
       "life conway"
-      [ testCase "bun is on PATH" $ do
+      [ testCase bunPathTestName $ do
           m <- getBun
           case m of
             Nothing -> assertFailure "bun not found on PATH"
@@ -129,9 +128,9 @@ lifeTests =
               let
                 life = stmts mainJS
               (soa, _, irNodes, _) <- flatPrepareCore life
-              js <- Ex.evaluate $ renderJSCompact (effectfulASTFromSoA soa)
-              irNodes @?= 60420
-              T.length js @?= 1005377
+              js <- Ex.evaluate $ renderJS (effectfulASTFromSoA soa)
+              irNodes @?= 69812
+              T.length js @?= 872421
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $
               renderJS
                 ( effectfulAST
