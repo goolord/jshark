@@ -30,6 +30,7 @@ need, qualified:
 
 ```haskell
 import JShark.Prelude
+import qualified Data.ByteString.Char8 as BS
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 ```
@@ -39,10 +40,10 @@ Platform modules share many names with base (`JShark.String.length`,
 provides `Functor`/`Monad`-style instances for the EDSL types and is
 also designed for qualified import.
 
-Compiling is pure string production — no JS runtime involved:
+Compiling produces bytes — no JS runtime involved:
 
 ```
-ghci> T.putStrLn =<< compileEffectSyntax readableConfig (Console.log ("hi" :: Expr f 'String))
+ghci> BS.putStrLn =<< compileEffectSyntax readableConfig (Console.log ("hi" :: Expr f 'String))
 console.log("hi");
 ```
 

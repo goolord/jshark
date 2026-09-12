@@ -5,6 +5,7 @@ module BindgenTests (bindgenTests) where
 
 import BindgenToy
 import Control.Monad (unless)
+import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -162,10 +163,10 @@ bindgenTests =
           Right _ -> fail "expected extra-arg parse error"
     , testCase "generated wrappers compileEffect to JS" $ do
         js <- compileEffect readableConfig toyDemo
-        assertBool "greet" ("toy.greet" `T.isInfixOf` js)
-        assertBool "add" ("toy.add" `T.isInfixOf` js)
-        assertBool "new Widget" ("new toy.Widget" `T.isInfixOf` js)
-        assertBool "resize" ("resize" `T.isInfixOf` js)
+        assertBool "greet" ("toy.greet" `BS.isInfixOf` js)
+        assertBool "add" ("toy.add" `BS.isInfixOf` js)
+        assertBool "new Widget" ("new toy.Widget" `BS.isInfixOf` js)
+        assertBool "resize" ("resize" `BS.isInfixOf` js)
     ]
 
 toyDemo :: Effect f 'Unit

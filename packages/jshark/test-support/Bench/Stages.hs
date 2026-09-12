@@ -22,7 +22,8 @@ module Bench.Stages
 where
 
 import Control.DeepSeq (NFData)
-import qualified Data.Text as T
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import JShark
   ( ClosedEffect
   , ClosedExpr
@@ -47,12 +48,12 @@ import JShark.Internal
 import Test.Tasty.Bench
 
 -- | Optimize, lower, and compact-render (the path 'compileEffect' uses).
-emit :: ClosedEffect u -> T.Text
+emit :: ClosedEffect u -> ByteString
 emit e = renderJS (effectfulAST e)
 {-# NOINLINE emit #-}
 
 emitLen :: ClosedEffect u -> Int
-emitLen e = T.length (emit e)
+emitLen e = BS.length (emit e)
 {-# NOINLINE emitLen #-}
 
 -- | IR optimizer node count (the path 'effectfulAST' uses).
@@ -104,7 +105,7 @@ codepathStages name prog =
     , bench "optNodes+emit/bytes" $
         nfClosed (\e -> (optEffectNodes e, emitLen e)) prog
     , bench "effectfulAST" $
-        nfClosed (\e -> T.length (renderJS (effectfulAST e))) prog
+        nfClosed (\e -> BS.length (renderJS (effectfulAST e))) prog
     , bench "emit" $ nfClosed emit prog
     , bench "emit/bytes" $ nfClosed emitLen prog
     , bench "prettyJS/e2e" $ nfAppClosed (\e -> prettyJS (emit e)) prog
@@ -118,10 +119,10 @@ codepathStagesPure name prog =
     name
     [ bench "optimize" $ nfPure optExprNodes prog
     , bench "optNodes+emit/bytes" $
-        nfPure (\e -> (optExprNodes e, T.length (renderJS (pureAST e)))) prog
-    , bench "pureAST" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
+        nfPure (\e -> (optExprNodes e, BS.length (renderJS (pureAST e)))) prog
+    , bench "pureAST" $ nfPure (\e -> BS.length (renderJS (pureAST e))) prog
     , bench "emit" $ nfPure (\e -> renderJS (pureAST e)) prog
-    , bench "emit/bytes" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
+    , bench "emit/bytes" $ nfPure (\e -> BS.length (renderJS (pureAST e))) prog
     , bench "prettyJS/e2e" $
         nfAppPure (\e -> prettyJS (renderJS (pureAST e))) prog
     , bench "compilePure/readable/e2e" $ nfAppPure (compilePure readableConfig) prog
@@ -135,7 +136,7 @@ stageBenches name prog =
     , bench "optNodes+emit/bytes" $
         nfClosed (\e -> (optEffectNodes e, emitLen e)) prog
     , bench "effectfulAST" $
-        nfClosed (\e -> T.length (renderJS (effectfulAST e))) prog
+        nfClosed (\e -> BS.length (renderJS (effectfulAST e))) prog
     , bench "renderJS" $ nfClosed emit prog
     , bench "emit/bytes" $ nfClosed emitLen prog
     , bench "effectfulProgram" $
@@ -157,10 +158,10 @@ stageBenchesPure name prog =
     name
     [ bench "optimize" $ nfPure optExprNodes prog
     , bench "optNodes+emit/bytes" $
-        nfPure (\e -> (optExprNodes e, T.length (renderJS (pureAST e)))) prog
-    , bench "pureAST" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
+        nfPure (\e -> (optExprNodes e, BS.length (renderJS (pureAST e)))) prog
+    , bench "pureAST" $ nfPure (\e -> BS.length (renderJS (pureAST e))) prog
     , bench "renderJS" $ nfPure (\e -> renderJS (pureAST e)) prog
-    , bench "emit/bytes" $ nfPure (\e -> T.length (renderJS (pureAST e))) prog
+    , bench "emit/bytes" $ nfPure (\e -> BS.length (renderJS (pureAST e))) prog
     , bench "pureProgram" $ nfPure (\e -> renderJS (pureProgram e)) prog
     , bench "prettyJS/e2e" $
         nfAppPure (\e -> prettyJS (renderJS (pureAST e))) prog

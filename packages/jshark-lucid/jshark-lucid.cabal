@@ -95,6 +95,7 @@ benchmark jshark-lucid-bench
   hs-source-dirs: bench
   build-depends:
     , base
+    , bytestring >= 0.10.8 && < 0.13
     , jshark
     , jshark-lucid
     , lucid

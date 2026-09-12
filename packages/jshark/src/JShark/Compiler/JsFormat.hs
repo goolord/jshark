@@ -14,8 +14,9 @@ module JShark.Compiler.JsFormat
   )
 where
 
-import Data.Text (Text)
-import qualified Data.Text as T
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
 import JShark.Compiler.Process (executeProcessStdin)
 import System.Directory (findExecutable)
 
@@ -23,22 +24,21 @@ biomePackage :: String
 biomePackage = "@biomejs/biome@2.5.11"
 
 -- | Pretty-print compact JS with Biome when available; otherwise return the
--- input unchanged (no stderr). Compile paths should use 'finishReadableIO' in
--- 'JShark.Compiler' so fallback notices reach stderr.
-prettyJS :: Text -> IO Text
+-- input unchanged (no stderr).
+prettyJS :: ByteString -> IO ByteString
 prettyJS src =
   tryPrettyJSIO src >>= \case
     Right out -> pure out
-    Left _ -> pure (T.strip src)
+    Left _ -> pure (BC.strip src)
 
 -- | Biome format attempt. Returns stripped output or an error message.
-tryPrettyJSIO :: Text -> IO (Either String Text)
+tryPrettyJSIO :: ByteString -> IO (Either String ByteString)
 tryPrettyJSIO src = do
   resolved <- resolveBiome
   case resolved of
     Left err -> pure (Left err)
     Right (exe, wrap) ->
-      fmap (fmap T.strip) (runBiome exe wrap (T.strip src))
+      fmap (fmap BC.strip) (runBiome exe wrap (BC.strip src))
 
 biomeAvailable :: IO Bool
 biomeAvailable = do
@@ -46,7 +46,7 @@ biomeAvailable = do
   case resolved of
     Left _ -> pure False
     Right (exe, wrap) ->
-      isRight <$> executeProcessStdin exe (wrap ["--version"]) ""
+      isRight <$> executeProcessStdin exe (wrap ["--version"]) BS.empty
  where
   isRight (Right _) = True
   isRight _ = False
@@ -69,7 +69,7 @@ resolveBiome = do
         )
 
 runBiome ::
-  FilePath -> ([String] -> [String]) -> Text -> IO (Either String Text)
+  FilePath -> ([String] -> [String]) -> ByteString -> IO (Either String ByteString)
 runBiome exe wrap source =
   executeProcessStdin
     exe

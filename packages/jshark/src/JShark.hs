@@ -119,6 +119,7 @@ module JShark
   , uint8Elems
   , pureProgram
   , effectfulProgram
+  , JS
   , renderJS
   , escapeJsString
   , structuralEq

@@ -19,6 +19,7 @@
 module ExampleTests (exampleTests, watchMappingTests) where
 
 import BunGate (bunPathTestName)
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.Text as T
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
@@ -57,7 +58,7 @@ parseExampleCase name eff = testCase name $ do
 
 renderExample :: ClosedEffect 'Unit -> IO String
 renderExample eff =
-  T.unpack <$> compileEffect readableConfig eff
+  BC.unpack <$> compileEffect readableConfig eff
 
 -- | The example-specific watch-path mapping moved out of
 -- @jshark-hotreload@; it lives here now.

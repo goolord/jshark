@@ -5,6 +5,7 @@
 
 module Main (main) where
 
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import JShark
 import JShark.Api
@@ -59,7 +60,7 @@ main = do
       timeIt "  unoptimized" $ do
         let
           !js = renderJS (effectfulAST (benchmarkTemplate n))
-        printf "    js length: %d\n" (T.length js)
+        printf "    js length: %d\n" (BS.length js)
 
   test 1
   test 5

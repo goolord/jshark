@@ -139,6 +139,7 @@ executable jshark-examples
   hs-source-dirs: app/server
   build-depends:
     , base
+    , bytestring
     , directory
     , filepath
     , jshark
@@ -161,6 +162,7 @@ executable jshark-compile
   hs-source-dirs: app/compile
   build-depends:
     , base
+    , bytestring
     , directory
     , filepath
     , jshark
@@ -209,6 +211,7 @@ executable jshark-life-phases
   hs-source-dirs: bench
   build-depends:
     , base
+    , bytestring
     , jshark
     , jshark-examples
     , text
@@ -245,6 +248,7 @@ executable jshark-probe
   hs-source-dirs: bench
   build-depends:
     , base
+    , bytestring
     , jshark
     , jshark-examples
     , text
@@ -294,6 +298,7 @@ test-suite jshark-examples-test
   hs-source-dirs: test
   build-depends:
     , base
+    , bytestring
     , containers
     , directory
     , filepath

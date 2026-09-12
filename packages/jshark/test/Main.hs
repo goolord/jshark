@@ -10,9 +10,11 @@
 module Main (main) where
 
 import Data.Array.Byte (ByteArray)
+import qualified Data.ByteString as BS
 import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import FlatTest
   ( flatDirectPackDeterministic
   , flatDirectPackForRangeOk
@@ -59,6 +61,10 @@ import Test.Tasty.HUnit
 
 main :: IO ()
 main = defaultMain tests
+
+-- | Decode emitted JS for text-based assertions.
+renderJsText :: JS -> Text
+renderJsText = TE.decodeUtf8 . renderJS
 
 tests :: TestTree
 tests =
@@ -230,7 +236,7 @@ evaluatorTests =
           ValueBool b -> b @?= True
         T.isInfixOf
           "$deepEqual"
-          ( ( renderJS
+          ( ( renderJsText
                 (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
             )
           )
@@ -339,7 +345,7 @@ codegenTests =
         (ffi "(function(){return 1})" RecNil)
         "(function(){return 1})()"
     , testCase "effectfulProgram wraps decls and the result in a JS IIFE" $
-        renderJS (effectfulProgram (with1 fooE (\x -> x + x)))
+        renderJsText (effectfulProgram (with1 fooE (\x -> x + x)))
           @?= "(() => {\n  const n0 = foo();\n  return n0 + n0;\n})()"
     , effectCodeCase
         "effectful console.log FFI call"
@@ -401,7 +407,7 @@ codegenTests =
     , testCase "foreverFrame reschedules requestAnimationFrame" $
         T.count
           "requestAnimationFrame"
-          (renderJS (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
+          (renderJsText (effectfulAST (fromSyntax (Timers.foreverFrame (\_ -> done)))))
           @?= 2
     , effectContains
         "foreverTick reschedules setTimeout"
@@ -496,7 +502,7 @@ controlFlowTests =
           w = number 3
           h = number 3
           js =
-            renderJS
+            renderJsText
               ( effectfulASTWith
                   minifiedStyle
                   ( fromSyntax $ do
@@ -610,7 +616,7 @@ controlFlowTests =
     , testCase "stringCaseE of Unit arms is a switch statement" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( effectfulAST
                   ( fromSyntax $ do
                       k <- toSyntax (ffi "key" RecNil)
@@ -634,7 +640,7 @@ controlFlowTests =
     , testCase "stringCaseE of values keeps the result bind" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( effectfulAST
                   ( fromSyntax $ do
                       k <- toSyntax (ffi "key" RecNil)
@@ -656,7 +662,7 @@ controlFlowTests =
     , testCase "stringCaseE switches on the scrutinee ref" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( effectfulAST
                   ( fromSyntax $ do
                       x <- toSyntax (ffi "val" RecNil)
@@ -719,7 +725,7 @@ stdlibTests =
         evaluateNumber (Array.length firstItems) @?= 2
     , testCase "Array.groupBy emits the $groupBy shim" $ do
         let
-          js = renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))
+          js = renderJsText (pureAST (Array.groupBy numArray (\_ -> string "k")))
         T.isInfixOf "const $groupBy =" js @?= True
         T.isInfixOf "new Map()" js @?= True
         T.isInfixOf "items:[]" js @?= True
@@ -729,7 +735,7 @@ stdlibTests =
     , testCase "Array.groupBy hoists once when used twice" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( pureAST
                   ( let_ (Array.groupBy numArray (\_ -> string "a")) $ \g1 ->
                       let_ (Array.groupBy numArray (\_ -> string "b")) $ \g2 ->
@@ -741,9 +747,9 @@ stdlibTests =
     , testCase "binary hoists match in pureAST and effectfulAST" $ do
         let
           pureJs =
-            renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))
+            renderJsText (pureAST (Array.groupBy numArray (\_ -> string "k")))
           effJs =
-            renderJS
+            renderJsText
               ( effectfulAST
                   (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index)
               )
@@ -754,7 +760,7 @@ stdlibTests =
         T.isInfixOf "(($checkedIndex)(n0)(n1)" effJs @?= False
     , testCase "Array.zipWith hoists $zipWith helper" $ do
         let
-          js = renderJS (pureAST (Array.zipWith (+) numArray numArray))
+          js = renderJsText (pureAST (Array.zipWith (+) numArray numArray))
         T.isInfixOf "const $zipWith =" js @?= True
         T.isInfixOf "=>" js @?= True
         T.isInfixOf "($zipWith)(n0)(n1)" js @?= False
@@ -769,7 +775,7 @@ stdlibTests =
     , testCase "Array.reduce hoists once when used twice" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( pureAST
                   ( let_ (Array.reduce numArray (number 0) (\acc x -> acc + x)) $ \a ->
                       let_ (Array.reduce numArray (number 1) (\acc x -> acc * x)) $ \b ->
@@ -871,7 +877,7 @@ stdlibTests =
         evaluateNumber (C.foldl (-) (number 0) numArray) @?= -3
         T.isInfixOf
           ".reduceRight"
-          (renderJS (pureAST (C.foldr (+) (number 0) numArray)))
+          (renderJsText (pureAST (C.foldr (+) (number 0) numArray)))
           @?= True
     , testCase "LetRec value rhs evaluates" $
         evaluateNumber (letRec (\_ -> number 1 + number 2) (\n -> n)) @?= 3
@@ -895,7 +901,7 @@ stdlibTests =
         True
     , testCase "Array.singleton is a one-element array" $ do
         evaluateNumber (Array.length (Array.singleton (number 7))) @?= 1
-        T.isInfixOf "[]" (renderJS (pureAST (Array.singleton (number 7))))
+        T.isInfixOf "[]" (renderJsText (pureAST (Array.singleton (number 7))))
           @?= False
     , pureCodeCase
         "unit array literal keeps its slots"
@@ -915,7 +921,7 @@ stdlibTests =
     , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
           js =
-            ( renderJS
+            ( renderJsText
                 ( pureProgram
                     ( toLambda
                         (\(a :: Expr f u) (b :: Expr f u) -> (structuralEq a b) .|| (structuralEq b a))
@@ -1069,7 +1075,7 @@ stdlibTests =
           let
             people = [Person ("p" <> T.pack (show i)) (fromIntegral i) | i <- [1 .. 15 :: Int]]
             js =
-              renderJS
+              renderJsText
                 ( effectfulAST
                     ( fromSyntax $ do
                         c <- Dom.lookupId (string "c")
@@ -1294,7 +1300,7 @@ stdlibTests =
         "const n0 = new Uint8Array(2);\nfill(n0);\nread(n0);"
     , testCase "locationHash is window.location.hash, not a bracket key" $ do
         let
-          js = renderJS (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
+          js = renderJsText (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
         T.isInfixOf "window.location.hash" js @?= True
         T.isInfixOf "[\"location.hash\"]" js @?= False
     , effectCodeCase
@@ -1328,11 +1334,11 @@ stdlibTests =
     , testCase "NaN .== NaN is false" $ do
         case evaluate (number (0 / 0) .== number (0 / 0)) of
           ValueBool b -> b @?= False
-        renderJS (pureAST (number (0 / 0) .== number (0 / 0))) @?= "false"
+        renderJsText (pureAST (number (0 / 0) .== number (0 / 0))) @?= "false"
     , testCase ".== on number exprs uses === without eq helpers" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( pureAST
                   (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b)))
               )
@@ -1341,7 +1347,7 @@ stdlibTests =
     , testCase "bound Number .== uses === (not $valueEq)" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( pureAST
                   (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1))
               )
@@ -1355,13 +1361,13 @@ stdlibTests =
     , testCase "frozen Number literals fold to === in .==" $ do
         let
           js =
-            renderJS
+            renderJsText
               (pureAST (number 1 .== number 1))
         T.isInfixOf "true" js @?= True
         T.isInfixOf "$valueEq" js @?= False
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
         let
-          js = renderJS (effectfulAST (with2 fooE barE structuralEq))
+          js = renderJsText (effectfulAST (with2 fooE barE structuralEq))
         T.isInfixOf "$valueEq" js @?= True
         T.isInfixOf " == " js @?= False
     , effectContains
@@ -1526,7 +1532,7 @@ goodPartsTests =
         "[1, 2].sort((a, b) => a - b)"
     , testCase "toSorted emits a binary compare callback" $ do
         let
-          js = renderJS (pureAST (Array.toSorted numArray (\a b -> a - b)))
+          js = renderJsText (pureAST (Array.toSorted numArray (\a b -> a - b)))
         T.isInfixOf "const $toSorted =" js @?= True
         T.isInfixOf "=>" js @?= True
         T.isInfixOf ".toSorted" js @?= True
@@ -1670,7 +1676,7 @@ genericTests =
     , testCase "whenTag on a nullary ctor compares .tag" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( effectfulAST
                   (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))
               )
@@ -1699,7 +1705,7 @@ genericTests =
     , testCase "caseSum nullary checks every named tag" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( effectfulAST
                   ( G.caseSum @Color (ffi "color" RecNil)
                       $ G.on @"Red" (\_ -> expr (string "r"))
@@ -1718,7 +1724,7 @@ genericTests =
     , testCase "caseSum Case_ is a suffix wildcard" $ do
         let
           js =
-            renderJS
+            renderJsText
               ( effectfulAST
                   ( G.caseSum @Color (ffi "color" RecNil)
                       $ G.on @"Red" (\_ -> expr (string "r"))
@@ -1800,7 +1806,7 @@ optimizeTests =
               (toSyntax noOp)
               [1 .. 40 :: Int]
         out <- compileEffect readableConfig (fromSyntax chain)
-        assertBool "emitted js" (T.length out > 20)
+        assertBool "emitted js" (BS.length out > 20)
     , testCase "optIrEffect marks ForRange impure" $
         optIrEffectForRangeImpure @?= True
     , pureCodeCase
@@ -2006,7 +2012,7 @@ optimizeTests =
                   x = Array.index cell 0
                 toSyntax_ $ ffi "sink" (arg x <: RecNil)
                 done
-          js = renderJS (effectfulAST eff)
+          js = renderJsText (effectfulAST eff)
         -- Row index must depend on the loop counter (not constant-folded to
         -- the first coordinate); column index 0 is expected to stay literal.
         T.isInfixOf "sink(" js @?= True
@@ -2022,9 +2028,9 @@ flatSoATests =
     [ testCase "optimize attaches pure flags" $
         flatSoaPureNodeCount (expr (number 1 + number 2)) > (0 :: Int) @?= True
     , testCase "constant fold chains" $
-        renderJS
+        renderJsText
           (effectfulASTWith minifiedStyle (expr ((number 1 + number 2) + number 3)))
-          @?= renderJS (effectfulASTWith minifiedStyle (expr (number 6)))
+          @?= renderJsText (effectfulASTWith minifiedStyle (expr (number 6)))
     , testCase "direct pack is deterministic (kernel)" $
         flatDirectPackDeterministic kernelAndLambdaUse @?= True
     , testCase "direct pack is deterministic (forRange u8set)" $
@@ -2105,10 +2111,10 @@ compilerTests =
     [ testCase "compilePure passthrough emits an IIFE" $ do
         out <- compilePure passthroughConfig (number 1 + number 2)
         out @?= renderJS (pureProgram (number 1 + number 2))
-        assertBool "IIFE wrapper present" ("(() => {" `T.isInfixOf` out)
+        assertBool "IIFE wrapper present" ("(() => {" `BS.isInfixOf` out)
         assertBool
           "result is returned so minifiers cannot DCE it"
-          ("return" `T.isInfixOf` out)
+          ("return" `BS.isInfixOf` out)
     , testCase "compilePure ignores configProgress stderr" $ do
         let
           prog = number 1 + number 2
@@ -2141,7 +2147,7 @@ compilerTests =
         let
           prog :: Expr f 'Number
           prog = Let (Just "hintProbe") (sin (number 1)) (\x -> Var x + Var x)
-        renderJS (pureAST prog)
+        renderJsText (pureAST prog)
           @?= "const hintProbe = Math.sin(1);\nhintProbe + hintProbe"
     , testCase "same-scope binder hints uniquify" $ do
         let
@@ -2150,9 +2156,9 @@ compilerTests =
             Let (Just "x") (number 1) $ \a ->
               Let (Just "x") (number 2) $ \b ->
                 Var a + Var b
-        renderJS (pureAST prog) @?= "const x = 1;\nconst n1 = 2;\nx + n1"
+        renderJsText (pureAST prog) @?= "const x = 1;\nconst n1 = 2;\nx + n1"
     , testCase "readableConfig names pure let binders from HasCallStack" $ do
-        renderJS (pureAST readableLetSample)
+        renderJsText (pureAST readableLetSample)
           @?= "const readableLetSample = Math.sin(1);\nreadableLetSample + readableLetSample"
     , testCase "readableConfig names effect binders from HasCallStack" $ do
         out <- compileEffect readableConfig (fromSyntax readableBindSample)
@@ -2190,12 +2196,12 @@ compilerTests =
             readableConfig
             (fromSyntax (Map.withMap $ \m -> Map.clear m))
         out @?= "const n0 = new Map();\nn0.clear();"
-        assertBool "no IIFE" (not ("(() => {" `T.isInfixOf` out))
+        assertBool "no IIFE" (not ("(() => {" `BS.isInfixOf` out))
     , testCase "readableConfig $valueEq shim is multiline" $ do
         out <- compileEffect readableConfig (with2 fooE barE structuralEq)
-        assertBool "shim binding" ("const $valueEq =" `T.isInfixOf` out)
-        assertBool "pretty body" ("{\n" `T.isInfixOf` out)
-        assertBool "no IIFE" (not ("(() => {" `T.isInfixOf` out))
+        assertBool "shim binding" ("const $valueEq =" `BS.isInfixOf` out)
+        assertBool "pretty body" ("{\n" `BS.isInfixOf` out)
+        assertBool "no IIFE" (not ("(() => {" `BS.isInfixOf` out))
     , testCase "--readable sets OutputStyle Readable" $
         configStyle (applyCompilerArgs ["--readable"] defaultCompilerConfig)
           @?= Readable

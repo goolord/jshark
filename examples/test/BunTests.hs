@@ -12,6 +12,7 @@ module BunTests (bunEvalTests) where
 import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import Data.Array.Byte (ByteArray)
+import qualified Data.ByteString.Char8 as BC
 import Data.List (intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -278,9 +279,9 @@ bunEvalTests =
                 (Show (uint8Array (packUint8 [1, 2, 3])))
             , testCase "compileEffect ifE+LambdaE evaluates" $ do
                 out <- compileEffect defaultCompilerConfig prettyIfLambda
-                got <- T.unpack <$> runJS (T.unpack out)
+                got <- T.unpack <$> runJS (BC.unpack out)
                 assertEqual
-                  ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> T.unpack out)
+                  ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> BC.unpack out)
                   "6"
                   got
             ]
@@ -372,7 +373,7 @@ bunEvalTests =
             , testCase "a non-terminating program hits the timeout" $ do
                 let
                   spin =
-                    T.unpack (renderJS (effectfulProgram (while_ (expr (bool True)) noOp)))
+                    BC.unpack (renderJS (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)
@@ -456,7 +457,7 @@ bunCase name e = testCase name (assertBunAgrees e)
 -- @BigInt@ distinct.
 taggedCase :: String -> (forall f. Expr f u) -> Text -> TestTree
 taggedCase name e expected = testCase name $ do
-  got <- runJSTagged (T.unpack (renderJS (pureProgram e)))
+  got <- runJSTagged (BC.unpack (renderJS (pureProgram e)))
   assertEqual name expected got
 
 effectCase :: String -> (forall f. Effect f u) -> String -> TestTree
@@ -665,7 +666,7 @@ assertBunAgrees :: (forall f. Expr f u) -> IO ()
 assertBunAgrees e = do
   let
     expected = encodeJSValue (evaluate e)
-    program = T.unpack (renderJS (pureProgram e))
+    program = BC.unpack (renderJS (pureProgram e))
   got <- T.unpack <$> runJS program
   assertEqual
     ("evaluate JSON: " <> expected <> "\nbun JSON: " <> got <> "\njs:\n" <> program)

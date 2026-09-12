@@ -101,7 +101,7 @@ JShark programs require a few standard extensions:
 ```haskell
 import JShark.Prelude
 import qualified JShark.Console as Console
-import qualified Data.Text.IO as T
+import qualified Data.ByteString.Char8 as BS
 ```
 
 ### 1. Compiling Effects
@@ -112,7 +112,7 @@ A closed effectful program has type `forall f. Effect f 'Unit`. Sequence stateme
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified Data.Text.IO as T
+import qualified Data.ByteString.Char8 as BS
 import JShark.Prelude
 import qualified JShark.Console as Console
 
@@ -122,7 +122,7 @@ greet name = fromSyntax $ do
   done
 
 main :: IO ()
-main = compileEffect readableConfig (greet (string "world")) >>= T.putStrLn
+main = compileEffect readableConfig (greet (string "world")) >>= BS.putStrLn
 ```
 
 Emitted JavaScript:
@@ -169,7 +169,7 @@ Blocks end with `done` (`toSyntax noOp`), giving the block type `EffectSyntax f 
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified Data.Text.IO as T
+import qualified Data.ByteString.Char8 as BS
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Compiler
@@ -180,7 +180,7 @@ logMax = fromSyntax $ do
   done
 
 main :: IO ()
-main = compileEffect readableConfig logMax >>= T.putStrLn
+main = compileEffect readableConfig logMax >>= BS.putStrLn
 ```
 
 Emitted JavaScript:

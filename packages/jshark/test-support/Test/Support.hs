@@ -48,8 +48,10 @@ import CaptureStderr (captureStderr)
 import qualified Control.Exception as E
 import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
+import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import JShark (evaluate, renderJS)
@@ -176,17 +178,17 @@ mulDiv = number 6 * number 7 / number 2
 -- | Golden case for a closed effectful program.
 effectCodeCase :: String -> ClosedEffect u -> Text -> TestTree
 effectCodeCase name eff golden =
-  testCase name (renderJS (effectfulAST eff) @?= golden)
+  testCase name (renderJS (effectfulAST eff) @?= TE.encodeUtf8 golden)
 
 -- | Golden case for a closed effectful program under an explicit emit style.
 effectCodeCaseWith :: EmitStyle -> String -> ClosedEffect u -> Text -> TestTree
 effectCodeCaseWith style name eff golden =
-  testCase name (renderJS (effectfulASTWith style eff) @?= golden)
+  testCase name (renderJS (effectfulASTWith style eff) @?= TE.encodeUtf8 golden)
 
 -- | Golden case for a closed pure expression.
 pureCodeCase :: String -> ClosedExpr u -> Text -> TestTree
 pureCodeCase name e golden =
-  testCase name (renderJS (pureAST e) @?= golden)
+  testCase name (renderJS (pureAST e) @?= TE.encodeUtf8 golden)
 
 -- | Smoke case: rendered effect must contain every needle.
 effectContains :: String -> ClosedEffect u -> [Text] -> TestTree
@@ -194,7 +196,9 @@ effectContains name eff needles =
   testCase name $ do
     let
       js = renderJS (effectfulAST eff)
-    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+    mapM_
+      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
+      needles
 
 -- | 'effectContains' under an explicit emit style.
 effectContainsWith ::
@@ -203,7 +207,9 @@ effectContainsWith style name eff needles =
   testCase name $ do
     let
       js = renderJS (effectfulASTWith style eff)
-    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+    mapM_
+      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
+      needles
 
 -- | Smoke case: rendered pure expression must contain every needle.
 pureContains :: String -> ClosedExpr u -> [Text] -> TestTree
@@ -211,7 +217,9 @@ pureContains name e needles =
   testCase name $ do
     let
       js = renderJS (pureAST e)
-    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+    mapM_
+      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
+      needles
 
 -- | Evaluate a closed pure Bool expression.
 evalBoolCase :: String -> ClosedExpr 'Bool -> Bool -> TestTree

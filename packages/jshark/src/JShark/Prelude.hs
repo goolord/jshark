@@ -7,6 +7,7 @@
 --
 -- > {-# LANGUAGE DataKinds, OverloadedStrings #-}
 -- > import JShark.Prelude
+-- > import qualified Data.ByteString.Char8 as BS
 -- > import qualified JShark.Console as Console
 -- >
 -- > greet :: Expr f 'String -> Effect f 'Unit
@@ -15,7 +16,7 @@
 -- >   done
 -- >
 -- > main :: IO ()
--- > main = compileEffectSyntax readableConfig (Console.log ("hello, " <> string "world")) >>= T.putStrLn
+-- > main = compileEffectSyntax readableConfig (Console.log ("hello, " <> string "world")) >>= BS.putStrLn
 --
 -- Platform bindings ('JShark.Dom', 'JShark.Array', 'JShark.Canvas', …)
 -- stay qualified imports: they share many names with base and with each

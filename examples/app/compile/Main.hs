@@ -6,6 +6,7 @@
 module Main (main) where
 
 import Control.Monad (forM_, unless)
+import qualified Data.ByteString as BS
 import Data.List (partition)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -63,13 +64,13 @@ main = do
       jsOut = cacheDir </> (lab <> ".js")
       htmlOut = cacheDir </> (lab <> ".html")
       html = TL.toStrict (renderText (pageLabel lab script))
-    T.writeFile jsOut js
+    BS.writeFile jsOut js
     T.writeFile htmlOut html
     putStrLn jsOut
     putStrLn htmlOut
     hFlush stdout
 
-compileLabel :: CompilerConfig -> String -> IO Text
+compileLabel :: CompilerConfig -> String -> IO BS.ByteString
 compileLabel cfg lab = compileEffect cfg (exampleMainJS (T.pack lab))
 
 -- | Hot-reload shells use empty source-pane slots; the live app script URL

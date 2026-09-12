@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* **Breaking:** compiler output is now strict `ByteString`, built with
+  `Data.ByteString.Builder` instead of `Text`/`text-builder`. `renderJS`
+  returns `ByteString`, and `compileEffect`, `compileEffectPure`,
+  `compileEffectSyntax`, `compileEffectIO`, `compilePure`,
+  `compileJobsLabeled`, and `prettyJS` produce/consume `ByteString`.
+  Decode with `Data.Text.Encoding.decodeUtf8` when text is wanted.
+
 * **Breaking:** `Option` is now tagged (`{some: bool, value?}`) instead of
   native `null`/value, so nested options are faithful: `some none` and
   `none` are distinguishable. `unsafeNullable` converts a native

@@ -4,7 +4,7 @@
 
 module Main (main) where
 
-import qualified Data.Text as T
+import qualified Data.ByteString as BS
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
 import JShark (renderJS)
@@ -21,9 +21,9 @@ main :: IO ()
 main = do
   raw <- evaluate (optimizedEffectSize life)
   putStrLn $ "rawNodes," ++ show raw
-  -- 'effectfulAST' returns a lazy 'TextBuilder', so the only honest
-  -- measurement is end-to-end: force the rendered bytes.
+  -- 'effectfulAST' returns a 'Data.ByteString.Builder.Builder', so the only
+  -- honest measurement is end-to-end: force the rendered bytes.
   t1 <- getMonotonicTime
-  bytes <- evaluate (T.length (renderJS (effectfulAST life)))
+  bytes <- evaluate (BS.length (renderJS (effectfulAST life)))
   t2 <- getMonotonicTime
   putStrLn $ show bytes ++ "," ++ show (t2 - t1)

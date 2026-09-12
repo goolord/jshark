@@ -141,7 +141,7 @@ each bench dir):
 | `optNodes+emit/bytes` | node count + full emit length |
 | `effectfulAST` | `renderJS . effectfulAST` byte length |
 | `renderJS` / `emit` | compact render |
-| `emit/bytes` | `T.length . renderJS . effectfulAST` (full compile path used by `compileEffect` before pretty) |
+| `emit/bytes` | `BS.length . renderJS . effectfulAST` (full compile path used by `compileEffect` before pretty) |
 | `effectfulProgram` | unoptimized `effectfulProgram` (slow; avoid for routine runs) |
 | `prettyJS/e2e` | emit + pretty printer |
 | `compileEffect/readable/e2e` | full `compileEffect readableConfig` in IO |

@@ -11,6 +11,7 @@ module LifeTests (lifeTests) where
 import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import JShark (renderJS)
 import JShark.Api
 import JShark.Api.Generic (toObject)
@@ -117,7 +118,7 @@ lifeTests =
           "life compiler regressions"
           [ testCase "hoists checkedIndex once" $ do
               let
-                js = renderJS (effectfulAST (fromSyntax mainJS))
+                js = TE.decodeUtf8 (renderJS (effectfulAST (fromSyntax mainJS)))
               T.count "jshark: index" js @?= 1
               T.count "const $checkedIndex =" js @?= 1
           , testCase "paintGridCells dirty-rect reset (GridApi port)" $ do
@@ -128,7 +129,7 @@ lifeTests =
               let
                 life = stmts mainJS
               (soa, _, irNodes, _) <- flatPrepareCore life
-              js <- Ex.evaluate $ renderJS (effectfulASTFromSoA soa)
+              js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTFromSoA soa))
               irNodes @?= 70651
               T.length js @?= 880045
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $

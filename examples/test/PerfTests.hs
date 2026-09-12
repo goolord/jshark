@@ -9,8 +9,8 @@
 module PerfTests (perfTests) where
 
 import Control.Exception (evaluate)
+import qualified Data.ByteString as BS
 import Data.Int (Int64)
-import qualified Data.Text as T
 import JShark (ClosedEffect, renderJS)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
@@ -101,6 +101,6 @@ probeCase n maxChars maxAlloc =
   testCase ("probe " ++ show n ++ " JS size and alloc") $ do
     (chars, bytes) <-
       allocated $
-        evaluate (T.length (renderJS (effectfulAST (probeN n))))
+        evaluate (BS.length (renderJS (effectfulAST (probeN n))))
     assertCeiling ("probe" ++ show n ++ "Chars") chars maxChars
     assertCeiling ("probe" ++ show n ++ "Alloc") bytes maxAlloc

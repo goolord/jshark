@@ -20,6 +20,8 @@
 module JShark.Compiler.Codegen.Core where
 
 import Control.Exception (evaluate)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.Char as Char
 import qualified Data.IntMap.Strict as IM
 import Data.Maybe (fromMaybe, mapMaybe)
@@ -27,6 +29,7 @@ import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import GHC.Clock (getMonotonicTime)
 import qualified GHC.IO as GHCIO
 import JShark.Api.Types
@@ -489,11 +492,11 @@ arrowParams ps = parens (hcat (punctuate ", " ps))
 -- is idiomatic.
 arrowExpr r =
   let
-    t = T.strip (renderJS r)
+    t = BC.strip (renderJS r)
    in
     if needsObjectParens t then parens r else r
 
-needsObjectParens t = "{" `T.isPrefixOf` t
+needsObjectParens t = "{" `BS.isPrefixOf` t
 
 allocNIdents :: CG -> Int -> ([Int], CG)
 allocNIdents s 0 = ([], s)
@@ -533,7 +536,7 @@ emitHoistedFnValue s view nid fnJs =
     Nothing -> (s, fnJs)
     Just tag ->
       let
-        src = renderJS fnJs
+        src = TE.decodeUtf8 (renderJS fnJs)
         (s', name) = registerHoistedTag s tag src
        in
         (s', jsText name)
