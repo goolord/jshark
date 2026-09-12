@@ -49,6 +49,7 @@ import Network.Wai
   , responseStream
   )
 import Network.Wai.Internal (Response (..))
+import System.Timeout (timeout)
 
 -- | Intercept @/__jshark/*@ and optionally inject the client script into
 -- HTML responses from the underlying app.
@@ -122,11 +123,22 @@ eventLoop lock alive write flush next = do
   if not still
     then pure ()
     else do
-      ev <- next
-      ok <- try (writeEvent lock write flush ev) :: IO (Either SomeException ())
-      case ok of
-        Left _ -> atomically (writeTVar alive False)
-        Right () -> eventLoop lock alive write flush next
+      -- Poll rather than block forever on the channel: when a client
+      -- disconnects, the keepalive write fails and flips @alive@; without
+      -- this wake-up the event loop would hold the handler open until the
+      -- next broadcast.
+      m <- timeout ssePollMicroseconds next
+      case m of
+        Nothing -> eventLoop lock alive write flush next
+        Just ev -> do
+          ok <- try (writeEvent lock write flush ev) :: IO (Either SomeException ())
+          case ok of
+            Left _ -> atomically (writeTVar alive False)
+            Right () -> eventLoop lock alive write flush next
+
+-- | How often the SSE event loop wakes to notice a disconnected client.
+ssePollMicroseconds :: Int
+ssePollMicroseconds = 1000 * 1000
 
 keepaliveLoop ::
   MVar () -> TVar Bool -> (B.Builder -> IO ()) -> IO () -> IO ()
@@ -188,7 +200,7 @@ injectHotReloadClient cfg resp =
     | isRewritableHtml headers && not (alreadyInjected body) =
         responseLBS
           status
-          (dropContentLength headers)
+          (dropStaleHeaders headers)
           (injectScriptIntoHtml (scriptTag cfg) body)
     | otherwise = resp
 
@@ -203,10 +215,16 @@ identityEncoded hdrs =
     Nothing -> True
     Just ce -> BS.null ce || ce == "identity"
 
--- | The body grew, so a declared length is now wrong.
-dropContentLength ::
+-- | The body grew (or was otherwise edited), so declared length and any
+-- content validators that describe the old bytes are now wrong.
+dropStaleHeaders ::
   [(HeaderName, BS.ByteString)] -> [(HeaderName, BS.ByteString)]
-dropContentLength = filter ((/= "Content-Length") . fst)
+dropStaleHeaders =
+  filter
+    ( \(name, _) ->
+        name
+          `notElem` ["Content-Length", "ETag", "Content-MD5", "Digest"]
+    )
 
 isHtml :: [(HeaderName, BS.ByteString)] -> Bool
 isHtml hdrs =

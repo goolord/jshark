@@ -30,13 +30,41 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 main :: IO ()
-main = defaultMain lucidDomTests
+main = defaultMain $ testGroup "JShark.Lucid" [validationTests, lucidDomTests]
+
+-- | Structural checks do not need a DOM.
+validationTests :: TestTree
+validationTests =
+  testGroup
+    "validation"
+    [ testCase "a valid template has no errors" $
+        templateErrors (todoRow (string "x") true_) @?= []
+    , testCase "an orphan modifier is reported" $ do
+        let errs = templateErrors orphanModifier
+        assertBool
+          ("orphan message: " <> show errs)
+          (any (T.isInfixOf "enclosing" . teMessage) errs)
+    , testCase "a void child is reported with a path" $
+        case templateErrors voidChild of
+          (e : _) -> do
+            tePath e @?= ["input"]
+            assertBool "void message" (T.isInfixOf "void" (teMessage e))
+          [] -> assertFailure "expected a void-child error"
+    , testCase "modifiers inside an element are valid" $
+        templateErrors (li_ (classWhen true_ "x")) @?= []
+    ]
+
+orphanModifier :: JsHtml f ()
+orphanModifier = dynAttr "class" (string "x")
+
+voidChild :: JsHtml f ()
+voidChild = voidWith_ "input" [] (text_ "nope")
 
 lucidDomTests :: TestTree
 lucidDomTests =
   after AllSucceed "happy-dom is available" $
     testGroup
-      "JShark.Lucid"
+      "happy-dom"
       [ domCase
           "static structure survives the round trip"
           (markupOf (li_ (div_ [class_ "view"] "hi")))

@@ -20,6 +20,7 @@ module JShark.HotReload.Core
   , registerHtml
   , lookupHtml
   , currentJsHashes
+  , currentRevision
   , setBuildError
   , lastBuildError
   , setBuildStart
@@ -102,14 +103,18 @@ data HotReloadHub = HotReloadHub
   , hubHtml :: IORef (Map.Map Text (Text, Text))
   , hubError :: TVar (Maybe Text)
   , hubCompiling :: TVar (Maybe Text)
+  , -- | Monotonic publication counter: increments on every broadcast, so
+    -- clients and tests can order snapshots against events.
+    hubRevision :: TVar Int64
   }
 
--- | A coherent point-in-time view for a new SSE client: cached JS hashes
--- plus the current build status.
+-- | A coherent point-in-time view for a new SSE client: cached JS hashes,
+-- the current build status, and the publication revision at that instant.
 data HotReloadSnapshot = HotReloadSnapshot
   { snapshotJsHashes :: [(Text, Text)]
   , snapshotBuildError :: Maybe Text
   , snapshotCompiling :: Maybe Text
+  , snapshotRevision :: Int64
   }
   deriving (Show, Eq)
 
@@ -125,6 +130,7 @@ newHotReloadHub cfg = do
   html <- newIORef Map.empty
   err <- newTVarIO Nothing
   compiling <- newTVarIO Nothing
+  rev <- newTVarIO 0
   pure
     HotReloadHub
       { hubConfig = cfg
@@ -133,11 +139,13 @@ newHotReloadHub cfg = do
       , hubHtml = html
       , hubError = err
       , hubCompiling = compiling
+      , hubRevision = rev
       }
 
 -- | Broadcast an event to all subscribers and update build status in one
 -- transaction, so a concurrent 'subscribeWithSnapshot' observes a coherent
--- publication (never a status change without its event or vice versa).
+-- publication (never a status change without its event or vice versa). The
+-- revision increments with each publication.
 broadcastEvent :: HotReloadHub -> HotReloadEvent -> IO ()
 broadcastEvent hub ev =
   atomically $ do
@@ -153,6 +161,7 @@ broadcastEvent hub ev =
         writeTVar (hubCompiling hub) Nothing
       PageReload {} -> writeTVar (hubCompiling hub) Nothing
       _ -> pure ()
+    modifyTVar' (hubRevision hub) (+ 1)
     writeTChan (hubChan hub) ev
 
 -- | Duplicate the broadcast channel for one SSE client.
@@ -174,6 +183,7 @@ subscribeWithSnapshot hub =
     js <- readTVar (hubJs hub)
     err <- readTVar (hubError hub)
     comp <- readTVar (hubCompiling hub)
+    rev <- readTVar (hubRevision hub)
     ch <- dupTChan (hubChan hub)
     let
       snap =
@@ -181,6 +191,7 @@ subscribeWithSnapshot hub =
           { snapshotJsHashes = [(k, h) | (k, (_, h)) <- Map.toList js]
           , snapshotBuildError = err
           , snapshotCompiling = comp
+          , snapshotRevision = rev
           }
     pure (snap, atomically (readTChan ch))
 
@@ -276,6 +287,10 @@ currentJsHashes :: HotReloadHub -> IO [(Text, Text)]
 currentJsHashes hub = do
   m <- readTVarIO (hubJs hub)
   pure [(k, h) | (k, (_, h)) <- Map.toList m]
+
+-- | The current monotonic publication revision.
+currentRevision :: HotReloadHub -> IO Int64
+currentRevision = readTVarIO . hubRevision
 
 -- | Record and broadcast a build error.
 setBuildError :: HotReloadHub -> Text -> IO ()

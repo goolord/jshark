@@ -39,8 +39,15 @@
 -- type free of a slot index is what buys the sharing, and the price is that
 -- two mistakes — a modifier with no enclosing element, and a child inside a
 -- void element — are caught when the JavaScript is generated rather than by
--- the type checker. Both are loud failures during the build that emits the
--- JS, never something that reaches a browser.
+-- the type checker. 'templateErrors' exposes those problems as structured
+-- 'TemplateError's (with the element path); 'renderInto' and
+-- 'renderFragment' check them and throw the first one, so a bad template
+-- fails the build that emits the JS rather than reaching a browser.
+--
+-- Within an element block, modifiers ('dynAttr', 'classWhen', 'prop', 'on')
+-- apply to that element wherever they appear; rendering hoists them ahead of
+-- the children so a property or attribute is set before any child is
+-- appended.
 --
 -- @
 -- row :: Expr f 'String -> Expr f 'Bool -> JsHtml f ()
@@ -60,6 +67,10 @@ module JShark.Lucid
   , renderInto
   , renderFragment
 
+    -- * Validation
+  , TemplateError (..)
+  , templateErrors
+
     -- * Text
   , text_
   , dynText
@@ -76,6 +87,7 @@ module JShark.Lucid
   )
 where
 
+import Control.Exception (Exception (..), throw)
 import Control.Monad (void)
 import Data.String (IsString (..))
 import Data.Text (Text)
@@ -194,18 +206,67 @@ prop n v = single (Modifier (SetProp n (SomeExpr v)))
 on :: Text -> EffectSyntax f (f 'Unit) -> JsHtml f ()
 on ev body = single (Modifier (Listen ev body))
 
+-- | A structural problem with a template. 'tePath' is the chain of element
+-- names from the root to the offending node (empty for a root modifier).
+data TemplateError = TemplateError
+  { tePath :: [Text]
+  , teMessage :: Text
+  }
+  deriving (Show, Eq)
+
+instance Exception TemplateError where
+  displayException = formatTemplateError
+
+-- | All structural problems in a fragment: a modifier with no enclosing
+-- element, or a child inside a void element. Rendering checks these first
+-- and throws the first one, so a bad template fails the build rather than
+-- reaching a browser.
+templateErrors :: JsHtml f () -> [TemplateError]
+templateErrors (JsHtml (ns, _)) = go False [] ns
+ where
+  go inElement path = concatMap (node inElement path)
+  node inElement path = \case
+    Modifier _
+      | inElement -> []
+      | otherwise ->
+          [TemplateError path "a modifier needs an enclosing element"]
+    TextNode _ -> []
+    Element name _ (JsHtml (cs, _)) -> go True (path <> [name]) cs
+    Void name _ (JsHtml (cs, _)) ->
+      [ TemplateError
+          (path <> [name])
+          ("<" <> name <> "> is a void element and cannot have children")
+      | any (not . isModifier) cs
+      ]
+
+-- | Throw the first structural problem, if any. Called by the renderers.
+assertTemplate :: JsHtml f () -> ()
+assertTemplate h = case templateErrors h of
+  [] -> ()
+  (e : _) -> throw e
+
+formatTemplateError :: TemplateError -> String
+formatTemplateError (TemplateError path msg) =
+  "JShark.Lucid: "
+    ++ ( if null path
+           then "(root)"
+           else T.unpack (T.intercalate " > " path)
+       )
+    ++ ": "
+    ++ T.unpack msg
+
 -- | Emit the JavaScript that builds the fragment and appends its roots
 -- to @parent@.
 --
 -- Fails while the JavaScript is being generated if the template puts a
 -- modifier where there is no element to apply it to, or a child inside a
--- void element. See the module header for why those are build-time errors
--- rather than type errors.
+-- void element. 'templateErrors' exposes the same checks as data.
 renderInto ::
   Effect f ('MutableObject Dom.DomElement)
   -> JsHtml f ()
   -> EffectSyntax f (f 'Unit)
-renderInto parent (JsHtml (ns, _)) = do
+renderInto parent h@(JsHtml (ns, _)) = do
+  assertTemplate h `seq` pure ()
   mapM_ (renderNode parent) ns
   done
 
@@ -213,7 +274,8 @@ renderInto parent (JsHtml (ns, _)) = do
 -- insertion (see @DocumentFragment@ in the DOM performance guides).
 renderFragment ::
   JsHtml f () -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-renderFragment (JsHtml (ns, _)) = do
+renderFragment h@(JsHtml (ns, _)) = do
+  assertTemplate h `seq` pure ()
   frag <- hold $ ffi "document.createDocumentFragment" RecNil
   mapM_ (renderNode frag) ns
   pure frag
@@ -224,17 +286,18 @@ renderNode parent = \case
   Element name attrs (JsHtml (ns, _)) -> build parent name attrs ns
   Void name attrs (JsHtml (ns, _))
     | all isModifier ns -> build parent name attrs ns
-    | otherwise ->
-        error $
-          "JShark.Lucid: <"
-            ++ T.unpack name
-            ++ "> is a void element and cannot have children"
+    | otherwise -> throw (TemplateError [name] voidChildMessage)
   TextNode t -> do
     -- No JShark.Dom wrapper for text nodes; appendChild takes any Node.
     node <- hold (ffi "document.createTextNode" (arg t <: RecNil))
     void (Dom.appendChild parent node)
-  Modifier _ ->
-    error "JShark.Lucid: a modifier needs an enclosing element"
+  Modifier _ -> throw (TemplateError [] orphanMessage)
+
+voidChildMessage :: Text
+voidChildMessage = "a void element cannot have children"
+
+orphanMessage :: Text
+orphanMessage = "a modifier needs an enclosing element"
 
 build ::
   Effect f ('MutableObject Dom.DomElement)

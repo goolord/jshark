@@ -25,6 +25,7 @@ import JShark.HotReload.Core
   , HotReloadEvent (..)
   , HotReloadSnapshot (..)
   , broadcastEvent
+  , currentRevision
   , defaultHotReloadConfig
   , encodeEvent
   , newHotReloadHub
@@ -81,6 +82,15 @@ hotReloadTests =
     , testCase
         "snapshot and subscription are coherent"
         sseSnapshotCoherent
+    , testCase
+        "publication revisions are monotonic and snapshotted"
+        sseRevisionOk
+    , testCase
+        "two applications reload independently"
+        sseTwoAppsOk
+    , testCase
+        "reconnect after disconnect sees updates"
+        sseReconnectOk
     , testCase "HTML inject inserts client script before </head>" injectOk
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
     , testCase "raw responses are never rewritten" rawResponsePreserved
@@ -205,6 +215,50 @@ sseSnapshotCoherent = do
   (snap2, _) <- subscribeWithSnapshot hub
   assertEqual "snapshot error" (Just "boom") (snapshotBuildError snap2)
 
+-- | Each publication bumps a monotonic revision, and a snapshot records
+-- the revision it was taken at.
+sseRevisionOk :: IO ()
+sseRevisionOk = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  r0 <- currentRevision hub
+  broadcastEvent hub (CssUpdate "/a.css" 1)
+  broadcastEvent hub (CssUpdate "/a.css" 2)
+  r2 <- currentRevision hub
+  assertEqual "two broadcasts bump twice" (r0 + 2) r2
+  (snap, _) <- subscribeWithSnapshot hub
+  r3 <- currentRevision hub
+  assertEqual "snapshot carries the current revision" r3 (snapshotRevision snap)
+
+-- | Two apps share a hub but their artifacts and updates stay scoped.
+sseTwoAppsOk :: IO ()
+sseTwoAppsOk = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  ha <- registerJs hub "app-a" "console.log('a')"
+  hb <- registerJs hub "app-b" "console.log('b')"
+  next <- subscribe hub
+  broadcastEvent hub (JsUpdate "app-a" "/app-a/app.js" ha)
+  ev1 <- next
+  assertEqual "app-a event" (JsUpdate "app-a" "/app-a/app.js" ha) ev1
+  broadcastEvent hub (JsUpdate "app-b" "/app-b/app.js" hb)
+  ev2 <- next
+  assertEqual "app-b event" (JsUpdate "app-b" "/app-b/app.js" hb) ev2
+  (snap, _) <- subscribeWithSnapshot hub
+  let hashes = snapshotJsHashes snap
+  assertBool "app-a hash present" (("app-a", ha) `elem` hashes)
+  assertBool "app-b hash present" (("app-b", hb) `elem` hashes)
+
+-- | A client that connects, disconnects, and reconnects must still receive
+-- subsequent updates (the old subscription does not poison the channel).
+sseReconnectOk :: IO ()
+sseReconnectOk = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  _first <- subscribe hub
+  (_, next2) <- subscribeWithSnapshot hub
+  h <- registerJs hub "app" "v"
+  broadcastEvent hub (JsUpdate "app" "/app.js" h)
+  ev <- next2
+  assertEqual "second client sees the update" (JsUpdate "app" "/app.js" h) ev
+
 injectOk :: IO ()
 injectOk = do
   let
@@ -259,13 +313,25 @@ injectDropsLength = do
     resp =
       ResponseBuilder
         status200
-        [("Content-Type", "text/html"), ("Content-Length", "13")]
+        [ ("Content-Type", "text/html")
+        , ("Content-Length", "13")
+        , ("ETag", "\"v1\"")
+        , ("Content-MD5", "abc")
+        ]
         (B.byteString "<html></html>")
     out = injectHotReloadClient defaultHotReloadConfig resp
   assertEqual
     "stale length is dropped"
     Nothing
     (lookup "Content-Length" (responseHeadersOf out))
+  assertEqual
+    "stale ETag is dropped"
+    Nothing
+    (lookup "ETag" (responseHeadersOf out))
+  assertEqual
+    "stale Content-MD5 is dropped"
+    Nothing
+    (lookup "Content-MD5" (responseHeadersOf out))
   body <- responseBodyLBS out
   assertBool
     "client is injected"

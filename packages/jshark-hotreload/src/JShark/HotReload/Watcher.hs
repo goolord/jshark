@@ -8,9 +8,10 @@ module JShark.HotReload.Watcher
   )
 where
 
-import Control.Concurrent (MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.Async (async, waitCatch)
 import Control.Exception (SomeException, try)
-import Control.Monad (filterM, forM, void)
+import Control.Monad (filterM, forM)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Int (Int64)
 import Data.Maybe (catMaybes)
@@ -79,12 +80,15 @@ startWatcher hub targets = do
           Left ex -> do
             hPutStrLn stderr ("hot-reload: cannot watch " <> dir <> ": " <> show ex)
             pure Nothing
-  void $
-    forkIO (drainLoop hub targets debounceUs pending stop)
+  worker <- async (drainLoop hub targets debounceUs pending stop)
+  -- Return a disposer that stops the watches and joins the drain worker, so
+  -- a caller can start/stop the watcher repeatedly without leaking threads.
   pure $ do
     putMVar stop ()
     mapM_ id stopWatches
     stopManager mgr
+    _ <- waitCatch worker
+    pure ()
 
 -- | Keep only file events for watched extensions outside ignored dirs.
 -- 'Removed', 'CloseWrite', and attribute churn are dropped; the drain loop
