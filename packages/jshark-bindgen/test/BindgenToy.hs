@@ -12,6 +12,8 @@ module BindgenToy
   , greet
   , add
   , log_
+  , findWidget
+  , findWidth
   , clamp
   , newWidget
   , resize
@@ -54,6 +56,16 @@ log_ ::
   Expr f ('String)
   -> EffectSyntax f ()
 log_ msg = toSyntax_ $ ffi "toy.log" (arg msg <: RecNil)
+
+findWidget ::
+  Expr f ('String)
+  -> EffectSyntax f (Effect f ('Option ('MutableObject Widget)))
+findWidget id_ = hold $ optionalEffect (ffi "toy.findWidget" (arg id_ <: RecNil))
+
+findWidth ::
+  Expr f ('String)
+  -> EffectSyntax f (Expr f ('Option ('Number)))
+findWidth id_ = fmap unsafeNullable (bindExpr $ ffi "toy.findWidth" (arg id_ <: RecNil))
 
 clamp ::
   Expr f ('Number)

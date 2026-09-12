@@ -35,6 +35,14 @@
   encoded bodies; and the SSE keepalive and event loop serialize through
   one write lock so concurrent frames cannot interleave.
 
+* `jshark-bindgen`: the extractor enables `strictNullChecks`, so
+  `T | null` / `T | undefined` now become an `Option` instead of being
+  absorbed into `T`. The nullable returns emit through a new stable
+  `JShark.Api.optionalEffect` helper; the previous code spliced a stale
+  two-argument `Bind` (with `Lift`/`Var`) that did not typecheck. The
+  `toy.d.ts` fixture and `BindgenToy.hs` golden now cover nullable
+  handle and primitive returns.
+
 * Testing: `JShark.Bun.Internal` gains `runJSTagged`/`runProgramTagged`,
   which serialize through a tagger that keeps `undefined` vs `null`, `NaN`,
   the infinities, `-0`, and `BigInt` distinct; added gated `bun` tests for

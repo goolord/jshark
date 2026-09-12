@@ -288,6 +288,9 @@ function main() {
     declaration: true,
     noEmit: true,
     skipLibCheck: true,
+    // Distinguish `T | null` / `T | undefined` from bare `T`; without this
+    // TypeScript absorbs nullish members into the base type.
+    strictNullChecks: true,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,

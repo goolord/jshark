@@ -161,6 +161,7 @@ module JShark.Api
   , noOp
   , discard
   , hold
+  , optionalEffect
   , bindExpr
   , stmts
   , done
@@ -736,6 +737,12 @@ instance {-# OVERLAPPABLE #-} ToEffect f u (f u) where
 -- | Bind an effect and hand back a reusable 'Effect' handle to it.
 hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold = fmap Lift . bindExpr
+
+-- | Bind a native null\/value effect and wrap its result as a tagged
+-- 'Option'. Generated bindings use this for @T | null@ returns instead of
+-- splicing the underlying AST constructors.
+optionalEffect :: Effect f u -> Effect f ('Option u)
+optionalEffect m = Bind Nothing m (\x -> Lift (unsafeNullable (Var x)))
 
 -- | Recover the record phantom from an object handle. Closed so
 -- 'Effect'/'Expr' win over a bare PHOAS binder @f ('MutableObject r)@.

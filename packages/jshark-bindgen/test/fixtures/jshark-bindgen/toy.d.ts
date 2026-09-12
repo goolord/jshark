@@ -21,6 +21,10 @@ export declare class Widget {
   size(): Size;
 }
 
+export function findWidget(id: string): Widget | null;
+
+export function findWidth(id: string): number | null;
+
 export declare namespace util {
   function clamp(n: number, lo: number, hi: number): number;
 }

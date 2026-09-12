@@ -409,9 +409,9 @@ applyRet :: Ty -> Text -> Text
 applyRet t call
   | isUnit t = "toSyntax_ $ " <> call
   | isOptionHandle t =
-      "hold $ Bind ("
+      "hold $ optionalEffect ("
         <> call
-        <> ") (\\x -> Lift (unsafeNullable (Var x)))"
+        <> ")"
   | isHandle t = "hold $ " <> call
   | isOptionPrim t = "fmap unsafeNullable (bindExpr $ " <> call <> ")"
   | otherwise = "bindExpr $ " <> call
