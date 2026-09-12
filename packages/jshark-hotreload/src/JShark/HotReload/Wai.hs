@@ -80,10 +80,14 @@ pathSegments =
 -- | Standalone SSE application (also used by the middleware).
 handleSseRequest :: HotReloadHub -> Application
 handleSseRequest hub _req respond = do
-  next <- subscribe hub
+  -- Snapshot first, then subscribe: any event broadcast after the
+  -- subscription is newer than the snapshot, so a client can never apply a
+  -- newer event and then an older snapshot. Subscribing first would let an
+  -- event slip in between and be replayed after a stale 'Hello'.
   hashes <- currentJsHashes hub
   merr <- lastBuildError hub
   compiling <- lastCompiling hub
+  next <- subscribe hub
   alive <- newTVarIO True
   -- One writer: the keepalive worker and the event loop share the response's
   -- @write@/@flush@, so interleaving them would corrupt SSE frames.

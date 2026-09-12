@@ -76,6 +76,12 @@
   the infinities, `-0`, and `BigInt` distinct; added gated `bun` tests for
   each.
 
+* Release: the `jshark-bindgen` test fixtures and golden are package
+  data files, so the test suite resolves them from an unpacked source
+  distribution instead of assuming the monorepo checkout layout. The
+  hot-reload SSE handler snapshots state before subscribing so a client
+  cannot apply a newer event and then an older snapshot.
+
 * Benchmarks: the standalone `LifeEmit`/`LifeFullEmit`/`LifePhases`
   timers force their result before stopping the clock (they previously
   timed only thunk allocation).

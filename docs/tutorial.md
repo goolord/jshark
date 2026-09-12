@@ -104,10 +104,11 @@ Branching: `if_` is the ternary on pure values, `ifE`/`whenS`/`ifS`
 compose statements, `while_` loops, `forRange_` is the counting loop,
 `forEach` iterates arrays.
 
-Options and results are tagged JS values: `some x` / `none` compile to
-plain values/`null`, `ok a` / `err e` to `{ok, value}`. Branch with
-`optionCase` (expressions), `optionCaseE` + `whenSomeS`/`whenNoneS`
-(statements), `resultCase` / `resultCaseE`.
+Options are native JS `null` / value: `none` is `null`, `some x` is `x`
+(so `Option (Option a)` cannot distinguish `some none` from `none`).
+`Result` is `{ok, value}`. Branch with `optionCase` (expressions),
+`optionCaseE` + `whenSomeS`/`whenNoneS` (statements), `resultCase` /
+`resultCaseE`.
 
 ## DOM and typed events
 

@@ -25,11 +25,21 @@ extra-source-files:
   extract.mjs
   package.json
   bun.lock
+  test/fixtures/jshark-bindgen/ms.d.ts
+  test/fixtures/jshark-bindgen/plain.d.ts
+  test/fixtures/jshark-bindgen/toy.d.ts
+  test/fixtures/jshark-bindgen/toy.js
+  test/BindgenToy.hs
 
 data-files:
   extract.mjs
   package.json
   bun.lock
+  test/fixtures/jshark-bindgen/ms.d.ts
+  test/fixtures/jshark-bindgen/plain.d.ts
+  test/fixtures/jshark-bindgen/toy.d.ts
+  test/fixtures/jshark-bindgen/toy.js
+  test/BindgenToy.hs
 
 source-repository head
   type: git
@@ -97,6 +107,9 @@ test-suite jshark-bindgen-test
   other-modules:
     BindgenToy
     BindgenTests
+    Paths_jshark_bindgen
+  autogen-modules:
+    Paths_jshark_bindgen
   hs-source-dirs: test
   build-depends:
     , base

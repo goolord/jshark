@@ -16,9 +16,8 @@ import JShark.Bindgen.Cli
   )
 import JShark.Bindgen.Extract (tsExtractorAvailable)
 import JShark.Compiler (compileEffect, readableConfig)
-import System.Directory (doesFileExist, getCurrentDirectory)
-import System.Environment (getExecutablePath)
-import System.FilePath (takeDirectory, (</>))
+import Paths_jshark_bindgen (getDataFileName)
+import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 
@@ -26,47 +25,31 @@ import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 fixture :: FilePath -> FilePath
 fixture name = "test/fixtures/jshark-bindgen/" <> name
 
--- | Repo root (contains @cabal.project@). Test exes run from the build tree,
--- so anchor on the executable path rather than the process CWD.
-repoRoot :: IO FilePath
-repoRoot = do
-  exe <- getExecutablePath
-  go (takeDirectory exe)
- where
-  go dir = do
-    let
-      proj = dir </> "cabal.project"
-    present <- doesFileExist proj
-    if present
-      then pure dir
-      else do
-        let
-          up = takeDirectory dir
-        if up == dir
-          then getCurrentDirectory
-          else go up
-
--- | Absolute fixture path under @packages/jshark-bindgen@.
+-- | Fixture path from the package's data files, so it resolves both in the
+-- checkout and from an unpacked source distribution.
 fixtureAbs :: FilePath -> IO FilePath
-fixtureAbs name = do
-  root <- repoRoot
-  pure
-    ( root
-        </> "packages/jshark-bindgen/test/fixtures/jshark-bindgen"
-        </> name
-    )
+fixtureAbs name =
+  getDataFileName ("test" </> "fixtures" </> "jshark-bindgen" </> name)
 
--- | Absolute path of a file under @packages/jshark-bindgen@.
+-- | A file shipped as package data.
 pkgFileAbs :: FilePath -> IO FilePath
-pkgFileAbs rel = do
-  root <- repoRoot
-  pure (root </> "packages/jshark-bindgen" </> rel)
+pkgFileAbs rel = getDataFileName rel
+
+-- | The generated header records the resolved absolute fixture path; rewrite
+-- it to the checkout-relative form the golden uses. 'getDataFileName' can
+-- insert an extra @.@ segment, so collapse it first.
+relativizeSource :: FilePath -> FilePath -> Text -> Text
+relativizeSource fx name =
+  T.replace normalizedFx (T.pack ("test/fixtures/jshark-bindgen/" <> name))
+ where
+  normalizedFx =
+    T.replace "\\.\\" "\\" (T.replace "/./" "/" (T.pack fx))
 
 mustGenWith :: BindgenOpts -> FilePath -> IO Text
 mustGenWith opts name = do
   fx <- fixtureAbs name
   r <- generateFromFile opts fx
-  either fail pure r
+  either fail (pure . relativizeSource fx name) r
 
 mustGen :: FilePath -> IO Text
 mustGen = mustGenWith defaultBindgenOpts
@@ -136,16 +119,11 @@ bindgenTests =
           mustGenWith
             defaultBindgenOpts {optModuleName = Just "BindgenToy"}
             "toy.d.ts"
-        root <- repoRoot
-        let
-          -- the golden records the package-relative source path
-          normalized =
-            T.replace (T.pack (root </> "packages/jshark-bindgen/")) "" hs
-        golden <- TIO.readFile =<< pkgFileAbs "test/BindgenToy.hs"
+        golden <- TIO.readFile =<< pkgFileAbs ("test" </> "BindgenToy.hs")
         assertEqual
           "golden"
           (T.strip golden)
-          (T.strip normalized)
+          (T.strip hs)
     , testCase "CLI parses module / prefix flags" $ do
         case parseCliArgs
           [ "-m"
