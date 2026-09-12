@@ -1,14 +1,14 @@
 # JShark tutorial
 
-A tour of the EDSL for Haskell programmers who want to write browser
-JavaScript. Everything here compiles; the full programs live in
-`examples/src/JShark/Example/*` and the test suites, which compile each
-snippet and check the emitted JavaScript against both the Haskell
-interpreter and `bun`.
+A practical tour for Haskell programmers writing browser JavaScript.
+The snippets introduce the API; the [examples](../examples/src/JShark/Example)
+show complete applications. Tests cover compilation, host evaluation,
+and JavaScript execution in Bun.
 
 ## Setup
 
-A JShark program is ordinary Haskell. The canonical pragma block:
+A JShark program is ordinary Haskell. These extensions cover the examples
+in this guide:
 
 ```haskell
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -20,13 +20,10 @@ A JShark program is ordinary Haskell. The canonical pragma block:
 {-# LANGUAGE TypeApplications #-}
 ```
 
-(Or set them once as `default-extensions` in your `.cabal` file. The
-examples in this repo repeat the block per module, which is why every
-example file starts the same way.)
+You can also set these as `default-extensions` in your `.cabal` file.
 
-Import `JShark.Prelude` (the EDSL surface, FFI argument syntax, object
-literals, and the compiler in one module) plus the platform modules you
-need, qualified:
+Import `JShark.Prelude` for the core API and compiler, then add qualified
+imports for the platform modules you need:
 
 ```haskell
 import JShark.Prelude
@@ -40,19 +37,19 @@ Platform modules share many names with base (`JShark.String.length`,
 provides `Functor`/`Monad`-style instances for the EDSL types and is
 also designed for qualified import.
 
-Compiling produces bytes — no JS runtime involved:
+Compilation returns JavaScript as bytes and needs no JavaScript runtime:
 
 ```
 ghci> BS.putStrLn =<< compileEffectSyntax readableConfig (Console.log ("hi" :: Expr f 'String))
 console.log("hi");
 ```
 
-`readableConfig` emits the pretty snippet you see above;
+`readableConfig` emits a formatted snippet;
 `defaultCompilerConfig` emits a compact IIFE (minify it with an external
 tool if you want). `compileEffectSyntax` takes the do-notation form
 directly; `compileEffect` takes a closed `Effect`.
 
-## Two trees, one bridge
+## Expressions and effects
 
 The API is split in two:
 
@@ -61,20 +58,20 @@ The API is split in two:
   (`evaluate`, `evaluateNumber`, `evaluateBigInt`).
 - `Effect f u` — statements: mutation, DOM, FFI, control flow.
 
-Do-notation works on `EffectSyntax`, and the bridge is four words:
+Write `do` blocks in `EffectSyntax`. Four combinators connect them to `Effect`:
 
-| word        | direction                       | type                              |
+| Combinator  | Purpose                         | Type                              |
 |-------------|---------------------------------|-----------------------------------|
 | `toSyntax`  | `Effect` → do-block value       | `Effect f v -> EffectSyntax f (f v)` |
 | `bindExpr`  | same, reified as an `Expr`      | `Effect f u -> EffectSyntax f (Expr f u)` |
 | `fromSyntax`| whole do-block → `Effect`       | `EffectSyntax f (f v) -> Effect f v` |
 | `hold`      | keep an `Effect` for reuse      | `Effect f u -> EffectSyntax f (Effect f u)` |
 
-`bindExpr` gives you an `Expr` you can pass to pure functions;
-`toSyntax`/`hold` give you the runtime handle form. Reusing the result
-of `toSyntax` re-executes the effect; reusing a `hold`ed binding
-references the same value. Statements end with `done`
-(`toSyntax noOp`) so the block has type `EffectSyntax f (f 'Unit)`.
+`toSyntax` binds a result as a PHOAS variable. `bindExpr` exposes that
+result as an `Expr` for pure functions; `hold` exposes it as a reusable
+`Effect` handle. Each refers to the bound value rather than repeating the
+original effect. End a unit-returning block with `done` (`toSyntax noOp`)
+to give it type `EffectSyntax f (f 'Unit)`.
 
 ```haskell
 greet :: Expr f 'String -> Effect f 'Unit
@@ -86,9 +83,10 @@ greet name = fromSyntax $ do
 Literals and operators use the standard Haskell classes: `number 1 + number 2`,
 `("a" :: Expr f 'String) <> "b"`, and `OverloadedRecordDot` for object
 fields (below). Comparisons are dotted (`.==`, `.!=`, `.&&`) because the
-bare spellings are taken by the Haskell classes; JS semantics leak
-through on purpose (`Number` is an IEEE double, `rem_`/`quot_` truncate,
-bitwise ops go through `ToInt32`, exact integers are `BigInt`).
+bare spellings belong to Haskell classes. Operations follow JavaScript
+semantics: `Number` is an IEEE 754 double, `quot_` truncates, `rem_` gives
+the remainder, and bitwise operators use 32-bit conversions. Use `BigInt`
+for exact integers.
 
 ## Functions and control flow
 
@@ -97,8 +95,8 @@ add :: Expr f 'Number -> Expr f 'Number -> Expr f ('Function 'Number 'Number)
 add a b = lambda (\x -> x + a + b)
 ```
 
-`lambda` is pure; `lambdaE` may bind and sequence effects. Lets are
-`let_ x (\v -> ...)` — single-use lets inline, multi-use lets stay
+`lambda` is pure; `lambdaE` may bind and sequence effects. Bind pure values
+with `let_ x (\v -> ...)`: single-use bindings inline, reused bindings stay
 `const` in the output, and under `readableConfig` the emitted name is
 the Haskell function that created it (recovered via `HasCallStack`).
 Branching: `if_` is the ternary on pure values, `ifE`/`whenS`/`ifS`
@@ -128,7 +126,7 @@ exposed. JS numeric edge cases are preserved (`NaN`, `±Infinity`, `-0`,
 ## DOM and typed events
 
 `JShark.Dom` wraps element lookup and mutation. Event handlers receive a
-typed `Event` — no annotations, no `getProp'`:
+typed `Event` with accessors for common fields:
 
 ```haskell
 wire :: Effect f ('MutableObject Dom.DomElement) -> EffectSyntax f (f 'Unit)
@@ -145,8 +143,7 @@ wire el = do
 `Effect`-returning variant is `addEventListener`). Typed accessors cover
 `eventKey`, `eventCode`, `eventRepeat`, `eventPointerId`, `eventButton`,
 `eventShiftKey`, `eventClientX/Y`, `eventOffsetX/Y`, and
-`Dom.eventTarget`. For anything else, `getProp' e "name"` stays
-available (unchecked).
+`Dom.eventTarget`. Use the unchecked `getProp' e "name"` for other fields.
 
 ## Records, sums, and objects
 
@@ -170,7 +167,7 @@ two-branch shortcut.
 
 Functions with named parameters use `namedLambda`/`namedLambdaRow` and
 `JShark.Api.Params` rows (`Param "x" 'Number`); binder names land in the
-generated JavaScript, which keeps the readable output honest.
+generated JavaScript.
 
 ## FFI
 
@@ -184,41 +181,35 @@ logMax = fromSyntax $ do
 -- console.log("max", 2, 9);
 ```
 
-- The callee is free text, emitted verbatim — a typo is a runtime error,
-  not a compile error. The tests parse-check emitted output.
+- The callee is unchecked JavaScript text. GHC cannot catch misspelled
+  names or mismatched foreign signatures.
 - Arguments are `arg` (an `Expr`), `argEffect` (an effectful callback,
   rendered inline), and string/number literals via `OverloadedStrings`/`number`.
 - `callMethod receiver "method" args` puts an object handle in front.
 - `ffi` classifies its callee string: unparenthesized `=>` arrows become
   function values, IIFEs stay calls. `ffiExpr` always emits a bare
   expression (for `typeof`, comparisons, property reads).
-- To keep type safety at the boundary, wrap `ffi` in a monomorphic
-  helper — see `examples/src/JShark/Example/Synth/Audio.hs` for real
-  wrappers, or generate whole modules from TypeScript with
-  `jshark-bindgen`.
+- Give wrappers concrete type signatures that match the foreign API.
+  See the [Web Audio bindings](../examples/src/JShark/Example/Synth/Audio.hs),
+  or generate modules from TypeScript with `jshark-bindgen`.
 
 ## Testing without a browser
 
-Pure terms evaluate in Haskell — the test suite cross-checks every
-snippet above with `evaluate`/`evaluateNumber`:
+Evaluate pure terms in Haskell with `evaluate` or a typed helper:
 
 ```
 ghci> evaluateNumber ((number 1 + number 2) * number 4)
 12.0
 ```
 
-Effectful programs run under `bun`, optionally with browser globals from
-happy-dom, so DOM code is testable headlessly (see
-`examples/test/BunTests.hs`).
+Run effectful programs in Bun, with `happy-dom` when they need browser
+globals. See [BunTests.hs](../examples/test/BunTests.hs) for headless tests.
 
 ## Where to go next
 
-- `examples/src/JShark/Example/` — real apps: TodoMVC (with
-  `jshark-lucid` templates), a Canvas Breakout, a Web Audio synth, and a
-  WebGL Game of Life.
-- `packages/jshark-lucid` — describe DOM in Lucid syntax, compile to
-  `createElement` calls.
-- `packages/jshark-bindgen` — generate typed `ffi` wrappers from
-  TypeScript declarations.
-- `docs/benchmarking-and-testing.md` — profiling and benchmarking the
-  compiler itself.
+- [Examples](../examples/src/JShark/Example) — TodoMVC, Breakout, a Web Audio
+  synth, and a WebGL Game of Life.
+- [jshark-lucid](../packages/jshark-lucid) — DOM templates in Lucid syntax.
+- [jshark-bindgen](../packages/jshark-bindgen) — typed wrappers from TypeScript.
+- [Testing and benchmarking](benchmarking-and-testing.md) — test filters,
+  compiler benchmarks, and profiling.

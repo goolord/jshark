@@ -6,11 +6,11 @@ Generate typed Haskell `ffi` wrappers from TypeScript declarations:
 cabal run jshark-bindgen -- lib.d.ts --module JShark.Lib
 ```
 
-Extracts function, class, and namespace declarations from TypeScript `.d.ts`
-or JSDoc and emits a Haskell module of monomorphic wrappers. Requires `bun`
-with `typescript` installed to run the extractor.
+Reads functions, classes, and namespaces from TypeScript `.d.ts` files or
+JSDoc and emits Haskell wrappers with concrete type signatures. The extractor
+requires Bun and the `typescript` npm package.
 
-## Supported-input policy
+## Supported types
 
 | TypeScript | Emitted as | Notes |
 |------------|------------|-------|
@@ -23,10 +23,9 @@ with `typescript` installed to run the extractor.
 | class / interface / enum / named type | `'MutableObject <Phantom>` | fields via `Field` instances |
 | anything else (`any`, `unknown`, unions) | `JsUnknown` | surfaced as a diagnostic |
 
-Rules the emitter follows:
+## Binding behavior
 
-* **Overloads** get a stable identity and a distinct Haskell name (`ms`,
-  `ms2`), so every signature is emitted.
+* **Overloads** get distinct, stable Haskell names (`ms`, `ms2`), one per signature.
 * **Optional arguments** are accepted only in trailing position; optional
   parameters are omitted from the generated wrapper (callers that need to
   pass `undefined` explicitly should model it as `T | undefined`).
@@ -37,7 +36,7 @@ Rules the emitter follows:
   `(x: T | null) => void`) is not yet converted at the boundary; it is
   reported as an `unsupported-nullable` diagnostic rather than passed as a
   tagged object to native JS.
-* The extractor JSON carries a schema version checked on decode; the pinned
-  TypeScript is `5.9.3`.
+* Extractor output is schema-versioned and checked when decoded. TypeScript
+  is pinned to `5.9.3`.
 
 Part of the [JShark](https://github.com/goolord/jshark) monorepo.

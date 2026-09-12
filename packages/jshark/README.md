@@ -1,17 +1,17 @@
 # jshark
 
-> A typed, readable JavaScript EDSL embedded in Haskell.
+Write typed JavaScript in Haskell. Generate code you can read.
 
-JShark programs are ordinary Haskell values: the object language is
-JavaScript, the host is Haskell, and the embeddable subset is typed.
-Binders use PHOAS, so terms cannot reference unbound variables,
-substitution is function application, and capture is impossible.
+JShark embeds a typed subset of JavaScript in Haskell. GHC checks your
+program; JShark compiles it without a Haskell runtime. Haskell functions
+represent binders, keeping typed terms free of unbound variables and
+variable capture.
 
 ```haskell
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified Data.Text.IO as T
+import qualified Data.ByteString.Char8 as BS
 import JShark.Prelude
 import qualified JShark.Console as Console
 
@@ -21,11 +21,10 @@ greet name = fromSyntax $ do
   done
 
 main :: IO ()
-main = compileEffect readableConfig (greet (string "world")) >>= T.putStrLn
+main = compileEffect readableConfig (greet (string "world")) >>= BS.putStrLn
 ```
 
-The pure side of the language can be evaluated in GHCi with no JavaScript
-engine:
+Evaluate pure expressions in GHCi without a JavaScript engine:
 
 ```haskell
 ghci> import JShark (evaluateNumber)

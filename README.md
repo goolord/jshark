@@ -1,6 +1,6 @@
 # 🦈 JShark
 
-> **A typed, readable JavaScript EDSL embedded in Haskell.**
+Write typed JavaScript in Haskell. Generate code you can read.
 
 [![CI](https://github.com/goolord/jshark/actions/workflows/ci.yml/badge.svg)](https://github.com/goolord/jshark/actions/workflows/ci.yml)
 [![GHC 9.14+](https://img.shields.io/badge/GHC-9.14+-8f4e8b?logo=haskell)](https://www.haskell.org/)
@@ -8,34 +8,12 @@
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 [![Live Demos](https://img.shields.io/badge/Live%20Demos-goolord.github.io%2Fjshark-059669?logo=githubpages)](https://goolord.github.io/jshark/)
 
-JShark programs are ordinary Haskell values: the object language is JavaScript, the host is Haskell, and the embeddable subset is typed and modeled on Douglas Crockford's *JavaScript: The Good Parts*.
+JShark is an embedded domain-specific language (EDSL) for a typed subset of JavaScript, inspired by Douglas Crockford's *JavaScript: The Good Parts*. Programs are ordinary Haskell values, checked by GHC and compiled to JavaScript without a Haskell runtime.
 
-Binders are higher-order using PHOAS (Parametric Higher-Order Abstract Syntax): a lambda is a Haskell function, so terms cannot reference unbound variables, substitution is function application, and capture is impossible. Statements compose with `do` notation, while literals and operators use standard Haskell typeclasses.
-
-Codegen targets clean, readable JavaScript instead of opaque blobs: variable names and callstack hints are preserved, and pure terms can be evaluated directly in Haskell without a browser.
-
----
-
-## On "The JavaScript Problem"
-
-The HaskellWiki page on ["The JavaScript Problem"](https://wiki.haskell.org/The_JavaScript_Problem) frames the tension:
-
-1. JavaScript as a language has obvious flaws: weak typing, silent conversions, dynamic scope pitfalls (`this`), and no static guarantees.
-2. JavaScript as a platform is inescapable: it is the universal runtime of the browser.
-
-Past Haskell attempts split into distinct camps:
-- **Whole-language compilers (GHCJS, Asterius):** Compile full Haskell by shipping GHC's runtime (threads, thunk evaluation, GC) to JS or Wasm. You get full language semantics, but at the cost of multi-megabyte bundles, slow startup, and opaque emitted code.
-- **Alternative languages (PureScript, Elm):** Clean functional languages designed for browser runtimes, but separated into distinct ecosystems with their own package managers, compilers, and duplicate type definitions.
-- **Untyped AST/quasiquote embeddings (JMacro):** Enforce syntactic validity in Haskell, but defer type safety to runtime.
-- **Restricted compilers (Fay):** Compiled a small subset of Haskell without a heavy runtime, but lived outside standard GHC typechecking.
-
-JShark targets the band of applications too complex for a static site, but not heavy enough to justify GHCJS. Instead of running a GHC runtime inside JavaScript, it uses standard GHC to typecheck an embedded language that compiles to clean, dependency-free JS.
-
----
+Compose statements with `do` notation, use familiar Haskell operators, and build reusable combinators. Evaluate pure expressions in Haskell or compile them for the browser.
 
 ## Table of Contents
 
-- [On "The JavaScript Problem"](#on-the-javascript-problem)
 - [Key Features](#key-features)
 - [Live Demos](#live-demos)
 - [Quick Start](#quick-start)
@@ -56,16 +34,14 @@ JShark targets the band of applications too complex for a static site, but not h
 - [Documentation](#documentation)
 - [License](#license)
 
----
-
 ## Key Features
 
-- **Readable output:** Codegen preserves program structure and binder names. A `let`-bound temporary gets its name from the Haskell function that created it (via `HasCallStack`), and lambda arguments keep their Haskell names (`\(a :: Expr f 'Number) (b :: Expr f 'Number) -> a + b` compiles to `(a, b) => a + b`). `readableConfig` emits formatted JS; the default config emits a minified IIFE.
-- **Scope safety via PHOAS:** Binders use Parametric Higher-Order Abstract Syntax. Terms cannot refer to out-of-scope variables, and variable capture is impossible.
-- **Two typed ASTs:** The API separates pure expressions (`Expr f u`) from side effects (`Effect f u`). Pure code (literals, math, lambdas, arrays, objects, `Option`, `Result`) cannot perform I/O. Effects (DOM updates, console logs, mutation, FFI) form a separate tree joined only at explicit boundaries.
-- **One term, two runtimes:** Pure expressions can be evaluated in Haskell via GHCi and tests without a JS engine. Effectful programs run under Bun, optionally with browser globals from `happy-dom`, so DOM code can be tested headlessly.
-- **Gradually typed FFI:** `ffi` embeds unchecked JavaScript calls while arguments remain type-checked `Expr` terms via heterogeneous records (`Rec`). Helper functions can monomorphize calls into fully typed wrappers.
-- **Haskell as macro system:** Combinators like `map`, `zipWith`, and `groupBy` are ordinary Haskell functions building JS terms. `GHC.Generics` records and sum types map directly to JS objects, and `OverloadedRecordDot` provides field access.
+- **Readable output.** `readableConfig` formats JavaScript with meaningful binder names and call-stack hints. The default emits a compact, immediately invoked function (IIFE).
+- **Safe scope.** Parametric higher-order abstract syntax (PHOAS) uses Haskell functions for binders, preventing unbound variables and variable capture in typed terms.
+- **Explicit effects.** `Expr f u` describes pure computation; `Effect f u` describes mutation, DOM updates, and foreign calls.
+- **Headless testing.** Evaluate pure terms in Haskell. Run generated JavaScript in Bun, with `happy-dom` for browser APIs.
+- **JavaScript interop.** Call external APIs through `ffi`, write typed wrappers, or generate bindings from TypeScript declarations.
+- **Haskell abstractions.** Build JavaScript with ordinary Haskell functions. Convert `Generic` records and sums to objects, and access fields with `OverloadedRecordDot`.
 
 ---
 
@@ -73,7 +49,7 @@ JShark targets the band of applications too complex for a static site, but not h
 
 Live examples built from `master`: <https://goolord.github.io/jshark/>
 
-The details pane of each example shows the original Haskell source alongside the generated `Readable` JavaScript.
+Each demo pairs its Haskell source with the generated JavaScript.
 
 | Application | Description | Source |
 | :--- | :--- | :---: |
@@ -88,7 +64,7 @@ The details pane of each example shows the original Haskell source alongside the
 
 ### Setup and Pragmas
 
-JShark programs require a few standard extensions:
+The examples below use these extensions:
 
 ```haskell
 {-# LANGUAGE DataKinds #-}
@@ -96,7 +72,7 @@ JShark programs require a few standard extensions:
 {-# LANGUAGE ScopedTypeVariables #-}
 ```
 
-`JShark.Prelude` re-exports the EDSL surface, FFI argument syntax, object constructors, and the compiler. Platform modules (`JShark.Console`, `JShark.Dom`, etc.) should be imported qualified to avoid clashes with `base`:
+`JShark.Prelude` exports the core API and compiler. Import platform modules qualified to avoid name clashes:
 
 ```haskell
 import JShark.Prelude
@@ -150,20 +126,20 @@ JShark separates pure computation from side effects:
 - `Expr f u`: Pure values (numbers, strings, arrays, objects, functions, `Option`, `Result`).
 - `Effect f u`: Statements and mutations (DOM, timers, I/O, FFI).
 
-Four combinators bridge between `Effect` and `EffectSyntax` `do` blocks:
+Use `EffectSyntax` for `do` blocks, with these combinators to bind results and build an `Effect`:
 
 | Combinator | Type | Purpose |
 | :--- | :--- | :--- |
-| `toSyntax` | `Effect f v -> EffectSyntax f (f v)` | Runs an effect in a `do` block. Re-evaluates each time it is used. |
+| `toSyntax` | `Effect f v -> EffectSyntax f (f v)` | Binds an effect's result as a PHOAS variable. |
 | `bindExpr` | `Effect f u -> EffectSyntax f (Expr f u)` | Runs an effect and binds its result as an `Expr`. |
 | `fromSyntax` | `EffectSyntax f (f v) -> Effect f v` | Packs a `do` block into an `Effect`. |
-| `hold` | `Effect f u -> EffectSyntax f (Effect f u)` | Memoizes an effect so subsequent uses reference the same value. |
+| `hold` | `Effect f u -> EffectSyntax f (Effect f u)` | Binds an effect's result as a reusable `Effect` handle. |
 
 Blocks end with `done` (`toSyntax noOp`), giving the block type `EffectSyntax f (f 'Unit)`.
 
 ### 4. JavaScript FFI
 
-`ffi` embeds arbitrary calls when the core library does not cover an API. Arguments are passed as heterogeneous records (`<:` and `arg`) and stay type-checked `Expr` values:
+Use `ffi` for APIs outside the core library. Build argument lists with `arg` and `<:`. Arguments have JShark types, but the foreign function's signature is unchecked:
 
 ```haskell
 {-# LANGUAGE DataKinds #-}
@@ -191,7 +167,7 @@ console.log("max", 2, 9);
 
 - **Method calls:** `callMethod el "setAttribute" (arg "class" <: arg "active" <: RecNil)` compiles to `el.setAttribute("class", "active")`.
 - **Effectful arguments:** Use `ArgEffect` instead of `arg` when an argument is itself an effect call.
-- **Typed wrappers:** While `ffi` takes a string callee name, helper functions can monomorphize calls into type-safe interfaces. See [examples/src/JShark/Example/Synth/Audio.hs](examples/src/JShark/Example/Synth/Audio.hs) for a complete example wrapping Web Audio.
+- **Typed wrappers:** Give foreign calls concrete Haskell signatures so callers use a checked interface. The wrapper author is responsible for matching the JavaScript API. See the [Web Audio bindings](examples/src/JShark/Example/Synth/Audio.hs).
 
 ---
 
@@ -205,8 +181,7 @@ console.log("max", 2, 9);
 | `jshark-hotreload` | [`packages/jshark-hotreload`](packages/jshark-hotreload) | SSE dev-server middleware and file watcher for live reloading. |
 | `jshark-examples` | [`examples`](examples) | Four showcase apps, dev server, and static exporter. |
 
-Shared test and benchmark support lives in the `jshark:testing` sublibrary (not a
-user-facing API); `jshark-examples` consumes it from the same build.
+The internal `jshark:testing` sublibrary provides shared test and benchmark support.
 
 ### `jshark-lucid`
 
@@ -226,15 +201,15 @@ Extracts typed Haskell wrappers from TypeScript declarations:
 cabal run jshark-bindgen -- lib.d.ts --module JShark.Lib
 ```
 
-Requires `bun` with `@typescript` installed to run the extractor.
+Requires Bun and the `typescript` npm package. See the [bindgen README](packages/jshark-bindgen/README.md) for supported types.
 
 ---
 
 ## Design and Limitations
 
 - **A subset by design:** Idiomatic JS patterns outside the core (classes, `this`, prototype mutation, dynamic property lookup) must go through `ffi`.
-- **JavaScript semantics leak through:** Numbers are IEEE 754 doubles (bitwise ops truncate via `ToInt32`), exact integers use `BigInt`, and `Maybe`/`Either` map to tagged JS `Option` (`{some, value}`) and `Result` (`{ok, value}`).
-- **Runtime errors remain possible:** The type system guarantees structural correctness and scope hygiene, but external calls can still fail or throw. Use `catch_` to handle JS exceptions.
+- **JavaScript semantics:** Numbers are IEEE 754 doubles; bitwise operations use 32-bit conversions. Use `BigInt` for exact integers. `Option` and `Result` use tagged objects: `{some, value}` and `{ok, value}`.
+- **Runtime errors:** Types check the embedded program, not external APIs. Foreign calls can fail or throw; use `catch_` to handle JavaScript exceptions.
 - **Not an npm bundler:** External npm libraries must be bundled externally or loaded via script tags, then bound via `ffi` or `jshark-bindgen`.
 
 ---
@@ -247,7 +222,7 @@ Requires `bun` with `@typescript` installed to run the extractor.
 | :--- | :--- | :--- |
 | **GHC** | 9.14+ | Compiler |
 | **Cabal** | 3.12+ | Build tool |
-| **LLVM** | 20 (`opt-20`, `llc-20`) | Required by GHC on non-Windows platforms |
+| **LLVM** | 20 (`opt-20`, `llc-20`) | Used by this repository's non-Windows build configuration |
 | **[Bun](https://bun.sh)** | Current | Running JS-vs-interpreter tests and headless DOM evaluation |
 
 ### Nix
@@ -269,7 +244,7 @@ cabal build all
 
 ### Tests
 
-Tests compile programs to JavaScript and compare execution against the Haskell interpreter and Bun:
+Tests cover the interpreter, compiler, bindings, and examples. Runtime checks compare generated JavaScript in Bun with the Haskell interpreter:
 
 ```bash
 # Run all test suites
@@ -286,15 +261,13 @@ See [docs/benchmarking-and-testing.md](docs/benchmarking-and-testing.md) for mem
 
 ### Dev Server
 
-Starts the local example server with live reloading:
+Run the examples with live reloading at `http://localhost:3000`:
 
 ```bash
 cabal run exe:jshark-examples
 ```
 
-Served at `http://localhost:3000`.
-
-Export static HTML/JS for deployment (as used by GitHub Pages):
+Export static HTML and JavaScript for deployment:
 
 ```bash
 cabal run exe:jshark-examples -- export ./dist

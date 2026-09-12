@@ -1,7 +1,7 @@
 # Contributing to JShark
 
-Thanks for helping improve JShark. This guide covers the local workflow; the
-[README](README.md) explains what the project is.
+Thanks for contributing. Start here to build, test, and prepare a change.
+For a project overview, see the [README](README.md).
 
 ## Prerequisites
 
@@ -10,8 +10,8 @@ Thanks for helping improve JShark. This guide covers the local workflow; the
 - LLVM 20 (`opt-20`, `llc-20`) on non-Windows platforms
 - [Fourmolu](https://github.com/fourmolu/fourmolu) for formatting
 
-The easiest way to get all of these is `nix develop`, which pins the whole
-toolchain. See the README for a manual setup.
+Run `nix develop` for the pinned toolchain, or follow the
+[manual setup](README.md#building-and-development).
 
 ## Build, test, and benchmark
 
@@ -35,10 +35,9 @@ fourmolu --mode check $(git ls-files '*.hs')
 
 ## Warnings
 
-Each package declares a `werror` flag. `cabal.project` enables it for local
-builds, so warnings are errors in development; released packages default it
-off so future GHC warning sets do not break downstream builds. Keep the tree
-warning-clean.
+Local builds treat warnings as errors through each package's `werror` flag,
+enabled in `cabal.project`. Keep changes warning-free. Released packages
+leave the flag off to accommodate future GHC warnings.
 
 ## Commits
 
@@ -50,9 +49,10 @@ byte-for-byte; the golden tests under `packages/jshark/test/` enforce this.
 
 ## Architecture
 
-Start with the module header of `JShark` (`packages/jshark/src/JShark.hs`) for
-the compile pipeline, then `JShark.Api` for the surface syntax. Satellite
-packages are described in the [README](README.md#monorepo-packages).
+Read the module header of [`JShark`](packages/jshark/src/JShark.hs) for the
+compiler pipeline, then [`JShark.Api`](packages/jshark/src/JShark/Api.hs) for
+the public syntax. See the [package overview](README.md#monorepo-packages)
+for the rest of the repository.
 
 ## Pull requests
 

@@ -1,10 +1,10 @@
 # jshark-hotreload
 
-Server-sent-events hub, WAI middleware, and filesystem watcher used by the
-JShark example development server to reload compiled modules in a live
-browser session. Independent of the `jshark` compiler.
+A server-sent events (SSE) hub, WAI middleware, and file watcher for live
+reloading. The JShark example server uses them to reload compiled modules
+in the browser. This package is independent of the `jshark` compiler.
 
 See [`examples/app/server`](https://github.com/goolord/jshark/tree/master/examples/app/server)
-for how the dev server wires these pieces to the compiler.
+for the compiler integration.
 
 Part of the [JShark](https://github.com/goolord/jshark) monorepo.
