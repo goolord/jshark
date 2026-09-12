@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+* Compiler correctness (each backed by a regression test that fails on the
+  previous behavior):
+
+  * `EffectSyntax.(*>)` no longer drops the continuation of
+    `EffectSyntaxUnpure`; a sequenced do-block statement keeps every effect
+    it runs.
+  * `lowerFnBodyTags` threads a fresh binder stamp instead of restarting at
+    `-2`, so a `Fn` body no longer aliases its own parameter or an
+    enclosing `let`.
+  * Pure `if_` and `optionCase`, and `&&`/`||`, keep branch-local
+    declarations inside their branch instead of hoisting both sides and
+    evaluating the untaken one.
+  * `optConstantFoldNumOnce` copies its input with `thaw` and freezes every
+    written column; it no longer mutates the caller's `FlatSoA` (and no
+    longer relies on that mutation for the `B` column).
+  * `elimIrBind` only moves a single-use binding to its use site when the
+    bound term is pure or an alias. Splicing an impure effect past other
+    effects reordered evaluation in minified output
+    (`foo(); bar()` compiled to `bar(); foo()`).
+
+* Negative zero literals now compile to `-0.0` instead of `0`.
+
+* Testing: `JShark.Bun.Internal` gains `runJSTagged`/`runProgramTagged`,
+  which serialize through a tagger that keeps `undefined` vs `null`, `NaN`,
+  the infinities, `-0`, and `BigInt` distinct; added gated `bun` tests for
+  each.
+
+* Benchmarks: the standalone `LifeEmit`/`LifeFullEmit`/`LifePhases`
+  timers force their result before stopping the clock (they previously
+  timed only thunk allocation).
+
 ## 0.1.0.0 (2026-09-11)
 
 * First version. Released on an unsuspecting world.
