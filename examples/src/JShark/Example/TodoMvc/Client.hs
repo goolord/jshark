@@ -198,7 +198,7 @@ persistState state items filt = do
         , field @"nextId" nid
         ]
         `asTypeOf` emptyState
-  Storage.setItem Storage.localStorage storageKey (Json.stringify (var blob))
+  Storage.setItem Storage.localStorage storageKey (Json.stringifyPure (var blob))
 
 incomplete ::
   Expr f ('Array (MutableObjectOf Todo))

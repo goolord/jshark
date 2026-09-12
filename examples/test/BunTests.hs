@@ -34,6 +34,7 @@ import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.Example.Life (initialCatalogCells, initialPop, soupSeedPop)
 import JShark.Example.Life.GridApi (seedLiveCells, seedSoupRegion)
+import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
@@ -289,6 +290,9 @@ bunEvalTests =
             , effectCase "Set insert then member" setMember "true"
             , effectCase "Map foldM sums values" mapFold "3"
             , effectCase "Map mapM_ runs" mapForEach "undefined"
+            , effectCase "JSON.stringify of a number" jsonStringify "\"1\""
+            , effectCase "JSON.stringify of undefined is none" jsonStringifyUnit "\"none\""
+            , effectCase "JSON.stringify of BigInt throws" jsonStringifyBigInt "\"caught\""
             , effectCase
                 "catch_ of throw_"
                 (catch_ (throw_ (string "boom")) (\_ -> expr (number 7)))
@@ -485,6 +489,21 @@ mapForEach :: forall f. Effect f 'Unit
 mapForEach = fromSyntax $ Map.withMap $ \m -> do
   _ <- Map.insert m (string "x") (number 1)
   Map.mapM_ (\_ _ -> toSyntax noOp) m
+
+jsonStringify :: forall f. Effect f 'String
+jsonStringify = fromSyntax $ do
+  s <- bindExpr (Json.stringify (number 1))
+  yield (orElse s (string "none"))
+
+jsonStringifyUnit :: forall f. Effect f 'String
+jsonStringifyUnit = fromSyntax $ do
+  s <- bindExpr (Json.stringify (Literal ValueUnit))
+  yield (orElse s (string "none"))
+
+jsonStringifyBigInt :: forall f. Effect f 'String
+jsonStringifyBigInt = fromSyntax $ do
+  s <- bindExpr (catch_ (Json.stringify (bigInt 1)) (\_ -> expr none))
+  yield (orElse s (string "caught"))
 
 logHi :: forall f. Effect f 'Unit
 logHi = fromSyntax (Console.log (string "hi" :: Expr f 'String) *> done)

@@ -155,10 +155,10 @@ rewriteRuleTests =
           Literal (ValueBool b) -> b @?= True
           _ -> assertFailure "jshark/or"
     , testCase "and/or keep an impure left" $ do
-        case (Json.stringify (number 1) .== string "1") .&& false_ of
+        case (Json.stringifyPure (number 1) .== string "1") .&& false_ of
           And _ (Literal (ValueBool False)) -> pure ()
           _ -> assertFailure "andE dropped impure left"
-        case (Json.stringify (number 1) .== string "1") .|| true_ of
+        case (Json.stringifyPure (number 1) .== string "1") .|| true_ of
           Or _ (Literal (ValueBool True)) -> pure ()
           _ -> assertFailure "orE dropped impure left"
     , testCase "eq/ord fold number literals" $ do
@@ -979,8 +979,8 @@ stdlibTests =
     , testCase "Floating (**) evaluates as Math.pow" $
         evaluateNumber (number 2 ** number 10) @?= 1024
     , pureCodeCase
-        "Json.stringify renders as JSON.stringify(x)"
-        (Json.stringify (number 1))
+        "Json.stringifyPure renders as JSON.stringify(x)"
+        (Json.stringifyPure (number 1))
         "JSON.stringify(1)"
     , effectCodeCase
         "Console.log renders as console.log(x)"
@@ -1801,7 +1801,7 @@ optimizeTests =
     , pureCodeCase
         "GetField does not DCE an impure sibling field"
         ( ( Object.frozen
-              [ Object.field @"s" (Json.stringify (number 1))
+              [ Object.field @"s" (Json.stringifyPure (number 1))
               , Object.field @"y" (number 2)
               ] ::
               Expr f ('Object LitRow)
@@ -1831,15 +1831,15 @@ optimizeTests =
         "1"
     , pureCodeCase
         "unused stringify is kept (can throw)"
-        (let_ (Json.stringify (number 1)) (\_ -> number 2))
+        (let_ (Json.stringifyPure (number 1)) (\_ -> number 2))
         "const n0 = JSON.stringify(1);\n2"
     , pureContains
         "impure && false keeps stringify"
-        ((Json.stringify (number 1) .== string "1") .&& false_)
+        ((Json.stringifyPure (number 1) .== string "1") .&& false_)
         ["JSON.stringify"]
     , pureContains
         "impure || true keeps stringify"
-        ((Json.stringify (number 1) .== string "1") .|| true_)
+        ((Json.stringifyPure (number 1) .== string "1") .|| true_)
         ["JSON.stringify"]
     , pureCodeCase
         "optionCase of a Literal ValueOption folds"

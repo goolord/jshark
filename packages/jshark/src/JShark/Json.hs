@@ -4,6 +4,7 @@
 -- | Minimal @JSON@ wrapper.
 module JShark.Json
   ( stringify
+  , stringifyPure
   , unsafeParse
   , tryParse
   )
@@ -13,10 +14,21 @@ import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 
--- | @JSON.stringify(x)@. Observationally pure (no mutation; the result
--- is determined by @x@). Closed-name 'Std' 'Un', not a general FFI.
-stringify :: Expr f u -> Expr f 'String
-stringify = expr1 FixStringify
+-- | @JSON.stringify(x)@. Effectful: it throws on @BigInt@ and cyclic
+-- values and yields 'none' when the value has no JSON form (functions,
+-- @undefined@). The native @undefined@ is normalized to @null@.
+stringify :: Expr f u -> Effect f ('Option 'String)
+stringify x =
+  ffi
+    "((x) => { const s = JSON.stringify(x); return s === undefined ? null : s; })"
+    (arg x <: RecNil)
+
+-- | @JSON.stringify(x)@ for values the caller knows have a JSON form and
+-- cannot throw. Pure 'Std' 'Un', so it participates in the pure kernel;
+-- the optimizer still treats it as effectful (it may throw) and never
+-- discards it.
+stringifyPure :: Expr f u -> Expr f 'String
+stringifyPure = expr1 FixStringify
 
 -- | @JSON.parse(x)@. Throws on bad JSON, so this is an 'Effect'. The
 -- result type is asserted by the caller and not checked.

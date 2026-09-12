@@ -33,6 +33,12 @@
   missing attribute is `none`, matching the native `null` result. It
   previously claimed `'String` and handed back `null`.
 
+* `JShark.Json.stringify` is now honest: `Effect f ('Option 'String)`,
+  `none` when the value has no JSON form and a throw for `BigInt`/cyclic
+  input. The old pure `Expr f 'String` could hand back `undefined` or
+  throw. `stringifyPure` keeps the trusted, pure `Std` form for values the
+  caller knows are JSON-safe.
+
 * `jshark-hotreload` WAI middleware: raw WAI responses are now passed
   through untouched (they are the wire output) instead of rewriting their
   fallback; HTML injection drops the now-stale `Content-Length` and skips
