@@ -1307,12 +1307,37 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           (s1, MkCode condDecl condRef _) = flatChild ctx s0 cId
           (s2, MkCode bodyDecl bodyRef _) = flatChild ctx s1 bId
           bodyStmt = asStmt bodyDecl bodyRef
-          whileStmt =
-            "while"
-              <+> parens (fromMaybe mempty condRef)
-              <+> blockBody bodyStmt
+          cJs = fromMaybe "false" condRef
          in
-          (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
+          case condDecl of
+            Nothing ->
+              ( s2
+              , MkCode
+                  (Just ("while" <+> parens cJs <+> blockBody bodyStmt))
+                  Nothing
+                  False
+              )
+            Just decl ->
+              -- The condition may need declarations (a bound scrutinee, a
+              -- loop-carried read). Keep them inside the loop so the whole
+              -- condition is evaluated on every iteration, and break out
+              -- instead of testing a stale hoisted value.
+              let
+                check =
+                  decl
+                    $$ ("if" <+> parens ("!" <> parens cJs) <+> blockBody "break;")
+               in
+                ( s2
+                , MkCode
+                    ( Just
+                        ( "while"
+                            <+> parens "true"
+                            <+> blockBody (check $$ bodyStmt)
+                        )
+                    )
+                    Nothing
+                    False
+                )
       Flat.FX_ForRange startId endId _tag bodyId ->
         let
           (s1, MkCode startDecl startRef _) = flatChild ctx s0 startId

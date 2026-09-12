@@ -21,6 +21,11 @@
     bound term is pure or an alias. Splicing an impure effect past other
     effects reordered evaluation in minified output
     (`foo(); bar()` compiled to `bar(); foo()`).
+  * A `while` condition whose effect needs declarations (a bound
+    scrutinee, a loop-carried read) no longer has those declarations
+    hoisted above the loop. They run inside a `while (true)` body with an
+    explicit `if (!cond) break`, so the whole condition is re-evaluated
+    every iteration.
 
 * Negative zero literals now compile to `-0.0` instead of `0`.
 

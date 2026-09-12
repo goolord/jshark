@@ -1867,6 +1867,17 @@ optimizeTests =
         (while_ (expr (bool False)) (ffi "foo" RecNil))
         ""
     , effectCodeCase
+        "while re-evaluates a condition that needs declarations"
+        ( while_
+            ( Bind
+                Nothing
+                (ffi "tick" RecNil)
+                (\n -> expr ((Var n + number 1) .> number 1))
+            )
+            (ffi "body" RecNil)
+        )
+        "while (true) {const n0 = tick();\nif (!((n0 + 1) > 1)) {break;}\nbody();}"
+    , effectCodeCase
         "ifE of True takes the true branch"
         (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil))
         "foo()"
