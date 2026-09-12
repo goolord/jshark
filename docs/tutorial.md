@@ -138,6 +138,7 @@ wire el = do
     k <- eventKey e
     toSyntax_ (callMethod el "flash" (arg k <: RecNil))
     done
+  done
 ```
 
 `addEventListenerS` takes the handler directly in `EffectSyntax` (the
@@ -156,7 +157,7 @@ tagged objects:
 data Person = Person { fullName :: Text, years :: Double }
   deriving Generic
 
-js <- compileEffect readableConfig (fromSyntax (G.toObject (Person "Ada" 36)))
+js <- compileEffect readableConfig (G.toObject (Person "Ada" 36))
 -- {fullName: "Ada", years: 36}
 ```
 

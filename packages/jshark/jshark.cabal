@@ -166,6 +166,7 @@ test-suite jshark-test
   main-is: Main.hs
   other-modules:
     FlatTest
+    TutorialSnippets
   hs-source-dirs: test
   build-depends:
     , base

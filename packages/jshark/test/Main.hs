@@ -60,6 +60,7 @@ import qualified JShark.Worker as Worker
 import Test.Support
 import Test.Tasty
 import Test.Tasty.HUnit
+import TutorialSnippets (tutorialSnippets)
 
 main :: IO ()
 main = defaultMain tests
@@ -86,6 +87,7 @@ tests =
     , flatSoATests
     , compilerTests
     , ergonomicsTests
+    , tutorialSnippets
     ]
 
 -- | Host evaluation must separate success from JS-like failure and from
