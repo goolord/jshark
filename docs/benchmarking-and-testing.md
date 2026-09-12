@@ -261,6 +261,44 @@ For Life-shaped paths, swap the executable for `jshark-examples-bench`
 
 ---
 
+## Recorded baselines
+
+Budgets live next to the workload that measures them, so a regression trips
+a test rather than living only in prose:
+
+| Budget | Where | What it gates |
+|--------|-------|---------------|
+| Life raw/opt IR nodes, optimize alloc | `examples/test/PerfTests.hs` | optimizer/storage |
+| Life output UTF-8 bytes and `$`-helper count | `examples/test/PerfTests.hs` | emission/hoisting |
+| Probe 16/32 JS size and alloc | `examples/test/PerfTests.hs` | IR→JS scale |
+| Life golden node/byte counts | `examples/test/LifeTests.hs` | inline/optimizer regressions |
+
+Record a new baseline by measuring on GHC 9.14.1 / `-O2`, keeping enough
+slack for RTS/GC noise, and lowering the ceiling when an intentional win
+lands. Compiler stage attribution (`optimizeEffect` vs `effectfulAST` vs
+`emit`) comes from `jshark-compiler`; full Life stages from
+`jshark-examples-bench` / `jshark-life-phases`. Keep isolated stage timings
+separate from end-to-end numbers.
+
+## Release verification
+
+Before publishing, the release workflow (and locally) runs:
+
+```bash
+./scripts/check-tag-version.sh v0.1.0.0   # tag matches every package version
+./scripts/verify-sdists.sh                # unpack, build, test, install bindgen
+```
+
+`verify-sdists.sh` unpacks the four published source distributions into a
+fresh directory, writes a minimal `cabal.project` that points only at the
+unpacked sources (no root overrides), builds and tests them, installs
+`jshark-bindgen`, and runs it on a shipped fixture. It leaves the verified
+tarballs in `dist-newstyle/sdist/`; publish only those paths. The clean
+project uses GHC's default backend, so it also confirms the packages do not
+require the monorepo's LLVM options.
+
+---
+
 ## Quick reference
 
 ```bash

@@ -11,6 +11,8 @@ module PerfTests (perfTests) where
 import Control.Exception (evaluate)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import JShark (ClosedEffect, renderJS)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
@@ -46,6 +48,15 @@ maxProbe16Alloc = 10000000
 
 maxProbe32Alloc :: Int64
 maxProbe32Alloc = 70000000
+
+-- Life output is deterministic; cap UTF-8 bytes and hoisted `$`-helpers so
+-- an accidental helper explosion or inline regression trips here as well as
+-- in the golden test.
+maxLifeBytes :: Int
+maxLifeBytes = 900000
+
+maxLifeHelpers :: Int
+maxLifeHelpers = 100
 
 life :: ClosedEffect 'Ty.Unit
 life = stmts mainJS
@@ -94,6 +105,13 @@ perfTests =
         assertCeiling "optAlloc" bytes maxLifeOptAlloc
     , probeCase 16 maxProbe16Chars maxProbe16Alloc
     , probeCase 32 maxProbe32Chars maxProbe32Alloc
+    , testCase "Life output bytes and helper count" $ do
+        let js = renderJS (effectfulAST life)
+        assertCeiling "lifeBytes" (BS.length js) maxLifeBytes
+        assertCeiling
+          "lifeHelpers"
+          (T.count "const $" (TE.decodeUtf8 js))
+          maxLifeHelpers
     ]
 
 probeCase :: Int -> Int -> Int64 -> TestTree
