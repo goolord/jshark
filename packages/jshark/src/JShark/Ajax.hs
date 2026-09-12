@@ -54,6 +54,7 @@ send x = toSyntax_ $ callMethod x "send" RecNil
 sendPost :: Effect f ('MutableObject XHR) -> Expr f 'String -> EffectSyntax f ()
 sendPost x y = toSyntax_ $ callMethod x "send" (arg y <: RecNil)
 
+-- | Opaque @XMLHttpRequest@ handle.
 data XHR
 
 type instance Field XHR "responseText" = 'String

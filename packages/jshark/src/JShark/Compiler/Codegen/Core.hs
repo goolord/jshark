@@ -14,6 +14,9 @@
 {-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults -Wno-missing-pattern-synonym-signatures #-}
 
 -- | Codegen state ('CG'), snippet assembly ('Code'), and compile prep.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Codegen.Core where
 
 import Control.Exception (evaluate)
@@ -38,10 +41,7 @@ import JShark.Compiler.CompileProgress
   , reportPackPhase
   )
 import JShark.Compiler.CompileTiming
-  ( FlatOptProfile (..)
-  , FlatPrepareTiming (..)
-  , IrOptProfile (..)
-  , LowerProfile (..)
+  ( FlatPrepareTiming (..)
   , reportFlatPrepareTiming
   , seconds
   )
@@ -75,14 +75,12 @@ import JShark.Compiler.JsShim
   , useShim
   )
 import JShark.Compiler.Lower
-  ( lowerEffectClosed
-  , lowerOptEffectIrWith
+  ( lowerOptEffectIrWith
   , lowerOptExprIr
-  , optEffectClosed
   )
 
 preambleDecls s =
-  renderPreambleStyled (esSourceNames (cgStyle s)) (cgPreamble s)
+  renderPreambleStyled (cgPreamble s)
 
 emitBuiltin :: CG -> Builtin -> [JS] -> (CG, JS)
 emitBuiltin s b args =
@@ -276,129 +274,6 @@ flatPrepareFromIr irOpt = do
   pure (soaOpt, timing)
 {-# NOINLINE flatPrepareFromIr #-}
 
-profileFlatOptFromIr :: Ir.IrNode -> IO FlatOptProfile
-profileFlatOptFromIr irOpt = do
-  let
-    !soa0 = FlatSoA.packProgramDirect irOpt
-    !nodeCount = FlatSoA.flatSoaNodeCount soa0
-  _ <- GHCIO.evaluate (FlatSoA.soaPureCount soa0)
-  tFold0 <- getMonotonicTime
-  let
-    !(soa1, foldPasses, folded) = FlatSoA.constantFoldWithStats soa0
-  tFold1 <- getMonotonicTime
-  tFoldSeq0 <- getMonotonicTime
-  _ <- GHCIO.evaluate (FlatSoA.optConstantFoldNumOnce soa0)
-  tFoldSeq1 <- getMonotonicTime
-  tAttach0 <- getMonotonicTime
-  let
-    !pureCount = FlatSoA.soaPureCount soa1
-    !_ = FlatSoA.soaPureVector soa1
-  tAttach1 <- getMonotonicTime
-  let
-    foldSec = seconds tFold0 tFold1
-    foldSeqSec = seconds tFoldSeq0 tFoldSeq1
-    attachSec = seconds tAttach0 tAttach1
-    total = foldSec + attachSec
-  pure
-    FlatOptProfile
-      { fopNodeCount = nodeCount
-      , fopFoldSec = foldSec
-      , fopFoldSeqSec = foldSeqSec
-      , fopFoldPasses = foldPasses
-      , fopFolded = folded
-      , fopPureCount = pureCount
-      , fopAttachSec = attachSec
-      , fopTotalSec = total
-      }
-{-# NOINLINE profileFlatOptFromIr #-}
-
-profileIrOptFromIr :: Ir.IrNode -> IO IrOptProfile
-profileIrOptFromIr !irRaw = do
-  tMetaRaw0 <- getMonotonicTime
-  let
-    !rawNodes = Ir.irSize (Ir.metaIr irRaw)
-  tMetaRaw1 <- getMonotonicTime
-  tOpt0 <- getMonotonicTime
-  let
-    ?keepLets = False
-   in
-    do
-      let
-        !(_, !irOpt, !mdOpt) = Ir.optIr (-2) irRaw
-        !optNodes = Ir.irSize mdOpt
-      tOpt1 <- getMonotonicTime
-      tMetaOpt0 <- getMonotonicTime
-      let
-        !_ = Ir.metaIr irOpt
-      tMetaOpt1 <- getMonotonicTime
-      _ <- GHCIO.evaluate irOpt
-      let
-        metaRawSec = seconds tMetaRaw0 tMetaRaw1
-        optSec = seconds tOpt0 tOpt1
-        metaOptSec = seconds tMetaOpt0 tMetaOpt1
-       in
-        pure
-          IrOptProfile
-            { iopRawNodes = rawNodes
-            , iopOptNodes = optNodes
-            , iopLowerSec = 0
-            , iopMetaRawSec = metaRawSec
-            , iopOptSec = optSec
-            , iopMetaOptSec = metaOptSec
-            , iopPrepareSec = 0
-            , iopTotalSec = metaRawSec + optSec + metaOptSec
-            }
-{-# NOINLINE profileIrOptFromIr #-}
-
-profileIrOptFromClosed :: ClosedEffect u -> IO IrOptProfile
-profileIrOptFromClosed e = do
-  tLower0 <- getMonotonicTime
-  let
-    !irRaw = lowerEffectClosed e
-  tLower1 <- getMonotonicTime
-  tPrep0 <- getMonotonicTime
-  let
-    !irOpt = optEffectClosed irRaw
-    !optNodes = Ir.irSize (Ir.metaIr irOpt)
-  tPrep1 <- getMonotonicTime
-  _ <- GHCIO.evaluate irOpt
-  breakdown <- profileIrOptFromIr irRaw
-  let
-    lowerSec = seconds tLower0 tLower1
-    prepareSec = seconds tPrep0 tPrep1
-   in
-    pure
-      breakdown
-        { iopOptNodes = optNodes
-        , iopLowerSec = lowerSec
-        , iopPrepareSec = prepareSec
-        , iopTotalSec = lowerSec + prepareSec
-        }
-{-# NOINLINE profileIrOptFromClosed #-}
-
-profileLowerFromClosed :: ClosedEffect u -> IO LowerProfile
-profileLowerFromClosed e = do
-  tLazy0 <- getMonotonicTime
-  let
-    !irRaw = lowerEffectClosed e
-  tLazy1 <- getMonotonicTime
-  tForce0 <- getMonotonicTime
-  let
-    !rawNodes = Ir.irSize (Ir.metaIr irRaw)
-  tForce1 <- getMonotonicTime
-  let
-    lazySec = seconds tLazy0 tLazy1
-    forceSec = seconds tForce0 tForce1
-   in
-    pure
-      LowerProfile
-        { lopRawNodes = rawNodes
-        , lopLazySec = lazySec
-        , lopForceSec = forceSec
-        , lopTotalSec = lazySec + forceSec
-        }
-{-# NOINLINE profileLowerFromClosed #-}
-
 flatPrepareCore ::
   ClosedEffect u -> IO (FlatSoA.FlatSoA, FlatPrepareTiming, Int, Ir.IrNode)
 flatPrepareCore = flatPrepareCoreWith False
@@ -562,8 +437,6 @@ varStampJS cg env s =
       then maybe mempty (nJS cg) (IM.lookup i env)
       else nJS cg i
 
--- | Ident already allocated for this effect (@Lift (Var n1)@). Not a
--- counter guess: only a binder that is already in the tree.
 jsCall f a = parens f <> parens a
 
 jsCallN f args = parens f <> parens (hcat (punctuate ", " args))
@@ -616,7 +489,6 @@ arrowExpr r =
 
 needsObjectParens t = "{" `T.isPrefixOf` t
 
--- | Needs no parentheses as an operand: already a primary JS expression.
 allocNIdents :: CG -> Int -> ([Int], CG)
 allocNIdents s 0 = ([], s)
 allocNIdents s n =

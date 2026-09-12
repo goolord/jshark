@@ -12,6 +12,9 @@
 --
 -- Terminal output is serialized through a hand-rolled CAS gate
 -- ('withProgressIO') so concurrent jobs do not interleave their redraws.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.CompileProgress
   ( CompilePhase (..)
   , JobProgress (..)
@@ -267,9 +270,6 @@ phaseWeight = \case
   PhaseEmit -> 0.70
   PhaseDone -> 1.0
 
-phaseOrder :: CompilePhase -> Int
-phaseOrder = phaseToInt
-
 phaseLabel :: CompilePhase -> String
 phaseLabel = \case
   PhaseIrPrepare -> "irprep"
@@ -283,7 +283,7 @@ completedPhaseWeight phase =
   sum
     [ phaseWeight p
     | p <- [PhaseIrPrepare, PhasePack, PhaseFlatOpt, PhaseEmit, PhaseDone]
-    , phaseOrder p < phaseOrder phase
+    , phaseToInt p < phaseToInt phase
     ]
 
 jobProgressPct :: JobProgress -> Double

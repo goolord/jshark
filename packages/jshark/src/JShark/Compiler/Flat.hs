@@ -10,6 +10,9 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Untyped flat IR: pack + frozen SoA view + bulk passes.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Flat
   ( NodeId
   , FlatNode (..)

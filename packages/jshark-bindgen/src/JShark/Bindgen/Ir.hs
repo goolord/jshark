@@ -45,6 +45,7 @@ data Ty
     TyUnknown Text
   deriving (Eq, Show)
 
+-- | A function parameter: name, erased type, and optionality.
 data Param = Param
   { pName :: Text
   , pTy :: Ty
@@ -52,6 +53,7 @@ data Param = Param
   }
   deriving (Eq, Show)
 
+-- | An extracted function, constructor, or method.
 data Fun = Fun
   { fnName :: Text
   , fnFfi :: Text
@@ -62,6 +64,7 @@ data Fun = Fun
   }
   deriving (Eq, Show)
 
+-- | A class or interface property.
 data Prop = Prop
   { prName :: Text
   , prTy :: Ty
@@ -69,6 +72,7 @@ data Prop = Prop
   }
   deriving (Eq, Show)
 
+-- | An extracted class or interface declaration.
 data ClassDecl = ClassDecl
   { clName :: Text
   , clFfi :: Text
@@ -78,6 +82,7 @@ data ClassDecl = ClassDecl
   }
   deriving (Eq, Show)
 
+-- | A top-level exported constant.
 data ConstDecl = ConstDecl
   { cnName :: Text
   , cnFfi :: Text
@@ -85,6 +90,7 @@ data ConstDecl = ConstDecl
   }
   deriving (Eq, Show)
 
+-- | A single member of a TypeScript enum.
 data EnumMember = EnumMember
   { emName :: Text
   , emValue :: Maybe Text
@@ -92,18 +98,21 @@ data EnumMember = EnumMember
   }
   deriving (Eq, Show)
 
+-- | An exported TypeScript enum.
 data EnumDecl = EnumDecl
   { enName :: Text
   , enMembers :: [EnumMember]
   }
   deriving (Eq, Show)
 
+-- | An input declaration the extractor could not bind, with a reason.
 data Skipped = Skipped
   { skName :: Text
   , skReason :: Text
   }
   deriving (Eq, Show)
 
+-- | Everything extracted from one source file.
 data ModuleIr = ModuleIr
   { irModule :: Text
   , irPrefix :: Text
@@ -116,6 +125,7 @@ data ModuleIr = ModuleIr
   }
   deriving (Eq, Show)
 
+-- | An empty 'ModuleIr' with the given module name and source.
 emptyModule :: Text -> Text -> ModuleIr
 emptyModule name source =
   ModuleIr
@@ -144,6 +154,7 @@ tyAndChildren t = t : children t
     TyFun as r -> concatMap tyAndChildren as <> tyAndChildren r
     _ -> []
 
+-- | True when the type or any nested type is a 'TyUnknown'.
 tyUsesUnknown :: Ty -> Bool
 tyUsesUnknown = any isUnknown . tyAndChildren
  where
@@ -151,6 +162,7 @@ tyUsesUnknown = any isUnknown . tyAndChildren
     TyUnknown _ -> True
     _ -> False
 
+-- | True when the type or any nested type is a 'TyPromise'.
 tyUsesPromise :: Ty -> Bool
 tyUsesPromise = any isPromise . tyAndChildren
  where
@@ -167,6 +179,7 @@ walkFuns p ir =
       )
       (irClasses ir)
 
+-- | True when any function, property, or constant uses an unknown type.
 moduleUsesUnknown :: ModuleIr -> Bool
 moduleUsesUnknown ir =
   walkFuns funUnk ir
@@ -176,6 +189,7 @@ moduleUsesUnknown ir =
   funUnk f =
     tyUsesUnknown (fnRet f) || any (tyUsesUnknown . pTy) (fnParams f)
 
+-- | True when any function, property, or constant uses a promise.
 moduleUsesPromise :: ModuleIr -> Bool
 moduleUsesPromise ir =
   walkFuns funP ir

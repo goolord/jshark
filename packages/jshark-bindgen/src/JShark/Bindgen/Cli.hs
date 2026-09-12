@@ -41,16 +41,19 @@ import Options.Applicative
   )
 import System.Exit (die)
 
+-- | Parsed arguments: generation options, optional output path, input file.
 data Cli = Cli
   { cliOpts :: BindgenOpts
   , cliOut :: Maybe FilePath
   , cliFile :: FilePath
   }
 
+-- | optparse-applicative preferences: show help on error and on empty input.
 parserPrefs :: ParserPrefs
 parserPrefs =
   prefs (showHelpOnError <> showHelpOnEmpty)
 
+-- | Full parser description for the @jshark-bindgen@ command.
 parserInfo :: ParserInfo Cli
 parserInfo =
   info (helper <*> cliParser) $
@@ -101,6 +104,7 @@ bindgenOptsParser =
             )
       )
 
+-- | Parse an argument vector into 'Cli', reporting failures as 'Left'.
 parseCliArgs :: [String] -> Either String Cli
 parseCliArgs args =
   case execParserPure parserPrefs parserInfo args of
@@ -108,10 +112,12 @@ parseCliArgs args =
     Failure err -> Left (show err)
     CompletionInvoked _ -> Left "shell completion invoked"
 
+-- | Parse @argv@ and run the CLI; the executable entry point.
 runMain :: IO ()
 runMain =
   customExecParser parserPrefs parserInfo >>= runCli
 
+-- | Run the generator for a parsed 'Cli', writing to file or stdout.
 runCli :: Cli -> IO ()
 runCli cli = do
   ir <- parseIrFromFile (cliOpts cli) (cliFile cli)

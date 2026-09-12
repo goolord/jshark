@@ -1,6 +1,7 @@
 # Changelog
 
-The authoritative changelog lives at the repository root: see
-`CHANGELOG.md` there. This copy exists only so `cabal sdist` ships a
-changelog; release tooling is expected to sync it from the root before
-publishing.
+## 0.1.0.0 (2026-09-11)
+
+* First version.
+* See the [repository changelog](https://github.com/goolord/jshark/blob/master/CHANGELOG.md)
+  for the detailed pre-release history of the compiler and EDSL.

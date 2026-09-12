@@ -23,6 +23,7 @@ data Json
   | JObj [(Text, Json)]
   deriving (Eq, Show)
 
+-- | Decode the extractor's JSON IR for one module, or fail with a message.
 decodeModule :: Text -> Either String ModuleIr
 decodeModule src = do
   j <- parseJson src

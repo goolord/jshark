@@ -17,11 +17,14 @@ import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Object hiding (get, set)
 
+-- | Opaque Web Storage handle ('localStorage' or 'sessionStorage').
 data Storage
 
+-- | @window.localStorage@.
 localStorage :: Effect f ('MutableObject Storage)
 localStorage = unsafeObject "localStorage"
 
+-- | @window.sessionStorage@ — cleared when the tab closes.
 sessionStorage :: Effect f ('MutableObject Storage)
 sessionStorage = unsafeObject "sessionStorage"
 
@@ -35,6 +38,7 @@ getItem s key =
     $ bindExpr
     $ callMethod s "getItem" (arg key <: RecNil)
 
+-- | @storage.setItem(key, value)@.
 setItem ::
   Effect f ('MutableObject Storage)
   -> Expr f 'String
@@ -42,9 +46,11 @@ setItem ::
   -> EffectSyntax f (f 'Unit)
 setItem s key value = toSyntax $ callMethod s "setItem" (arg key <: arg value <: RecNil)
 
+-- | @storage.removeItem(key)@.
 removeItem ::
   Effect f ('MutableObject Storage) -> Expr f 'String -> EffectSyntax f (f 'Unit)
 removeItem s key = toSyntax $ callMethod s "removeItem" (arg key <: RecNil)
 
+-- | @storage.clear()@ — remove all entries.
 clear :: Effect f ('MutableObject Storage) -> EffectSyntax f (f 'Unit)
 clear s = toSyntax $ callMethod s "clear" RecNil

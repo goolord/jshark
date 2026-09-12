@@ -26,8 +26,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 -- Measured on GHC 9.14.1 / -O2 after Index-only Array.index + dropped
--- expandBounds walk (2026-08-27): raw/opt from @exe:jshark-life-metrics@
--- (rawNodes=62574, optNodes=95752).
+-- expandBounds walk (2026-08-27): rawNodes=62574, optNodes=95752.
 maxLifeRawNodes :: Int
 maxLifeRawNodes = 70000
 

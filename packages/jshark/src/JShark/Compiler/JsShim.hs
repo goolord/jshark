@@ -25,11 +25,11 @@ where
 
 import Data.Char (isDigit)
 import qualified Data.Char as Char
+import Data.List (nub, sortBy)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.List (nub, sortBy)
 import JShark.Compiler.Emit
   ( JS
   , hcat
@@ -148,10 +148,9 @@ hoistNIdents src = go 0 []
   isIdentCont (Just c) = Char.isAlphaNum c || c == '_'
   isIdentCont Nothing = False
 
--- | Render preamble bindings. The @sourceNames@ flag is reserved for codegen
--- ('esSourceNames'); shim bodies stay compact and Biome formats the full emit.
-renderPreambleStyled :: Bool -> Preamble -> JS
-renderPreambleStyled _sourceNames p =
+-- | Render preamble bindings compactly; Biome formats the full emit.
+renderPreambleStyled :: Preamble -> JS
+renderPreambleStyled p =
   vcat
     [ ("const" <+> jsText name <+> "=" <+> jsText src) <> semi
     | (name, src) <- preambleToList p

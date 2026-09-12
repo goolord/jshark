@@ -1,6 +1,5 @@
 packages:
   packages/jshark
-  packages/jshark-testing
   packages/jshark-lucid
   packages/jshark-bindgen
   packages/jshark-hotreload
@@ -12,7 +11,19 @@ optimization: 2
 
 -- Warning flags live in each package's own `common warnings` stanza
 -- (the Hackage-safe location); this file only carries environment
--- specifics.
+-- specifics. `-Werror` is opt-in via each package's `werror` flag so
+-- released packages stay buildable on future GHCs; developer builds enable
+-- it here.
+package jshark
+  flags: +werror
+package jshark-lucid
+  flags: +werror
+package jshark-bindgen
+  flags: +werror
+package jshark-hotreload
+  flags: +werror
+package jshark-examples
+  flags: +werror
 
 -- Windows lacks the LLVM opt/llc-20 toolchain used elsewhere.
 if !os(windows)

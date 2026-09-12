@@ -1,9 +1,19 @@
-cabal-version: 2.4
+cabal-version: 3.4
 
 -- jshark core: safe JS EDSL + compiler pipeline.
 name: jshark
-version: 0.1
+version: 0.1.0.0
 synopsis: Safe Javascript EDSL
+description:
+  A typed, readable JavaScript EDSL embedded in Haskell. Programs are
+  ordinary Haskell values: binders use PHOAS, statements compose with
+  @do@ notation, and codegen emits clean JavaScript whose binder names
+  and callstack hints are preserved.
+  .
+  The API separates pure expressions (@Expr@) from side effects
+  (@Effect@). Pure terms can be evaluated directly in Haskell, and
+  effectful programs run under Bun or a browser with optional
+  @happy-dom@ globals.
 homepage: https://github.com/goolord/jshark
 bug-reports: https://github.com/goolord/jshark/issues
 license: BSD-3-Clause
@@ -23,16 +33,26 @@ copyright:
   copyright 2019 Andrew Martin
   copyright 2019 Kyle McKean
 category: Language
+stability: experimental
 build-type: Simple
-extra-source-files:
+tested-with: GHC == 9.14.1
+extra-doc-files:
   README.md
   CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/goolord/jshark
+
+flag werror
+  description: Treat warnings as errors (development builds)
+  manual: True
+  default: False
 
 common warnings
   ghc-options:
     -Wall
     -Wextra
-    -Werror
     -Wcompat
     -Widentities
     -Wincomplete-record-updates
@@ -41,6 +61,9 @@ common warnings
     -Wmissing-home-modules
     -Wpartial-fields
     -Wredundant-constraints
+
+  if flag(werror)
+    ghc-options: -Werror
 
 library
   import: warnings
@@ -93,54 +116,66 @@ library
     JShark.Compiler.Lower
     JShark.Compiler.Process
   build-depends:
-    , ansi-terminal >= 1.0
+    , ansi-terminal >= 1.0 && < 1.2
     , async >= 2.2 && < 2.4
     , atomic-primops >= 0.8 && < 0.9
     , base >= 4.17 && < 5
-    , bytestring >= 0.10.8 && < 1
-    , containers
-    , directory
+    , bytestring >= 0.10.8 && < 0.13
+    , containers >= 0.6 && < 0.8
+    , directory >= 1.3 && < 1.4
     , effectful >= 2.5 && < 2.8
-    , exceptions >= 0.10
-    , filepath
+    , filepath >= 1.4 && < 1.6
     , http-types >= 0.8 && < 1
-    , mtl >= 2.2
-    , transformers
-    , process
+    , mtl >= 2.2 && < 2.4
+    , transformers >= 0.5 && < 0.7
+    , process >= 1.6 && < 1.7
     , streaming-bytestring >= 0.3.0 && < 0.4
     , text >= 1.2 && < 3
     -- 1.x required for GHC 9.14; 0.6.x pulls text-builder-dev (broken on 9.14).
     , text-builder >= 1.0 && < 1.1
-    , time >= 1.12 && < 1.16
     , typed-process >= 0.2.11 && < 0.3
-    , vector >= 0.12
+    , vector >= 0.12 && < 0.14
   hs-source-dirs: src
   default-language: Haskell2010
-  ghc-options: -O2
+
+-- | Shared test/bench support. Public so the example package (which
+-- cannot depend on a private component) can reuse it; this is not a
+-- user-facing API and may change without notice.
+library testing
+  import: warnings
+  visibility: public
+  exposed-modules:
+    Bench.Stages
+    CaptureStderr
+    Test.Support
+  hs-source-dirs: test-support
+  build-depends:
+    , base >= 4.17 && < 5
+    , deepseq >= 1.4 && < 1.6
+    , jshark
+    , tasty >= 1.4 && < 1.6
+    , tasty-bench >= 0.3.5 && < 0.4
+    , tasty-hunit >= 0.10 && < 0.11
+    , text >= 1.2 && < 3
+  default-language: Haskell2010
 
 test-suite jshark-test
   import: warnings
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
-    CaptureStderr
     FlatTest
-    Test.Support
-  hs-source-dirs:
-    test
-    -- Shared test/bench sources live in the jshark-testing package; the
-    -- test-suite compiles them in place because depending on that
-    -- package here would be a cabal package cycle (it depends on jshark).
-    ../jshark-testing/test-support
+  hs-source-dirs: test
   build-depends:
     , base
-    , directory
-    , filepath
+    , directory >= 1.3 && < 1.4
+    , filepath >= 1.4 && < 1.6
     , jshark
-    , tasty
-    , tasty-hunit
-    , text
-    , vector
+    , jshark:testing
+    , tasty >= 1.4 && < 1.6
+    , tasty-hunit >= 0.10 && < 0.11
+    , text >= 1.2 && < 3
+    , vector >= 0.12 && < 0.14
   default-language: Haskell2010
   ghc-options:
     -Wno-deprecations
@@ -153,20 +188,16 @@ benchmark jshark-compiler
   import: warnings
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules:
-    Bench.Stages
-  hs-source-dirs:
-    bench
-    ../jshark-testing/test-support
+  hs-source-dirs: bench
   build-depends:
     , base
-    , deepseq >= 1.4
+    , deepseq >= 1.4 && < 1.6
     , jshark
-    , tasty-bench >= 0.3.5
-    , text
+    , jshark:testing
+    , tasty-bench >= 0.3.5 && < 0.4
+    , text >= 1.2 && < 3
   default-language: Haskell2010
   ghc-options:
-    -O2
     -threaded
     -rtsopts
     -with-rtsopts=-N

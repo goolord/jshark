@@ -204,7 +204,9 @@ console.log("max", 2, 9);
 | `jshark-bindgen` | [`packages/jshark-bindgen`](packages/jshark-bindgen) | Generates Haskell `ffi` wrapper modules from TypeScript `.d.ts` or JSDoc. |
 | `jshark-hotreload` | [`packages/jshark-hotreload`](packages/jshark-hotreload) | SSE dev-server middleware and file watcher for live reloading. |
 | `jshark-examples` | [`examples`](examples) | Four showcase apps, dev server, and static exporter. |
-| `jshark-testing` | [`packages/jshark-testing`](packages/jshark-testing) | Shared test/bench support (golden-case helpers, compiler-stage benches). |
+
+Shared test and benchmark support lives in the `jshark:testing` sublibrary (not a
+user-facing API); `jshark-examples` consumes it from the same build.
 
 ### `jshark-lucid`
 
@@ -310,6 +312,7 @@ cabal run exe:jshark-examples -- export ./dist
 
 - [JShark Tutorial](docs/tutorial.md): EDSL tour covering syntax, AST primitives, lambdas, records, and Lucid.
 - [Benchmarking & Testing Guide](docs/benchmarking-and-testing.md): Test suites, profiling, and RTS configuration.
+- [Contributing](CONTRIBUTING.md): Local build/test/format workflow and commit conventions.
 - [Changelog](CHANGELOG.md): Version history and updates.
 
 ---

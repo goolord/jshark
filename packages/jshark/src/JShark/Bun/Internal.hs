@@ -4,6 +4,9 @@
 --
 -- A caller holding a 'String' of JavaScript has already left the typed
 -- subset, so this stays behind @.Internal@ rather than in the public API.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Bun.Internal
   ( JSProgram (..)
   , plainProgram

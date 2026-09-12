@@ -57,6 +57,8 @@ data WatchTargets = WatchTargets
   -- ^ Fired for non-Page @.hs@ edits (Mode B recompiler hook).
   }
 
+-- | Build 'WatchTargets' from roots using the default CSS mapping and a no-op
+-- Haskell hook.
 defaultWatchTargets :: [FilePath] -> WatchTargets
 defaultWatchTargets dirs =
   WatchTargets

@@ -88,6 +88,7 @@ data OutputStyle
 -- | Top-level compiler configuration.
 data CompilerConfig = CompilerConfig
   { configStyle :: OutputStyle
+  -- ^ Output mode: IIFE-wrapped 'Minified' or unwrapped 'Readable'.
   , configProgress :: Bool
   -- ^ Print a terminal progress bar for batch compiles and elapsed time when
   --     done. Off by default so tests stay quiet.
@@ -138,6 +139,8 @@ finishReadableIO quiet src =
         $ hPutStrLn stderr ("JShark.Compiler: " ++ err ++ "; using compact emit")
       pure (T.strip src)
 
+-- | Compile an effectful program to JS text, drawing progress when
+-- 'configProgress' is set.
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffect cfg eff = do
   start <- getCPUTime
@@ -155,9 +158,11 @@ compileEffectSyntax ::
   CompilerConfig -> (forall f. EffectSyntax f (f u)) -> IO Text
 compileEffectSyntax cfg body = compileEffect cfg (fromSyntax body)
 
+-- | Like 'compileEffect' but silent: never draws progress bars.
 compileEffectPure :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffectPure cfg eff = runEff (compileEffectEff (quietCfg cfg) eff)
 
+-- | Like 'compileEffect' but always draws progress bars.
 compileEffectIO :: CompilerConfig -> ClosedEffect u -> IO Text
 compileEffectIO cfg = compileEffect cfg {configProgress = True}
 
@@ -219,7 +224,7 @@ compileJobsLabeled baseCfg jobs
               CP.initJob board slot label
               out <-
                 CP.withActiveJob slot board $
-                  compileEffectPure (mergeJobConfig baseCfg jobCfg) eff
+                  compileEffectPure (mergeJobConfig jobCfg) eff
               CP.markJobDone board slot
               CP.withProgressIO refresh
               pure (slot, out)
@@ -235,7 +240,7 @@ compileJobsLabeled baseCfg jobs
       pure (map snd (sortOn fst indexed))
   | otherwise =
       mapConcurrently
-        (\(_label, jobCfg, eff) -> compileEffectPure (mergeJobConfig baseCfg jobCfg) eff)
+        (\(_label, jobCfg, eff) -> compileEffectPure (mergeJobConfig jobCfg) eff)
         jobs
 
 -- | Banner-before-serve only means JS is ready if this ran.
@@ -250,8 +255,9 @@ effectDoc :: OutputStyle -> ClosedEffect u -> JS
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
 
-mergeJobConfig :: CompilerConfig -> CompilerConfig -> CompilerConfig
-mergeJobConfig _base job =
+-- | Worker jobs never drive the shared progress display or log to stderr.
+mergeJobConfig :: CompilerConfig -> CompilerConfig
+mergeJobConfig job =
   job
     { configProgress = False
     , configQuiet = True

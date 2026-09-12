@@ -9,9 +9,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults -Wno-incomplete-patterns #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults #-}
 
 -- | Flat IR → JavaScript (effectful compile path).
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Codegen.Flat where
 
 import Control.Monad (forM_)
@@ -31,7 +34,6 @@ import JShark.Compiler.Binder
   ( pattern Name
   )
 import JShark.Compiler.Codegen.Core
-import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
 import JShark.Compiler.Codegen.Stmt
   ( asStmt
   , assignResult
@@ -67,6 +69,7 @@ import JShark.Compiler.Evaluate
   , jsUint8ArrayLit
   )
 import qualified JShark.Compiler.Flat as Flat
+import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
 
 resultPayloadRef :: Maybe JS -> JS
 resultPayloadRef = fromMaybe "undefined"
@@ -833,9 +836,13 @@ buildFlatEmitPlan view root s0 =
                 Flat.FE_MethFilter arr tag bodyId ->
                   planGo env arr Prelude.>> scopedBody [tag] 1 bodyId
                 Flat.FE_MethReduce arr z tagA tagB bodyId ->
-                  planGo env arr Prelude.>> planGo env z Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                  planGo env arr
+                    Prelude.>> planGo env z
+                    Prelude.>> scopedBody [tagA, tagB] 2 bodyId
                 Flat.FE_MethReduceRight arr z tagA tagB bodyId ->
-                  planGo env arr Prelude.>> planGo env z Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                  planGo env arr
+                    Prelude.>> planGo env z
+                    Prelude.>> scopedBody [tagA, tagB] 2 bodyId
                 Flat.FE_MethToSorted arr tagA tagB bodyId ->
                   planGo env arr Prelude.>> scopedBody [tagA, tagB] 2 bodyId
                 Flat.FE_MethFrom lenId tag bodyId ->
@@ -1358,5 +1365,3 @@ pureAST = pureASTWith idiomaticStyle
 pureASTWith :: EmitStyle -> ClosedExpr u -> JS
 pureASTWith style e =
   uncurry renderWithPreamble (flatPureCodegenWith style e)
-
--- | Stmt-only codegen for branching effects (no shared @let result@).

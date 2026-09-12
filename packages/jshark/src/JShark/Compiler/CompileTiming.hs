@@ -1,12 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
 
--- | Wall-clock breakdown for flat and PHOAS compile prepare paths.
---   Enable stderr logging with @JSHARK_COMPILE_TIMING=1@.
+-- | Wall-clock timing for the flat-prepare path. Enable stderr logging
+--   with @JSHARK_COMPILE_TIMING=1@.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.CompileTiming
   ( FlatPrepareTiming (..)
-  , FlatOptProfile (..)
-  , IrOptProfile (..)
-  , LowerProfile (..)
   , reportFlatPrepareTiming
   , seconds
   )
@@ -16,51 +16,12 @@ import Control.Monad (when)
 import System.Environment (lookupEnv)
 import System.IO (hPutStrLn, stderr)
 
+-- | Wall-clock (monotonic) breakdown of the flat-prepare path.
 data FlatPrepareTiming = FlatPrepareTiming
   { fptIrPrepareSec :: !Double
   , fptPackSec :: !Double
   , fptFlatOptSec :: !Double
   , fptTotalSec :: !Double
-  }
-  deriving (Eq, Show)
-
--- | Sub-step breakdown of 'fptFlatOptSec' (constant fold vs attach); purity
--- itself is computed at pack time, not in the flat-opt phase.
-data FlatOptProfile = FlatOptProfile
-  { fopNodeCount :: !Int
-  , fopFoldSec :: !Double
-  , fopFoldSeqSec :: !Double
-  , fopFoldPasses :: !Int
-  , fopFolded :: !Bool
-  , fopPureCount :: !Int
-  , fopAttachSec :: !Double
-  , fopTotalSec :: !Double
-  }
-  deriving (Eq, Show)
-
--- | Sub-step breakdown of 'fptIrPrepareSec' (lower vs optimize vs metadata).
---
--- 'iopLowerSec' is lazy PHOAS-to-IR WHNF.  Most lowering work is deferred
--- into 'iopPrepareSec' ('optEffectClosed' forces the raw tree).  The
--- meta/opt lines come from a second pass on the already-forced raw IR.
-data IrOptProfile = IrOptProfile
-  { iopRawNodes :: !Int
-  , iopOptNodes :: !Int
-  , iopLowerSec :: !Double
-  , iopMetaRawSec :: !Double
-  , iopOptSec :: !Double
-  , iopMetaOptSec :: !Double
-  , iopPrepareSec :: !Double
-  , iopTotalSec :: !Double
-  }
-  deriving (Eq, Show)
-
--- | PHOAS-to-IR lower breakdown ('lowerEffectClosed' is lazy WHNF until forced).
-data LowerProfile = LowerProfile
-  { lopRawNodes :: !Int
-  , lopLazySec :: !Double
-  , lopForceSec :: !Double
-  , lopTotalSec :: !Double
   }
   deriving (Eq, Show)
 

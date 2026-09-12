@@ -45,6 +45,7 @@ withMap k = do
   m <- toSyntax new
   k (Lift (Var m))
 
+-- | @map.set(k, v)@.
 insert ::
   Effect f ('Map k v)
   -> Expr f k
@@ -67,21 +68,25 @@ lookup m k =
       "((m, k) => { const v = m.get(k); return v === undefined ? null : v; })"
       (ArgEffect m <: arg k <: RecNil)
 
+-- | @map.delete(k)@.
 delete ::
   Effect f ('Map k v)
   -> Expr f k
   -> EffectSyntax f (f 'Unit)
 delete m k = toSyntax $ callMethod m "delete" (arg k <: RecNil)
 
+-- | @map.has(k)@.
 member ::
   Effect f ('Map k v)
   -> Expr f k
   -> EffectSyntax f (Expr f 'Bool)
 member m k = bindExpr $ callMethod m "has" (arg k <: RecNil)
 
+-- | @map.size@.
 size :: Effect f ('Map k v) -> EffectSyntax f (Expr f 'Number)
 size m = bindExpr $ unsafeObjectGet m "size"
 
+-- | @map.clear()@.
 clear :: Effect f ('Map k v) -> EffectSyntax f (f 'Unit)
 clear m = toSyntax $ callMethod m "clear" RecNil
 

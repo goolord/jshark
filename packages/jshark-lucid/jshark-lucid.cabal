@@ -1,9 +1,13 @@
-cabal-version: 2.4
+cabal-version: 3.4
 
 -- jshark-lucid: Lucid HTML DSL integration.
 name: jshark-lucid
-version: 0.1
+version: 0.1.0.0
 synopsis: Lucid HTML templates that render to JShark DOM builders
+description:
+  Write declarative HTML with Lucid syntax and compile it to JShark DOM
+  builders (@createElement@, attribute writes, and event bindings) that
+  run in the browser or under a headless DOM.
 homepage: https://github.com/goolord/jshark
 bug-reports: https://github.com/goolord/jshark/issues
 license: BSD-3-Clause
@@ -11,13 +15,26 @@ license-file: LICENSE
 author: goolord
 maintainer: goolord <zacharyachurchill@gmail.com>
 category: Language
+stability: experimental
 build-type: Simple
+tested-with: GHC == 9.14.1
+extra-doc-files:
+  README.md
+  CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/goolord/jshark
+
+flag werror
+  description: Treat warnings as errors (development builds)
+  manual: True
+  default: False
 
 common warnings
   ghc-options:
     -Wall
     -Wextra
-    -Werror
     -Wcompat
     -Widentities
     -Wincomplete-record-updates
@@ -26,6 +43,9 @@ common warnings
     -Wmissing-home-modules
     -Wpartial-fields
     -Wredundant-constraints
+
+  if flag(werror)
+    ghc-options: -Werror
 
 -- JShark.Lucid destructures Lucid.Base's Attribute, which is not part of
 -- the public Lucid API, so the bound is the tested minor rather than the
@@ -40,9 +60,9 @@ library
     JShark.Lucid
     JShark.Lucid.HotReload
   build-depends:
-    , base
-    , jshark
-    , text
+    , base >= 4.17 && < 5
+    , jshark >= 0.1 && < 0.2
+    , text >= 1.2 && < 3
   hs-source-dirs: src
   default-language: Haskell2010
 
@@ -53,13 +73,13 @@ test-suite jshark-lucid-test
   hs-source-dirs: test
   build-depends:
     , base
-    , directory
+    , directory >= 1.3 && < 1.4
     , jshark
     , jshark-lucid
     , lucid
-    , tasty
-    , tasty-hunit
-    , text
+    , tasty >= 1.4 && < 1.6
+    , tasty-hunit >= 0.10 && < 0.11
+    , text >= 1.2 && < 3
   default-language: Haskell2010
   ghc-options:
     -Wno-deprecations
@@ -78,10 +98,9 @@ benchmark jshark-lucid-bench
     , jshark
     , jshark-lucid
     , lucid
-    , text
+    , text >= 1.2 && < 3
   default-language: Haskell2010
   ghc-options:
-    -O2
     -threaded
     -rtsopts
     -with-rtsopts=-N

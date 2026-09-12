@@ -17,10 +17,8 @@ module JShark.HotReload.Core
   , lookupJs
   , registerHtml
   , lookupHtml
-  , jsHash
   , currentJsHashes
   , setBuildError
-  , clearBuildError
   , lastBuildError
   , setBuildStart
   , lastCompiling
@@ -59,6 +57,7 @@ data HotReloadEvent
     Hello [(Text, Text)]
   deriving (Show, Eq)
 
+-- | Runtime settings for event/client paths, auto-inject, and debounce.
 data HotReloadConfig = HotReloadConfig
   { hrEnabled :: Bool
   , hrAutoInject :: Bool
@@ -68,6 +67,7 @@ data HotReloadConfig = HotReloadConfig
   }
   deriving (Show, Eq)
 
+-- | Default config: enabled, auto-inject, standard paths, 75 ms debounce.
 defaultHotReloadConfig :: HotReloadConfig
 defaultHotReloadConfig =
   HotReloadConfig
@@ -78,6 +78,7 @@ defaultHotReloadConfig =
     , hrDebounceMs = 75
     }
 
+-- | Shared broadcast channel, artifact caches, and build-status refs.
 data HotReloadHub = HotReloadHub
   { hubConfig :: HotReloadConfig
   , hubChan :: TChan HotReloadEvent
@@ -87,9 +88,11 @@ data HotReloadHub = HotReloadHub
   , hubCompiling :: IORef (Maybe Text)
   }
 
+-- | The 'HotReloadConfig' the hub was created with.
 hotReloadConfig :: HotReloadHub -> HotReloadConfig
 hotReloadConfig = hubConfig
 
+-- | Create a hub with an empty cache and no build status.
 newHotReloadHub :: HotReloadConfig -> IO HotReloadHub
 newHotReloadHub cfg = do
   chan <- newBroadcastTChanIO
@@ -107,6 +110,7 @@ newHotReloadHub cfg = do
       , hubCompiling = compiling
       }
 
+-- | Broadcast an event to all subscribers and update build status.
 broadcastEvent :: HotReloadHub -> HotReloadEvent -> IO ()
 broadcastEvent hub ev = do
   case ev of
@@ -197,6 +201,7 @@ registerJs hub name source = do
     (Map.insert name (source, h) m, ())
   pure h
 
+-- | Look up cached JS source and hash by app name.
 lookupJs :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
 lookupJs hub name = Map.lookup name <$> readIORef (hubJs hub)
 
@@ -209,6 +214,7 @@ registerHtml hub name source = do
     (Map.insert name (source, h) m, ())
   pure h
 
+-- | Look up cached HTML source and hash by app name.
 lookupHtml :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
 lookupHtml hub name = Map.lookup name <$> readIORef (hubHtml hub)
 
@@ -232,25 +238,30 @@ jsHash t =
       if n == 0 then "0" else go (abs n) ""
   pad8 s = replicate (max 0 (8 - length s)) '0' <> take 8 s
 
+-- | Snapshot the app-name to JS hash map for a new SSE client.
 currentJsHashes :: HotReloadHub -> IO [(Text, Text)]
 currentJsHashes hub = do
   m <- readIORef (hubJs hub)
   pure [(k, h) | (k, (_, h)) <- Map.toList m]
 
+-- | Record and broadcast a build error.
 setBuildError :: HotReloadHub -> Text -> IO ()
 setBuildError hub msg = broadcastEvent hub (BuildError msg)
 
 clearBuildError :: HotReloadHub -> IO ()
 clearBuildError hub = atomicModifyIORef' (hubError hub) (\_ -> (Nothing, ()))
 
+-- | The most recent build error, if any.
 lastBuildError :: HotReloadHub -> IO (Maybe Text)
 lastBuildError = readIORef . hubError
 
+-- | Record and broadcast that an app started compiling.
 setBuildStart :: HotReloadHub -> Text -> IO ()
 setBuildStart hub app = broadcastEvent hub (BuildStart app)
 
 clearCompiling :: HotReloadHub -> IO ()
 clearCompiling hub = atomicModifyIORef' (hubCompiling hub) (\_ -> (Nothing, ()))
 
+-- | The app currently compiling, if any.
 lastCompiling :: HotReloadHub -> IO (Maybe Text)
 lastCompiling = readIORef . hubCompiling

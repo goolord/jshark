@@ -126,11 +126,6 @@ module JShark
   , effectfulASTFromSoA
   , irEffectFromClosed
   , flatPrepareCore
-  , flatPrepareFromIr
-  , profileFlatOptFromIr
-  , profileIrOptFromClosed
-  , profileIrOptFromIr
-  , profileLowerFromClosed
   , flatSoaNodeCount
   , pureProgram
   , effectfulProgram
@@ -146,14 +141,8 @@ where
 import JShark.Api.Types
 import JShark.Compiler.Codegen.Core
   ( flatPrepareCore
-  , flatPrepareFromIr
-  , profileFlatOptFromIr
-  , profileIrOptFromClosed
-  , profileIrOptFromIr
-  , profileLowerFromClosed
   , renderIIFE
   )
-import JShark.Compiler.Flat (flatSoaNodeCount)
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
   , effectfulASTFromSoA
@@ -172,6 +161,7 @@ import JShark.Compiler.Evaluate
   , packUint8
   , uint8Elems
   )
+import JShark.Compiler.Flat (flatSoaNodeCount)
 import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
   ( irEffectFromClosed
@@ -179,8 +169,10 @@ import JShark.Compiler.Lower
   , optimizedExprSize
   )
 
+-- | Compile a closed pure expression to a JavaScript IIFE.
 pureProgram :: ClosedExpr u -> JS
 pureProgram e = uncurry renderIIFE (flatPureCodegen e)
 
+-- | Compile a closed effectful program to a JavaScript IIFE.
 effectfulProgram :: ClosedEffect u -> JS
 effectfulProgram e = uncurry renderIIFE (flatEffectfulCodegen e)

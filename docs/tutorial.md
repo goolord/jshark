@@ -170,7 +170,7 @@ logMax = fromSyntax $ do
 - The callee is free text, emitted verbatim — a typo is a runtime error,
   not a compile error. The tests parse-check emitted output.
 - Arguments are `arg` (an `Expr`), `argEffect` (an effectful callback,
-  rendered inline), string/number literals via `OverloadedStrings`/`num`.
+  rendered inline), and string/number literals via `OverloadedStrings`/`number`.
 - `callMethod receiver "method" args` puts an object handle in front.
 - `ffi` classifies its callee string: unparenthesized `=>` arrows become
   function values, IIFEs stay calls. `ffiExpr` always emits a bare

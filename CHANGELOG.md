@@ -1,6 +1,20 @@
 # Revision history for jshark
 
 ## Unreleased
+
+## 0.1.0.0 (2026-09-11)
+
+* First version. Released on an unsuspecting world.
+
+* Release polish: shared test/bench support moves to the public
+  `jshark:testing` sublibrary (replacing the `jshark-testing` package);
+  every library package gains Hackage metadata (`description`,
+  `tested-with`, `source-repository`, version bounds, per-package
+  README/CHANGELOG, `extra-doc-files`); `-Werror` moves behind a
+  `werror` cabal flag (still enabled for local builds); the dev-only
+  per-phase profiling executables and `profile*`/`CompileTiming`
+  helpers are removed; the public API is documented and the exposed
+  compiler internals are labelled internal/unstable.
 * Internal dead code and copy-paste are gone, ~3.3k LOC: the compiler drops
   unused entries (`irExprFromClosed`, `irOptimized{Effect,Expr}FromClosed`,
   `nestedDummy`, `renderFFIForm`, the unstyled `prepareFlat*Program`,
@@ -34,9 +48,9 @@
   vendored copy `examples/static/js/jshark-reload.js` is deleted (pages
   load `/__jshark/client.js`).
 
-* Shared test/bench support lives in the new `jshark-testing` package
-  (`Test.Support`, `CaptureStderr`, `Bench.Stages`), replacing the ~95%
-  and byte-identical copies under `examples/`; the four-example registry
+* Shared test/bench support lives in the `jshark:testing` sublibrary
+  (`Test.Support`, `CaptureStderr`, `Bench.Stages`), consumed by the core
+  test/bench and the example package; the four-example registry
   is `JShark.Example.Registry` (was hand-written three times), and the
   bun-gating scaffold is shared (`BunGate`). Core tests gain golden-case
   combinators (`effectCodeCase`/`pureCodeCase`/`effectContains`/
@@ -587,7 +601,3 @@
   via `optionCase` instead of silently risking a JS `null`.
 * De-duplicated `JShark.Console.log`, which reimplemented
   `JShark.Api.consoleLog`; it now just aliases it.
-
-## 0.1.0.0 (YYYY-mm-dd)
-
-* First version. Released on an unsuspecting world.

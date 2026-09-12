@@ -17,6 +17,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Bindgen.Ir
 
+-- | Render a 'ModuleIr' as a complete JShark FFI module.
 emitModule :: ModuleIr -> Text
 emitModule ir =
   let
@@ -63,7 +64,7 @@ planModuleNames ir =
         <> fmap (\fn -> SlotFun (FunKey T.empty (fnName fn) False False)) (irFuns ir)
         <> concatMap classFunSlots (irClasses ir)
     rawNames = fmap slotRaw slots
-    finalNames = globalUnique rawNames
+    finalNames = uniques rawNames
     named = zip slots finalNames
     funMap =
       Map.fromList
@@ -130,9 +131,6 @@ uniques = go []
       cand = if k == 1 then n else n <> T.pack (show k)
      in
       if cand `elem` seen then pick n (k + 1) seen else cand
-
-globalUnique :: [Text] -> [Text]
-globalUnique = uniques
 
 lookupFun :: NamePlan -> FunKey -> Text
 lookupFun plan k =
@@ -479,6 +477,7 @@ hsFunName isCtor n
 enumMemberName :: Text -> Text -> Text
 enumMemberName en mem = hsVarName (en <> mem)
 
+-- | Render a raw JS name as a valid Haskell type name, avoiding reserved types.
 hsTypeName :: Text -> Text
 hsTypeName raw =
   let
@@ -486,6 +485,7 @@ hsTypeName raw =
    in
     if n `elem` reservedTypes then "Js" <> n else n
 
+-- | Render a raw JS name as a valid Haskell variable name, avoiding reserved words.
 hsVarName :: Text -> Text
 hsVarName raw =
   let

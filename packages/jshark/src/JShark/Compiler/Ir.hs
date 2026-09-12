@@ -20,6 +20,9 @@
 -- Expression\/effect *position* is still a property of a subtree, determined
 -- by its top constructor; the type bridge nodes ('IrLift' \/ the old
 -- 'IrEmbedEff') reduce to pack-time wrapper rows.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Ir
   ( IrMeta (..)
   , IrNode (..)
@@ -650,16 +653,16 @@ isIdentityEffect tag = \case
 elimBinder ::
   (?keepLets :: P.Bool) =>
   (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
-  -> -- rebuild a kept binding
-  (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
-  -> -- rebuild a dead binding
-  (IrNode -> P.Bool)
-  -> -- extra guard on the pure dead-drop
-  (IrNode -> P.Bool)
-  -> -- extra @once@ condition
-  (IrNode -> Int -> IrNode -> P.Bool)
-  -> -- @preserve@ predicate
-  IrMeta
+  -- rebuild a kept binding
+  -> (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
+  -- rebuild a dead binding
+  -> (IrNode -> P.Bool)
+  -- extra guard on the pure dead-drop
+  -> (IrNode -> P.Bool)
+  -- extra @once@ condition
+  -> (IrNode -> Int -> IrNode -> P.Bool)
+  -- @preserve@ predicate
+  -> IrMeta
   -> Maybe Text
   -> Int
   -> IrNode
@@ -1412,7 +1415,7 @@ sameFamilyEq (ValueUint8Array a) (ValueUint8Array b) = Just (a == b)
 sameFamilyEq (ValueFrozen as) (ValueFrozen bs) =
   recordEq (map valueField as) (map valueField bs)
 sameFamilyEq (ValueFunction _) (ValueFunction _) =
-  error "evaluate: functions cannot be compared for equality"
+  error "JShark.Compiler.Ir: functions cannot be compared for equality"
 sameFamilyEq _ _ = Nothing
 
 listEq :: [Value u] -> [Value v] -> Maybe P.Bool

@@ -6,6 +6,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
+-- | Shared fixtures and golden-case helpers for the core test suite and the
+--   compiler benchmarks. Not a user-facing API.
 module Test.Support
   ( LitRow
   , Person (..)

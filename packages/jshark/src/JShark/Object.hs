@@ -86,9 +86,11 @@ set o v =
 newObject :: Effect f ('MutableObject r)
 newObject = UnsafeObject "{}"
 
+-- | A frozen-object field literal @k: v@.
 field :: forall k r f. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
 field = FieldLit @k
 
+-- | An effectful field literal @k: v@ (see 'obj').
 fieldEffect ::
   forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
 fieldEffect = FieldLitEffect @k
@@ -106,6 +108,7 @@ frozen = FrozenLit
 create :: Effect f ('MutableObject proto) -> Effect f ('MutableObject child)
 create proto = FFI (FFICall "Object.create") (ArgEffect proto <: RecNil)
 
+-- | @delete o[k]@ — 'True' when the property was removed.
 delete :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f 'Bool
 delete = DeleteProp
 
@@ -116,11 +119,14 @@ hasOwn o k =
     (FFICall "Object.prototype.hasOwnProperty.call")
     (ArgEffect o <: ArgExpr k <: RecNil)
 
+-- | A handle to a JS global by name, e.g. @unsafeObject \"window\"@.
 unsafeObject :: Text -> Effect f ('MutableObject a)
 unsafeObject = UnsafeObject
 
+-- | Unchecked property read @o[k]@ with a Haskell 'String' key.
 unsafeObjectGet :: Effect f object -> String -> Effect f u
 unsafeObjectGet o k = UnsafeObjectGet o (T.pack k)
 
+-- | Unchecked property assignment @o[k] = v@.
 unsafeObjectAssign :: Effect f object -> Effect f assignment -> Effect f u
 unsafeObjectAssign = UnsafeObjectAssign

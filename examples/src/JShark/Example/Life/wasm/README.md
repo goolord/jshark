@@ -7,7 +7,7 @@ possible future wasm grid migration.
 ## Build
 
 ```bash
-cd examples/Life/wasm
+cd examples/src/JShark/Example/Life/wasm
 zig build -Doptimize=ReleaseFast
 # artifact: zig-out/bin/life-simd.wasm (not vendored under js/)
 ```

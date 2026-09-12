@@ -7,7 +7,11 @@ Commands assume the repo root and Cabal v2 (`cabal build`, `cabal test`,
 - `packages/jshark-lucid` — Lucid DOM integration (suite `jshark-lucid-test`, bench `jshark-lucid-bench`)
 - `packages/jshark-bindgen` — TypeScript/JS FFI generator (suite `jshark-bindgen-test`)
 - `packages/jshark-hotreload` — hot-reload hub/WAI/watcher (suite `jshark-hotreload-test`)
-- `examples` — the four showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`, plus `jshark-life-*` profiling executables)
+- `examples` — the four showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`)
+
+Shared test/bench support is the `jshark:testing` sublibrary
+(`packages/jshark/test-support/`: `Test.Support`, `CaptureStderr`,
+`Bench.Stages`); it is used by the core suite and by the examples package.
 
 ## Prerequisites
 
@@ -92,13 +96,14 @@ Benchmarks use **tasty-bench**. They are for **manual** compiler investigation; 
 
 | Cabal target | Package | Purpose |
 |--------------|---------|---------|
-| `jshark-compiler` | `jshark` | Synthetic compiler microbenchmarks (`packages/jshark/bench/Main.hs`, `Bench.Stages`). Best for attributing **which compiler stage** is slow on synthetic trees. |
+| `jshark-compiler` | `jshark` | Synthetic compiler microbenchmarks (`packages/jshark/bench/Main.hs`, `Bench.Stages` in `jshark:testing`). Best for attributing **which compiler stage** is slow on synthetic trees. |
 | `jshark-examples-bench` | `examples` | Full example ASTs (`examples/bench/Main.hs`: Breakout, TodoMvc, Synth, Life). Life `emit` is very slow. |
 | `jshark-forced` | `examples` | `NFData` / forcing costs on Life |
-| `jshark-life-*` | `examples` | `jshark-life-phases`, `jshark-life-metrics`, `jshark-life-flatopt`, `jshark-life-iropt`, `jshark-life-lower`, `jshark-life-emit`, `jshark-life-full-emit` — Life-only stage profiling executables |
+| `jshark-life-*` | `examples` | `jshark-life-phases`, `jshark-life-emit`, `jshark-life-full-emit`, `jshark-probe` — Life-only stage profiling executables |
 | `jshark-lucid-bench` | `jshark-lucid` | Lucid → DOM compile path |
 
-Default bench RTS: `-N` (multicore), `-M10G`, `-O2`.
+Default bench RTS: `-N` (multicore), `-M10G`; optimization comes from
+`optimization: 2` in `cabal.project`.
 
 ### Run benchmarks
 
@@ -151,7 +156,6 @@ Typical attribution on Life-shaped trees:
 Life-only stage attribution is easiest with the profiling executables:
 
 ```bash
-cabal run jshark-life-metrics    # raw/opt node counts + allocations
 cabal run jshark-life-phases     # wall clock per compiler phase
 cabal run jshark-life-full-emit  # end-to-end emit timing
 ```
@@ -225,7 +229,7 @@ Names look like `All.codepaths.effect.deepUseChain.emit/bytes`; filter with `-p 
 - Prefer **one** `-p` case per run so the `.prof` file matches the hypothesis.
 - Force-killing the process on Windows may **omit** `.prof` output; prefer `-t` timeout so the process exits normally.
 - Match RTS caps to the test suite (`-N1`) when comparing to `cabal test` behavior.
-- Rebuild after `packages/jshark/src/JShark.hs` changes before trusting an old `.prof`.
+- Rebuild after compiler source changes before trusting an old `.prof`.
 
 ---
 
@@ -281,11 +285,11 @@ cabal bench jshark-examples-bench -- jshark-examples-bench -t 120s -p 'life.opti
 | Path | Role |
 |------|------|
 | `packages/jshark/test/Main.hs` | core test tree |
-| `packages/jshark/bench/Main.hs`, `Bench.Stages` (in `jshark-testing`) | synthetic `jshark-compiler` bench |
+| `packages/jshark/bench/Main.hs`, `Bench.Stages` (in `jshark:testing`) | synthetic `jshark-compiler` bench |
 | `examples/test/Main.hs` | example/Life test tree |
 | `examples/test/ExampleTests.hs` | Bun parse tests for every example |
 | `examples/test/LifeTests.hs`, `BunTests.hs` | runtime JS checks |
 | `examples/bench/` | full-example bench + `jshark-life-*` profiling executables |
-| `cabal.project` | project-wide warning flags, tests/benchmarks on |
+| `cabal.project` | project config: tests/benchmarks on, `werror` flag enabled |
 | `profile/` | gitignored `.prof` / bench logs from manual runs |
 | `.cursor/rules/` | `cabal test`, Fourmolu, architecture notes |

@@ -22,10 +22,11 @@ alwaysApply: true
 ## Layout
 - `packages/jshark/src/JShark/Api/` — PHOAS AST (`Types`), params, `Prim`, `Rec`, `Classes`, `Generic`
 - `packages/jshark/src/JShark/Api.hs` — smart constructors and syntax helpers
-- `packages/jshark/src/JShark/Compiler/` — Flatten, Lower, Optimize, Codegen, Emit, …
-- `packages/jshark/src/JShark/Compiler.hs` — compile driver (`compileEffect`, minify config)
+- `packages/jshark/src/JShark/Compiler/` — `Lower` (PHOAS→Ir), `Ir` (optimize), `Flat` (pack/SoA), `Codegen.*`, `Emit`, `Evaluate`, `JsShim`
+- `packages/jshark/src/JShark/Compiler.hs` — compile driver (`compileEffect`, `CompilerConfig`)
 - `packages/jshark/src/JShark/` — JS API bridgers (`Array`, `Dom`, `Ajax`, `Timers`, …)
 - `packages/jshark/src/JShark.hs` — public facade (`pureProgram`, `effectfulProgram`)
+- `packages/jshark/test-support/` — `jshark:testing` sublibrary (`Test.Support`, `Bench.Stages`)
 - `packages/jshark-lucid/`, `packages/jshark-hotreload/`, `packages/jshark-bindgen/` — satellite packages
-- `examples/src/JShark/Example/{Breakout,Life,Synth,TodoMvc,Hvm2Demo,Theme}.hs`, `examples/app/server/`, `examples/static/` — apps, dev server, assets
+- `examples/src/JShark/Example/{Breakout,Life,Synth,TodoMvc,Theme}.hs`, `examples/app/server/`, `examples/static/` — apps, dev server, assets
 - Test suites live under each `packages/*/test/` and `examples/test/`

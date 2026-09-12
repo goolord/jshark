@@ -249,62 +249,79 @@ type instance Field Event "offsetY" = 'Number
 
 type instance Field Event "shiftKey" = 'Bool
 
+-- | @event.key@ — the key value for keyboard events.
 eventKey ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
 eventKey o = Object.get @"key" @Event (toEffect o)
 
+-- | @event.code@ — the physical key code for keyboard events.
 eventCode ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
 eventCode o = Object.get @"code" @Event (toEffect o)
 
+-- | @event.repeat@ — whether a held key is auto-repeating.
 eventRepeat ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
 eventRepeat o = Object.get @"repeat" @Event (toEffect o)
 
+-- | @event.pointerId@ — the unique id of the pointer that fired the event.
 eventPointerId ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
 eventPointerId o = Object.get @"pointerId" @Event (toEffect o)
 
+-- | @event.clientX@ — pointer x in viewport coordinates.
 eventClientX ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
 eventClientX o = Object.get @"clientX" @Event (toEffect o)
 
+-- | @event.clientY@ — pointer y in viewport coordinates.
 eventClientY ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
 eventClientY o = Object.get @"clientY" @Event (toEffect o)
 
+-- | @event.button@ — the mouse button index.
 eventButton ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
 eventButton o = Object.get @"button" @Event (toEffect o)
 
+-- | @event.shiftKey@ — whether Shift was held.
 eventShiftKey ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
 eventShiftKey o = Object.get @"shiftKey" @Event (toEffect o)
 
+-- | @event.offsetX@ — pointer x relative to the target element.
 eventOffsetX ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
 eventOffsetX o = Object.get @"offsetX" @Event (toEffect o)
 
+-- | @event.offsetY@ — pointer y relative to the target element.
 eventOffsetY ::
   ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
 eventOffsetY o = Object.get @"offsetY" @Event (toEffect o)
 
+-- | The global JS @window@ object.
 window :: Effect f ('MutableObject Window)
 window = unsafeObject "window"
 
+-- | @window.location.host@.
 host :: EffectSyntax f (Expr f 'String)
 host = Object.get @"location.host" window
 
+-- | @window.location.hash@.
 locationHash :: EffectSyntax f (Expr f 'String)
 locationHash = Object.get @"location.hash" window
 
+-- | An empty mutable object; alias of 'newObject'.
 emptyObject :: Effect f ('MutableObject ())
 emptyObject = newObject
 
+-- | Set an element's @onclick@ property to a raw handler (not
+-- @addEventListener@).
 onClick ::
   Effect f ('MutableObject obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
 onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "onclick") (LambdaE f)
 
+-- | 'onClick' with the handler written in 'EffectSyntax'.
 onClick_ ::
   Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 onClick_ el body = onClick el $ \_ -> stmts body
@@ -324,7 +341,7 @@ ffiExpr s = FFI (FFIExpr s)
 --   everything else (including parenthesized IIFEs) becomes 'FFICall'.
 classifyFFI :: Text -> FFIForm
 classifyFFI s
-  | T.head s == '(' = FFICall s
+  | "(" `T.isPrefixOf` s = FFICall s
   | isUnparenthesizedArrow s = FFILambda s
   | otherwise = FFICall s
 
@@ -351,9 +368,12 @@ assign dst src = do
 expr :: Expr f u -> Effect f u
 expr = Lift
 
+-- | Yield an expression's PHOAS binder for reuse elsewhere in the
+-- do-block (re-embed with 'var').
 yield :: Expr f u -> EffectSyntax f (f u)
 yield = toSyntax . Lift
 
+-- | Apply a function expression to an argument (@f(x)@ in JS).
 apply :: Expr f ('Function u v) -> Expr f u -> Expr f v
 apply = Apply
 
@@ -408,6 +428,7 @@ lambdaE f = LambdaE (\x -> f (Lift (var x)))
 letRec :: (Expr f u -> Expr f u) -> (Expr f u -> Expr f v) -> Expr f v
 letRec r b = LetRec (\x -> r (var x)) (\x -> b (var x))
 
+-- | Recursive effect binding; the 'Effect' analogue of 'letRec'.
 bindRec ::
   (Effect f u -> Effect f u) -> (Effect f u -> Effect f v) -> Effect f v
 bindRec r b = BindRec (\x -> r (Lift (var x))) (\x -> b (Lift (var x)))
@@ -438,6 +459,7 @@ bool :: Bool -> Expr f 'Bool
 bool = Literal . ValueBool
 {-# INLINE bool #-}
 
+-- | JS @true@ / @false@ literals.
 true_, false_ :: Expr f 'Bool
 true_ = bool True
 false_ = bool False
@@ -465,9 +487,11 @@ newByteArray ::
 newByteArray n =
   FFI (FFILambda "n => new Uint8Array(n)") (arg n <: RecNil)
 
+-- | @arr[i]@ — read one byte of a 'Uint8Array'.
 u8Index :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number
 u8Index = U8Index
 
+-- | @arr[i] = b@ — write one byte of a 'Uint8Array'.
 u8Set ::
   Expr f 'Uint8Array
   -> Expr f 'Number
@@ -475,6 +499,7 @@ u8Set ::
   -> Effect f 'Unit
 u8Set = U8Set
 
+-- | @arr.fill(b)@ — fill a 'Uint8Array' with a byte.
 u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
 u8Fill = U8Fill
 
@@ -485,6 +510,7 @@ u8Copy dst src =
     (FFILambda "(d,s)=>{d.set(s);}")
     (arg dst <: arg src <: RecNil)
 
+-- | @arr.length@ — the length of a 'Uint8Array'.
 u8Len :: Expr f 'Uint8Array -> Expr f 'Number
 u8Len = expr1 FixU8Len
 
@@ -497,6 +523,7 @@ forRange ::
   -> Effect f 'Unit
 forRange start end body = ForRange start end (\i -> body (var i))
 
+-- | 'forRange' with an 'EffectSyntax' body.
 forRange_ ::
   Expr f 'Number
   -> Expr f 'Number
@@ -504,9 +531,11 @@ forRange_ ::
   -> EffectSyntax f (f 'Unit)
 forRange_ start end f = toSyntax $ forRange start end (\x -> stmts (f x))
 
+-- | @[]@ — an empty array literal.
 emptyArray :: Expr f ('Array u)
 emptyArray = Literal (ValueArray [])
 
+-- | JS string coercion, like @String(x)@.
 toString :: Expr f u -> Expr f 'String
 toString = Show
 
@@ -521,12 +550,14 @@ arrayCallback name arr f =
 forEach :: Expr f ('Array u) -> (Expr f u -> Effect f u') -> Effect f 'Unit
 forEach = arrayCallback "forEach"
 
+-- | 'forEach' with an 'EffectSyntax' body.
 forEach_ ::
   Expr f ('Array u)
   -> (Expr f u -> EffectSyntax f (f 'Unit))
   -> EffectSyntax f (f 'Unit)
 forEach_ arr f = toSyntax $ forEach arr (\x -> stmts (f x))
 
+-- | The unit effect: does nothing.
 noOp :: Effect f 'Unit
 noOp = expr (Literal ValueUnit)
 
@@ -576,6 +607,7 @@ while_ = While
 try_ :: Effect f u -> Effect f u -> Effect f u
 try_ a b = Try a (\_ -> b)
 
+-- | 'try_' with the caught error passed to the handler.
 catch_ :: Effect f u -> (Expr f 'String -> Effect f u) -> Effect f u
 catch_ a k = Try a (\e -> k (var e))
 
@@ -599,10 +631,12 @@ optionCase ::
   Expr f ('Option u) -> Expr f v -> (Expr f u -> Expr f v) -> Expr f v
 optionCase opt noneBranch someBranch = OptionCase opt noneBranch (\x -> someBranch (var x))
 
+-- | 'optionCase' in effect position.
 optionCaseE ::
   Expr f ('Option u) -> Effect f v -> (Expr f u -> Effect f v) -> Effect f v
 optionCaseE opt noneBranch someBranch = OptionCaseE opt noneBranch (\x -> someBranch (var x))
 
+-- | Wrap an expression as an 'Option' without a @null@ check.
 unsafeNullable :: Expr f u -> Expr f ('Option u)
 unsafeNullable = UnsafeNullable
 
@@ -629,6 +663,7 @@ resultCase ::
   -> Expr f v
 resultCase r onErr onOk = ResultCase r (\e -> onErr (var e)) (\a -> onOk (var a))
 
+-- | 'resultCase' in effect position.
 resultCaseE ::
   Expr f ('Result e a)
   -> (Expr f e -> Effect f v)
@@ -636,12 +671,15 @@ resultCaseE ::
   -> Effect f v
 resultCaseE r onErr onOk = ResultCaseE r (\e -> onErr (var e)) (\a -> onOk (var a))
 
+-- | JS @typeof x@.
 typeOf :: Expr f u -> Expr f 'String
 typeOf = TypeOf
 
+-- | Boolean negation.
 not_ :: Expr f 'Bool -> Expr f 'Bool
 not_ c = c .== false_
 
+-- | @el.addEventListener(name, handler)@ with an 'Effect'-returning handler.
 addEventListener ::
   Text
   -> Effect f ('MutableObject obj)
@@ -664,6 +702,7 @@ addEventListenerS ::
 addEventListenerS name el handler =
   addEventListener name el (stmts . handler)
 
+-- | 'addEventListener' with an 'EffectSyntax' body that ignores the event.
 addEventListener_ ::
   Text
   -> Effect f ('MutableObject obj)
@@ -671,6 +710,7 @@ addEventListener_ ::
   -> EffectSyntax f ()
 addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
 
+-- | Wrap an expression as an FFI argument.
 arg :: Expr f u -> Arg f u
 arg = ArgExpr
 
@@ -679,6 +719,8 @@ arg = ArgExpr
 argEffect :: Effect f u -> Arg f u
 argEffect = ArgEffect
 
+-- | Sources that can be lifted into an 'Effect': an 'Effect', an 'Expr',
+-- or a PHOAS binder @f u@.
 class ToEffect f u a where
   toEffect :: a -> Effect f u
 
@@ -691,6 +733,7 @@ instance ToEffect f u (Expr f u) where
 instance {-# OVERLAPPABLE #-} ToEffect f u (f u) where
   toEffect = Lift . Var
 
+-- | Bind an effect and hand back a reusable 'Effect' handle to it.
 hold :: Effect f u -> EffectSyntax f (Effect f u)
 hold = fmap Lift . bindExpr
 
@@ -712,6 +755,7 @@ get o =
   Object.get @k @(ObjectRow a)
     (toEffect o :: Effect f ('MutableObject (ObjectRow a)))
 
+-- | @o.k = v@ typed property write; use 'setProp' for a free-text key.
 set ::
   forall k a f.
   (KnownSymbol k, ToEffect f ('MutableObject (ObjectRow a)) a) =>
@@ -725,21 +769,28 @@ set o v =
 getProp :: Effect f ('MutableObject a) -> String -> EffectSyntax f (Expr f u)
 getProp o name = bindExpr $ unsafeObjectGet o name
 
+-- | Untyped @o.k = v@ for a free-text key. Prefer 'set' when the key is a
+-- 'Field'.
 setProp ::
   Effect f ('MutableObject a) -> String -> Expr f u -> EffectSyntax f (f 'Unit)
 setProp o name v = toSyntax $ unsafeObjectAssign (unsafeObjectGet o name) (Lift v)
 
+-- | Row-untyped 'getProp': accepts any object handle and an unchecked
+-- result type.
 getProp' ::
   forall f o u.
   ToEffect f ('MutableObject ()) o => o -> String -> EffectSyntax f (Expr f u)
 getProp' o name = getProp (toEffect o :: Effect f ('MutableObject ())) name
 
+-- | Collapse an 'EffectSyntax' block into an 'Effect'.
 stmts :: EffectSyntax f (f 'Unit) -> Effect f 'Unit
 stmts = fromSyntax
 
+-- | The empty 'EffectSyntax' statement.
 done :: EffectSyntax f (f 'Unit)
 done = toSyntax noOp
 
+-- | 'when_' in 'EffectSyntax' form: run the body when the condition holds.
 whenS :: Expr f 'Bool -> EffectSyntax f (f 'Unit) -> EffectSyntax f (f 'Unit)
 whenS (Literal (ValueBool True)) body = body
 whenS (Literal (ValueBool False)) _ = done
@@ -748,6 +799,7 @@ whenS (Literal (ValueBool False)) _ = done
 whenS c body = toSyntax $ IfE (expr c) (stmts body) noOp
 {-# INLINE [1] whenS #-}
 
+-- | 'ifE' in 'EffectSyntax' form.
 ifS ::
   Expr f 'Bool
   -> EffectSyntax f (f 'Unit)
@@ -761,6 +813,8 @@ ifS (Literal (ValueBool False)) _ e = e
 ifS c t e = toSyntax $ IfE (expr c) (stmts t) (stmts e)
 {-# INLINE [1] ifS #-}
 
+-- | 'whenSomeE' in 'EffectSyntax' form: run the body when the
+-- already-bound option is present.
 whenSomeS ::
   Expr f ('Option u)
   -> (Expr f u -> EffectSyntax f (f 'Unit))
@@ -783,6 +837,7 @@ whenSomeE opt k = do
   o <- bindExpr opt
   whenSomeS o k
 
+-- | Call a zero-argument function value (@f()@).
 call0 ::
   forall a f.
   ToEffect f ('Function 'Unit 'Unit) a => a -> EffectSyntax f (f 'Unit)
@@ -794,12 +849,14 @@ infixr 3 .&&
 
 infixr 2 .||
 
+-- | Scalar equality and inequality (@===@ / @!==@).
 (.==), (.!=) :: KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
 (.==) = mkEq
 (.!=) = mkNEq
 {-# INLINE [1] (.==) #-}
 {-# INLINE [1] (.!=) #-}
 
+-- | Ordering comparisons (@>@, @<@, @>=@, @<=@).
 (.>)
   , (.<)
   , (.>=)
@@ -814,12 +871,14 @@ infixr 2 .||
 {-# INLINE [1] (.>=) #-}
 {-# INLINE [1] (.<=) #-}
 
+-- | Boolean conjunction and disjunction.
 (.&&), (.||) :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 (.&&) = andE
 (.||) = orE
 {-# INLINE (.&&) #-}
 {-# INLINE (.||) #-}
 
+-- | Unsigned right shift (@>>>@).
 ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 ushr = ushrE
 {-# INLINE [1] ushr #-}

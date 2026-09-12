@@ -33,11 +33,13 @@ import JShark.Bindgen.Ir
 import JShark.Bindgen.Json (decodeModule)
 import System.FilePath (takeBaseName)
 
+-- | Options controlling the generated module name and FFI prefix.
 data BindgenOpts = BindgenOpts
   { optModuleName :: Maybe Text
   , optPrefix :: Maybe Text
   }
 
+-- | 'BindgenOpts' with no module-name or prefix override.
 defaultBindgenOpts :: BindgenOpts
 defaultBindgenOpts =
   BindgenOpts
@@ -45,10 +47,12 @@ defaultBindgenOpts =
     , optPrefix = Nothing
     }
 
+-- | Extract the file at the given path and render a Haskell module.
 generateFromFile :: BindgenOpts -> FilePath -> IO (Either String Text)
 generateFromFile opts path =
   fmap (fmap generateFromIr) (parseIrFromFile opts path)
 
+-- | Extract and decode the input file to a 'ModuleIr', applying 'BindgenOpts'.
 parseIrFromFile :: BindgenOpts -> FilePath -> IO (Either String ModuleIr)
 parseIrFromFile opts path = do
   script <- findExtractScript
@@ -66,9 +70,11 @@ parseIrFromFile opts path = do
           ir <- decodeModule json
           Right (applyOpts opts path ir)
 
+-- | Render a 'ModuleIr' to Haskell source.
 generateFromIr :: ModuleIr -> Text
 generateFromIr = emitModule
 
+-- | Override an IR's module name, prefix, and source from 'BindgenOpts'.
 applyOpts :: BindgenOpts -> FilePath -> ModuleIr -> ModuleIr
 applyOpts opts path ir =
   let

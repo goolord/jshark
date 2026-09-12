@@ -151,6 +151,7 @@ writeEvent write flush ev = do
   write (B.byteString "\n\n")
   flush
 
+-- | Serve the embedded browser runtime at @/__jshark/client.js@.
 handleClientScript :: (Response -> IO a) -> IO a
 handleClientScript respond =
   respond $

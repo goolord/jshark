@@ -1,0 +1,57 @@
+name: Release
+
+# Cut a release by pushing a tag like `v0.1.0.0`. Builds source
+# distributions, verifies each package with `cabal check`, publishes the
+# four library packages to Hackage (when HACKAGE_TOKEN is configured), and
+# creates a GitHub Release with the tarballs attached.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        id: setup
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.12"
+
+      - run: cabal update
+
+      - name: Hackage checks
+        run: |
+          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+            (cd "packages/$p" && cabal check)
+          done
+
+      - name: Source distributions
+        run: cabal sdist jshark jshark-lucid jshark-bindgen jshark-hotreload
+
+      - name: Upload to Hackage
+        env:
+          HACKAGE_TOKEN: ${{ secrets.HACKAGE_TOKEN }}
+        run: |
+          if [ -z "$HACKAGE_TOKEN" ]; then
+            echo "HACKAGE_TOKEN is not set; skipping Hackage upload."
+            exit 0
+          fi
+          # jshark first so dependents resolve; Hackage accepts an upload
+          # even while dependencies are still being ingested.
+          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+            cabal upload --publish --token="$HACKAGE_TOKEN" dist-newstyle/sdist/$p-*.tar.gz
+          done
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist-newstyle/sdist/*.tar.gz

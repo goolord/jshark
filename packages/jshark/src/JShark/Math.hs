@@ -46,24 +46,32 @@ dec = lambda (\x -> x - 1)
 e :: Expr f 'Number
 e = 2.718281828459045
 
+-- | @Math.SQRT2@.
 sqrt2 :: Expr f 'Number
 sqrt2 = 1.4142135623730951
 
+-- | @Math.SQRT1_2@.
 sqrt1_2 :: Expr f 'Number
 sqrt1_2 = 0.7071067811865476
 
+-- | @Math.LN2@.
 ln2 :: Expr f 'Number
 ln2 = 0.6931471805599453
 
+-- | @Math.LN10@.
 ln10 :: Expr f 'Number
 ln10 = 2.302585092994046
 
+-- | @Math.LOG2E@.
 log2e :: Expr f 'Number
 log2e = 1.4426950408889634
 
+-- | @Math.LOG10E@.
 log10e :: Expr f 'Number
 log10e = 0.4342944819032518
 
+-- | Element-wise @Math@ unary functions: @Math.cbrt@, @Math.log2@,
+-- @Math.log10@, @Math.floor@, @Math.ceil@, @Math.round@, @Math.trunc@.
 cbrt
   , log2
   , log10
@@ -80,6 +88,7 @@ ceil = expr1 FixCeil
 round = expr1 FixRound
 trunc = expr1 FixTrunc
 
+-- | Binary @Math@ functions: @Math.atan2@, @Math.max@, @Math.min@, @Math.hypot@.
 atan2, max, min, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
 atan2 x y = expr2 FixAtan2 x y
 max x y = expr2 FixMax x y

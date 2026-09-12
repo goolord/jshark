@@ -62,20 +62,13 @@ jobs:
 
       # ghcup has no fourmolu bindist for ubuntu-24.04; the action
       # fetches the GitHub release zip instead.
-      - name: Fourmolu (advisory)
-        id: fourmolu
-        continue-on-error: true
+      - name: Fourmolu
         uses: haskell-actions/run-fourmolu@v13
         with:
           version: "0.20.1.0"
           pattern: |
             packages
             examples
-
-      - name: Fourmolu advisory notice
-        if: steps.fourmolu.outcome != 'success'
-        run: |
-          echo "::warning title=Fourmolu::Some files are not formatted. Run scripts/format.sh locally."
 
       - name: Install jshark-bindgen TypeScript deps
         run: bun install
@@ -85,6 +78,18 @@ jobs:
         run: |
           cabal test all --test-show-details=direct \
             --test-options='+RTS -N1 -M4G -RTS -t120'
+
+      - name: Hackage checks
+        run: |
+          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+            (cd "packages/$p" && cabal check)
+          done
+
+      - name: Source distributions
+        run: cabal sdist jshark jshark-lucid jshark-bindgen jshark-hotreload
+
+      - name: Haddock
+        run: cabal haddock jshark jshark-lucid jshark-bindgen jshark-hotreload
 
   pages-build:
     needs: check

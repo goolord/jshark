@@ -72,6 +72,7 @@ foldArrayIndex arr i = case (arr, i) of
 finiteDouble :: Double -> Bool
 finiteDouble d = not (isNaN d) && not (isInfinite d)
 
+-- | @arr.length@.
 length :: Expr f ('Array u) -> Expr f 'Number
 length = expr1 FixArrLen
 
@@ -87,6 +88,7 @@ filter arr f = Std (Method (MethFilter arr (\x -> f (var x))))
 mapE :: Expr f ('Array u) -> (Expr f u -> Effect f v) -> Effect f ('Array v)
 mapE = arrayCallback "map"
 
+-- | 'mapE' with an 'EffectSyntax' callback; binds the resulting array.
 mapE_ ::
   Expr f ('Array u)
   -> (Expr f u -> EffectSyntax f (f v))
@@ -98,18 +100,22 @@ filterE ::
   Expr f ('Array u) -> (Expr f u -> Effect f 'Bool) -> Effect f ('Array u)
 filterE = arrayCallback "filter"
 
+-- | 'filterE' with an 'EffectSyntax' callback; binds the resulting array.
 filterE_ ::
   Expr f ('Array u)
   -> (Expr f u -> EffectSyntax f (f 'Bool))
   -> EffectSyntax f (Expr f ('Array u))
 filterE_ arr f = bindExpr $ filterE arr (\x -> fromSyntax (f x))
 
+-- | @arr.includes(x)@ — strict equality.
 includes :: Expr f ('Array u) -> Expr f u -> Expr f 'Bool
 includes xs x = expr2 FixIncludes xs x
 
+-- | @arr.concat(other)@ — a new array; does not mutate.
 concat :: Expr f ('Array u) -> Expr f ('Array u) -> Expr f ('Array u)
 concat xs ys = expr2 FixConcat xs ys
 
+-- | @arr.join(sep)@.
 join :: Expr f ('Array u) -> Expr f 'String -> Expr f 'String
 join xs sep = expr2 FixJoin xs sep
 
@@ -120,6 +126,7 @@ clear arr =
     (UnsafeObjectGet (expr arr) "length")
     (Lift (number 0))
 
+-- | 'clear' in statement form.
 clear_ :: Expr f ('Array u) -> EffectSyntax f (f 'Unit)
 clear_ arr = toSyntax $ clear arr
 
@@ -127,6 +134,7 @@ clear_ arr = toSyntax $ clear arr
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
 push arr x = pushMany arr [x]
 
+-- | 'push' in statement form.
 push_ :: Expr f ('Array u) -> Expr f u -> EffectSyntax f (f 'Unit)
 push_ arr x = toSyntax $ push arr x
 
@@ -140,6 +148,7 @@ pushMany arr xs =
   case foldr (\x (SomeArgs ys) -> SomeArgs (arg x <: ys)) (SomeArgs RecNil) xs of
     SomeArgs args -> callMethod (expr arr) "push" args
 
+-- | 'pushMany' in statement form.
 pushMany_ :: Expr f ('Array u) -> [Expr f u] -> EffectSyntax f (f 'Unit)
 pushMany_ arr xs = toSyntax $ pushMany arr xs
 

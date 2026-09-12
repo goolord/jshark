@@ -46,6 +46,7 @@ import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Dom (DomElement)
 
+-- | Opaque 2D drawing context; style is set through its 'Field's.
 data Context2D
 
 -- | CSS color strings. Gradients / patterns are not in the 'Field' yet.
@@ -61,8 +62,10 @@ type instance Field Context2D "textAlign" = 'String
 
 type instance Field Context2D "globalAlpha" = 'Number
 
+-- | Opaque result of 'measureText'; read its @width@ 'Field'.
 data TextMetrics
 
+-- | Opaque pixel buffer; read its bytes with 'imageDataBytes'.
 data ImageData
 
 type instance Field TextMetrics "width" = 'Number
@@ -105,16 +108,19 @@ canvasWidth ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'Number)
 canvasWidth el = getProp el "width"
 
+-- | @HTMLCanvasElement.height@. Assigning resets the bitmap.
 canvasHeight ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'Number)
 canvasHeight el = getProp el "height"
 
+-- | @el.width = n@. Resets the bitmap.
 setCanvasWidth ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 setCanvasWidth el n = setProp el "width" n
 
+-- | @el.height = n@. Resets the bitmap.
 setCanvasHeight ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'Number
@@ -160,6 +166,8 @@ call4 ::
 call4 ctx name x y w h =
   ctxCall ctx name (arg x <: arg y <: arg w <: arg h <: RecNil)
 
+-- | Rectangles at @(x, y, w, h)@: @fillRect@ fills, @strokeRect@ outlines,
+-- @clearRect@ erases; @rect@ appends the rectangle to the current path.
 fillRect
   , rect
   , strokeRect
@@ -175,6 +183,7 @@ rect ctx = call4 ctx "rect"
 strokeRect ctx = call4 ctx "strokeRect"
 clearRect ctx = call4 ctx "clearRect"
 
+-- | @ctx.createImageData(w, h)@ — a transparent pixel buffer.
 createImageData ::
   Effect f ('MutableObject Context2D)
   -> Expr f 'Number
@@ -183,6 +192,7 @@ createImageData ::
 createImageData ctx w h =
   hold $ callMethod ctx "createImageData" (arg w <: arg h <: RecNil)
 
+-- | @ctx.putImageData(img, x, y)@ — blit the whole image.
 putImageData ::
   Effect f ('MutableObject Context2D)
   -> Expr f ('MutableObject ImageData)
@@ -226,10 +236,14 @@ putImageDataRegion ctx img dx dy sx sy sw sh = do
       )
   done
 
+-- | @img.data@ — the @Uint8ClampedArray@ bytes (@RGBA@ per pixel).
 imageDataBytes ::
   Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
 imageDataBytes img = getProp (expr img) "data"
 
+-- | Path and state primitives: @beginPath@ / @closePath@ delimit a path,
+-- @fill@ / @stroke@ paint it, and @save@ / @restore@ push and pop the
+-- drawing state.
 beginPath
   , closePath
   , fill
@@ -245,6 +259,7 @@ stroke ctx = ctxCall0 ctx "stroke"
 save ctx = ctxCall0 ctx "save"
 restore ctx = ctxCall0 ctx "restore"
 
+-- | @ctx.moveTo(x, y)@ / @ctx.lineTo(x, y)@ — current-path cursor.
 moveTo
   , lineTo ::
     Effect f ('MutableObject Context2D)
@@ -266,6 +281,7 @@ arc ::
 arc ctx x y r start end =
   ctxCall ctx "arc" (arg x <: arg y <: arg r <: arg start <: arg end <: RecNil)
 
+-- | @ctx.fillText(text, x, y)@ / @strokeText@ — draw text at @(x, y)@.
 fillText
   , strokeText ::
     Effect f ('MutableObject Context2D)
@@ -276,12 +292,14 @@ fillText
 fillText ctx = call3 ctx "fillText"
 strokeText ctx = call3 ctx "strokeText"
 
+-- | @ctx.measureText(text)@ — a 'TextMetrics' handle (read @width@).
 measureText ::
   Effect f ('MutableObject Context2D)
   -> Expr f 'String
   -> EffectSyntax f (Effect f ('MutableObject TextMetrics))
 measureText ctx t = hold $ callMethod ctx "measureText" (arg t <: RecNil)
 
+-- | @ctx.translate(x, y)@.
 translate ::
   Effect f ('MutableObject Context2D)
   -> Expr f 'Number
@@ -289,12 +307,14 @@ translate ::
   -> EffectSyntax f (f 'Unit)
 translate ctx = call2 ctx "translate"
 
+-- | @ctx.rotate(radians)@.
 rotate ::
   Effect f ('MutableObject Context2D)
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 rotate ctx a = ctxCall ctx "rotate" (arg a <: RecNil)
 
+-- | @ctx.scale(sx, sy)@.
 scale ::
   Effect f ('MutableObject Context2D)
   -> Expr f 'Number

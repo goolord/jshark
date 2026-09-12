@@ -69,6 +69,7 @@ lookupId ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 lookupId x = hold $ ffi "document.getElementById" (arg x <: RecNil)
 
+-- | @document.querySelectorAll(selector)@ — all matching elements as an array.
 lookupSelector ::
   Expr f 'String -> EffectSyntax f (Effect f ('Array ('MutableObject DomElement)))
 lookupSelector x = hold $ ffi "document.querySelectorAll" (arg x <: RecNil)
@@ -80,6 +81,7 @@ classOp ::
   -> EffectSyntax f (f 'Unit)
 classOp name el x = toSyntax $ callMethod el name (arg x <: RecNil)
 
+-- | @el.classList.add@ / @remove@ / @toggle@ for one class name.
 classAdd
   , classRemove
   , classToggle ::
@@ -96,6 +98,7 @@ createElement ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 createElement tag = hold $ ffi "document.createElement" (arg tag <: RecNil)
 
+-- | @el.setAttribute(name, value)@.
 setAttribute ::
   Effect f ('MutableObject DomElement)
   -> Text
@@ -105,23 +108,27 @@ setAttribute el name value =
   toSyntax $
     callMethod el "setAttribute" (arg (string name) <: arg value <: RecNil)
 
+-- | @el.getAttribute(name)@ — typed 'String'; a missing attribute is @null@.
 getAttribute ::
   Effect f ('MutableObject DomElement) -> Text -> EffectSyntax f (Expr f 'String)
 getAttribute el name =
   bindExpr $ callMethod el "getAttribute" (arg (string name) <: RecNil)
 
+-- | @parent.appendChild(child)@.
 appendChild ::
   Effect f ('MutableObject DomElement)
   -> Effect f ('MutableObject DomElement)
   -> EffectSyntax f (f 'Unit)
 appendChild parent child = toSyntax $ callMethod parent "appendChild" (ArgEffect child <: RecNil)
 
+-- | @parent.removeChild(child)@.
 removeChild ::
   Effect f ('MutableObject DomElement)
   -> Effect f ('MutableObject DomElement)
   -> EffectSyntax f (f 'Unit)
 removeChild parent child = toSyntax $ callMethod parent "removeChild" (ArgEffect child <: RecNil)
 
+-- | @el.replaceChildren()@ — remove all children.
 replaceChildren ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (f 'Unit)
 replaceChildren el = toSyntax $ callMethod el "replaceChildren" RecNil
@@ -137,12 +144,14 @@ replaceChildrenFrom parent source =
       "((p, s) => { p.replaceChildren(...s.childNodes); })"
       (ArgEffect parent <: ArgEffect source <: RecNil)
 
+-- | @el.textContent = x@.
 setTextContent ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 setTextContent el x = setProp el "textContent" x
 
+-- | @el.style[prop] = value@.
 setStyleProperty ::
   Effect f ('MutableObject DomElement)
   -> Text
@@ -155,20 +164,24 @@ setStyleProperty el prop value =
       "((el, p, v) => { el.style[p] = v; })"
       (ArgEffect el <: arg (string prop) <: arg value <: RecNil)
 
+-- | Read @el.innerHTML@ as an 'Expr' 'String'.
 innerHTML ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)
 innerHTML el = get @"innerHTML" el
 
+-- | @el.innerHTML = x@.
 setInnerHTML ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 setInnerHTML el x = set @"innerHTML" el x
 
+-- | Read @el.innerText@ as an 'Expr' 'String'.
 innerText ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)
 innerText el = get @"innerText" el
 
+-- | @el.innerText = x@.
 setInnerText ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'String
@@ -180,6 +193,7 @@ getValue ::
   Effect f ('MutableObject DomElement) -> EffectSyntax f (Expr f 'String)
 getValue el = getProp el "value"
 
+-- | @el.value = v@ (inputs).
 setValue ::
   Effect f ('MutableObject DomElement)
   -> Expr f 'String
