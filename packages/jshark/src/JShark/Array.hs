@@ -11,6 +11,16 @@
 -- ('push', 'clear', 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers
 -- (@$groupBy@) come from 'namedLambdaRow' and are called with 'applyNamed2'.
 --
+-- Read-only and copying operations are 'Expr': 'index', 'length',
+-- 'includes', 'join', 'map', 'filter', 'reduce', 'reduceRight',
+-- 'arraySlice', 'concat', and 'toSorted' do not mutate their receiver.
+-- 'arraySlice', 'concat', and 'toSorted' return a /new/ array (a copy);
+-- that is a value-level copy only, with no runtime freezing — the original
+-- stays mutable and can still be written through an 'Effect'. 'sort'
+-- mutates in place and is therefore an 'Effect'; use 'toSorted' to sort a
+-- copy. Mutating a read-only result through an 'Effect' handle is a type
+-- error, since those operations take @Expr f ('Array u)@.
+--
 -- Import qualified; names clash with 'Prelude'.
 module JShark.Array
   ( index

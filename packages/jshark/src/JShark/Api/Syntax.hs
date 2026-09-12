@@ -8,6 +8,22 @@
 -- | The 'EffectSyntax' do-notation bridge: the KeyMonad-style monadic syntax
 -- for building 'Effect' terms. Split out of 'JShark.Api.Types' so the raw
 -- AST and the construction monad are separate responsibilities.
+--
+-- The convention, so a reader can tell the three apart at a glance:
+--
+-- * 'bindExpr' binds once and yields an 'Expr' (\"@x <- bindExpr e@\"): the
+--   effect runs once, and the reified expression can be used any number of
+--   times (a JS @const@).
+-- * 'toSyntax' yields the raw PHOAS binder @f u@ for a single use. This is
+--   the ergonomic form when the value exists only inside the block.
+-- * 'toSyntax_' runs an effect for its side effect and yields Haskell @()@;
+--   use it for discarded statements. @(*>)@ / 'seqSyntax' sequence two
+--   effects and discard the first result.
+--
+-- A raw repeatable computation is therefore an 'Effect' passed to
+-- 'bindExpr'; a discarded one is 'toSyntax_'; and a bind-once value is
+-- 'bindExpr'. Use 'expr' to lift a pure 'Expr' into an 'Effect' when it
+-- needs to be sequenced.
 module JShark.Api.Syntax
   ( EffectSyntax (..)
   , toSyntax
