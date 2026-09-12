@@ -99,6 +99,9 @@ hotReloadTests =
     , testCase "startWatcher sees a second same-size save" watcherSecondSaveOk
     , testCase "startWatcher sees an atomic-rename save" watcherRenameSaveOk
     , testCase
+        "startWatcher can be restarted repeatedly"
+        watcherRestartOk
+    , testCase
         "disposeTracked keeps EventSource and shell listeners"
         hmrDisposeKeepsSse
     , testCase
@@ -447,6 +450,50 @@ watcherRenameSaveOk = do
    where
     go waited
       | waited >= 8000000 = readIORef ref
+      | otherwise = do
+          n <- readIORef ref
+          if n >= want
+            then pure n
+            else threadDelay 50000 >> go (waited + 50000)
+
+-- | Reusing the hub across repeated start/stop cycles must not leak or
+-- wedge: each fresh watcher still sees saves, and the disposer joins the
+-- previous drain worker.
+watcherRestartOk :: IO ()
+watcherRestartOk = do
+  tmp <- getTemporaryDirectory
+  let
+    dir = tmp </> "jshark-hr-watch-restart"
+    hsDir = dir </> "Life"
+    hs = hsDir </> "Client.hs"
+  bracket (setup dir hsDir) (\_ -> removePathForcibly dir) $ \_ -> do
+    hits <- newIORef (0 :: Int)
+    hub <- newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
+    let
+      targets =
+        (watchTargets [dir])
+          { onHaskellSource =
+              \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
+          }
+    mapM_
+      ( \i -> do
+          stop <- startWatcher hub targets
+          threadDelay 200000
+          writeFile hs ("module Client where\n-- cycle " <> show i <> "\n")
+          _ <- waitForHits hits i
+          stop
+      )
+      [1 .. 3 :: Int]
+    n <- readIORef hits
+    assertBool ("three restarts each saw a save, got " <> show n) (n >= 3)
+ where
+  setup d hd = do
+    removePathForcibly d
+    createDirectoryIfMissing True hd
+  waitForHits ref want = go (0 :: Int)
+   where
+    go waited
+      | waited >= 4000000 = readIORef ref
       | otherwise = do
           n <- readIORef ref
           if n >= want
