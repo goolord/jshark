@@ -4,11 +4,16 @@
 module BindgenTests (bindgenTests) where
 
 import BindgenToy
+import qualified BindgenJs
+import qualified BindgenMs
+import qualified BindgenPlain
 import Control.Monad (unless)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import JShark (effectfulProgram, renderJS)
 import JShark.Api
 import JShark.Bindgen
 import JShark.Bindgen.Cli
@@ -16,6 +21,8 @@ import JShark.Bindgen.Cli
   , parseCliArgs
   )
 import JShark.Bindgen.Extract (tsExtractorAvailable)
+import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics)
+import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
 import JShark.Compiler (compileEffect, readableConfig)
 import Paths_jshark_bindgen (getDataFileName)
 import System.FilePath ((</>))
@@ -181,7 +188,60 @@ bindgenTests =
         assertBool
           "native null/value sentinel"
           ("o.some ? o.value : null" `BS.isInfixOf` js)
+    , testCase "overloads get distinct Haskell names" $ do
+        hs <- mustGen "ms.d.ts"
+        assertBool "first overload" ("ms ::" `T.isInfixOf` hs)
+        assertBool "second overload" ("ms2 ::" `T.isInfixOf` hs)
+    , testCase "generated BindgenMs.hs is a golden of ms.d.ts" $
+        assertGolden "BindgenMs"
+          (defaultBindgenOpts {optModuleName = Just "BindgenMs"})
+          "ms.d.ts"
+    , testCase "generated BindgenPlain.hs is a golden of plain.d.ts" $
+        assertGolden "BindgenPlain"
+          (defaultBindgenOpts {optModuleName = Just "BindgenPlain"})
+          "plain.d.ts"
+    , testCase "generated BindgenJs.hs is a golden of toy.js" $
+        assertGolden "BindgenJs"
+          (defaultBindgenOpts {optModuleName = Just "BindgenJs"})
+          "toy.js"
+    , testCase "every fixture wrapper module compiles to JS" $ do
+        js <- compileEffect readableConfig allFixtureWrappers
+        assertBool "toy.greet" ("toy.greet" `BS.isInfixOf` js)
+        assertBool "toy.add" ("toy.add" `BS.isInfixOf` js)
+        -- plain.d.ts and toy.js both export unqualified `greet`.
+        assertBool "unqualified greet" ("greet(" `BS.isInfixOf` js)
+        assertBool "ms overloads" ("ms(" `BS.isInfixOf` js)
+    , testCase "representative wrapper executes against a JS fixture" $ do
+        let
+          js = renderJS (effectfulProgram msRun)
+          prog =
+            JSProgram
+              { jsFlags = []
+              , jsPrelude =
+                  "globalThis.ms = (v) => typeof v === \"string\" ? v.length : String(v);"
+              , jsExpression = BC.unpack js
+              , jsEpilogue = ""
+              }
+        got <- runProgram bunTimeoutMicroseconds prog
+        assertEqual "ms(\"abcd\") === 4" "4" got
+    , testCase "nested nullable declarations surface a diagnostic" $ do
+        fx <- fixtureAbs "nested.d.ts"
+        r <- parseIrFromFile defaultBindgenOpts fx
+        case r of
+          Left e -> fail e
+          Right ir -> do
+            let cats = map dgCategory (irDiagnostics ir)
+            assertBool
+              ("unsupported-nullable diagnostic, got " <> show cats)
+              ("unsupported-nullable" `elem` cats)
     ]
+
+-- | Generate @name@ from @fixture@ and compare against the committed golden.
+assertGolden :: FilePath -> BindgenOpts -> FilePath -> IO ()
+assertGolden moduleNameSym opts fixtureName = do
+  hs <- mustGenWith opts fixtureName
+  golden <- TIO.readFile =<< pkgFileAbs ("test" </> moduleNameSym <> ".hs")
+  assertEqual "golden" (T.strip golden) (T.strip hs)
 
 toyDemo :: Effect f 'Unit
 toyDemo = fromSyntax $ do
@@ -200,3 +260,26 @@ toyNullableArgs = fromSyntax $ do
   setWidth (string "a") (some (number 4))
   _ <- pickWidget (string "a") (expr none)
   done
+
+-- | One program touching every fixture module, so all generated wrappers
+-- are compiled (and type-checked) by the test suite.
+allFixtureWrappers :: Effect f 'Unit
+allFixtureWrappers = fromSyntax $ do
+  t <- greet (string "toy")
+  log_ t
+  n <- add (number 1) (number 2)
+  _ <- BindgenPlain.greet (string "plain")
+  p <- BindgenPlain.add (number 1) (number 2)
+  _ <- BindgenJs.greet (string "js")
+  j <- BindgenJs.add (number 2) (number 3)
+  m1 <- BindgenMs.ms (string "abcd")
+  m2 <- BindgenMs.ms2 (number 7)
+  _ <- add (n + p + j + m1) (number 0)
+  log_ m2
+  done
+
+-- | A wrapper whose foreign fixture is supplied by the test prelude.
+msRun :: Effect f 'Number
+msRun = fromSyntax $ do
+  n <- BindgenMs.ms (string "abcd")
+  yield n

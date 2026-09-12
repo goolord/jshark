@@ -42,6 +42,7 @@ data FunKey = FunKey
   , fkName :: Text
   , fkCtor :: Bool
   , fkStatic :: Bool
+  , fkOverload :: Int
   }
   deriving (Eq, Ord, Show)
 
@@ -61,7 +62,7 @@ planModuleNames ir =
         <> fmap (SlotType . hsTypeName . enName) (irEnums ir)
         <> fmap (SlotConst . cnName) (irConsts ir)
         <> concatMap enumMemberSlots (irEnums ir)
-        <> fmap (\fn -> SlotFun (FunKey T.empty (fnName fn) False False)) (irFuns ir)
+        <> fmap (\fn -> SlotFun (FunKey T.empty (fnName fn) False False (fnOverload fn))) (irFuns ir)
         <> concatMap classFunSlots (irClasses ir)
     rawNames = fmap slotRaw slots
     finalNames = uniques rawNames
@@ -100,7 +101,7 @@ slotRaw = \case
   SlotType n -> n
   SlotConst cn -> hsVarName cn
   SlotEnum en mem -> enumMemberName en mem
-  SlotFun (FunKey _ n isCtor _) -> hsFunName isCtor n
+  SlotFun (FunKey _ n isCtor _ _) -> hsFunName isCtor n
 
 enumMemberSlots :: EnumDecl -> [Slot]
 enumMemberSlots e =
@@ -110,9 +111,9 @@ enumMemberSlots e =
 
 classFunSlots :: ClassDecl -> [Slot]
 classFunSlots c =
-  [ SlotFun (FunKey (clName c) (fnName f) True False) | f <- clCtors c
+  [ SlotFun (FunKey (clName c) (fnName f) True False (fnOverload f)) | f <- clCtors c
   ]
-    <> [ SlotFun (FunKey (clName c) (fnName f) False (fnStatic f))
+    <> [ SlotFun (FunKey (clName c) (fnName f) False (fnStatic f) (fnOverload f))
        | f <- clMethods c
        ]
 
@@ -309,7 +310,7 @@ funBinds ir plan =
 emitTopFun :: NamePlan -> Fun -> [Text]
 emitTopFun plan f =
   let
-    key = FunKey T.empty (fnName f) False False
+    key = FunKey T.empty (fnName f) False False (fnOverload f)
     name = lookupFun plan key
    in
     emitFun plan Nothing name f
@@ -326,7 +327,7 @@ emitClass plan c =
 emitClassFun :: NamePlan -> ClassDecl -> Bool -> Fun -> [Text]
 emitClassFun plan c isCtor f =
   let
-    key = FunKey (clName c) (fnName f) isCtor (fnStatic f)
+    key = FunKey (clName c) (fnName f) isCtor (fnStatic f) (fnOverload f)
     name = lookupFun plan key
    in
     emitFun plan (Just c) name f

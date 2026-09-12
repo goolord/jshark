@@ -26,9 +26,13 @@ extra-source-files:
   package.json
   bun.lock
   test/fixtures/jshark-bindgen/ms.d.ts
+  test/fixtures/jshark-bindgen/nested.d.ts
   test/fixtures/jshark-bindgen/plain.d.ts
   test/fixtures/jshark-bindgen/toy.d.ts
   test/fixtures/jshark-bindgen/toy.js
+  test/BindgenJs.hs
+  test/BindgenMs.hs
+  test/BindgenPlain.hs
   test/BindgenToy.hs
 
 data-files:
@@ -36,9 +40,13 @@ data-files:
   package.json
   bun.lock
   test/fixtures/jshark-bindgen/ms.d.ts
+  test/fixtures/jshark-bindgen/nested.d.ts
   test/fixtures/jshark-bindgen/plain.d.ts
   test/fixtures/jshark-bindgen/toy.d.ts
   test/fixtures/jshark-bindgen/toy.js
+  test/BindgenJs.hs
+  test/BindgenMs.hs
+  test/BindgenPlain.hs
   test/BindgenToy.hs
 
 source-repository head
@@ -107,6 +115,9 @@ test-suite jshark-bindgen-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
   other-modules:
+    BindgenJs
+    BindgenMs
+    BindgenPlain
     BindgenToy
     BindgenTests
     Paths_jshark_bindgen

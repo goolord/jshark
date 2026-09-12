@@ -29,16 +29,28 @@ decodeModule :: Text -> Either String ModuleIr
 decodeModule = eitherDecodeStrict' . encodeUtf8
 
 instance FromJSON ModuleIr where
-  parseJSON = withObject "ModuleIr" $ \o ->
-    ModuleIr
-      <$> o .: "module"
-      <*> o .: "prefix"
-      <*> o .: "source"
-      <*> o .: "classes"
-      <*> o .: "funs"
-      <*> o .: "consts"
-      <*> o .: "enums"
-      <*> o .: "skipped"
+  parseJSON = withObject "ModuleIr" $ \o -> do
+    v <- o .: "v" :: Parser Int
+    if v == bindgenSchemaVersion
+      then
+        ModuleIr
+          <$> o .: "module"
+          <*> o .: "prefix"
+          <*> o .: "source"
+          <*> o .: "classes"
+          <*> o .: "funs"
+          <*> o .: "consts"
+          <*> o .: "enums"
+          <*> o .: "skipped"
+          <*> (o .:? "diagnostics" .!= [])
+      else
+        fail
+          ( "unsupported extractor JSON schema version "
+              <> show v
+              <> " (expected "
+              <> show bindgenSchemaVersion
+              <> "); update jshark-bindgen"
+          )
 
 instance FromJSON ClassDecl where
   parseJSON = withObject "ClassDecl" $ \o ->
@@ -58,6 +70,7 @@ instance FromJSON Fun where
       <*> o .: "ret"
       <*> o .: "ctor"
       <*> (fromMaybe False <$> o .:? "static")
+      <*> (fromMaybe 0 <$> o .:? "overload")
 
 instance FromJSON Param where
   parseJSON = withObject "Param" $ \o ->
@@ -96,6 +109,10 @@ instance FromJSON EnumMember where
 instance FromJSON Skipped where
   parseJSON = withObject "Skipped" $ \o ->
     Skipped <$> o .: "name" <*> o .: "reason"
+
+instance FromJSON Diagnostic where
+  parseJSON = withObject "Diagnostic" $ \o ->
+    Diagnostic <$> o .: "category" <*> o .: "message"
 
 instance FromJSON Ty where
   parseJSON = withObject "Ty" $ \o -> do

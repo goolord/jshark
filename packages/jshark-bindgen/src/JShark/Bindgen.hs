@@ -68,7 +68,13 @@ parseIrFromFile opts path = do
         Left err -> pure (Left err)
         Right json -> pure $ do
           ir <- decodeModule json
-          Right (applyOpts opts path ir)
+          let
+            applied = applyOpts opts path ir
+          Right
+            applied
+              { irDiagnostics =
+                  irDiagnostics applied <> validateModule applied
+              }
 
 -- | Render a 'ModuleIr' to Haskell source.
 generateFromIr :: ModuleIr -> Text

@@ -15,6 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import JShark.Bindgen
+import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics)
 import Options.Applicative
   ( Parser
   , ParserInfo
@@ -40,6 +41,7 @@ import Options.Applicative
   , strOption
   )
 import System.Exit (die)
+import System.IO (hPutStrLn, stderr)
 
 -- | Parsed arguments: generation options, optional output path, input file.
 data Cli = Cli
@@ -123,7 +125,17 @@ runCli cli = do
   ir <- parseIrFromFile (cliOpts cli) (cliFile cli)
   case ir of
     Left e -> die e
-    Right x -> writeOut (cliOut cli) (generateFromIr x)
+    Right x -> do
+      mapM_ (hPutStrLn stderr . renderDiagnostic) (irDiagnostics x)
+      writeOut (cliOut cli) (generateFromIr x)
+
+-- | One-line stderr rendering of an extractor or binding diagnostic.
+renderDiagnostic :: Diagnostic -> String
+renderDiagnostic d =
+  "jshark-bindgen: ["
+    <> T.unpack (dgCategory d)
+    <> "] "
+    <> T.unpack (dgMessage d)
 
 writeOut :: Maybe FilePath -> Text -> IO ()
 writeOut Nothing t = TIO.putStr t
