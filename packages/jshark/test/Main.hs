@@ -1865,6 +1865,14 @@ optimizeTests =
         (optionCase (some (number 1 + number 2)) (number 0) (\x -> x + 1))
         "const n0 = 3;\nn0 + 1"
     , pureCodeCase
+        "some none nests faithfully"
+        (some (none :: Expr f ('Option 'Number)))
+        "{some: true, value: {some: false}}"
+    , pureCodeCase
+        "none is tagged none"
+        (none :: Expr f ('Option 'Number))
+        "{some: false}"
+    , pureCodeCase
         "if_ True takes the true branch"
         (if_ (bool True) (number 1) (number 99))
         "1"

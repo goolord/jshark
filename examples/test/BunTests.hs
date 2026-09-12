@@ -416,6 +416,11 @@ bunEvalTests =
                       "<div id=\"other\"></div>"
                       domMissing
                       "{\"some\":false}"
+                  , domCase
+                      "lookupIdOption of a missing id is none"
+                      "<div id=\"other\"></div>"
+                      domMissingOption
+                      "\"absent\""
                   , domCase "localStorage round trip" "" domStorage "\"v\""
                   , domCase
                       "happy-dom has no 2D canvas, and the Option says so"
@@ -613,6 +618,11 @@ domMissing = fromSyntax $ do
   el <- Dom.lookupId (string "a")
   handle <- toSyntax el
   yield (unsafeNullable (Var handle))
+
+domMissingOption :: forall f. Effect f 'String
+domMissingOption = fromSyntax $ do
+  opt <- Dom.lookupIdOption (string "nope") >>= bindExpr
+  yield (optionCase opt (string "absent") (\_ -> string "present"))
 
 domStorage :: forall f. Effect f 'String
 domStorage = fromSyntax $ do

@@ -12,8 +12,10 @@
 module JShark.Dom
   ( DomElement
   , byId
+  , byIdOption
   , eventTarget
   , lookupId
+  , lookupIdOption
   , lookupSelector
   , classAdd
   , classRemove
@@ -64,10 +66,28 @@ eventTarget o =
     (Object.unsafeObjectGet (toEffect o :: Effect f ('MutableObject Event)) "target")
 
 -- | @document.getElementById(x)@. Bound via 'hold' so reusing the
--- handle only references the variable, never re-runs the lookup.
+-- handle only references the variable, never re-runs the lookup. The
+-- handle is JS @null@ when the id is absent; use 'lookupIdOption' when
+-- that matters.
 lookupId ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 lookupId x = hold $ ffi "document.getElementById" (arg x <: RecNil)
+
+-- | Like 'lookupId', but a missing id is 'none'.
+lookupIdOption ::
+  Expr f 'String
+  -> EffectSyntax f (Effect f ('Option ('MutableObject DomElement)))
+lookupIdOption x =
+  hold $
+    Bind
+      Nothing
+      (ffi "document.getElementById" (arg x <: RecNil))
+      (\v -> Lift (unsafeNullable (Var v)))
+
+-- | @document.getElementById(id)@ for a literal id, as an 'Option'.
+byIdOption ::
+  Text -> EffectSyntax f (Effect f ('Option ('MutableObject DomElement)))
+byIdOption = lookupIdOption . string
 
 -- | @Array.from(document.querySelectorAll(selector))@ — all matching
 -- elements as a real array. @querySelectorAll@ returns a @NodeList@, which
