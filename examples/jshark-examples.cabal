@@ -111,6 +111,7 @@ library
     JShark.Example.TodoMvc.Client
     JShark.Example.TodoMvc.Ids
     JShark.Example.TodoMvc.Page
+    JShark.Example.Watch
   build-depends:
     , array
     , base
@@ -118,6 +119,7 @@ library
     , directory
     , filepath
     , jshark
+    , jshark-hotreload
     , jshark-lucid
     , process
     , text

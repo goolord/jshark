@@ -4,11 +4,7 @@
 -- driven by @fsnotify@ instead of a content-hash poll loop.
 module JShark.HotReload.Watcher
   ( WatchTargets (..)
-  , defaultWatchTargets
   , startWatcher
-  , exampleAppForHs
-  , exampleAppsForHs
-  , isLucidShellPath
   )
 where
 
@@ -17,7 +13,6 @@ import Control.Exception (SomeException, try)
 import Control.Monad (filterM, forM, void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Int (Int64)
-import Data.List (isInfixOf)
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -42,7 +37,6 @@ import System.FilePath
   ( splitDirectories
   , takeDirectory
   , takeExtension
-  , takeFileName
   )
 import System.IO (hPutStrLn, stderr)
 import System.Timeout (timeout)
@@ -56,68 +50,6 @@ data WatchTargets = WatchTargets
   , onHaskellSource :: FilePath -> IO ()
   -- ^ Fired for non-Page @.hs@ edits (Mode B recompiler hook).
   }
-
--- | Build 'WatchTargets' from roots using the default CSS mapping and a no-op
--- Haskell hook.
-defaultWatchTargets :: [FilePath] -> WatchTargets
-defaultWatchTargets dirs =
-  WatchTargets
-    { watchDirs = dirs
-    , cssUrlFor = defaultCssUrl
-    , onHaskellSource = \_ -> pure ()
-    }
-
-defaultCssUrl :: FilePath -> Maybe T.Text
-defaultCssUrl path
-  | takeExtension path /= ".css" = Nothing
-  | otherwise =
-      Just (T.pack ("/static/" <> map slash (takeFileName path)))
- where
-  slash c = if c == '\\' then '/' else c
-
--- | Map a changed @.hs@ path under @examples/@ to an example app name.
-exampleAppForHs :: FilePath -> Maybe T.Text
-exampleAppForHs path =
-  case exampleAppsForHs path of
-    [one] -> Just one
-    _ -> Nothing
-
--- | Like 'exampleAppForHs', but @ThemeHead@ maps to every example.
-exampleAppsForHs :: FilePath -> [T.Text]
-exampleAppsForHs path
-  | takeExtension path /= ".hs" = []
-  | serverOrCompile path = []
-  | isThemeHead path =
-      ["breakout", "todo-mvc", "synth", "life"]
-  | otherwise =
-      case matchDir path of
-        Just app -> [app]
-        Nothing -> []
- where
-  serverOrCompile p =
-    any
-      (`isInfixOf` p)
-      [ "examples\\app\\server"
-      , "examples/app/server"
-      , "examples\\app\\compile"
-      , "examples/app/compile"
-      , "examples\\app\\wasm"
-      , "examples/app/wasm"
-      ]
-  isThemeHead p = "Theme" `isInfixOf` p
-  matchDir p
-    | "TodoMvc" `isInfixOf` p = Just "todo-mvc"
-    | "Breakout" `isInfixOf` p = Just "breakout"
-    | "Synth" `isInfixOf` p = Just "synth"
-    | "Life" `isInfixOf` p = Just "life"
-    | otherwise = Nothing
-
--- | Lucid shell / shared head — prefer full page reload after rebuild.
-isLucidShellPath :: FilePath -> Bool
-isLucidShellPath path =
-  takeFileName path == "Page.hs"
-    || "Theme" `isInfixOf` path
-    || takeExtension path == ".html"
 
 -- | Start an fsnotify watch over the configured roots. The manager uses
 -- fsnotify's OS watch wherever one exists; on Windows that native watch

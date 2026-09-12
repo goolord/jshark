@@ -62,6 +62,13 @@
   through `FromJSON`, and hotreload encodes SSE events through `ToJSON`.
   The two schemas remain independent.
 
+* Example-specific watcher/asset mapping (`exampleAppForHs`,
+  `exampleAppsForHs`, `isLucidShellPath`, the `/static` CSS URL, and
+  `exampleWatchTargets`) moved from `jshark-hotreload` to
+  `JShark.Example.Watch` in the examples package. The hotreload watcher is
+  now generic over `WatchTargets`; the moved test lives in the examples
+  suite.
+
 * `Array.indexChecked` names the checked indexing contract explicitly, and
   the native return values are available: `Array.pushLen` (new length) and
   `Map.deleteReturning` / `Set.deleteReturning` (whether the key/element

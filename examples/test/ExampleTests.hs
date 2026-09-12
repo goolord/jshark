@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 -- | Every example must emit JavaScript that parses.
@@ -15,7 +16,7 @@
 -- Each case compiles only its own example via 'compileEffect' +
 -- 'readableConfig' (optimized 'effectfulAST', no minifier). Cases do not
 -- share a setup hook, so a slow example like Life cannot block Breakout.
-module ExampleTests (exampleTests) where
+module ExampleTests (exampleTests, watchMappingTests) where
 
 import BunGate (bunPathTestName)
 import qualified Data.Text as T
@@ -27,6 +28,11 @@ import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life
 import qualified JShark.Example.Synth as Synth
 import qualified JShark.Example.TodoMvc as TodoMvc
+import JShark.Example.Watch
+  ( exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -52,3 +58,38 @@ parseExampleCase name eff = testCase name $ do
 renderExample :: ClosedEffect 'Unit -> IO String
 renderExample eff =
   T.unpack <$> compileEffect readableConfig eff
+
+-- | The example-specific watch-path mapping moved out of
+-- @jshark-hotreload@; it lives here now.
+watchMappingTests :: TestTree
+watchMappingTests =
+  testGroup
+    "example watch mapping"
+    [ testCase "exampleAppForHs maps Client.hs paths" $ do
+        assertEqual
+          "todo"
+          (Just "todo-mvc")
+          (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Client.hs")
+        assertEqual
+          "breakout"
+          (Just "breakout")
+          (exampleAppForHs "examples\\src\\JShark\\Example\\Breakout\\Types.hs")
+        assertEqual
+          "page maps"
+          (Just "todo-mvc")
+          (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Page.hs")
+        assertEqual
+          "server skip"
+          Nothing
+          (exampleAppForHs "examples/app/server/DevServer.hs")
+        assertEqual
+          "theme all"
+          ["breakout", "todo-mvc", "synth", "life"]
+          (exampleAppsForHs "examples/src/JShark/Example/Theme.hs")
+        assertBool
+          "lucid shell"
+          (isLucidShellPath "examples/src/JShark/Example/Breakout/Page.hs")
+        assertBool
+          "not lucid"
+          (not (isLucidShellPath "examples/src/JShark/Example/Breakout/Client.hs"))
+    ]

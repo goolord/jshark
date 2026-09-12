@@ -38,10 +38,6 @@ import JShark.HotReload.Wai
   )
 import JShark.HotReload.Watcher
   ( WatchTargets (..)
-  , defaultWatchTargets
-  , exampleAppForHs
-  , exampleAppsForHs
-  , isLucidShellPath
   , startWatcher
   )
 import Network.HTTP.Types (HeaderName, statusCode)
@@ -85,7 +81,6 @@ hotReloadTests =
     , testCase "raw responses are never rewritten" rawResponsePreserved
     , testCase "inject drops a stale Content-Length" injectDropsLength
     , testCase "inject skips an encoded body" injectSkipsCompressed
-    , testCase "exampleAppForHs maps Client.hs paths" exampleAppMapOk
     , testCase "startWatcher sees a second same-size save" watcherSecondSaveOk
     , testCase "startWatcher sees an atomic-rename save" watcherRenameSaveOk
     , testCase
@@ -266,34 +261,15 @@ responseSummary = \case
   ResponseStream _ hs _ -> "ResponseStream " <> show (map fst hs)
   ResponseRaw {} -> "ResponseRaw"
 
-exampleAppMapOk :: IO ()
-exampleAppMapOk = do
-  assertEqual
-    "todo"
-    (Just "todo-mvc")
-    (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Client.hs")
-  assertEqual
-    "breakout"
-    (Just "breakout")
-    (exampleAppForHs "examples\\src\\JShark\\Example\\Breakout\\Types.hs")
-  assertEqual
-    "page maps"
-    (Just "todo-mvc")
-    (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Page.hs")
-  assertEqual
-    "server skip"
-    Nothing
-    (exampleAppForHs "examples/app/server/DevServer.hs")
-  assertEqual
-    "theme all"
-    ["breakout", "todo-mvc", "synth", "life"]
-    (exampleAppsForHs "examples/src/JShark/Example/Theme.hs")
-  assertBool
-    "lucid shell"
-    (isLucidShellPath "examples/src/JShark/Example/Breakout/Page.hs")
-  assertBool
-    "not lucid"
-    (not (isLucidShellPath "examples/src/JShark/Example/Breakout/Client.hs"))
+-- | Watch targets over the given roots with no CSS mapping and a no-op
+-- hook; the tests override 'onHaskellSource'.
+watchTargets :: [FilePath] -> WatchTargets
+watchTargets dirs =
+  WatchTargets
+    { watchDirs = dirs
+    , cssUrlFor = const Nothing
+    , onHaskellSource = \_ -> pure ()
+    }
 
 -- | Same-length overwrite must still enqueue a second Haskell recompile.
 watcherSecondSaveOk :: IO ()
@@ -309,7 +285,7 @@ watcherSecondSaveOk = do
       newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
     let
       targets =
-        (defaultWatchTargets [dir])
+        (watchTargets [dir])
           { onHaskellSource =
               \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
           }
@@ -352,7 +328,7 @@ watcherRenameSaveOk = do
       newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
     let
       targets =
-        (defaultWatchTargets [dir])
+        (watchTargets [dir])
           { onHaskellSource =
               \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
           }
