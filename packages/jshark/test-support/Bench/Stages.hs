@@ -26,11 +26,7 @@ import qualified Data.Text as T
 import JShark
   ( ClosedEffect
   , ClosedExpr
-  , effectfulAST
   , effectfulProgram
-  , optimizedEffectSize
-  , optimizedExprSize
-  , pureAST
   , pureProgram
   , renderJS
   )
@@ -41,6 +37,12 @@ import JShark.Compiler
   , passthroughConfig
   , prettyJS
   , readableConfig
+  )
+import JShark.Internal
+  ( effectfulAST
+  , optimizedEffectSize
+  , optimizedExprSize
+  , pureAST
   )
 import Test.Tasty.Bench
 

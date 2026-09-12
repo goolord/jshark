@@ -11,12 +11,7 @@ module LifeTests (lifeTests) where
 import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import qualified Data.Text as T
-import JShark
-  ( effectfulAST
-  , effectfulASTFromSoA
-  , flatPrepareCore
-  , renderJS
-  )
+import JShark (renderJS)
 import JShark.Api
 import JShark.Api.Generic (toObject)
 import JShark.Api.Rec (Rec (..), (<:))
@@ -50,6 +45,11 @@ import JShark.Example.Life.Types
   , cellPx
   , zoomLevelLabels
   , zoomLevels
+  )
+import JShark.Internal
+  ( effectfulAST
+  , effectfulASTFromSoA
+  , flatPrepareCore
   )
 import qualified JShark.Math as Math
 import Test.Tasty

@@ -36,6 +36,13 @@ import JShark.Compiler
 import JShark.Compiler.Codegen.Core (minifiedStyle)
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
+import JShark.Internal
+  ( Builtin (ValueEq)
+  , builtinSrc
+  , effectfulAST
+  , effectfulASTWith
+  , pureAST
+  )
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math

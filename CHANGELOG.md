@@ -62,6 +62,13 @@
   through `FromJSON`, and hotreload encodes SSE events through `ToJSON`.
   The two schemas remain independent.
 
+* The ordinary `JShark` facade no longer exports the IR\/SoA\/codegen
+  internals (`pureAST`/`effectfulAST`/…, `irEffectFromClosed`,
+  `flatPrepareCore`, `flatSoaNodeCount`, `optimized*Size`, the JsShim
+  `Builtin`/`builtinSrc`). They move to a deliberate `JShark.Internal`
+  module for tests, benchmarks, and tooling; `pureProgram` and
+  `effectfulProgram` stay public.
+
 * Example-specific watcher/asset mapping (`exampleAppForHs`,
   `exampleAppsForHs`, `isLucidShellPath`, the `/static` CSS URL, and
   `exampleWatchTargets`) moved from `jshark-hotreload` to

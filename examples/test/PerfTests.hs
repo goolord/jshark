@@ -11,16 +11,12 @@ module PerfTests (perfTests) where
 import Control.Exception (evaluate)
 import Data.Int (Int64)
 import qualified Data.Text as T
-import JShark
-  ( ClosedEffect
-  , effectfulAST
-  , optimizedEffectSize
-  , renderJS
-  )
+import JShark (ClosedEffect, renderJS)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Api.Types as Ty
 import JShark.Example.Life (mainJS)
+import JShark.Internal (effectfulAST, optimizedEffectSize)
 import System.Mem (getAllocationCounter)
 import Test.Tasty
 import Test.Tasty.HUnit

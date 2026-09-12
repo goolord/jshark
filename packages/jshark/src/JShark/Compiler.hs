@@ -53,9 +53,7 @@ import Effectful (Eff, IOE, liftIO, runEff, (:>))
 import JShark
   ( ClosedEffect
   , ClosedExpr
-  , effectfulAST
   , effectfulProgram
-  , pureAST
   , pureProgram
   , renderJS
   )
@@ -67,6 +65,7 @@ import JShark.Compiler.JsFormat
   , prettyJS
   , tryPrettyJSIO
   )
+import JShark.Internal (effectfulAST, pureAST)
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStrLn, stderr)
 

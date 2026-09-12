@@ -11,10 +11,11 @@ import Control.Monad (forM_)
 import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
-import JShark (ClosedEffect, effectfulAST, renderJS)
+import JShark (ClosedEffect, renderJS)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Api.Types as T
+import JShark.Internal (effectfulAST)
 import System.Environment (getArgs)
 
 -- | Nested binds + while nests scaled by depth.

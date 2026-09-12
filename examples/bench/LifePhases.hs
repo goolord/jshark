@@ -7,11 +7,12 @@ module Main (main) where
 import qualified Data.Text as T
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
-import JShark (effectfulAST, optimizedEffectSize, renderJS)
+import JShark (renderJS)
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect)
 import qualified JShark.Api.Types as Ty
 import JShark.Example.Life (mainJS)
+import JShark.Internal (effectfulAST, optimizedEffectSize)
 
 life :: ClosedEffect Ty.Unit
 life = stmts mainJS

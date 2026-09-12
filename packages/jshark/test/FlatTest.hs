@@ -25,7 +25,6 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import Data.Word (Word8)
-import JShark (irEffectFromClosed)
 import JShark.Api.Types
   ( ClosedEffect
   , FixedOp (FixArrLen)
@@ -33,6 +32,7 @@ import JShark.Api.Types
   )
 import qualified JShark.Compiler.Flat as Flat
 import qualified JShark.Compiler.Ir as Ir
+import JShark.Internal (irEffectFromClosed)
 
 flatDirectPackDeterministic :: ClosedEffect u -> Bool
 flatDirectPackDeterministic e =

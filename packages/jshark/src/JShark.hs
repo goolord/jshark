@@ -117,40 +117,22 @@ module JShark
   , evaluateBigInt
   , packUint8
   , uint8Elems
-  , optimizedExprSize
-  , optimizedEffectSize
-  , pureAST
-  , pureASTWith
-  , effectfulAST
-  , effectfulASTWith
-  , effectfulASTFromSoA
-  , irEffectFromClosed
-  , flatPrepareCore
-  , flatSoaNodeCount
   , pureProgram
   , effectfulProgram
   , renderJS
   , escapeJsString
   , structuralEq
   , structuralNEq
-  , Builtin (ValueEq)
-  , builtinSrc
   )
 where
 
 import JShark.Api.Types
 import JShark.Compiler.Codegen.Core
-  ( flatPrepareCore
-  , renderIIFE
+  ( renderIIFE
   )
 import JShark.Compiler.Codegen.Flat
-  ( effectfulAST
-  , effectfulASTFromSoA
-  , effectfulASTWith
-  , flatEffectfulCodegen
+  ( flatEffectfulCodegen
   , flatPureCodegen
-  , pureAST
-  , pureASTWith
   )
 import JShark.Compiler.Emit (JS, renderJS)
 import JShark.Compiler.Evaluate
@@ -160,13 +142,6 @@ import JShark.Compiler.Evaluate
   , evaluateNumber
   , packUint8
   , uint8Elems
-  )
-import JShark.Compiler.Flat (flatSoaNodeCount)
-import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
-import JShark.Compiler.Lower
-  ( irEffectFromClosed
-  , optimizedEffectSize
-  , optimizedExprSize
   )
 
 -- | Compile a closed pure expression to a JavaScript IIFE.

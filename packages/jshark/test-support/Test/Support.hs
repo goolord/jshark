@@ -52,19 +52,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import JShark
-  ( effectfulAST
-  , effectfulASTWith
-  , evaluate
-  , pureAST
-  , renderJS
-  )
+import JShark (evaluate, renderJS)
 import JShark.Api
 import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Compiler (biomeAvailable)
 import JShark.Compiler.Codegen.Core (EmitStyle)
+import JShark.Internal (effectfulAST, effectfulASTWith, pureAST)
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
