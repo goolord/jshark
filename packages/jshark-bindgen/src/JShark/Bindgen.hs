@@ -70,10 +70,10 @@ parseIrFromFile opts path = do
           ir <- decodeModule json
           let
             applied = applyOpts opts path ir
+            diags = irDiagnostics applied <> validateModule applied
           Right
-            applied
-              { irDiagnostics =
-                  irDiagnostics applied <> validateModule applied
+            (pruneUnsupported applied)
+              { irDiagnostics = diags
               }
 
 -- | Render a 'ModuleIr' to Haskell source.
@@ -95,6 +95,29 @@ applyOpts opts path ir =
         , irSource =
             if T.null (irSource ir) then T.pack path else irSource ir
         }
+
+-- | Drop declarations whose signature contains a nullable nested inside a
+-- container or callback. The emitter does not convert those at the foreign
+-- boundary, so leaving them in would pass tagged objects to native code;
+-- the matching 'Diagnostic' is still reported.
+pruneUnsupported :: ModuleIr -> ModuleIr
+pruneUnsupported ir =
+  ir
+    { irFuns = filter (not . funNested) (irFuns ir)
+    , irClasses = map pruneClass (irClasses ir)
+    , irConsts = filter (not . constNested) (irConsts ir)
+    }
+ where
+  funNested f =
+    any tyHasNestedOption (fnRet f : map pTy (fnParams f))
+  propNested p = tyHasNestedOption (prTy p)
+  constNested c = tyHasNestedOption (cnTy c)
+  pruneClass c =
+    c
+      { clCtors = filter (not . funNested) (clCtors c)
+      , clMethods = filter (not . funNested) (clMethods c)
+      , clProps = filter (not . propNested) (clProps c)
+      }
 
 qualifyPrefix :: ModuleIr -> ModuleIr
 qualifyPrefix ir

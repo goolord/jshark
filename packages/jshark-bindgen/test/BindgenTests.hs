@@ -21,7 +21,7 @@ import JShark.Bindgen.Cli
   , parseCliArgs
   )
 import JShark.Bindgen.Extract (tsExtractorAvailable)
-import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics)
+import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics, irFuns)
 import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
 import JShark.Compiler (compileEffect, readableConfig)
 import Paths_jshark_bindgen (getDataFileName)
@@ -234,6 +234,10 @@ bindgenTests =
             assertBool
               ("unsupported-nullable diagnostic, got " <> show cats)
               ("unsupported-nullable" `elem` cats)
+            assertEqual
+              "nested-nullable declarations are pruned"
+              []
+              (irFuns ir)
     ]
 
 -- | Generate @name@ from @fixture@ and compare against the committed golden.
