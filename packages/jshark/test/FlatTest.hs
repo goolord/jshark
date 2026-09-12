@@ -16,6 +16,7 @@ module FlatTest
   , optIrEffectForRangeImpure
   , optConstantFoldPreservesInput
   , optConstantFoldManyLits
+  , flatEmitOrderValidates
   )
 where
 
@@ -61,8 +62,18 @@ flatDirectPackOptimizeStable e =
    in
     Flat.soaColumnsEqual soa1 soa2
 
--- | Constant folding must be a pure function of its input: the caller may
--- still hold (and reuse) the 'FlatSoA' it passed in. Mutating the immutable
+-- | The emit order must be a child-before-parent traversal covering every
+-- reachable node exactly once.
+flatEmitOrderValidates :: ClosedEffect u -> Bool
+flatEmitOrderValidates e =
+  let
+    soa = Flat.optimizeFlatPack (Flat.packProgramDirect (irEffectFromClosed e))
+    root = Flat.fsaRoot soa
+    order = Flat.flatSoaEmitOrder soa root
+   in
+    null (Flat.validateFlatSoaEmitOrder soa root order)
+
+-- | Constant folding must be a pure function of its input: the caller may-- still hold (and reuse) the 'FlatSoA' it passed in. Mutating the immutable
 -- input's backing store in place would corrupt it. Build a minimal
 -- @1 + 2@ program that forces a fold, then check the input columns.
 optConstantFoldPreservesInput :: Bool

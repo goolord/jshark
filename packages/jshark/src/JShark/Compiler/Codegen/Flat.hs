@@ -698,7 +698,7 @@ flatTableLookup (FlatTableRead m) i =
 data FlatEmitPlan = FlatEmitPlan
   { fepEnv :: !(V.Vector (Maybe Env))
   , fepBind :: !(V.Vector (Maybe Int))
-  , fepLayers :: !(V.Vector (V.Vector Flat.NodeId))
+  , fepOrder :: !(V.Vector Flat.NodeId)
   }
 
 data FlatEmitCtx = FlatEmitCtx
@@ -825,8 +825,8 @@ flatEmitApplyArgs ctx s0 xs =
     (s0, mempty, [])
     xs
 
--- | Emit a child node: a table lookup keyed by node id (layer order was
--- fixed by 'Flat.flatSoaLayerBuckets', so children are already emitted).
+-- | Emit a child node: a table lookup keyed by node id (emit order was
+-- fixed by 'Flat.flatSoaEmitOrder', so children are already emitted).
 flatChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
 
 flatNodeKindEffect view nid =
@@ -1007,14 +1007,14 @@ buildFlatEmitPlan view root s0 =
         ( FlatEmitPlan
             { fepEnv = envF
             , fepBind = bindF
-            , fepLayers = Flat.flatSoaLayerBuckets view root
+            , fepOrder = Flat.flatSoaEmitOrder view root
             }
         , sFinal
         )
 
 flatEmitLayered view root plan s0 =
   let
-    emitOrder = concatMap V.toList (V.toList (fepLayers plan))
+    emitOrder = V.toList (fepOrder plan)
     (!tableFinal, !sFinal) =
       foldl'
         ( \(!table, !s) nid ->

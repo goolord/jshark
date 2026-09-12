@@ -18,6 +18,7 @@ import qualified Data.Text.Encoding as TE
 import FlatTest
   ( flatDirectPackDeterministic
   , flatDirectPackForRangeOk
+  , flatEmitOrderValidates
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
   , flatSoaPureNodeCount
@@ -2183,6 +2184,8 @@ flatSoATests =
         optConstantFoldPreservesInput @?= True
     , testCase "constant fold grows literal storage geometrically" $
         optConstantFoldManyLits 50 @?= True
+    , testCase "emit order is a validated child-before-parent traversal" $
+        flatEmitOrderValidates kernelAndLambdaUse @?= True
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number

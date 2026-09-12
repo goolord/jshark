@@ -56,6 +56,8 @@ module JShark.Compiler.Flat
   , flatSoaHoistTag
   , flatSoaParamName
   , flatSoaLayerBuckets
+  , flatSoaEmitOrder
+  , validateFlatSoaEmitOrder
   , soaPureCount
   , soaPureVector
   , constantFoldWithStats
@@ -77,6 +79,7 @@ import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Generic as GV
@@ -1442,21 +1445,72 @@ flatSoaReachableDepths soa root =
       _ <- go root
       V.unsafeFreeze md
 
+-- | Reachable nodes grouped by depth and, within a depth, by ascending node
+-- id (a child-before-parent emit order). Built in a single pass over the
+-- depth column grouped by 'Map', rather than rescanning all @n@ nodes once
+-- per depth, which was @O(maxDepth · n)@.
 flatSoaLayerBuckets :: FlatSoA -> NodeId -> V.Vector (V.Vector NodeId)
 flatSoaLayerBuckets soa root =
   let
     depths = flatSoaReachableDepths soa root
     n = V.length depths
-    maxD = V.foldl' max 0 depths
-    bucket d =
-      V.fromList
-        [ i
+    maxD = V.foldl' max (-1) depths
+    -- Prepend so each depth's list is built with O(1) conses, then reverse.
+    -- 'Map.fromListWith (++)' applies @new ++ old@ (newest first because the
+    -- comprehension is ascending), so the stored list is descending.
+    byDepth =
+      Map.fromListWith (++)
+        [ (d, [i])
         | i <- [0 .. n - 1]
-        , depths V.! i == d
-        , depths V.! i >= 0
+        , let d = depths V.! i
+        , d >= 0
         ]
    in
-    V.fromList [bucket d | d <- [0 .. maxD]]
+    V.fromList
+      [ V.fromList (reverse (Map.findWithDefault [] d byDepth))
+      | d <- [0 .. maxD]
+      ]
+
+-- | 'flatSoaLayerBuckets' flattened into one child-before-parent emit order.
+flatSoaEmitOrder :: FlatSoA -> NodeId -> V.Vector NodeId
+flatSoaEmitOrder soa root =
+  V.concat (V.toList (flatSoaLayerBuckets soa root))
+
+-- | Validate a child-before-parent emit order: every reachable node appears
+-- exactly once, and every pack ref precedes its parent. Returns one message
+-- per problem; @[]@ is valid. A test/assertion helper, not on the compile
+-- path.
+validateFlatSoaEmitOrder :: FlatSoA -> NodeId -> V.Vector NodeId -> [Text]
+validateFlatSoaEmitOrder soa root order =
+  dups <> invalid <> missing <> misordered
+ where
+  n = flatSoaNodeCount soa
+  depths = flatSoaReachableDepths soa root
+  (positions, dups) = V.ifoldl' collect (Map.empty, []) order
+  collect (m, ds) idx nid =
+    case Map.lookup nid m of
+      Just _ -> (m, (T.pack "duplicate node #" <> tshow nid) : ds)
+      Nothing -> (Map.insert nid idx m, ds)
+  invalid =
+    [ T.pack "invalid node #" <> tshow nid
+    | nid <- V.toList order
+    , nid < 0 || nid >= n
+    ]
+  missing =
+    [ T.pack "missing node #" <> tshow i
+    | i <- [0 .. n - 1]
+    , depths V.! i >= 0
+    , not (Map.member i positions)
+    ]
+  misordered =
+    [ T.pack "node #" <> tshow nid <> T.pack " uses #" <> tshow r <> T.pack " after it"
+    | (idx, nid) <- zip [0 :: Int ..] (V.toList order)
+    , nid >= 0
+    , nid < n
+    , r <- flatSoaNodePackRefs soa (flatSoaNode soa nid)
+    , maybe True (>= idx) (Map.lookup r positions)
+    ]
+  tshow = T.pack . show
 
 -- | Per-node purity in one backward sweep. Pack order keeps every child
 -- ref (side-table rows included) below its parent, so children are final
