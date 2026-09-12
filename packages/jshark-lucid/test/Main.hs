@@ -163,7 +163,7 @@ clickTemplate = fromSyntax $ do
   btn <- querySelector (string "button.hit")
   _ <- toSyntax (callMethod btn "click" RecNil :: Effect f 'Unit)
   v <- Dom.getAttribute root "data-hit"
-  yield v
+  yield (orElse v (string ""))
 
 -- | The TodoMVC row, the template this library was built for.
 todoRow :: Expr f 'String -> Expr f 'Bool -> JsHtml f ()

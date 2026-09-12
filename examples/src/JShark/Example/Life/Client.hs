@@ -1214,7 +1214,13 @@ wireTools toolRef btns canvas eraserSize viewport = do
     addEventListener "click" btn $ \_ ->
       stmts $ do
         raw <- Dom.getAttribute btn "data-tool"
-        selectTool toolRef btns (parseInt_ raw (number 10)) canvas eraserSize viewport
+        selectTool
+          toolRef
+          btns
+          (parseInt_ (orElse raw (string "0")) (number 10))
+          canvas
+          eraserSize
+          viewport
     done
 
 selectTool ::
@@ -1231,7 +1237,7 @@ selectTool toolRef btns sid canvas eraserSize viewport = do
     btn <- hold (expr (Array.index btns i))
     raw <- Dom.getAttribute btn "data-tool"
     let
-      on = parseInt_ raw (number 10) .== sid
+      on = parseInt_ (orElse raw (string "0")) (number 10) .== sid
     toSyntax_ $
       callMethod
         btn

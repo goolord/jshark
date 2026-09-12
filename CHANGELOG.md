@@ -29,6 +29,10 @@
   `Array` but returned a `NodeList`, so array methods other than index and
   `length` failed at runtime.
 
+* `JShark.Dom.getAttribute` now returns `Expr f ('Option 'String)`; a
+  missing attribute is `none`, matching the native `null` result. It
+  previously claimed `'String` and handed back `null`.
+
 * `jshark-hotreload` WAI middleware: raw WAI responses are now passed
   through untouched (they are the wire output) instead of rewriting their
   fallback; HTML injection drops the now-stale `Content-Length` and skips

@@ -115,11 +115,16 @@ setAttribute el name value =
   toSyntax $
     callMethod el "setAttribute" (arg (string name) <: arg value <: RecNil)
 
--- | @el.getAttribute(name)@ — typed 'String'; a missing attribute is @null@.
+-- | @el.getAttribute(name)@ — 'none' when the attribute is absent (the
+-- native @null@ result).
 getAttribute ::
-  Effect f ('MutableObject DomElement) -> Text -> EffectSyntax f (Expr f 'String)
+  Effect f ('MutableObject DomElement)
+  -> Text
+  -> EffectSyntax f (Expr f ('Option 'String))
 getAttribute el name =
-  bindExpr $ callMethod el "getAttribute" (arg (string name) <: RecNil)
+  fmap unsafeNullable
+    $ bindExpr
+    $ callMethod el "getAttribute" (arg (string name) <: RecNil)
 
 -- | @parent.appendChild(child)@.
 appendChild ::

@@ -374,6 +374,11 @@ bunEvalTests =
                       domClass
                       "\"on\""
                   , domCase
+                      "a missing attribute is None"
+                      "<div id=\"a\"></div>"
+                      domAttrMissing
+                      "\"missing\""
+                  , domCase
                       "createElement and appendChild are visible to querySelectorAll"
                       "<div id=\"a\"></div>"
                       domAppend
@@ -507,7 +512,13 @@ domClass = fromSyntax $ do
   el <- Dom.lookupId (string "a")
   _ <- Dom.classAdd el (string "on")
   c <- Dom.getAttribute el "class"
-  yield c
+  yield (orElse c (string ""))
+
+domAttrMissing :: forall f. Effect f 'String
+domAttrMissing = fromSyntax $ do
+  el <- Dom.lookupId (string "a")
+  c <- Dom.getAttribute el "data-nope"
+  yield (orElse c (string "missing"))
 
 domAppend :: forall f. Effect f 'Number
 domAppend = fromSyntax $ do
