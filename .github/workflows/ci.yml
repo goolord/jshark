@@ -67,8 +67,9 @@ jobs:
         with:
           version: "0.20.1.0"
           pattern: |
-            packages
-            examples
+            packages/**/*.hs
+            examples/**/*.hs
+            scripts/**/*.hs
 
       - name: Install jshark-bindgen TypeScript deps
         run: bun install
