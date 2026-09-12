@@ -104,11 +104,12 @@ Branching: `if_` is the ternary on pure values, `ifE`/`whenS`/`ifS`
 compose statements, `while_` loops, `forRange_` is the counting loop,
 `forEach` iterates arrays.
 
-Options are native JS `null` / value: `none` is `null`, `some x` is `x`
-(so `Option (Option a)` cannot distinguish `some none` from `none`).
-`Result` is `{ok, value}`. Branch with `optionCase` (expressions),
-`optionCaseE` + `whenSomeS`/`whenNoneS` (statements), `resultCase` /
-`resultCaseE`.
+Options are tagged JS values: `none` is `{some: false}`, `some x` is
+`{some: true, value: x}` (so `Option (Option a)` faithfully nests).
+`unsafeNullable` converts a native @null@/value from an FFI boundary into
+a tagged option. `Result` is `{ok, value}`. Branch with `optionCase`
+(expressions), `optionCaseE` + `whenSomeS`/`whenNoneS` (statements),
+`resultCase` / `resultCaseE`.
 
 ## DOM and typed events
 

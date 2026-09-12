@@ -233,7 +233,7 @@ Requires `bun` with `@typescript` installed to run the extractor.
 ## Design and Limitations
 
 - **A subset by design:** Idiomatic JS patterns outside the core (classes, `this`, prototype mutation, dynamic property lookup) must go through `ffi`.
-- **JavaScript semantics leak through:** Numbers are IEEE 754 doubles (bitwise ops truncate via `ToInt32`), exact integers use `BigInt`, and `Maybe`/`Either` map to JS `Option` (`null`/value) and `Result` (`{ok, value}`).
+- **JavaScript semantics leak through:** Numbers are IEEE 754 doubles (bitwise ops truncate via `ToInt32`), exact integers use `BigInt`, and `Maybe`/`Either` map to tagged JS `Option` (`{some, value}`) and `Result` (`{ok, value}`).
 - **Runtime errors remain possible:** The type system guarantees structural correctness and scope hygiene, but external calls can still fail or throw. Use `catch_` to handle JS exceptions.
 - **Not an npm bundler:** External npm libraries must be bundled externally or loaded via script tags, then bound via `ffi` or `jshark-bindgen`.
 

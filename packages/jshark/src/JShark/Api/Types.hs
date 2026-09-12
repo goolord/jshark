@@ -33,7 +33,7 @@
 --   that build this tree, not extra constructors.
 -- * One 'Std' constructor holds every pure JS standard-library name
 --   we expose ('Math.sin', @Array.prototype.map@, @JSON.stringify@, …).
--- * Haskell sums encoded as JS: 'Option' is @null@ / the value;
+-- * Haskell sums encoded as JS: 'Option' is @{some: Bool, value?}@;
 --   'Result' is @{ok: Bool, value: …}@.
 -- * 'Effect' is impure: statements, FFI, mutation, I/O, free-text names.
 --
@@ -485,11 +485,11 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f v
     -> (f u -> Expr f v)
     -> Expr f v
-    -- ^ Eliminate an 'Option', analogous to 'maybe'. Option is JS @null@ /
-    -- the value itself. Intro via 'UnsafeNullable' or
-    -- @Literal (ValueOption …)@. This stays a primitive: 'JShark.evaluate'
-    -- uses @f = Value@, so a bound @'Option u@ cannot be unwrapped by
-    -- @if_ (opt .== none)@ plus a type-changing coerce.
+    -- ^ Eliminate a tagged 'Option', analogous to 'maybe'. Intro via
+    -- 'JShark.Api.some' / 'JShark.Api.none' or @Literal (ValueOption …)@.
+    -- This stays a primitive: 'JShark.evaluate' uses @f = Value@, so a
+    -- bound @'Option u@ cannot be unwrapped by @if_ (opt .== none)@ plus a
+    -- type-changing coerce.
     -- | Construct a successful 'Result'.
   ResultOk :: Expr f a -> Expr f ('Result e a)
   -- | Construct an error 'Result'.
