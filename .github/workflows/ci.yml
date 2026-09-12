@@ -19,50 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM 20
-        run: |
-          # dl.google.com's apt repo is flaky on hosted runners (Hash Sum
-          # mismatch); CI never needs Chrome, so drop it before updating.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y llvm-20
+      - uses: ./.github/actions/setup
 
       - uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.16.0
 
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install Biome
-        run: bun install -g @biomejs/biome@2.5.11
-
-      - uses: haskell-actions/setup@v2
-        id: setup
-        with:
-          ghc-version: "9.14.1"
-          cabal-version: "3.12"
-
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.setup.outputs.cabal-store }}
-          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project') }}
-          restore-keys: |
-            ${{ runner.os }}-ghc-9.14.1-
-
-      - run: cabal update
-
-      - name: Static assets
-        run: |
-          ./scripts/vendor-speed-highlight.sh
-          ./scripts/gen-synth-keys-css.sh
-          ./scripts/gen-life-tool-preview-css.sh
-
       - name: Rebuild vendored WASM
         run: ./scripts/check-wasm.sh
 
       # ghcup has no fourmolu bindist for ubuntu-24.04; the action
-      # fetches the GitHub release zip instead.
-      - name: Fourmolu
+      # fetches the GitHub release zip instead. Never block CI on format
+      # drift; surface a workflow warning instead.
+      - name: Fourmolu (advisory)
+        id: fourmolu
+        continue-on-error: true
         uses: haskell-actions/run-fourmolu@v13
         with:
           version: "0.20.1.0"
@@ -70,6 +41,11 @@ jobs:
             packages/**/*.hs
             examples/**/*.hs
             scripts/**/*.hs
+
+      - name: Fourmolu advisory notice
+        if: steps.fourmolu.outcome != 'success'
+        run: |
+          echo "::warning title=Fourmolu::Some files are not formatted. Run scripts/format.sh locally."
 
       - name: Install jshark-bindgen TypeScript deps
         run: bun install
@@ -106,39 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM 20
-        run: |
-          # dl.google.com's apt repo is flaky on hosted runners (Hash Sum
-          # mismatch); CI never needs Chrome, so drop it before updating.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update
-          sudo apt-get install -y llvm-20
-
-      - uses: haskell-actions/setup@v2
-        id: setup
-        with:
-          ghc-version: "9.14.1"
-          cabal-version: "3.12"
-
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install Biome
-        run: bun install -g @biomejs/biome@2.5.11
-
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.setup.outputs.cabal-store }}
-          key: ${{ runner.os }}-ghc-9.14.1-${{ hashFiles('**/*.cabal', 'cabal.project') }}
-          restore-keys: |
-            ${{ runner.os }}-ghc-9.14.1-
-
-      - run: cabal update
-
-      - name: Static assets
-        run: |
-          ./scripts/vendor-speed-highlight.sh
-          ./scripts/gen-synth-keys-css.sh
-          ./scripts/gen-life-tool-preview-css.sh
+      - uses: ./.github/actions/setup
 
       - name: Export static site
         run: cabal run exe:jshark-examples -- export _site

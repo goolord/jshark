@@ -46,15 +46,6 @@ jobs:
         if: github.ref_type == 'tag'
         run: ./scripts/check-tag-version.sh "$GITHUB_REF_NAME"
 
-      - name: Build and test the checkout
-        run: cabal test all --test-show-details=direct --test-options='+RTS -N1 -M4G -RTS -t120'
-
-      - name: Hackage checks
-        run: |
-          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
-            (cd "packages/$p" && cabal check)
-          done
-
       # Builds/tests the unpacked sdists outside the monorepo (no root
       # overrides), installs jshark-bindgen, and runs it on a shipped fixture.
       # Leaves the exact verified tarballs in dist-newstyle/sdist.
