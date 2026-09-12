@@ -58,6 +58,7 @@ library
     JShark.HotReload.Wai
     JShark.HotReload.Watcher
   build-depends:
+    , aeson >= 2.0 && < 2.4
     , base >= 4.17 && < 5
     , bytestring >= 0.10.8 && < 0.13
     , containers >= 0.6 && < 0.8

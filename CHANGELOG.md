@@ -57,6 +57,11 @@
   `Canvas.imageDataBytes` returns `Expr f 'Uint8ClampedArray`, so a write
   clamps rather than wraps (a bun test pins `300 -> 44` vs `300 -> 255`).
 
+* `jshark-bindgen` and `jshark-hotreload` use aeson for their JSON
+  instead of hand-rolled parser/encoder: bindgen decodes the extractor IR
+  through `FromJSON`, and hotreload encodes SSE events through `ToJSON`.
+  The two schemas remain independent.
+
 * `Array.indexChecked` names the checked indexing contract explicitly, and
   the native return values are available: `Array.pushLen` (new length) and
   `Map.deleteReturning` / `Set.deleteReturning` (whether the key/element

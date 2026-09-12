@@ -33,12 +33,16 @@ import Control.Concurrent.STM
   , readTChan
   , writeTChan
   )
+import Data.Aeson (ToJSON (..), encode, object, (.=))
+import qualified Data.Aeson.Key as Key
 import Data.Bits (xor)
+import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8)
 
 -- | Server → browser hot-reload notifications (SSE payloads).
 -- Positional fields avoid -Wpartial-fields across sum constructors.
@@ -135,62 +139,43 @@ subscribe hub = do
 
 -- | SSE @data:@ JSON line (no trailing blank line).
 encodeEvent :: HotReloadEvent -> Text
-encodeEvent = \case
-  JsUpdate name u h ->
-    object
-      [ ("type", str "js-update")
-      , ("appName", str name)
-      , ("url", str u)
-      , ("hash", str h)
-      ]
-  CssUpdate u ts ->
-    object
-      [ ("type", str "css-update")
-      , ("url", str u)
-      , ("timestamp", T.pack (show ts))
-      ]
-  PageReload why ->
-    object
-      [ ("type", str "page-reload")
-      , ("reason", str why)
-      ]
-  BuildError msg ->
-    object
-      [ ("type", str "build-error")
-      , ("message", str msg)
-      ]
-  BuildStart app ->
-    object
-      [ ("type", str "build-start")
-      , ("appName", str app)
-      ]
-  Hello hashes ->
-    object
-      [ ("type", str "hello")
-      , ("jsHashes", hashObject hashes)
-      ]
- where
-  str t = "\"" <> escapeJson t <> "\""
-  object pairs =
-    "{"
-      <> T.intercalate "," [str k <> ":" <> v | (k, v) <- pairs]
-      <> "}"
-  hashObject hs =
-    "{"
-      <> T.intercalate
-        ","
-        [str k <> ":" <> str v | (k, v) <- hs]
-      <> "}"
+encodeEvent = decodeUtf8 . LBS.toStrict . encode
 
-escapeJson :: Text -> Text
-escapeJson =
-  T.concatMap $ \c -> case c of
-    '"' -> "\\\""
-    '\\' -> "\\\\"
-    '\n' -> "\\n"
-    '\r' -> "\\r"
-    '\t' -> "\\t"
-    _ -> T.singleton c
+instance ToJSON HotReloadEvent where
+  toJSON = \case
+    JsUpdate name u h ->
+      object
+        [ "type" .= ("js-update" :: Text)
+        , "appName" .= name
+        , "url" .= u
+        , "hash" .= h
+        ]
+    CssUpdate u ts ->
+      object
+        [ "type" .= ("css-update" :: Text)
+        , "url" .= u
+        , "timestamp" .= ts
+        ]
+    PageReload why ->
+      object
+        [ "type" .= ("page-reload" :: Text)
+        , "reason" .= why
+        ]
+    BuildError msg ->
+      object
+        [ "type" .= ("build-error" :: Text)
+        , "message" .= msg
+        ]
+    BuildStart app ->
+      object
+        [ "type" .= ("build-start" :: Text)
+        , "appName" .= app
+        ]
+    Hello hashes ->
+      object
+        [ "type" .= ("hello" :: Text)
+        , "jsHashes" .= object [Key.fromText k .= v | (k, v) <- hashes]
+        ]
 
 -- | Cache compiled JS and return its content hash.
 registerJs :: HotReloadHub -> Text -> Text -> IO Text
