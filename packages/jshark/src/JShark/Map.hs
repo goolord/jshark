@@ -14,6 +14,7 @@ module JShark.Map
   , insert
   , lookup
   , delete
+  , deleteReturning
   , member
   , size
   , clear
@@ -74,6 +75,14 @@ delete ::
   -> Expr f k
   -> EffectSyntax f (f 'Unit)
 delete m k = toSyntax $ callMethod m "delete" (arg k <: RecNil)
+
+-- | Like 'delete', but keeps @Map.prototype.delete@'s return value:
+-- whether the key was present.
+deleteReturning ::
+  Effect f ('Map k v)
+  -> Expr f k
+  -> EffectSyntax f (Expr f 'Bool)
+deleteReturning m k = bindExpr $ callMethod m "delete" (arg k <: RecNil)
 
 -- | @map.has(k)@.
 member ::

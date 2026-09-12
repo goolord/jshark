@@ -14,6 +14,7 @@
 -- Import qualified; names clash with 'Prelude'.
 module JShark.Array
   ( index
+  , indexChecked
   , length
   , map
   , mapE
@@ -26,6 +27,7 @@ module JShark.Array
   , join
   , push
   , push_
+  , pushLen
   , clear
   , clear_
   , pushMany
@@ -56,6 +58,11 @@ index arr i =
   case foldArrayIndex arr i of
     Just e -> e
     Nothing -> Index arr i
+
+-- | 'index' under a name that says the bounds check is part of the
+-- contract (it throws instead of returning @undefined@).
+indexChecked :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
+indexChecked = index
 
 foldArrayIndex ::
   Expr f ('Array u) -> Expr f 'Number -> Maybe (Expr f u)
@@ -134,6 +141,11 @@ clear_ arr = toSyntax $ clear arr
 push :: Expr f ('Array u) -> Expr f u -> Effect f 'Unit
 push arr x = pushMany arr [x]
 
+-- | Like 'push', but keeps @Array.prototype.push@'s return value: the new
+-- length.
+pushLen :: Expr f ('Array u) -> Expr f u -> Effect f 'Number
+pushLen arr x = pushManyLen arr [x]
+
 -- | 'push' in statement form.
 push_ :: Expr f ('Array u) -> Expr f u -> EffectSyntax f (f 'Unit)
 push_ arr x = toSyntax $ push arr x
@@ -144,7 +156,16 @@ data SomeArgs f where
 
 -- | @arr.push(x, y, …)@. One call; mutates in place.
 pushMany :: Expr f ('Array u) -> [Expr f u] -> Effect f 'Unit
-pushMany arr xs =
+pushMany = pushCall
+
+-- | 'pushMany' keeping the new length.
+pushManyLen :: Expr f ('Array u) -> [Expr f u] -> Effect f 'Number
+pushManyLen = pushCall
+
+-- | One @arr.push(…)@ call; the result universe is caller-chosen (Unit
+-- discards, Number keeps @Array.prototype.push@'s new length).
+pushCall :: Expr f ('Array u) -> [Expr f u] -> Effect f w
+pushCall arr xs =
   case foldr (\x (SomeArgs ys) -> SomeArgs (arg x <: ys)) (SomeArgs RecNil) xs of
     SomeArgs args -> callMethod (expr arr) "push" args
 

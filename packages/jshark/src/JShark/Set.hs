@@ -11,6 +11,7 @@ module JShark.Set
   , withSet
   , insert
   , delete
+  , deleteReturning
   , member
   , size
   , clear
@@ -48,6 +49,12 @@ insert s x = toSyntax $ callMethod s "add" (arg x <: RecNil)
 delete ::
   Effect f ('Set a) -> Expr f a -> EffectSyntax f (f 'Unit)
 delete s x = toSyntax $ callMethod s "delete" (arg x <: RecNil)
+
+-- | Like 'delete', but keeps @Set.prototype.delete@'s return value:
+-- whether the element was present.
+deleteReturning ::
+  Effect f ('Set a) -> Expr f a -> EffectSyntax f (Expr f 'Bool)
+deleteReturning s x = bindExpr $ callMethod s "delete" (arg x <: RecNil)
 
 -- | @set.has(x)@.
 member ::

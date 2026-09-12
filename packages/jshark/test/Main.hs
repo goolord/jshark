@@ -961,6 +961,21 @@ stdlibTests =
         )
         "[1, 2].push(3, 4);"
     , effectCodeCase
+        "Array.pushLen keeps the native new length"
+        ( fromSyntax $ do
+            n <- bindExpr (Array.pushLen numArray (number 3))
+            yield n
+        )
+        "[1, 2].push(3)"
+    , pureContains
+        "Array.indexChecked uses the checked index"
+        ( toLambda
+            ( \(a :: Expr f ('Array 'Number)) (i :: Expr f 'Number) ->
+                Array.indexChecked a i
+            )
+        )
+        ["$checkedIndex"]
+    , effectCodeCase
         "Array.fromEffects renders an array literal"
         (Array.fromEffects [expr (number 1), expr (number 2)])
         "[1, 2]"
@@ -1179,6 +1194,18 @@ stdlibTests =
             )
         )
         "const n0 = new Set();\nn0.add(\"x\");"
+    , effectContains
+        "Map.deleteReturning emits delete"
+        ( fromSyntax
+            (Map.withMap $ \m -> Map.deleteReturning m (string "k") >>= yield)
+        )
+        [".delete(\"k\")"]
+    , effectContains
+        "Set.deleteReturning emits delete"
+        ( fromSyntax
+            (Set.withSet $ \s -> Set.deleteReturning s (string "x") >>= yield)
+        )
+        [".delete(\"x\")"]
     , effectCodeCase
         "Map.mapM_ emits forEach with (k,v) callback order"
         ( fromSyntax

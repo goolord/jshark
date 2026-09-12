@@ -52,6 +52,11 @@
   algorithm, and the generated helper is now a fixed shim in the
   preamble.
 
+* `Array.indexChecked` names the checked indexing contract explicitly, and
+  the native return values are available: `Array.pushLen` (new length) and
+  `Map.deleteReturning` / `Set.deleteReturning` (whether the key/element
+  was present). The existing discarding forms are unchanged.
+
 * `JShark.Dom.lookupSelector` now returns a real `Array`
   (`Array.from(document.querySelectorAll(...))`). It was typed as an
   `Array` but returned a `NodeList`, so array methods other than index and
