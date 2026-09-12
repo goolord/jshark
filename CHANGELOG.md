@@ -69,6 +69,12 @@
   now generic over `WatchTargets`; the moved test lives in the examples
   suite.
 
+* The examples test suite resolves its fixtures and static assets through
+  `Paths_jshark_examples` (`static/…`, `src/JShark/Example/Life/js/…`)
+  instead of walking up to `cabal.project`, so it runs from an unpacked
+  source distribution. The Pico pin is kept in the test because the
+  repo-level `scripts/pico-version` is not package data.
+
 * `Array.indexChecked` names the checked indexing contract explicitly, and
   the native return values are available: `Array.pushLen` (new length) and
   `Map.deleteReturning` / `Set.deleteReturning` (whether the key/element

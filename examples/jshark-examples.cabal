@@ -286,8 +286,11 @@ test-suite jshark-examples-test
     ExampleTests
     LifeTests
     LifeWorkerTests
+    Paths_jshark_examples
     PerfTests
     StaticCssTests
+  autogen-modules:
+    Paths_jshark_examples
   hs-source-dirs: test
   build-depends:
     , base

@@ -8,29 +8,11 @@ import qualified Data.Text.IO as TIO
 import JShark.Bun (evaluateEffectJSON)
 import JShark.Example.Life (engineWorkerJs, lifeLutWorkerBootJs)
 import JShark.Example.Life.LifeTestSupport (blinkerLutStepJson)
-import System.Directory (doesFileExist, getCurrentDirectory)
+import Paths_jshark_examples (getDataFileName)
 import System.Exit (ExitCode (..))
-import System.FilePath (takeDirectory, (</>))
 import System.Process (readProcessWithExitCode)
 import Test.Tasty
 import Test.Tasty.HUnit
-
--- | Repo root (contains @cabal.project@), independent of the test CWD.
-repoRoot :: IO FilePath
-repoRoot = getCurrentDirectory >>= go
- where
-  go dir = do
-    let
-      proj = dir </> "cabal.project"
-    ok <- doesFileExist proj
-    if ok
-      then pure dir
-      else do
-        let
-          up = takeDirectory dir
-        if up == dir
-          then fail "life worker test: cabal.project not found above cwd"
-          else go up
 
 lifeWorkerTests :: TestTree
 lifeWorkerTests =
@@ -38,12 +20,8 @@ lifeWorkerTests =
     testGroup
       "life worker bundle"
       [ testCase "EngineWorker.js matches Haskell engineWorkerJs" $ do
-          root <- repoRoot
           onDisk <-
-            TIO.readFile
-              ( root
-                  </> "examples/src/JShark/Example/Life/js/EngineWorker.js"
-              )
+            TIO.readFile =<< getDataFileName "src/JShark/Example/Life/js/EngineWorker.js"
           onDisk @?= engineWorkerJs
       , testCase "worker LifeLUT.stepRegionLUT matches JShark LUT" $ do
           mBun <- getBun

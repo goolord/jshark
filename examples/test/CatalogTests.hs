@@ -25,37 +25,16 @@ import JShark.Example.Life.Patterns
   , glider
   , speciesColor
   )
-import System.Directory (doesFileExist, getCurrentDirectory)
-import System.FilePath (takeDirectory, (</>))
+import Paths_jshark_examples (getDataFileName)
 import Test.Tasty
 import Test.Tasty.HUnit
-
--- | Repo root (contains @cabal.project@), independent of the test CWD.
-repoRoot :: IO FilePath
-repoRoot = getCurrentDirectory >>= go
- where
-  go dir = do
-    let
-      proj = dir </> "cabal.project"
-    ok <- doesFileExist proj
-    if ok
-      then pure dir
-      else do
-        let
-          up = takeDirectory dir
-        if up == dir
-          then fail "catalog test: cabal.project not found above cwd"
-          else go up
 
 catalogTests :: TestTree
 catalogTests =
   testGroup
     "life catalog sidecar"
     [ testCase "catalog.js matches Haskell catalogJs" $ do
-        root <- repoRoot
-        onDisk <-
-          T.readFile
-            (root </> "examples/src/JShark/Example/Life/js/catalog.js")
+        onDisk <- T.readFile =<< getDataFileName "src/JShark/Example/Life/js/catalog.js"
         onDisk @?= catalogJs
     , testCase "glider orientations share canonical hash" $
         canonicalShapeHash glider
