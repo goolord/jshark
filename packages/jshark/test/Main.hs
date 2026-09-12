@@ -381,7 +381,7 @@ codegenTests =
                 Console.log x *> done
             )
         )
-        ["opt()", "=== null"]
+        ["opt()", ".some"]
     , effectContains
         "loop0 is a recursive zero-arg function"
         ( fromSyntax
@@ -894,7 +894,7 @@ stdlibTests =
         "unit array literal keeps its slots"
         (Literal (ValueArray [ValueUnit, ValueUnit]))
         "[undefined, undefined]"
-    , testCase "Array.join renders null as the empty string" $ do
+    , testCase "Array.join renders tagged options as objects" $ do
         let
           opts =
             Literal
@@ -902,9 +902,9 @@ stdlibTests =
                   [ValueOption Nothing, ValueOption (Just (ValueNumber 1))]
               )
         case evaluate (Array.join opts (string "-")) of
-          ValueString s -> s @?= "-1"
+          ValueString s -> s @?= "[object Object]-[object Object]"
         case evaluate (Show opts) of
-          ValueString s -> s @?= ",1"
+          ValueString s -> s @?= "[object Object],[object Object]"
     , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
           js =
@@ -1025,7 +1025,7 @@ stdlibTests =
                   )
             )
         )
-        "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, false);\nconst n2 = n1;\nconst n3 = n2;\n(n3 === null ? \"no\" : \"ok\")"
+        "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, false);\nconst n2 = ((v) => v == null ? {some: false} : {some: true, value: v})(n1);\nconst n4 = n2;\nlet n5;\nif (n4 .some) {const n3 = n4.value;\nn5 = \"ok\";}\nelse {n5 = \"no\";}\nn5"
     , effectCodeCase
         "Canvas.getContext2dDesync requests desynchronized context"
         ( fromSyntax
@@ -1040,7 +1040,7 @@ stdlibTests =
                   )
             )
         )
-        "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, true);\nconst n2 = n1;\nconst n3 = n2;\n(n3 === null ? \"no\" : \"ok\")"
+        "const n0 = document.getElementById(\"c\");\nconst n1 = ((el,d)=>el.getContext('2d',{desynchronized:!!d,alpha:false,willReadFrequently:false}))(n0, true);\nconst n2 = ((v) => v == null ? {some: false} : {some: true, value: v})(n1);\nconst n4 = n2;\nlet n5;\nif (n4 .some) {const n3 = n4.value;\nn5 = \"ok\";}\nelse {n5 = \"no\";}\nn5"
     , testCase
         "optionCaseE of getContext plus a large object array tests that context"
         $ do
@@ -1072,23 +1072,26 @@ stdlibTests =
               ]
             nullId =
               let
-                pre = fst (T.breakOn " === null" js)
+                pre = fst (T.breakOn " .some" js)
                 stem = T.dropWhileEnd (\c -> c == 'n' || isDigit c) pre
                in
                 T.drop (T.length stem) pre
-            -- `const a = b;` aliases can chain, so follow them rather than
-            -- assuming the null test names the context binding directly.
+            -- The scrutinee may be the context directly, an alias of it, or
+            -- a conversion wrapper around it. Follow a plain-identifier
+            -- alias, and treat any RHS that mentions a context id as
+            -- resolving to it.
             aliasOf i =
-              [ rhs
-              | chunk <- T.splitOn "const " js
-              , let
-                  (lhs, rest) = T.breakOn " = " chunk
-              , lhs == i
-              , let
-                  rhs = T.takeWhile (/= ';') (T.drop 3 rest)
-              , rhs == jsIdent rhs
-              , not (T.null rhs)
-              ]
+              concat
+                [ if rhs == jsIdent rhs
+                    then [rhs | not (T.null rhs)]
+                    else [cid | cid <- ctxIds, cid `T.isInfixOf` rhs]
+                | chunk <- T.splitOn "const " js
+                , let
+                    (lhs, rest) = T.breakOn " = " chunk
+                , lhs == i
+                , let
+                    rhs = T.takeWhile (/= ';') (T.drop 3 rest)
+                ]
             resolvesToCtx fuel i
               | i `elem` ctxIds = True
               | fuel <= (0 :: Int) = False
@@ -1145,7 +1148,7 @@ stdlibTests =
                 toSyntax (expr (optionCase v (string "missing") (\x -> x)))
             )
         )
-        "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\n(n1 === null ? \"missing\" : n1)"
+        "const n0 = localStorage.getItem(\"k\");\nconst n2 = ((v) => v == null ? {some: false} : {some: true, value: v})(n0);\nlet n3;\nif (n2 .some) {const n1 = n2.value;\nn3 = n1;}\nelse {n3 = \"missing\";}\nn3"
     , effectCodeCase
         "Map.lookup treats undefined as None"
         ( fromSyntax
@@ -1155,7 +1158,7 @@ stdlibTests =
                   toSyntax (expr (optionCase v (string "missing") (\x -> x)))
             )
         )
-        "const n0 = new Map();\nconst n1 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })(n0, \"k\");\nconst n2 = n1;\n(n2 === null ? \"missing\" : n2)"
+        "const n0 = new Map();\nconst n1 = ((m, k) => { const v = m.get(k); return v === undefined ? null : v; })(n0, \"k\");\nconst n3 = ((v) => v == null ? {some: false} : {some: true, value: v})(n1);\nlet n4;\nif (n3 .some) {const n2 = n3.value;\nn4 = n2;}\nelse {n4 = \"missing\";}\nn4"
     , effectCodeCase
         "Map.insert emits set"
         ( fromSyntax
@@ -1553,11 +1556,11 @@ genericTests =
     , effectCodeCase
         "toObject renders list and Maybe fields"
         (G.toObject (Tagged "x" ["a", "b"] Nothing))
-        "{label: \"x\", tags: [\"a\", \"b\"], nickname: null}"
+        "{label: \"x\", tags: [\"a\", \"b\"], nickname: {some: false}}"
     , effectCodeCase
-        "toObject Maybe record field is nullable object not Some wrapper"
+        "toObject Maybe field is a tagged Option"
         (G.toObject (Team (Just (Person "Ada" 36))))
-        "const n0 = {fullName: \"Ada\", years: 36};\n{lead: n0}"
+        "const n0 = {fullName: \"Ada\", years: 36};\n{lead: ((v) => v == null ? {some: false} : {some: true, value: v})(n0)}"
     , effectCodeCase
         "get on a Generic object uses derived Field"
         ( fromSyntax $ do
@@ -2023,7 +2026,7 @@ ergonomicsTests =
                 done
             )
         )
-        "const n0 = localStorage.getItem(\"k\");\nconst n1 = n0;\nif (n1 === null) {seed();}"
+        "const n0 = localStorage.getItem(\"k\");\nconst n2 = ((v) => v == null ? {some: false} : {some: true, value: v})(n0);\nconst n1 = n2.value;\nif (n2 .some) {}\nelse {seed();}"
     , effectCodeCase
         "addEventListenerS + eventKey avoids stmts and annotations"
         ( fromSyntax

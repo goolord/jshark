@@ -106,8 +106,17 @@ flatRenderLiteral env s0 = \case
   ValueString s -> (s0, Code mempty (jsQuote s))
   ValueFunction _ -> error "JShark.flatPureAST: ValueFunction is eval-only"
   ValueUnit -> (s0, mempty)
-  ValueOption (Just x) -> flatRenderLiteral env s0 x
-  ValueOption Nothing -> (s0, Code mempty "null")
+  ValueOption (Just x) ->
+    let
+      (s1, MkCode d r fx) = flatRenderLiteral env s0 x
+     in
+      ( s1
+      , MkCode
+          d
+          (Just ("{some: true, value: " <> fromMaybe "undefined" r <> "}"))
+          fx
+      )
+  ValueOption Nothing -> (s0, Code mempty "{some: false}")
   ValueResult (Right x) -> flatRenderResultLit True s0 x
   ValueResult (Left x) -> flatRenderResultLit False s0 x
   ValueRegex s ->
@@ -1115,49 +1124,37 @@ flatPureASTGo !ctx !env !sIn view nid =
       Flat.FE_OptionCase oId nId _tag sId ->
         let
           (s1, MkCode optDecl optRef _) = flatChild ctx s0 oId
-          (nBind, s2) = flatPlanIdent ctx s1 nid
-          optVar = identName s2 nBind
-          (s3, MkCode noneDecl noneRef nFX) = flatChild ctx s2 nId
-          (s4, MkCode someDecl someRef sFX) = flatChild ctx s3 sId
-          optBind =
-            constBind s4 nBind (fromMaybe mempty optRef)
-          cond = jsText optVar <+> "===" <+> "null"
+          (nOpt, s2) = allocIdent s1
+          optVar = identName s2 nOpt
+          (nVal, s3) = flatPlanIdent ctx s2 nid
+          (s4, MkCode noneDecl noneRef _) = flatChild ctx s3 nId
+          (s5, MkCode someDecl someRef _) = flatChild ctx s4 sId
+          optBind = constBind s5 nOpt (fromMaybe "null" optRef)
+          cond = jsText optVar <+> ".some"
+          -- The some branch was lowered against the tag binder; bind it to
+          -- the unwrapped payload.
+          valBind = constBind s5 nVal (jsText optVar <> ".value")
+          (nRes, s6) = allocIdent s5
+          rv = identName s6 nRes
          in
-          if isNothing noneDecl && isNothing someDecl && not nFX && not sFX
-            then
-              ( s4
-              , MkCode
-                  (Just (fromMaybe mempty optDecl $$ optBind))
-                  ( Just
-                      ( parens
-                          ( cond
-                              <+> "?"
-                              <+> fromMaybe "undefined" noneRef
-                              <+> ":"
-                              <+> fromMaybe "undefined" someRef
-                          )
-                      )
+          ( s6
+          , MkCode
+              ( Just
+                  ( fromMaybe mempty optDecl
+                      $$ optBind
+                      $$ letResult rv
+                      $$ ifAssignOrStmt
+                        (Just rv)
+                        cond
+                        (Just (valBind $$ fromMaybe mempty someDecl))
+                        someRef
+                        noneDecl
+                        noneRef
                   )
-                  False
               )
-            else
-              -- Branch-local declarations must stay inside their branch.
-              let
-                (n, s5) = allocIdent s4
-                rv = identName s5 n
-               in
-                ( s5
-                , MkCode
-                    ( Just
-                        ( fromMaybe mempty optDecl
-                            $$ optBind
-                            $$ letResult rv
-                            $$ ifAssignOrStmt (Just rv) cond noneDecl noneRef someDecl someRef
-                        )
-                    )
-                    (Just (jsText rv))
-                    False
-                )
+              (Just (jsText rv))
+              False
+          )
       Flat.FE_ResultOk xId ->
         let
           (s1, MkCode d r _) = flatChild ctx s0 xId
@@ -1191,7 +1188,17 @@ flatPureASTGo !ctx !env !sIn view nid =
       Flat.FE_Fixed fixed -> flatRenderFixed ctx s0 view fixed
       Flat.FE_FnLit tags _names bodyId ->
         flatRenderFnLit ctx env s0 tags bodyId
-      Flat.FE_UnsafeNullable xId -> flatChild ctx s0 xId
+      Flat.FE_UnsafeNullable xId ->
+        let
+          (s1, Code d r) = flatChild ctx s0 xId
+         in
+          ( s1
+          , Code
+              d
+              ( "((v) => v == null ? {some: false} : {some: true, value: v})"
+                  <> parens r
+              )
+          )
       Flat.FE_FrozenLit gi -> flatRenderObjectLit ctx s0 view gi
       Flat.FE_GetField ti oId ->
         let
@@ -1419,18 +1426,22 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           s0
           ( \s ->
               let
-                (s1, Code oDecl oRef) = flatChild ctx s oId
-                (nBind, s2) = flatPlanIdent ctx s1 nid
+                (s1, MkCode oDecl oRef _) = flatChild ctx s oId
+                (nOpt, s2) = allocIdent s1
+                (nBind, s3) = flatPlanIdent ctx s2 nid
+                oBind = constBind s3 nOpt (fromMaybe "null" oRef)
+                valBind =
+                  constBind s3 nBind (jsText (identName s3 nOpt) <> ".value")
                in
-                (s2, oDecl $$ constBind s2 nBind oRef, nBind)
+                (s3, fromMaybe mempty oDecl $$ oBind $$ valBind, (nOpt, nBind))
           )
-          ( \mRes nBind s ->
+          ( \mRes (nOpt, _nBind) s ->
               let
                 (s1, MkCode nDecl nRef _) = flatChild ctx s nId
                 (s2, MkCode sDecl sRef _) = flatChild ctx s1 sId
-                cond = nJS s nBind <+> "===" <+> "null"
+                cond = nJS s nOpt <+> ".some"
                in
-                (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
+                (s2, ifAssignOrStmt mRes cond sDecl sRef nDecl nRef)
           )
       Flat.FX_ResultCaseE resId tagE errId tagO okId ->
         flatRenderResultCaseE ctx env s0 view nid resId tagE errId tagO okId

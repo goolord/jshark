@@ -20,7 +20,7 @@ import JShark.Api.Types
 stringify :: Expr f u -> Effect f ('Option 'String)
 stringify x =
   ffi
-    "((x) => { const s = JSON.stringify(x); return s === undefined ? null : s; })"
+    "((x) => { const s = JSON.stringify(x); return s === undefined ? {some: false} : {some: true, value: s}; })"
     (arg x <: RecNil)
 
 -- | @JSON.stringify(x)@ for values the caller knows have a JSON form and

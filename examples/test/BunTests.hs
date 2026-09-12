@@ -174,7 +174,13 @@ bunEvalTests =
             , bunCase
                 "some is the wrapped value"
                 (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
-            , bunCase "none is null" (none :: Expr f ('Option 'Number))
+            , bunCase "none is tagged none" (none :: Expr f ('Option 'Number))
+            , bunCase
+                "some none nests faithfully"
+                (JShark.Api.some (none :: Expr f ('Option 'Number)))
+            , bunCase
+                "unsafeNullable of undefined is none"
+                (unsafeNullable (Literal ValueUnit))
             , bunCase "string concat" (Concat (string "a") (string "b"))
             , bunCase "Show number" (Show (number 3))
             , bunCase "Eq numbers" (number 1 .== number 1)
@@ -406,10 +412,10 @@ bunEvalTests =
                       domSelectorMap
                       "3"
                   , domCase
-                      "getElementById of a missing id is null"
+                      "getElementById of a missing id is none"
                       "<div id=\"other\"></div>"
                       domMissing
-                      "null"
+                      "{\"some\":false}"
                   , domCase "localStorage round trip" "" domStorage "\"v\""
                   , domCase
                       "happy-dom has no 2D canvas, and the Option says so"
@@ -645,8 +651,8 @@ encodeJSValue = \case
   ValueString s -> encodeJSString (T.unpack s)
   ValueUnit -> "undefined"
   ValueArray xs -> "[" ++ intercalate "," (map encodeJSValue xs) ++ "]"
-  ValueOption Nothing -> "null"
-  ValueOption (Just x) -> encodeJSValue x
+  ValueOption Nothing -> "{\"some\":false}"
+  ValueOption (Just x) -> "{\"some\":true,\"value\":" ++ encodeJSValue x ++ "}"
   ValueResult (Right x) -> encodeResult True x
   ValueResult (Left x) -> encodeResult False x
   ValueRegex s -> encodeJSString (T.unpack s)

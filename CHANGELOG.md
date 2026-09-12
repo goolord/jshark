@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+* **Breaking:** `Option` is now tagged (`{some: bool, value?}`) instead of
+  native `null`/value, so nested options are faithful: `some none` and
+  `none` are distinguishable. `unsafeNullable` converts a native
+  null/value into a tagged option, and `Json.stringify`'s shim now emits
+  the tagged shape. The tutorial and the affected goldens/tests are
+  updated. (A distinct native `Nullable` universe is the next step.)
+
 * Compiler correctness (each backed by a regression test that fails on the
   previous behavior):
 

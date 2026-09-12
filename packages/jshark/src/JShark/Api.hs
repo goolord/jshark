@@ -616,11 +616,12 @@ catch_ a k = Try a (\e -> k (var e))
 throw_ :: Expr f 'String -> Effect f v
 throw_ = Throw
 
--- | Wrap a value: JS @null@ means missing, so @some x@ is just
--- @x@ and none is @null@ (see 'orElse').
+-- | Wrap a value in a tagged 'Option'. @some x@ compiles to
+-- @{some: true, value: x}@, so @some none@ is distinguishable from
+-- @none@ (which is @{some: false}@).
 some :: Expr f u -> Expr f ('Option u)
 some (Literal v) = Literal (ValueOption (Just v))
-some x = UnsafeNullable x
+some x = expr1 FixSome x
 
 -- | The missing option: JS @null@.
 none :: Expr f ('Option u)
@@ -637,7 +638,8 @@ optionCaseE ::
   Expr f ('Option u) -> Effect f v -> (Expr f u -> Effect f v) -> Effect f v
 optionCaseE opt noneBranch someBranch = OptionCaseE opt noneBranch (\x -> someBranch (var x))
 
--- | Wrap an expression as an 'Option' without a @null@ check.
+-- | Convert a native JS null\/value (e.g. an FFI result) into a tagged
+-- 'Option': @null@ \/ @undefined@ become 'none', anything else 'some'.
 unsafeNullable :: Expr f u -> Expr f ('Option u)
 unsafeNullable = UnsafeNullable
 

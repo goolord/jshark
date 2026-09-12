@@ -595,6 +595,10 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   -- | Uncurried call @(f)(x, y)@ for hoisted two-arg helpers ('applyNamed2').
   FixCall2 ::
     FixedOp ('Function a ('Function b r)) a b r
+  -- | Tagged @Option@ @some@: @{some: true, value: x}@. Native null\/value
+  -- is 'UnsafeNullable', not this.
+  FixSome ::
+    FixedOp u 'Unit 'Unit ('Option u)
 
 -- | Argument list for a 'FixedOp', matching its arity.
 data FixedArgs f a b c where
@@ -1055,8 +1059,8 @@ instance Semigroup (Expr f u) => Semigroup (Expr f ('Option u)) where
   o <> d =
     Let Nothing d $ \dv ->
       OptionCase o (Var dv) $ \x ->
-        OptionCase (Var dv) (UnsafeNullable (Var x)) $ \y ->
-          UnsafeNullable (Var x <> Var y)
+        OptionCase (Var dv) (expr1 FixSome (Var x)) $ \y ->
+          expr1 FixSome (Var x <> Var y)
 
 instance Semigroup (Expr f u) => Monoid (Expr f ('Option u)) where
   mempty = Literal (ValueOption Nothing)

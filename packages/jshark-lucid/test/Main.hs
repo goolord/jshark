@@ -126,13 +126,13 @@ markupOf html = withRoot html Dom.innerHTML
 textOf :: Expr f 'String -> JsHtml f () -> Effect f 'String
 textOf selector html = withRoot html $ \_ -> querySelector selector >>= Dom.innerText
 
--- | An attribute of the first element matching a selector.
+-- | An attribute of the first element matching a selector, or @\"\"@.
 attrOf ::
-  Expr f 'String -> Expr f 'String -> JsHtml f () -> Effect f ('Option 'String)
+  Expr f 'String -> Expr f 'String -> JsHtml f () -> Effect f 'String
 attrOf selector name html = withRoot html $ \_ -> do
   el <- querySelector selector
   v <- toSyntax (callMethod el "getAttribute" (arg name <: RecNil))
-  pure (unsafeNullable (Var v))
+  pure (orElse (unsafeNullable (Var v)) (string ""))
 
 -- | Whether an element carries a class.
 hasClass :: Expr f 'String -> Expr f 'String -> JsHtml f () -> Effect f 'Bool

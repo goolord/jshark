@@ -127,8 +127,8 @@ isCheapValue = \case
   ValueString {} -> True
   ValueBool {} -> True
   ValueUnit -> True
-  ValueOption Nothing -> True
-  ValueOption (Just v) -> isCheapValue v
+  -- A tagged option is an object; never duplicate it.
+  ValueOption _ -> False
   ValueResult (Left v) -> isCheapValue v
   ValueResult (Right v) -> isCheapValue v
   ValueRegex {} -> False
@@ -227,8 +227,8 @@ jsShow (ValueBool True) = "true"
 jsShow (ValueBool False) = "false"
 jsShow ValueUnit = "undefined"
 jsShow (ValueArray xs) = T.intercalate "," (map jsJoinElem xs)
-jsShow (ValueOption Nothing) = "null"
-jsShow (ValueOption (Just x)) = jsShow x
+-- A tagged option is a plain object: `String({some:…})` is `[object Object]`.
+jsShow (ValueOption _) = "[object Object]"
 jsShow ValueResult {} = "[object Object]"
 jsShow (ValueRegex s) = s
 jsShow (ValueUint8Array ba) = jsShowUint8Array ba
@@ -240,8 +240,8 @@ jsShow (ValueFunction _) = error "evaluate: cannot show a function"
 -- there, not as @\"null\"@ / @\"undefined\"@.
 jsJoinElem :: Value u -> Text
 jsJoinElem = \case
-  ValueOption Nothing -> ""
-  ValueOption (Just v) -> jsJoinElem v
+  -- Objects (including tagged options) join as their `String` form.
+  ValueOption _ -> "[object Object]"
   ValueUnit -> ""
   v -> jsShow v
 
@@ -255,8 +255,7 @@ typeOfValue = \case
   ValueUnit -> "undefined"
   ValueFunction {} -> "function"
   ValueArray {} -> "object"
-  ValueOption Nothing -> "object"
-  ValueOption (Just v) -> typeOfValue v
+  ValueOption _ -> "object"
   ValueResult {} -> "object"
   ValueRegex {} -> "object"
   ValueUint8Array {} -> "object"
@@ -552,7 +551,13 @@ evalAlg rec apply = \case
     m <- rec msg
     error ("evaluate: " ++ T.unpack (unString m))
   Std s -> evalStd rec s
-  UnsafeNullable x -> ValueOption . Just <$> rec x
+  UnsafeNullable x -> do
+    v <- rec x
+    -- Match the runtime conversion: null/undefined become none.
+    pure $ case v of
+      ValueUnit -> ValueOption Nothing
+      ValueOption Nothing -> ValueOption Nothing
+      _ -> ValueOption (Just v)
   FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit rec) fs
   GetField @k o -> do
     ov <- rec o
@@ -703,6 +708,7 @@ evalFixed ::
   -> FixedArgs Value a b c
   -> m (Value u)
 evalFixed rec op args = case (op, args) of
+  (FixSome, ArgsU x) -> ValueOption . Just <$> rec x
   (n, ArgsU x)
     | Just (MathUnary n') <- matchMathUnary n ->
         ValueNumber . Prim.mathUnaryFn n' . unNumber <$> rec x

@@ -186,6 +186,7 @@ fixedUnaryJS n r = case n of
   FixToBigInt -> "BigInt" <> parens r
   FixFromBigInt -> "Number" <> parens r
   FixParseBigInt -> "BigInt" <> parens r
+  FixSome -> "{some: true, value: " <> r <> "}"
   _ -> error "JShark.Api.Prim.fixedUnaryJS: not a std unary op"
  where
   dotLength = r <> ".length"
