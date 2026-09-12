@@ -18,8 +18,6 @@ life = stmts mainJS
 main :: IO ()
 main = do
   start <- getMonotonicTime
-  let
-    bytes = emitLen life
+  bytes <- evaluate (emitLen life)
   end <- getMonotonicTime
-  evaluate bytes
   putStrLn $ show bytes ++ "," ++ show (end - start)

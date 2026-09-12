@@ -23,24 +23,24 @@ import JShark.HotReload.Client (clientRuntimeText)
 import JShark.HotReload.Core
   ( HotReloadConfig (..)
   , HotReloadEvent (..)
+  , HotReloadSnapshot (..)
   , broadcastEvent
+  , currentRevision
   , defaultHotReloadConfig
   , encodeEvent
   , newHotReloadHub
   , registerJs
   , subscribe
+  , subscribeWithSnapshot
   )
 import JShark.HotReload.Wai
   ( handleClientScript
   , hotReloadMiddleware
+  , injectHotReloadClient
   , injectScriptIntoHtml
   )
 import JShark.HotReload.Watcher
   ( WatchTargets (..)
-  , defaultWatchTargets
-  , exampleAppForHs
-  , exampleAppsForHs
-  , isLucidShellPath
   , startWatcher
   )
 import Network.HTTP.Types (HeaderName, statusCode)
@@ -79,11 +79,28 @@ hotReloadTests =
     , testCase "middleware serves client.js" middlewareClientOk
     , testCase "SSE response is event-stream" eventsHeaderOk
     , testCase "broadcast reaches subscribers" sseBroadcastOk
+    , testCase
+        "snapshot and subscription are coherent"
+        sseSnapshotCoherent
+    , testCase
+        "publication revisions are monotonic and snapshotted"
+        sseRevisionOk
+    , testCase
+        "two applications reload independently"
+        sseTwoAppsOk
+    , testCase
+        "reconnect after disconnect sees updates"
+        sseReconnectOk
     , testCase "HTML inject inserts client script before </head>" injectOk
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
-    , testCase "exampleAppForHs maps Client.hs paths" exampleAppMapOk
+    , testCase "raw responses are never rewritten" rawResponsePreserved
+    , testCase "inject drops a stale Content-Length" injectDropsLength
+    , testCase "inject skips an encoded body" injectSkipsCompressed
     , testCase "startWatcher sees a second same-size save" watcherSecondSaveOk
     , testCase "startWatcher sees an atomic-rename save" watcherRenameSaveOk
+    , testCase
+        "startWatcher can be restarted repeatedly"
+        watcherRestartOk
     , testCase
         "disposeTracked keeps EventSource and shell listeners"
         hmrDisposeKeepsSse
@@ -175,6 +192,76 @@ sseBroadcastOk = do
   assertEqual "event" (CssUpdate "/static/todo-mvc.css" 42) ev
   assertBool "json" ("css-update" `T.isInfixOf` encodeEvent ev)
 
+-- | The snapshot and the subscription must cover the whole timeline with
+-- no gap: anything published before the atomic connect is in the snapshot;
+-- anything published after is delivered on the stream. This pins the
+-- boundary that the old snapshot-then-subscribe pair could straddle.
+sseSnapshotCoherent :: IO ()
+sseSnapshotCoherent = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  -- A publish that completed before the client connects is snapshotted.
+  h1 <- registerJs hub "app" "v1"
+  broadcastEvent hub (JsUpdate "app" "/app.js" h1)
+  (snap, _) <- subscribeWithSnapshot hub
+  assertEqual
+    "pre-connect hash is in the snapshot"
+    [("app", h1)]
+    (snapshotJsHashes snap)
+  -- A publish after the atomic connect is delivered, never lost.
+  (_, next) <- subscribeWithSnapshot hub
+  h2 <- registerJs hub "app" "v2"
+  broadcastEvent hub (JsUpdate "app" "/app.js" h2)
+  ev <- next
+  assertEqual "post-connect update is delivered" (JsUpdate "app" "/app.js" h2) ev
+  -- Build status is part of the same coherent view.
+  broadcastEvent hub (BuildError "boom")
+  (snap2, _) <- subscribeWithSnapshot hub
+  assertEqual "snapshot error" (Just "boom") (snapshotBuildError snap2)
+
+-- | Each publication bumps a monotonic revision, and a snapshot records
+-- the revision it was taken at.
+sseRevisionOk :: IO ()
+sseRevisionOk = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  r0 <- currentRevision hub
+  broadcastEvent hub (CssUpdate "/a.css" 1)
+  broadcastEvent hub (CssUpdate "/a.css" 2)
+  r2 <- currentRevision hub
+  assertEqual "two broadcasts bump twice" (r0 + 2) r2
+  (snap, _) <- subscribeWithSnapshot hub
+  r3 <- currentRevision hub
+  assertEqual "snapshot carries the current revision" r3 (snapshotRevision snap)
+
+-- | Two apps share a hub but their artifacts and updates stay scoped.
+sseTwoAppsOk :: IO ()
+sseTwoAppsOk = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  ha <- registerJs hub "app-a" "console.log('a')"
+  hb <- registerJs hub "app-b" "console.log('b')"
+  next <- subscribe hub
+  broadcastEvent hub (JsUpdate "app-a" "/app-a/app.js" ha)
+  ev1 <- next
+  assertEqual "app-a event" (JsUpdate "app-a" "/app-a/app.js" ha) ev1
+  broadcastEvent hub (JsUpdate "app-b" "/app-b/app.js" hb)
+  ev2 <- next
+  assertEqual "app-b event" (JsUpdate "app-b" "/app-b/app.js" hb) ev2
+  (snap, _) <- subscribeWithSnapshot hub
+  let hashes = snapshotJsHashes snap
+  assertBool "app-a hash present" (("app-a", ha) `elem` hashes)
+  assertBool "app-b hash present" (("app-b", hb) `elem` hashes)
+
+-- | A client that connects, disconnects, and reconnects must still receive
+-- subsequent updates (the old subscription does not poison the channel).
+sseReconnectOk :: IO ()
+sseReconnectOk = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  _first <- subscribe hub
+  (_, next2) <- subscribeWithSnapshot hub
+  h <- registerJs hub "app" "v"
+  broadcastEvent hub (JsUpdate "app" "/app.js" h)
+  ev <- next2
+  assertEqual "second client sees the update" (JsUpdate "app" "/app.js" h) ev
+
 injectOk :: IO ()
 injectOk = do
   let
@@ -207,34 +294,82 @@ middlewareInjectOk = do
   assertBool "no defer" (not ("defer" `BS8.isInfixOf` strict))
   assertBool "still has body close" ("</body>" `BS8.isInfixOf` strict)
 
-exampleAppMapOk :: IO ()
-exampleAppMapOk = do
+-- | A raw response's fallback may be HTML, but the middleware must hand the
+-- raw response back unchanged (it is the wire output).
+rawResponsePreserved :: IO ()
+rawResponsePreserved = do
+  let
+    fallback =
+      responseLBS
+        status200
+        [("Content-Type", "text/html; charset=utf-8")]
+        "<html><body></body></html>"
+    raw = ResponseRaw (\_ _ -> pure ()) fallback
+  case injectHotReloadClient defaultHotReloadConfig raw of
+    ResponseRaw {} -> pure ()
+    other ->
+      assertFailure ("raw response was rewritten: " <> show (responseSummary other))
+
+injectDropsLength :: IO ()
+injectDropsLength = do
+  let
+    resp =
+      ResponseBuilder
+        status200
+        [ ("Content-Type", "text/html")
+        , ("Content-Length", "13")
+        , ("ETag", "\"v1\"")
+        , ("Content-MD5", "abc")
+        ]
+        (B.byteString "<html></html>")
+    out = injectHotReloadClient defaultHotReloadConfig resp
   assertEqual
-    "todo"
-    (Just "todo-mvc")
-    (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Client.hs")
-  assertEqual
-    "breakout"
-    (Just "breakout")
-    (exampleAppForHs "examples\\src\\JShark\\Example\\Breakout\\Types.hs")
-  assertEqual
-    "page maps"
-    (Just "todo-mvc")
-    (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Page.hs")
-  assertEqual
-    "server skip"
+    "stale length is dropped"
     Nothing
-    (exampleAppForHs "examples/app/server/DevServer.hs")
+    (lookup "Content-Length" (responseHeadersOf out))
   assertEqual
-    "theme all"
-    ["breakout", "todo-mvc", "synth", "life"]
-    (exampleAppsForHs "examples/src/JShark/Example/Theme.hs")
+    "stale ETag is dropped"
+    Nothing
+    (lookup "ETag" (responseHeadersOf out))
+  assertEqual
+    "stale Content-MD5 is dropped"
+    Nothing
+    (lookup "Content-MD5" (responseHeadersOf out))
+  body <- responseBodyLBS out
   assertBool
-    "lucid shell"
-    (isLucidShellPath "examples/src/JShark/Example/Breakout/Page.hs")
+    "client is injected"
+    ("/__jshark/client.js" `BS8.isInfixOf` LBS.toStrict body)
+
+injectSkipsCompressed :: IO ()
+injectSkipsCompressed = do
+  let
+    resp =
+      ResponseBuilder
+        status200
+        [("Content-Type", "text/html"), ("Content-Encoding", "gzip")]
+        (B.byteString "<html></html>")
+    out = injectHotReloadClient defaultHotReloadConfig resp
+  body <- responseBodyLBS out
   assertBool
-    "not lucid"
-    (not (isLucidShellPath "examples/src/JShark/Example/Breakout/Client.hs"))
+    "encoded body is left alone"
+    (not ("/__jshark/client.js" `BS8.isInfixOf` LBS.toStrict body))
+
+responseSummary :: Response -> String
+responseSummary = \case
+  ResponseBuilder _ hs _ -> "ResponseBuilder " <> show (map fst hs)
+  ResponseFile _ hs _ _ -> "ResponseFile " <> show (map fst hs)
+  ResponseStream _ hs _ -> "ResponseStream " <> show (map fst hs)
+  ResponseRaw {} -> "ResponseRaw"
+
+-- | Watch targets over the given roots with no CSS mapping and a no-op
+-- hook; the tests override 'onHaskellSource'.
+watchTargets :: [FilePath] -> WatchTargets
+watchTargets dirs =
+  WatchTargets
+    { watchDirs = dirs
+    , cssUrlFor = const Nothing
+    , onHaskellSource = \_ -> pure ()
+    }
 
 -- | Same-length overwrite must still enqueue a second Haskell recompile.
 watcherSecondSaveOk :: IO ()
@@ -250,7 +385,7 @@ watcherSecondSaveOk = do
       newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
     let
       targets =
-        (defaultWatchTargets [dir])
+        (watchTargets [dir])
           { onHaskellSource =
               \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
           }
@@ -293,7 +428,7 @@ watcherRenameSaveOk = do
       newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
     let
       targets =
-        (defaultWatchTargets [dir])
+        (watchTargets [dir])
           { onHaskellSource =
               \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
           }
@@ -315,6 +450,50 @@ watcherRenameSaveOk = do
    where
     go waited
       | waited >= 8000000 = readIORef ref
+      | otherwise = do
+          n <- readIORef ref
+          if n >= want
+            then pure n
+            else threadDelay 50000 >> go (waited + 50000)
+
+-- | Reusing the hub across repeated start/stop cycles must not leak or
+-- wedge: each fresh watcher still sees saves, and the disposer joins the
+-- previous drain worker.
+watcherRestartOk :: IO ()
+watcherRestartOk = do
+  tmp <- getTemporaryDirectory
+  let
+    dir = tmp </> "jshark-hr-watch-restart"
+    hsDir = dir </> "Life"
+    hs = hsDir </> "Client.hs"
+  bracket (setup dir hsDir) (\_ -> removePathForcibly dir) $ \_ -> do
+    hits <- newIORef (0 :: Int)
+    hub <- newHotReloadHub defaultHotReloadConfig {hrDebounceMs = 50}
+    let
+      targets =
+        (watchTargets [dir])
+          { onHaskellSource =
+              \_ -> atomicModifyIORef' hits $ \n -> (n + 1, ())
+          }
+    mapM_
+      ( \i -> do
+          stop <- startWatcher hub targets
+          threadDelay 200000
+          writeFile hs ("module Client where\n-- cycle " <> show i <> "\n")
+          _ <- waitForHits hits i
+          stop
+      )
+      [1 .. 3 :: Int]
+    n <- readIORef hits
+    assertBool ("three restarts each saw a save, got " <> show n) (n >= 3)
+ where
+  setup d hd = do
+    removePathForcibly d
+    createDirectoryIfMissing True hd
+  waitForHits ref want = go (0 :: Int)
+   where
+    go waited
+      | waited >= 4000000 = readIORef ref
       | otherwise = do
           n <- readIORef ref
           if n >= want

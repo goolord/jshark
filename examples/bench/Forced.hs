@@ -6,6 +6,7 @@ module Main (main) where
 import JShark
 import JShark.Api
 import qualified JShark.Example.Life as Life
+import JShark.Internal (optimizedEffectSize)
 import System.Environment (getArgs)
 import Test.Tasty.Bench
 

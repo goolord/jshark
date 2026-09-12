@@ -14,8 +14,8 @@
 -- Codegen already emits compact JS ('renderJS'). Default config wraps an IIFE
 -- and does no external post-processing; run an external minifier over the
 -- output if you want more. 'readableConfig' emits a debug snippet (no IIFE,
--- then Biome via 'finishReadableIO'). 'prettyJS' is @Text -> IO Text@; see
--- CHANGELOG.
+-- then Biome via 'finishReadableIO'). 'prettyJS' is
+-- @ByteString -> IO ByteString@; see CHANGELOG.
 --
 -- 'compileEffect' honors 'configProgress'. 'compileEffectPure' is silent;
 -- 'compileEffectIO' always draws. 'compilePure' never draws.
@@ -45,6 +45,9 @@ import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (evaluate, finally)
 import Control.Monad (unless, when)
 import Data.Atomics.Counter (newCounter, readCounter, writeCounter)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
 import Data.List (sortOn)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -53,13 +56,11 @@ import Effectful (Eff, IOE, liftIO, runEff, (:>))
 import JShark
   ( ClosedEffect
   , ClosedExpr
-  , effectfulAST
   , effectfulProgram
-  , pureAST
   , pureProgram
   , renderJS
   )
-import JShark.Api.Types (EffectSyntax, fromSyntax)
+import JShark.Api.Syntax (EffectSyntax, fromSyntax)
 import qualified JShark.Compiler.CompileProgress as CP
 import JShark.Compiler.Emit (JS)
 import JShark.Compiler.JsFormat
@@ -67,6 +68,7 @@ import JShark.Compiler.JsFormat
   , prettyJS
   , tryPrettyJSIO
   )
+import JShark.Internal (effectfulAST, pureAST)
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStrLn, stderr)
 
@@ -88,6 +90,7 @@ data OutputStyle
 -- | Top-level compiler configuration.
 data CompilerConfig = CompilerConfig
   { configStyle :: OutputStyle
+  -- ^ Output mode: IIFE-wrapped 'Minified' or unwrapped 'Readable'.
   , configProgress :: Bool
   -- ^ Print a terminal progress bar for batch compiles and elapsed time when
   --     done. Off by default so tests stay quiet.
@@ -113,7 +116,7 @@ compileTreeEff ::
   IOE :> es =>
   CompilerConfig
   -> (OutputStyle -> JS)
-  -> Eff es Text
+  -> Eff es ByteString
 compileTreeEff cfg doc = do
   let
     !js = renderJS (doc (configStyle cfg))
@@ -122,13 +125,13 @@ compileTreeEff cfg doc = do
   liftIO $ forceCompiled formatted
 
 finishReadableEff ::
-  IOE :> es => CompilerConfig -> Text -> Eff es Text
+  IOE :> es => CompilerConfig -> ByteString -> Eff es ByteString
 finishReadableEff cfg src
   | configStyle cfg == Readable =
       liftIO (finishReadableIO (configQuiet cfg) src)
   | otherwise = pure src
 
-finishReadableIO :: Bool -> Text -> IO Text
+finishReadableIO :: Bool -> ByteString -> IO ByteString
 finishReadableIO quiet src =
   tryPrettyJSIO src >>= \case
     Right out -> pure out
@@ -136,9 +139,11 @@ finishReadableIO quiet src =
       unless quiet
         $ CP.withProgressIO
         $ hPutStrLn stderr ("JShark.Compiler: " ++ err ++ "; using compact emit")
-      pure (T.strip src)
+      pure (BC.strip src)
 
-compileEffect :: CompilerConfig -> ClosedEffect u -> IO Text
+-- | Compile an effectful program to JS bytes, drawing progress when
+-- 'configProgress' is set.
+compileEffect :: CompilerConfig -> ClosedEffect u -> IO ByteString
 compileEffect cfg eff = do
   start <- getCPUTime
   out <- runEff (compileEffectEff cfg eff)
@@ -152,32 +157,34 @@ compileEffect cfg eff = do
 -- | Compile a program written directly in 'JShark.Api.EffectSyntax'
 -- (absorbs the @fromSyntax@ wrap at the compile boundary).
 compileEffectSyntax ::
-  CompilerConfig -> (forall f. EffectSyntax f (f u)) -> IO Text
+  CompilerConfig -> (forall f. EffectSyntax f (f u)) -> IO ByteString
 compileEffectSyntax cfg body = compileEffect cfg (fromSyntax body)
 
-compileEffectPure :: CompilerConfig -> ClosedEffect u -> IO Text
+-- | Like 'compileEffect' but silent: never draws progress bars.
+compileEffectPure :: CompilerConfig -> ClosedEffect u -> IO ByteString
 compileEffectPure cfg eff = runEff (compileEffectEff (quietCfg cfg) eff)
 
-compileEffectIO :: CompilerConfig -> ClosedEffect u -> IO Text
+-- | Like 'compileEffect' but always draws progress bars.
+compileEffectIO :: CompilerConfig -> ClosedEffect u -> IO ByteString
 compileEffectIO cfg = compileEffect cfg {configProgress = True}
 
 compileEffectEff ::
   IOE :> es =>
   CompilerConfig
   -> ClosedEffect u
-  -> Eff es Text
+  -> Eff es ByteString
 compileEffectEff cfg eff =
   compileTreeEff cfg (`effectDoc` eff)
 
 -- | Compile a pure JShark expression. Never draws progress bars.
-compilePure :: CompilerConfig -> ClosedExpr u -> IO Text
+compilePure :: CompilerConfig -> ClosedExpr u -> IO ByteString
 compilePure cfg e = runEff (compilePureEff (quietCfg cfg) e)
 
 compilePureEff ::
   IOE :> es =>
   CompilerConfig
   -> ClosedExpr u
-  -> Eff es Text
+  -> Eff es ByteString
 compilePureEff cfg e = compileTreeEff cfg (`pureDoc` e)
 
 -- | Compile many labeled effectful programs concurrently (one capability per
@@ -186,7 +193,7 @@ compilePureEff cfg e = compileTreeEff cfg (`pureDoc` e)
 compileJobsLabeled ::
   CompilerConfig
   -> [(Text, CompilerConfig, ClosedEffect u)]
-  -> IO [Text]
+  -> IO [ByteString]
 compileJobsLabeled baseCfg jobs
   | configProgress baseCfg = do
       let
@@ -219,7 +226,7 @@ compileJobsLabeled baseCfg jobs
               CP.initJob board slot label
               out <-
                 CP.withActiveJob slot board $
-                  compileEffectPure (mergeJobConfig baseCfg jobCfg) eff
+                  compileEffectPure (mergeJobConfig jobCfg) eff
               CP.markJobDone board slot
               CP.withProgressIO refresh
               pure (slot, out)
@@ -235,12 +242,12 @@ compileJobsLabeled baseCfg jobs
       pure (map snd (sortOn fst indexed))
   | otherwise =
       mapConcurrently
-        (\(_label, jobCfg, eff) -> compileEffectPure (mergeJobConfig baseCfg jobCfg) eff)
+        (\(_label, jobCfg, eff) -> compileEffectPure (mergeJobConfig jobCfg) eff)
         jobs
 
 -- | Banner-before-serve only means JS is ready if this ran.
-forceCompiled :: Text -> IO Text
-forceCompiled t = t <$ evaluate (T.length t)
+forceCompiled :: ByteString -> IO ByteString
+forceCompiled t = t <$ evaluate (BS.length t)
 
 pureDoc :: OutputStyle -> ClosedExpr u -> JS
 pureDoc Readable e = pureAST e
@@ -250,8 +257,9 @@ effectDoc :: OutputStyle -> ClosedEffect u -> JS
 effectDoc Readable e = effectfulAST e
 effectDoc Minified e = effectfulProgram e
 
-mergeJobConfig :: CompilerConfig -> CompilerConfig -> CompilerConfig
-mergeJobConfig _base job =
+-- | Worker jobs never drive the shared progress display or log to stderr.
+mergeJobConfig :: CompilerConfig -> CompilerConfig
+mergeJobConfig job =
   job
     { configProgress = False
     , configQuiet = True

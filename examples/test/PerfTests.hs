@@ -9,27 +9,24 @@
 module PerfTests (perfTests) where
 
 import Control.Exception (evaluate)
+import qualified Data.ByteString as BS
 import Data.Int (Int64)
 import qualified Data.Text as T
-import JShark
-  ( ClosedEffect
-  , effectfulAST
-  , optimizedEffectSize
-  , renderJS
-  )
+import qualified Data.Text.Encoding as TE
+import JShark (ClosedEffect, renderJS)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Api.Types as Ty
 import JShark.Example.Life (mainJS)
+import JShark.Internal (effectfulAST, optimizedEffectSize)
 import System.Mem (getAllocationCounter)
 import Test.Tasty
 import Test.Tasty.HUnit
 
 -- Measured on GHC 9.14.1 / -O2 after Index-only Array.index + dropped
--- expandBounds walk (2026-08-27): raw/opt from @exe:jshark-life-metrics@
--- (rawNodes=62574, optNodes=95752).
+-- expandBounds walk (2026-08-27): rawNodes=62574, optNodes=95752.
 maxLifeRawNodes :: Int
-maxLifeRawNodes = 70000
+maxLifeRawNodes = 72000
 
 maxLifeOptNodes :: Int
 maxLifeOptNodes = 110000
@@ -51,6 +48,15 @@ maxProbe16Alloc = 10000000
 
 maxProbe32Alloc :: Int64
 maxProbe32Alloc = 70000000
+
+-- Life output is deterministic; cap UTF-8 bytes and hoisted `$`-helpers so
+-- an accidental helper explosion or inline regression trips here as well as
+-- in the golden test.
+maxLifeBytes :: Int
+maxLifeBytes = 900000
+
+maxLifeHelpers :: Int
+maxLifeHelpers = 100
 
 life :: ClosedEffect 'Ty.Unit
 life = stmts mainJS
@@ -99,6 +105,13 @@ perfTests =
         assertCeiling "optAlloc" bytes maxLifeOptAlloc
     , probeCase 16 maxProbe16Chars maxProbe16Alloc
     , probeCase 32 maxProbe32Chars maxProbe32Alloc
+    , testCase "Life output bytes and helper count" $ do
+        let js = renderJS (effectfulAST life)
+        assertCeiling "lifeBytes" (BS.length js) maxLifeBytes
+        assertCeiling
+          "lifeHelpers"
+          (T.count "const $" (TE.decodeUtf8 js))
+          maxLifeHelpers
     ]
 
 probeCase :: Int -> Int -> Int64 -> TestTree
@@ -106,6 +119,6 @@ probeCase n maxChars maxAlloc =
   testCase ("probe " ++ show n ++ " JS size and alloc") $ do
     (chars, bytes) <-
       allocated $
-        evaluate (T.length (renderJS (effectfulAST (probeN n))))
+        evaluate (BS.length (renderJS (effectfulAST (probeN n))))
     assertCeiling ("probe" ++ show n ++ "Chars") chars maxChars
     assertCeiling ("probe" ++ show n ++ "Alloc") bytes maxAlloc

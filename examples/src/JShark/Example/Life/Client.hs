@@ -142,6 +142,12 @@ boot ::
   -> EffectSyntax f (f 'Unit)
 boot canvas app = do
   appH <- hold (expr app)
+  -- Register a dispose hook so a hot reload destroys the old Pixi renderer
+  -- (and its textures) instead of leaking a WebGL context per reload.
+  toSyntax_ $
+    ffi
+      "app => { window.__JSHARK_DISPOSE__ = function () { try { app.destroy(true, { children: true, texture: true, baseTexture: true }); } catch (_) {} }; }"
+      (arg app <: RecNil)
   viewport <- initViewport
   Profile.install canvas viewport
   renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))
@@ -1214,7 +1220,13 @@ wireTools toolRef btns canvas eraserSize viewport = do
     addEventListener "click" btn $ \_ ->
       stmts $ do
         raw <- Dom.getAttribute btn "data-tool"
-        selectTool toolRef btns (parseInt_ raw (number 10)) canvas eraserSize viewport
+        selectTool
+          toolRef
+          btns
+          (parseInt_ (orElse raw (string "0")) (number 10))
+          canvas
+          eraserSize
+          viewport
     done
 
 selectTool ::
@@ -1231,7 +1243,7 @@ selectTool toolRef btns sid canvas eraserSize viewport = do
     btn <- hold (expr (Array.index btns i))
     raw <- Dom.getAttribute btn "data-tool"
     let
-      on = parseInt_ raw (number 10) .== sid
+      on = parseInt_ (orElse raw (string "0")) (number 10) .== sid
     toSyntax_ $
       callMethod
         btn

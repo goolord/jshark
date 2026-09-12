@@ -22,7 +22,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word (Word8)
 import JShark.Api
-  ( arg
+  ( EffectSyntax
+  , arg
   , forRange
   , stmts
   , toSyntax
@@ -32,7 +33,6 @@ import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
   ( Arg (..)
   , Effect (..)
-  , EffectSyntax
   , Expr (..)
   , FFIForm (FFILambda)
   , Universe (..)

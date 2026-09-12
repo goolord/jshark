@@ -11,12 +11,8 @@ module LifeTests (lifeTests) where
 import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
 import qualified Data.Text as T
-import JShark
-  ( effectfulAST
-  , effectfulASTFromSoA
-  , flatPrepareCore
-  , renderJS
-  )
+import qualified Data.Text.Encoding as TE
+import JShark (renderJS)
 import JShark.Api
 import JShark.Api.Generic (toObject)
 import JShark.Api.Rec (Rec (..), (<:))
@@ -50,6 +46,11 @@ import JShark.Example.Life.Types
   , cellPx
   , zoomLevelLabels
   , zoomLevels
+  )
+import JShark.Internal
+  ( effectfulAST
+  , effectfulASTFromSoA
+  , flatPrepareCore
   )
 import qualified JShark.Math as Math
 import Test.Tasty
@@ -117,7 +118,7 @@ lifeTests =
           "life compiler regressions"
           [ testCase "hoists checkedIndex once" $ do
               let
-                js = renderJS (effectfulAST (fromSyntax mainJS))
+                js = TE.decodeUtf8 (renderJS (effectfulAST (fromSyntax mainJS)))
               T.count "jshark: index" js @?= 1
               T.count "const $checkedIndex =" js @?= 1
           , testCase "paintGridCells dirty-rect reset (GridApi port)" $ do
@@ -128,9 +129,11 @@ lifeTests =
               let
                 life = stmts mainJS
               (soa, _, irNodes, _) <- flatPrepareCore life
-              js <- Ex.evaluate $ renderJS (effectfulASTFromSoA soa)
-              irNodes @?= 69812
-              T.length js @?= 872421
+              js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTFromSoA soa))
+              -- Mutable array reads (u8Index, FixArrLen, …) are no longer
+              -- moved/inlined across writes, so a handful stay as bindings.
+              irNodes @?= 70675
+              T.length js @?= 880643
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $
               renderJS
                 ( effectfulAST

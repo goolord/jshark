@@ -1,6 +1,225 @@
 # Revision history for jshark
 
 ## Unreleased
+
+* **Breaking:** optimized IR metadata now carries independent movement,
+  discard, purity, and cost permissions instead of a single `irPure` bit.
+  Mutable reads (`u8[i]`, generic array indexing, array-reading fixed ops)
+  and `IrError`/`IrTry` are no longer treated as movable/effect-free, so a
+  read bound before a write is not inlined across it (`u8Index buffer 0`
+  followed by a write now logs the pre-write byte). `IrMeta` gained
+  `irMove`/`irDrop`; `JShark.Compiler.Ir` also exposes `validateIr`.
+
+* **Breaking:** `Promise.promiseThen` reflects JS adoption through the
+  `Resolved` type family (a handler returning `Promise v` yields
+  `Promise v`), and `Promise.promiseCatch` now requires the handler to
+  recover to the original resolution type `u`, returning `Promise u`.
+  `promiseThenValue`/`promiseCatchReason` consumers are unchanged.
+
+* **Breaking:** `JShark.Api` adds `unsafeOptionToNative` and
+  `unsafeOptionToNativeEffect` (tagged `Option` to native `null`/value, the
+  inverse of `unsafeNullable`). `jshark-bindgen` emits them so a
+  `T | null` argument is unwrapped at the boundary instead of passing a
+  tagged object to native JS; nested nullables (arrays/callbacks) are
+  reported as diagnostics rather than converted silently.
+
+* **Breaking:** host evaluation distinguishes outcomes. `tryEvaluate`
+  returns an `EvalFailure` (`EvalJsFailure` for a JS-like throw such as an
+  out-of-bounds checked index, `EvalUnsupported` for functions/effectful
+  fields/ops with no host rule); `evaluate` still throws. `UnsafeNullable`
+  keeps a tagged nested `Option` present rather than collapsing it.
+
+* `jshark-bindgen` extractor JSON is versioned and validated on decode;
+  TypeScript 5.9.3 is pinned; every overload is extracted with a stable
+  identity and emitted under a distinct name; the extractor resolves
+  TypeScript from an env override, the extractor's directory, or the
+  consumer's `node_modules`. Golden modules for every fixture are compiled,
+  and a generated wrapper is executed against a JS fixture.
+
+* Hot reload publishes status and events in one transaction with a
+  monotonic revision on the snapshot; the SSE loop polls so a disconnected
+  client is torn down without waiting for the next broadcast; rewritten HTML
+  drops stale `ETag`/`Content-MD5`; and the watcher drain worker is joined on
+  dispose.
+
+* `JShark.Lucid` replaces render-time `error` strings with structured
+  `TemplateError` values (element path + message) and a `templateErrors`
+  validator for orphan modifiers and void-element children.
+
+* The release workflow verifies tag/version agreement, builds and tests the
+  unpacked source distributions outside the monorepo, installs
+  `jshark-bindgen`, runs it on a shipped fixture, and publishes only the
+  tarballs that passed verification (`scripts/check-tag-version.sh`,
+  `scripts/verify-sdists.sh`). The library packages now allow
+  `containers < 0.9` for GHC 9.14's boot library.
+
+* **Breaking:** compiler output is now strict `ByteString`, built with
+  `Data.ByteString.Builder` instead of `Text`/`text-builder`. `renderJS`
+  returns `ByteString`, and `compileEffect`, `compileEffectPure`,
+  `compileEffectSyntax`, `compileEffectIO`, `compilePure`,
+  `compileJobsLabeled`, and `prettyJS` produce/consume `ByteString`.
+  Decode with `Data.Text.Encoding.decodeUtf8` when text is wanted.
+
+* **Breaking:** `Option` is now tagged (`{some: bool, value?}`) instead of
+  native `null`/value, so nested options are faithful: `some none` and
+  `none` are distinguishable. `unsafeNullable` converts a native
+  null/value into a tagged option, and `Json.stringify`'s shim now emits
+  the tagged shape. The tutorial and the affected goldens/tests are
+  updated.
+
+* Compiler correctness (each backed by a regression test that fails on the
+  previous behavior):
+
+  * `EffectSyntax.(*>)` no longer drops the continuation of
+    `EffectSyntaxUnpure`; a sequenced do-block statement keeps every effect
+    it runs.
+  * `lowerFnBodyTags` threads a fresh binder stamp instead of restarting at
+    `-2`, so a `Fn` body no longer aliases its own parameter or an
+    enclosing `let`.
+  * Pure `if_` and `optionCase`, and `&&`/`||`, keep branch-local
+    declarations inside their branch instead of hoisting both sides and
+    evaluating the untaken one. Pure `resultCase` does the same.
+  * `optConstantFoldNumOnce` copies its input with `thaw` and freezes every
+    written column; it no longer mutates the caller's `FlatSoA` (and no
+    longer relies on that mutation for the `B` column).
+  * `elimIrBind` only moves a single-use binding to its use site when the
+    bound term is pure or an alias. Splicing an impure effect past other
+    effects reordered evaluation in minified output
+    (`foo(); bar()` compiled to `bar(); foo()`).
+  * A `while` condition whose effect needs declarations (a bound
+    scrutinee, a loop-carried read) no longer has those declarations
+    hoisted above the loop. They run inside a `while (true)` body with an
+    explicit `if (!cond) break`, so the whole condition is re-evaluated
+    every iteration.
+  * A named lambda that captures an outer binder is no longer hoisted to a
+    shared @$name@ preamble binding, where the capture was out of scope.
+    Only closed named lambdas hoist; capturing ones render inline.
+
+* Negative zero literals now compile to `-0.0` instead of `0`.
+
+* Compiler performance: the flat constant-fold pass grows its literal
+  column geometrically (and freezes only the used slice) instead of
+  `unsafeGrow`-by-one per folded literal, which was quadratic in the
+  number of folds.
+
+* `Array.groupBy` now emits a `$groupBy` shim that builds groups with a
+  local `Map` and append-only arrays in one pass, preserving first-seen
+  key order and element order and evaluating the key once per non-hole
+  element. The previous pure `reduce`/`map` chain rescanned and recopied
+  every group per element. The host evaluator implements the same
+  algorithm, and the generated helper is now a fixed shim in the
+  preamble.
+
+* Clamped and wrapping byte arrays are now distinct: a `Uint8ClampedArray`
+  universe with a `U8Buffer` class shared by the `u8*` operations.
+  `Canvas.imageDataBytes` returns `Expr f 'Uint8ClampedArray`, so a write
+  clamps rather than wraps (a bun test pins `300 -> 44` vs `300 -> 255`).
+
+* `jshark-bindgen` and `jshark-hotreload` use aeson for their JSON
+  instead of hand-rolled parser/encoder: bindgen decodes the extractor IR
+  through `FromJSON`, and hotreload encodes SSE events through `ToJSON`.
+  The two schemas remain independent.
+
+* The ordinary `JShark` facade no longer exports the IR\/SoA\/codegen
+  internals (`pureAST`/`effectfulAST`/…, `irEffectFromClosed`,
+  `flatPrepareCore`, `flatSoaNodeCount`, `optimized*Size`, the JsShim
+  `Builtin`/`builtinSrc`). They move to a deliberate `JShark.Internal`
+  module for tests, benchmarks, and tooling; `pureProgram` and
+  `effectfulProgram` stay public.
+
+* The `EffectSyntax` do-notation bridge moved from `JShark.Api.Types` to
+  `JShark.Api.Syntax`, so the raw AST and the construction monad are
+  separate modules. `JShark.Api` re-exports the syntax names, so ordinary
+  imports are unchanged; direct `JShark.Api.Types` importers use
+  `JShark.Api.Syntax`.
+
+* The optimizer entry points force the optimized tree with a lightweight
+  `forceIr` instead of calling `metaIr`, which recomputed and discarded a
+  per-node `IntMap`. Life emit drops ~5%.
+
+* Example-specific watcher/asset mapping (`exampleAppForHs`,
+  `exampleAppsForHs`, `isLucidShellPath`, the `/static` CSS URL, and
+  `exampleWatchTargets`) moved from `jshark-hotreload` to
+  `JShark.Example.Watch` in the examples package. The hotreload watcher is
+  now generic over `WatchTargets`; the moved test lives in the examples
+  suite.
+
+* The examples test suite resolves its fixtures and static assets through
+  `Paths_jshark_examples` (`static/…`, `src/JShark/Example/Life/js/…`)
+  instead of walking up to `cabal.project`, so it runs from an unpacked
+  source distribution. The Pico pin is kept in the test because the
+  repo-level `scripts/pico-version` is not package data.
+
+* `Array.indexChecked` names the checked indexing contract explicitly, and
+  the native return values are available: `Array.pushLen` (new length) and
+  `Map.deleteReturning` / `Set.deleteReturning` (whether the key/element
+  was present). The existing discarding forms are unchanged.
+
+* `JShark.Dom.lookupSelector` now returns a real `Array`
+  (`Array.from(document.querySelectorAll(...))`). It was typed as an
+  `Array` but returned a `NodeList`, so array methods other than index and
+  `length` failed at runtime.
+
+* `JShark.Dom.getAttribute` now returns `Expr f ('Option 'String)`; a
+  missing attribute is `none`, matching the native `null` result. It
+  previously claimed `'String` and handed back `null`.
+
+* `JShark.Json.stringify` is now honest: `Effect f ('Option 'String)`,
+  `none` when the value has no JSON form and a throw for `BigInt`/cyclic
+  input. The old pure `Expr f 'String` could hand back `undefined` or
+  throw. `stringifyPure` keeps the trusted, pure `Std` form for values the
+  caller knows are JSON-safe.
+
+* `JShark.Promise.promiseThen`/`promiseCatch` now return the Promise the
+  call produced (a reusable `hold` handle) instead of a binder typed as
+  the resolved value; `promiseCatch`'s handler takes a caller-chosen
+  rejection-reason universe. `JShark.Ajax.fetch` is typed as
+  `Promise ('MutableObject FetchResponse)`. Bun tests cover resolution,
+  catch pass-through of the rejection reason, and returned-Promise
+  adoption.
+
+* `jshark-hotreload` WAI middleware: raw WAI responses are now passed
+  through untouched (they are the wire output) instead of rewriting their
+  fallback; HTML injection drops the now-stale `Content-Length` and skips
+  encoded bodies; and the SSE keepalive and event loop serialize through
+  one write lock so concurrent frames cannot interleave.
+
+* `jshark-bindgen`: the extractor enables `strictNullChecks`, so
+  `T | null` / `T | undefined` now become an `Option` instead of being
+  absorbed into `T`. The nullable returns emit through a new stable
+  `JShark.Api.optionalEffect` helper; the previous code spliced a stale
+  two-argument `Bind` (with `Lift`/`Var`) that did not typecheck. The
+  `toy.d.ts` fixture and `BindgenToy.hs` golden now cover nullable
+  handle and primitive returns.
+
+* Testing: `JShark.Bun.Internal` gains `runJSTagged`/`runProgramTagged`,
+  which serialize through a tagger that keeps `undefined` vs `null`, `NaN`,
+  the infinities, `-0`, and `BigInt` distinct; added gated `bun` tests for
+  each.
+
+* Release: the `jshark-bindgen` test fixtures and golden are package
+  data files, so the test suite resolves them from an unpacked source
+  distribution instead of assuming the monorepo checkout layout. The
+  hot-reload SSE handler snapshots state before subscribing so a client
+  cannot apply a newer event and then an older snapshot.
+
+* Benchmarks: the standalone `LifeEmit`/`LifeFullEmit`/`LifePhases`
+  timers force their result before stopping the clock (they previously
+  timed only thunk allocation).
+
+## 0.1.0.0 (2026-09-11)
+
+* First version. Released on an unsuspecting world.
+
+* Release polish: shared test/bench support moves to the public
+  `jshark:testing` sublibrary (replacing the `jshark-testing` package);
+  every library package gains Hackage metadata (`description`,
+  `tested-with`, `source-repository`, version bounds, per-package
+  README/CHANGELOG, `extra-doc-files`); `-Werror` moves behind a
+  `werror` cabal flag (still enabled for local builds); the dev-only
+  per-phase profiling executables and `profile*`/`CompileTiming`
+  helpers are removed; the public API is documented and the exposed
+  compiler internals are labelled internal/unstable.
 * Internal dead code and copy-paste are gone, ~3.3k LOC: the compiler drops
   unused entries (`irExprFromClosed`, `irOptimized{Effect,Expr}FromClosed`,
   `nestedDummy`, `renderFFIForm`, the unstyled `prepareFlat*Program`,
@@ -34,9 +253,9 @@
   vendored copy `examples/static/js/jshark-reload.js` is deleted (pages
   load `/__jshark/client.js`).
 
-* Shared test/bench support lives in the new `jshark-testing` package
-  (`Test.Support`, `CaptureStderr`, `Bench.Stages`), replacing the ~95%
-  and byte-identical copies under `examples/`; the four-example registry
+* Shared test/bench support lives in the `jshark:testing` sublibrary
+  (`Test.Support`, `CaptureStderr`, `Bench.Stages`), consumed by the core
+  test/bench and the example package; the four-example registry
   is `JShark.Example.Registry` (was hand-written three times), and the
   bun-gating scaffold is shared (`BunGate`). Core tests gain golden-case
   combinators (`effectCodeCase`/`pureCodeCase`/`effectContains`/
@@ -587,7 +806,3 @@
   via `optionCase` instead of silently risking a JS `null`.
 * De-duplicated `JShark.Console.log`, which reimplemented
   `JShark.Api.consoleLog`; it now just aliases it.
-
-## 0.1.0.0 (YYYY-mm-dd)
-
-* First version. Released on an unsuspecting world.

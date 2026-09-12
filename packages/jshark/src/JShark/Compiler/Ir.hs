@@ -20,6 +20,9 @@
 -- Expression\/effect *position* is still a property of a subtree, determined
 -- by its top constructor; the type bridge nodes ('IrLift' \/ the old
 -- 'IrEmbedEff') reduce to pack-time wrapper rows.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Ir
   ( IrMeta (..)
   , IrNode (..)
@@ -29,9 +32,11 @@ module JShark.Compiler.Ir
   , irNodeChildren
   , SomeFixedOp (..)
   , metaIr
+  , forceIr
   , optIr
   , occursIr
   , lazyOccursIr
+  , validateIr
   , effectMd
   , optStep
   , optSmall
@@ -42,7 +47,7 @@ import Data.Bits (xor, (.&.), (.|.))
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.List (lookup)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -52,7 +57,9 @@ import JShark.Api.Prim
   , MathUnary (..)
   , exactMathBinary
   , exactMathUnary
+  , isDropFixed
   , isFiniteDouble
+  , isMoveFixed
   , isPureFixed
   , matchMathBinary
   , matchMathUnary
@@ -84,16 +91,29 @@ import qualified Prelude as P
 data IrMeta = IrMeta
   { irSize :: {-# UNPACK #-} !Int
   , irFree :: !(IntMap Int)
-  , irPure :: !P.Bool
-  , irCheap :: !P.Bool
+  , -- | Effect-free: evaluating it changes no observable state and
+    -- allocates no identity that escapes. Necessary but not sufficient to
+    -- treat a term as referentially transparent: a mutable read is
+    -- effect-free yet its value depends on when it runs.
+    irPure :: !P.Bool
+  , -- | Movement-safe: may be moved across other evaluations without
+    -- changing behavior. False for mutable reads (array element, byte
+    -- buffer), throws, divergence, and unknown calls.
+    irMove :: !P.Bool
+  , -- | Discard-safe: evaluating and dropping the result is unobservable.
+    -- False for effects, writes, throws, and divergence. Implies 'irPure'.
+    irDrop :: !P.Bool
+  , -- | Cheap to duplicate. Only a cost refinement; duplication still
+    -- requires 'irMove' (see 'elimBinder').
+    irCheap :: !P.Bool
   }
 
 instance Semigroup IrMeta where
-  IrMeta s1 f1 p1 c1 <> IrMeta s2 f2 p2 c2 =
-    IrMeta (s1 + s2) (IM.unionWith (+) f1 f2) (p1 && p2) (c1 && c2)
+  IrMeta s1 f1 p1 m1 d1 c1 <> IrMeta s2 f2 p2 m2 d2 c2 =
+    IrMeta (s1 + s2) (IM.unionWith (+) f1 f2) (p1 && p2) (m1 && m2) (d1 && d2) (c1 && c2)
 
 instance Monoid IrMeta where
-  mempty = IrMeta 0 IM.empty True True
+  mempty = IrMeta 0 IM.empty True True True True
 
 -- | Optimizer tag spacing and the small-body inline threshold (kept from
 -- the deleted 'JShark.Compiler.Metadata').
@@ -105,7 +125,7 @@ optSmall = 16
 
 -- | Force impure on optimized metadata (empty arg lists are otherwise pure).
 effectMd :: IrMeta -> IrMeta
-effectMd !md = md <> IrMeta 0 IM.empty False False
+effectMd !md = md <> IrMeta 0 IM.empty False False False False
 
 -- | One field of a frozen or mutable object literal. Name is the JS key;
 -- the child is the field value (effect-kinded for the @Eff@ forms).
@@ -303,15 +323,17 @@ data IrNode
 -- skip test off 'irFree'.
 metaIr :: IrNode -> IrMeta
 metaIr !node = case node of
-  IrLiteral v -> IrMeta 1 IM.empty True (isCheapValue v)
-  IrVar i -> IrMeta 1 (IM.singleton i 1) True True
+  IrLiteral v -> IrMeta 1 IM.empty True True True (isCheapValue v)
+  IrVar i -> IrMeta 1 (IM.singleton i 1) True True True True
   _ -> here node <> childMeta node
  where
   here = \case
     -- Stdlib calls (Math.*, checkedIndex, …) are not 'cheap': a 2-use
     -- @let x = Math.sin(1) in x + x@ keeps its binding instead of
-    -- duplicating the call, matching the former PHOAS policy.
-    IrFixed (SomeFixedOp op) _ -> IrMeta 1 IM.empty (isPureFixed op) P.False
+    -- duplicating the call, matching the former PHOAS policy. Whether the
+    -- op may move or be discarded is classified separately.
+    IrFixed (SomeFixedOp op) _ ->
+      IrMeta 1 IM.empty (isPureFixed op) (isMoveFixed op) (isDropFixed op) P.False
     IrFFI {} -> impure
     IrUnsafeObject {} -> impure
     IrUnsafeObjectGet {} -> impure
@@ -326,14 +348,74 @@ metaIr !node = case node of
     IrTry {} -> impure
     IrDeleteProp {} -> impure
     IrError {} -> impure
-    _ -> IrMeta 1 IM.empty True False
-  impure = IrMeta 1 IM.empty False False
+    -- Mutable reads: effect-free and total, but their value depends on the
+    -- position relative to writes.
+    IrU8Index {} -> readOnlyMeta (IrMeta 1 IM.empty True True True False)
+    -- A generic array read is likewise position-dependent and may throw
+    -- when the receiver is not an array, so it is not discard-safe.
+    IrIndex {} -> readMayThrowMeta (IrMeta 1 IM.empty True True True False)
+    _ -> IrMeta 1 IM.empty True True True False
+  impure = IrMeta 1 IM.empty False False False False
 
 -- | Metadata of the immediate children (list children included), so every
 -- child, lazy or not, contributes once. 'irNodeChildren' already encodes the
 -- per-constructor child layout, so this is a plain fold over it.
 childMeta :: IrNode -> IrMeta
 childMeta = strictFoldMap metaIr . irNodeChildren
+
+-- | Deep-force a tree without building metadata. The optimizer entry points
+-- used to call 'metaIr' just to force the result; that allocates an
+-- 'IntMap' per node. This walks the same children and discards the result.
+forceIr :: IrNode -> ()
+forceIr node = case node of
+  IrLiteral _ -> ()
+  IrVar _ -> ()
+  _ -> foldl' (\ !() c -> forceIr c) () (irNodeChildren node)
+
+-- | Validate that every 'IrVar' is bound and every binder is unique along
+-- its scope path. Returns one message per problem; @[]@ means well-scoped
+-- with fresh binders. Sibling scopes may reuse tags. Used to police the
+-- optimizer and substitution passes (especially alias inlining and
+-- hoisting), which are the places a binder can escape or collide.
+validateIr :: IrNode -> [Text]
+validateIr = go []
+ where
+  go :: [Int] -> IrNode -> [Text]
+  go scope node = case node of
+    IrVar i -> [T.pack "unbound variable #" <> tshow i | i `notElem` scope]
+    IrLiteral _ -> []
+    IrLet tag _ x b -> go scope x <> under tag scope b
+    IrLetRec tag r b -> under tag scope r <> under tag scope b
+    IrLambda tag _ b -> under tag scope b
+    IrOptionCase o n tag s -> go scope o <> go scope n <> under tag scope s
+    IrResultCase o tagE er tagO ok ->
+      go scope o <> under tagE scope er <> under tagO scope ok
+    IrFnLit tags _ b ->
+      let
+        (errs, scope') = foldl' addOne ([], scope) tags
+        addOne (es, sc) t
+          | t `elem` sc = (es <> [dupMsg t], sc)
+          | otherwise = (es, t : sc)
+       in
+        errs <> go scope' b
+    IrBind tag _ x b -> go scope x <> under tag scope b
+    IrBindRec tag r b -> under tag scope r <> under tag scope b
+    IrLambdaE tag b -> under tag scope b
+    IrForRange s e tag b -> go scope s <> go scope e <> under tag scope b
+    IrOptionCaseE o n tag s -> go scope o <> go scope n <> under tag scope s
+    IrResultCaseE o tagE er tagO ok ->
+      go scope o <> under tagE scope er <> under tagO scope ok
+    IrTry a tag k -> go scope a <> under tag scope k
+    _ -> concatMap (go scope) (irNodeChildren node)
+
+  under :: Int -> [Int] -> IrNode -> [Text]
+  under tag scope body
+    | tag `elem` scope = dupMsg tag : go (tag : scope) body
+    | otherwise = go (tag : scope) body
+  dupMsg :: Int -> Text
+  dupMsg tag = T.pack "duplicate binder #" <> tshow tag
+  tshow :: Int -> Text
+  tshow = T.pack . show
 
 -- | Does @t@ occur anywhere in @node@? Unlike a free-variable map this
 -- short-circuits on the first hit and allocates nothing.
@@ -644,22 +726,32 @@ isIdentityEffect tag = \case
   IrLift x -> isIdentityIr tag x
   _ -> False
 
+-- | Only a closed lambda may be hoisted to a shared @$name@ binding: a
+-- capturing body would reference binders that are not in scope in the
+-- preamble. @md@ is the body metadata including the lambda's own binder.
+closeHoist :: Int -> LamInfo -> IrMeta -> LamInfo
+closeHoist tag info md
+  | isJust (lamTag info)
+  , not (IM.null (irFree (bindMeta tag md))) =
+      info {lamTag = Nothing}
+  | otherwise = info
+
 -- | Shared let\/bind eliminator. 'IrLet' and 'IrBind' differ in how a kept
 -- binding is rebuilt, how a dead one is rebuilt (@IrThenE@ drops the
 -- binder), and which right-hand sides count as aliases.
 elimBinder ::
   (?keepLets :: P.Bool) =>
   (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
-  -> -- rebuild a kept binding
-  (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
-  -> -- rebuild a dead binding
-  (IrNode -> P.Bool)
-  -> -- extra guard on the pure dead-drop
-  (IrNode -> P.Bool)
-  -> -- extra @once@ condition
-  (IrNode -> Int -> IrNode -> P.Bool)
-  -> -- @preserve@ predicate
-  IrMeta
+  -- rebuild a kept binding
+  -> (Int -> Maybe Text -> IrNode -> IrNode -> IrNode)
+  -- rebuild a dead binding
+  -> (IrNode -> P.Bool)
+  -- extra guard on the pure dead-drop
+  -> (IrNode -> P.Bool)
+  -- extra @once@ condition
+  -> (IrNode -> Int -> IrNode -> P.Bool)
+  -- @preserve@ predicate
+  -> IrMeta
   -> Maybe Text
   -> Int
   -> IrNode
@@ -671,12 +763,20 @@ elimBinder ctorKeep ctorDead dropPure extraOnce preserve !mdX !hint !tag !x !bod
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
     spliced = closed <> mdX
-    once = extraOnce x P.|| irCheap mdX P.|| not (lazyOccursIr tag body)
+    -- A single use may be inlined only when moving the bound term to that
+    -- use is safe. 'irMove' is the movement permission: pure terms qualify,
+    -- mutable reads (e.g. @u8[i]@) do not, because a write may sit between
+    -- the binding and its use. An immovable term is retained as a real
+    -- binding instead. The cheap/once estimates only refine the movable
+    -- case.
+    once =
+      extraOnce x
+        P.|| (irMove mdX P.&& (irCheap mdX P.|| not (lazyOccursIr tag body)))
     keep = preserve x tag body
    in
     case uses of
       0
-        | irPure mdX
+        | irDrop mdX
         , not (dropPure x) ->
             (body, closed)
       0 -> (ctorDead tag hint x body, nodeMeta mdX closed)
@@ -731,7 +831,25 @@ elimIrBind =
 
 nodeMeta :: IrMeta -> IrMeta -> IrMeta
 nodeMeta !mdX !mdY =
-  IrMeta 1 IM.empty (irPure mdX && irPure mdY) False <> mdX <> mdY
+  IrMeta
+    1
+    IM.empty
+    (irPure mdX && irPure mdY)
+    (irMove mdX && irMove mdY)
+    (irDrop mdX && irDrop mdY)
+    False
+    <> mdX
+    <> mdY
+
+-- | Withdraw movement permission from an otherwise pure read of mutable
+-- state (e.g. a byte-buffer element). The read stays discard-safe.
+readOnlyMeta :: IrMeta -> IrMeta
+readOnlyMeta !md = md {irMove = False}
+
+-- | Withdraw movement and discard permission from a mutable read that may
+-- also throw (bounds/type check), such as @arr[i]@.
+readMayThrowMeta :: IrMeta -> IrMeta
+readMayThrowMeta !md = md {irMove = False, irDrop = False}
 
 -- | Close a binder: its tag is no longer free above this node. Without
 -- this the free map grows to every tag in the subtree, and the union in
@@ -740,10 +858,10 @@ bindMeta :: Int -> IrMeta -> IrMeta
 bindMeta !tag !md = md {irFree = IM.delete tag (irFree md)}
 
 litMeta :: Value u -> IrMeta
-litMeta v = IrMeta 1 IM.empty True (isCheapValue v)
+litMeta v = IrMeta 1 IM.empty True True True (isCheapValue v)
 
 varMeta :: Int -> IrMeta
-varMeta !i = IrMeta 1 (IM.singleton i 1) True True
+varMeta !i = IrMeta 1 (IM.singleton i 1) True True True True
 
 optIr :: (?keepLets :: P.Bool) => Int -> IrNode -> (Int, IrNode, IrMeta)
 optIr !t0 node = case node of
@@ -767,7 +885,7 @@ optIr !t0 node = case node of
       (t2, g', mdG) = optIr t1 g
      in
       ( t2
-      , IrApply (IrLambda bindTag info g') x'
+      , IrApply (IrLambda bindTag (closeHoist bindTag info mdG) g') x'
       , nodeMeta mdX mdG
       )
   IrApply (IrLambda tag LamInfo {lamTag = Nothing} g) x ->
@@ -806,8 +924,9 @@ optIrNode !t0 node = case node of
   IrLambda tag hoist g ->
     let
       (t1, g', md) = optIr t0 g
+      bound = bindMeta tag md
      in
-      (t1, IrLambda tag hoist g', bindMeta tag md)
+      (t1, IrLambda tag (closeHoist tag hoist md) g', bound)
   IrApply f x ->
     let
       (t1, f', mdF) = optIr t0 f
@@ -893,7 +1012,6 @@ optIrNode !t0 node = case node of
       (t2, i', mdI) = optIr t1 i
      in
       case (x', i') of
-        (IrIndex {}, _) -> (t2, IrIndex x' i', nodeMeta mdX mdI)
         (IrLiteral (ValueArray vs), IrLiteral (ValueNumber d))
           | isFiniteDouble d
           , let
@@ -903,13 +1021,18 @@ optIrNode !t0 node = case node of
                 v = vs !! n
                in
                 (t2, IrLiteral v, litMeta v <> mdX <> mdI)
-        _ -> (t2, IrIndex x' i', nodeMeta mdX mdI)
-  IrU8Index x i -> binOptIr t0 IrU8Index x i
+        _ -> (t2, IrIndex x' i', readMayThrowMeta (nodeMeta mdX mdI))
+  IrU8Index x i ->
+    let
+      (t1, x', mdX) = optIr t0 x
+      (t2, i', mdI) = optIr t1 i
+     in
+      (t2, IrU8Index x' i', readOnlyMeta (nodeMeta mdX mdI))
   IrError x ->
     let
       (t1, x', md) = optIr t0 x
      in
-      (t1, IrError x', md)
+      (t1, IrError x', effectMd md)
   IrFixed sf args -> optIrFixedF t0 sf args
   IrFnLit tags names b -> optIrFnLit t0 tags names b
   IrUnsafeNullable x ->
@@ -927,10 +1050,10 @@ optIrNode !t0 node = case node of
       (t1, o', mdO) = optIr t0 o
      in
       case o' of
-        -- Project only when every sibling field is pure, so projecting
-        -- @.b@ cannot DCE an effectful @.a@.
+        -- Project only when every sibling field is discard-safe, so
+        -- projecting @.b@ cannot DCE an effectful or throwing @.a@.
         IrFrozenLit fs
-          | irPure mdO
+          | irDrop mdO
           , Just fld <- lookupIrField key fs ->
               optIr t1 fld
         _ -> (t1, IrGetField key o', mdO)
@@ -1008,10 +1131,10 @@ optIrNode !t0 node = case node of
               -- @x && true@ is @x@ (kept with its own metadata).
               IrLiteral (ValueBool P.True) -> (t2, x', mdX)
               IrLiteral (ValueBool P.False)
-                -- @x && false@ is @false@ only when @x@ is pure; the
-                -- JS @&&@ never evaluates the RHS, but an impure @x@
-                -- must keep its effect.
-                | irPure mdX ->
+                -- @x && false@ is @false@ only when @x@ is discard-safe;
+                -- the JS @&&@ never evaluates the RHS, but an effectful or
+                -- throwing @x@ must be preserved.
+                | irDrop mdX ->
                     (t2, IrLiteral (ValueBool P.False), litMeta (ValueBool P.False) <> mdX)
               _ ->
                 (t2, KAnd x' y', kernelFoldMdK <> nodeMeta mdX mdY)
@@ -1030,7 +1153,7 @@ optIrNode !t0 node = case node of
             case y' of
               IrLiteral (ValueBool P.False) -> (t2, x', mdX)
               IrLiteral (ValueBool P.True)
-                | irPure mdX ->
+                | irDrop mdX ->
                     (t2, IrLiteral (ValueBool P.True), litMeta (ValueBool P.True) <> mdX)
               _ ->
                 (t2, KOr x' y', kernelFoldMdK <> nodeMeta mdX mdY)
@@ -1097,7 +1220,7 @@ optIrNode !t0 node = case node of
       (t1, args', md) = optIrArgs t0 args
      in
       (t1, IrFFI form args', effectMd md)
-  IrUnsafeObject o -> (t0, IrUnsafeObject o, IrMeta 1 IM.empty False False)
+  IrUnsafeObject o -> (t0, IrUnsafeObject o, IrMeta 1 IM.empty False False False False)
   IrUnsafeObjectGet x s ->
     let
       (t1, x', md) = optIr t0 x
@@ -1270,7 +1393,7 @@ optIrNode !t0 node = case node of
       (t1, a', mdA) = optIr t0 a
       (t2, k', mdK) = optIr (t1 - optStep) k
      in
-      (t2, IrTry a' tag k', nodeMeta mdA (bindMeta tag mdK))
+      (t2, IrTry a' tag k', effectMd (nodeMeta mdA (bindMeta tag mdK)))
   IrObjectLit fs ->
     let
       (t1, fs', md) = mapAccumIrFields t0 fs
@@ -1288,20 +1411,6 @@ optIrNode !t0 node = case node of
      in
       (t1, IrArrayLit es', md)
   _ -> error "JShark.Compiler.Ir.optIrNode: unhandled constructor"
-
-binOptIr ::
-  (?keepLets :: P.Bool) =>
-  Int
-  -> (IrNode -> IrNode -> IrNode)
-  -> IrNode
-  -> IrNode
-  -> (Int, IrNode, IrMeta)
-binOptIr !t0 k x y =
-  let
-    (t1, x', mdX) = optIr t0 x
-    (t2, y', mdY) = optIr t1 y
-   in
-    (t2, k x' y', nodeMeta mdX mdY)
 
 num2OptIr ::
   (?keepLets :: P.Bool) =>
@@ -1412,7 +1521,7 @@ sameFamilyEq (ValueUint8Array a) (ValueUint8Array b) = Just (a == b)
 sameFamilyEq (ValueFrozen as) (ValueFrozen bs) =
   recordEq (map valueField as) (map valueField bs)
 sameFamilyEq (ValueFunction _) (ValueFunction _) =
-  error "evaluate: functions cannot be compared for equality"
+  error "JShark.Compiler.Ir: functions cannot be compared for equality"
 sameFamilyEq _ _ = Nothing
 
 listEq :: [Value u] -> [Value v] -> Maybe P.Bool
@@ -1587,7 +1696,7 @@ fixedFoldMd sf res = case res of
     SomeFixedOp n -> fixedKeepMd n
 
 fixedKeepMd :: FixedOp a b c u -> IrMeta
-fixedKeepMd n = IrMeta 1 IM.empty (isPureFixed n) P.False
+fixedKeepMd n = IrMeta 1 IM.empty (isPureFixed n) (isMoveFixed n) (isDropFixed n) P.False
 
 kernelFoldMd :: IrNode -> IrMeta
 kernelFoldMd res = case res of
@@ -1595,7 +1704,7 @@ kernelFoldMd res = case res of
   _ -> kernelFoldMdK
 
 kernelFoldMdK :: IrMeta
-kernelFoldMdK = IrMeta 1 IM.empty True False
+kernelFoldMdK = IrMeta 1 IM.empty True True True False
 
 -- | Known-constructor scrutinees for 'IrOptionCase' \/ 'IrOptionCaseE'.
 peelIrOption :: IrNode -> Maybe (Maybe IrNode)

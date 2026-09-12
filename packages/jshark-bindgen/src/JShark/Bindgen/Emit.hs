@@ -17,6 +17,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Bindgen.Ir
 
+-- | Render a 'ModuleIr' as a complete JShark FFI module.
 emitModule :: ModuleIr -> Text
 emitModule ir =
   let
@@ -41,6 +42,7 @@ data FunKey = FunKey
   , fkName :: Text
   , fkCtor :: Bool
   , fkStatic :: Bool
+  , fkOverload :: Int
   }
   deriving (Eq, Ord, Show)
 
@@ -60,10 +62,10 @@ planModuleNames ir =
         <> fmap (SlotType . hsTypeName . enName) (irEnums ir)
         <> fmap (SlotConst . cnName) (irConsts ir)
         <> concatMap enumMemberSlots (irEnums ir)
-        <> fmap (\fn -> SlotFun (FunKey T.empty (fnName fn) False False)) (irFuns ir)
+        <> fmap (\fn -> SlotFun (FunKey T.empty (fnName fn) False False (fnOverload fn))) (irFuns ir)
         <> concatMap classFunSlots (irClasses ir)
     rawNames = fmap slotRaw slots
-    finalNames = globalUnique rawNames
+    finalNames = uniques rawNames
     named = zip slots finalNames
     funMap =
       Map.fromList
@@ -99,7 +101,7 @@ slotRaw = \case
   SlotType n -> n
   SlotConst cn -> hsVarName cn
   SlotEnum en mem -> enumMemberName en mem
-  SlotFun (FunKey _ n isCtor _) -> hsFunName isCtor n
+  SlotFun (FunKey _ n isCtor _ _) -> hsFunName isCtor n
 
 enumMemberSlots :: EnumDecl -> [Slot]
 enumMemberSlots e =
@@ -109,9 +111,9 @@ enumMemberSlots e =
 
 classFunSlots :: ClassDecl -> [Slot]
 classFunSlots c =
-  [ SlotFun (FunKey (clName c) (fnName f) True False) | f <- clCtors c
+  [ SlotFun (FunKey (clName c) (fnName f) True False (fnOverload f)) | f <- clCtors c
   ]
-    <> [ SlotFun (FunKey (clName c) (fnName f) False (fnStatic f))
+    <> [ SlotFun (FunKey (clName c) (fnName f) False (fnStatic f) (fnOverload f))
        | f <- clMethods c
        ]
 
@@ -130,9 +132,6 @@ uniques = go []
       cand = if k == 1 then n else n <> T.pack (show k)
      in
       if cand `elem` seen then pick n (k + 1) seen else cand
-
-globalUnique :: [Text] -> [Text]
-globalUnique = uniques
 
 lookupFun :: NamePlan -> FunKey -> Text
 lookupFun plan k =
@@ -311,7 +310,7 @@ funBinds ir plan =
 emitTopFun :: NamePlan -> Fun -> [Text]
 emitTopFun plan f =
   let
-    key = FunKey T.empty (fnName f) False False
+    key = FunKey T.empty (fnName f) False False (fnOverload f)
     name = lookupFun plan key
    in
     emitFun plan Nothing name f
@@ -328,7 +327,7 @@ emitClass plan c =
 emitClassFun :: NamePlan -> ClassDecl -> Bool -> Fun -> [Text]
 emitClassFun plan c isCtor f =
   let
-    key = FunKey (clName c) (fnName f) isCtor (fnStatic f)
+    key = FunKey (clName c) (fnName f) isCtor (fnStatic f) (fnOverload f)
     name = lookupFun plan key
    in
     emitFun plan (Just c) name f
@@ -393,6 +392,13 @@ recArgs pns =
     "(" <> T.intercalate " <: " bits <> " <: RecNil)"
  where
   recArg (p, n)
+    -- A declared @T | null@ argument is a tagged 'Option' inside JShark;
+    -- unwrap it to the native null/value the foreign API expects.
+    | TyOption _ <- pTy p
+    , isHandle (pTy p) =
+        "ArgEffect (unsafeOptionToNativeEffect " <> n <> ")"
+    | TyOption _ <- pTy p =
+        "arg (unsafeOptionToNative " <> n <> ")"
     | isHandle (pTy p) = "ArgEffect " <> n
     | otherwise = "arg " <> n
 
@@ -411,9 +417,9 @@ applyRet :: Ty -> Text -> Text
 applyRet t call
   | isUnit t = "toSyntax_ $ " <> call
   | isOptionHandle t =
-      "hold $ Bind ("
+      "hold $ optionalEffect ("
         <> call
-        <> ") (\\x -> Lift (unsafeNullable (Var x)))"
+        <> ")"
   | isHandle t = "hold $ " <> call
   | isOptionPrim t = "fmap unsafeNullable (bindExpr $ " <> call <> ")"
   | otherwise = "bindExpr $ " <> call
@@ -479,6 +485,7 @@ hsFunName isCtor n
 enumMemberName :: Text -> Text -> Text
 enumMemberName en mem = hsVarName (en <> mem)
 
+-- | Render a raw JS name as a valid Haskell type name, avoiding reserved types.
 hsTypeName :: Text -> Text
 hsTypeName raw =
   let
@@ -486,6 +493,7 @@ hsTypeName raw =
    in
     if n `elem` reservedTypes then "Js" <> n else n
 
+-- | Render a raw JS name as a valid Haskell variable name, avoiding reserved words.
 hsVarName :: Text -> Text
 hsVarName raw =
   let

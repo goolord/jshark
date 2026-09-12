@@ -5,6 +5,9 @@
 --
 -- Extracted from the former PHOAS emitter so 'JShark.Compiler.Codegen.Flat'
 -- can build statement-form control flow without a PHOAS dependency.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Codegen.Stmt
   ( asStmt
   , ifElseStmt

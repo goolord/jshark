@@ -53,9 +53,11 @@ setInterval ::
   -> EffectSyntax f (Expr f 'Number)
 setInterval = timerCall "setInterval"
 
+-- | @clearTimeout(id)@.
 clearTimeout :: Expr f 'Number -> EffectSyntax f ()
 clearTimeout timerId = toSyntax_ $ ffi "clearTimeout" (arg timerId <: RecNil)
 
+-- | @clearInterval(id)@.
 clearInterval :: Expr f 'Number -> EffectSyntax f ()
 clearInterval timerId = toSyntax_ $ ffi "clearInterval" (arg timerId <: RecNil)
 

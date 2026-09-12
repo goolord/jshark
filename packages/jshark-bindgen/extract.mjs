@@ -11,16 +11,61 @@ const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
 function loadTypescript() {
-  const local = resolve(here, "node_modules/typescript");
-  try {
-    if (existsSync(local)) return require(local);
-    return require("typescript");
-  } catch {
-    console.error(
-      "jshark-bindgen: install typescript next to extract.mjs:\n  cd jshark-bindgen && bun install",
-    );
-    process.exit(2);
+  // A loaded module must look like the TypeScript compiler API; a stray
+  // global `typescript` shim would otherwise fail deep inside the extractor.
+  const asCompiler = (mod) =>
+    mod && typeof mod.createProgram === "function" && mod.ModuleResolutionKind
+      ? mod
+      : null;
+  // Explicit override: path to a typescript package directory.
+  const override = process.env.JSHARK_BINDGEN_TYPESCRIPT;
+  if (override) {
+    try {
+      const ts = asCompiler(require(resolve(override)));
+      if (ts) return ts;
+    } catch {
+      // fall through to the other candidates
+    }
   }
+  const candidates = [resolve(here, "node_modules/typescript")];
+  // Walk up from the current directory so an installed extractor can find
+  // the consumer's own `typescript` dependency.
+  let dir = process.cwd();
+  for (;;) {
+    candidates.push(resolve(dir, "node_modules/typescript"));
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  const tried = [];
+  for (const c of candidates) {
+    if (!existsSync(c)) {
+      tried.push(c);
+      continue;
+    }
+    try {
+      const ts = asCompiler(require(c));
+      if (ts) return ts;
+      tried.push(c + " (not the TypeScript API)");
+    } catch {
+      tried.push(c);
+    }
+  }
+  try {
+    const ts = asCompiler(require("typescript"));
+    if (ts) return ts;
+    tried.push("typescript (not the TypeScript API)");
+  } catch {
+    tried.push("typescript");
+  }
+  console.error(
+    "jshark-bindgen: typescript not found.\n" +
+      "  Install it next to extract.mjs (`cd jshark-bindgen && bun install`),\n" +
+      "  add it to the consuming project, or set JSHARK_BINDGEN_TYPESCRIPT\n" +
+      "  to a typescript package directory.\n  searched:\n    " +
+      tried.join("\n    "),
+  );
+  process.exit(2);
 }
 
 const ts = loadTypescript();
@@ -140,7 +185,7 @@ function paramOf(checker, p) {
   };
 }
 
-function funOf(checker, name, ffi, sig, ctor, isStatic = false) {
+function funOf(checker, name, ffi, sig, ctor, isStatic = false, overload = 0) {
   return {
     name,
     ffi,
@@ -148,6 +193,7 @@ function funOf(checker, name, ffi, sig, ctor, isStatic = false) {
     ret: serializeType(checker, sig.getReturnType()),
     ctor: !!ctor,
     static: !!isStatic,
+    overload,
   };
 }
 
@@ -170,7 +216,7 @@ function collectClass(checker, sym, ffi) {
     const key = sig.getParameters().map((p) => p.getName()).join(",");
     if (seen.has(key)) continue;
     seen.add(key);
-    ctors.push(funOf(checker, sym.getName(), ffi, sig, true));
+    ctors.push(funOf(checker, sym.getName(), ffi, sig, true, false, ctors.length));
   }
   for (const mem of t.getProperties?.() ?? []) {
     const decl = mem.valueDeclaration ?? mem.declarations?.[0];
@@ -182,9 +228,11 @@ function collectClass(checker, sym, ffi) {
     );
     if (sigs.length) {
       const isStatic = !!(mem.flags & ts.SymbolFlags.Static);
-      methods.push(
-        funOf(checker, mem.getName(), mem.getName(), sigs[0], false, isStatic),
-      );
+      sigs.forEach((sig, i) => {
+        methods.push(
+          funOf(checker, mem.getName(), mem.getName(), sig, false, isStatic, i),
+        );
+      });
     } else {
       props.push({
         name: mem.getName(),
@@ -242,7 +290,9 @@ function walkSymbol(checker, sym, ffiPrefix, into) {
       sym.valueDeclaration ?? sym.declarations?.[0],
     );
     const sigs = t.getCallSignatures();
-    if (sigs[0]) into.funs.push(funOf(checker, name, ffi, sigs[0], false));
+    sigs.forEach((sig, i) => {
+      into.funs.push(funOf(checker, name, ffi, sig, false, false, i));
+    });
     return;
   }
   if (flags & ts.SymbolFlags.Enum) {
@@ -260,8 +310,10 @@ function walkSymbol(checker, sym, ffiPrefix, into) {
       ? checker.getTypeOfSymbolAtLocation(sym, decl)
       : checker.getDeclaredTypeOfSymbol(sym);
     const sigs = t.getCallSignatures?.() ?? [];
-    if (sigs[0] && !(flags & ts.SymbolFlags.Interface)) {
-      into.funs.push(funOf(checker, name, ffi, sigs[0], false));
+    if (sigs.length && !(flags & ts.SymbolFlags.Interface)) {
+      sigs.forEach((sig, i) => {
+        into.funs.push(funOf(checker, name, ffi, sig, false, false, i));
+      });
     } else {
       into.consts.push({
         name,
@@ -288,6 +340,9 @@ function main() {
     declaration: true,
     noEmit: true,
     skipLibCheck: true,
+    // Distinguish `T | null` / `T | undefined` from bare `T`; without this
+    // TypeScript absorbs nullish members into the base type.
+    strictNullChecks: true,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
@@ -300,6 +355,7 @@ function main() {
     process.exit(1);
   }
   const into = {
+    v: 1,
     module: moduleName || moduleFromFile(file),
     prefix: prefix,
     source: file,
@@ -308,7 +364,17 @@ function main() {
     consts: [],
     enums: [],
     skipped: [],
+    diagnostics: [],
   };
+  for (const d of [
+    ...program.getSyntacticDiagnostics(sf),
+    ...program.getSemanticDiagnostics(sf),
+  ]) {
+    into.diagnostics.push({
+      category: ts.DiagnosticCategory[d.category] ?? String(d.category),
+      message: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    });
+  }
   for (const stmt of sf.statements) {
     if (ts.isNamespaceExportDeclaration(stmt) && stmt.name) {
       into.prefix = into.prefix || stmt.name.text;

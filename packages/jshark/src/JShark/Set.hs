@@ -11,6 +11,7 @@ module JShark.Set
   , withSet
   , insert
   , delete
+  , deleteReturning
   , member
   , size
   , clear
@@ -39,24 +40,36 @@ withSet k = do
   s <- toSyntax new
   k (Lift (Var s))
 
+-- | @set.add(x)@.
 insert ::
   Effect f ('Set a) -> Expr f a -> EffectSyntax f (f 'Unit)
 insert s x = toSyntax $ callMethod s "add" (arg x <: RecNil)
 
+-- | @set.delete(x)@.
 delete ::
   Effect f ('Set a) -> Expr f a -> EffectSyntax f (f 'Unit)
 delete s x = toSyntax $ callMethod s "delete" (arg x <: RecNil)
 
+-- | Like 'delete', but keeps @Set.prototype.delete@'s return value:
+-- whether the element was present.
+deleteReturning ::
+  Effect f ('Set a) -> Expr f a -> EffectSyntax f (Expr f 'Bool)
+deleteReturning s x = bindExpr $ callMethod s "delete" (arg x <: RecNil)
+
+-- | @set.has(x)@.
 member ::
   Effect f ('Set a) -> Expr f a -> EffectSyntax f (Expr f 'Bool)
 member s x = bindExpr $ callMethod s "has" (arg x <: RecNil)
 
+-- | @set.size@.
 size :: Effect f ('Set a) -> EffectSyntax f (Expr f 'Number)
 size s = bindExpr $ unsafeObjectGet s "size"
 
+-- | @set.clear()@.
 clear :: Effect f ('Set a) -> EffectSyntax f (f 'Unit)
 clear s = toSyntax $ callMethod s "clear" RecNil
 
+-- | @set.forEach@, running @body@ for each element.
 mapM_ ::
   (Expr f a -> EffectSyntax f (f 'Unit))
   -> Effect f ('Set a)

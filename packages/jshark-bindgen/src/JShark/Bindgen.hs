@@ -33,11 +33,13 @@ import JShark.Bindgen.Ir
 import JShark.Bindgen.Json (decodeModule)
 import System.FilePath (takeBaseName)
 
+-- | Options controlling the generated module name and FFI prefix.
 data BindgenOpts = BindgenOpts
   { optModuleName :: Maybe Text
   , optPrefix :: Maybe Text
   }
 
+-- | 'BindgenOpts' with no module-name or prefix override.
 defaultBindgenOpts :: BindgenOpts
 defaultBindgenOpts =
   BindgenOpts
@@ -45,10 +47,12 @@ defaultBindgenOpts =
     , optPrefix = Nothing
     }
 
+-- | Extract the file at the given path and render a Haskell module.
 generateFromFile :: BindgenOpts -> FilePath -> IO (Either String Text)
 generateFromFile opts path =
   fmap (fmap generateFromIr) (parseIrFromFile opts path)
 
+-- | Extract and decode the input file to a 'ModuleIr', applying 'BindgenOpts'.
 parseIrFromFile :: BindgenOpts -> FilePath -> IO (Either String ModuleIr)
 parseIrFromFile opts path = do
   script <- findExtractScript
@@ -64,11 +68,19 @@ parseIrFromFile opts path = do
         Left err -> pure (Left err)
         Right json -> pure $ do
           ir <- decodeModule json
-          Right (applyOpts opts path ir)
+          let
+            applied = applyOpts opts path ir
+            diags = irDiagnostics applied <> validateModule applied
+          Right
+            (pruneUnsupported applied)
+              { irDiagnostics = diags
+              }
 
+-- | Render a 'ModuleIr' to Haskell source.
 generateFromIr :: ModuleIr -> Text
 generateFromIr = emitModule
 
+-- | Override an IR's module name, prefix, and source from 'BindgenOpts'.
 applyOpts :: BindgenOpts -> FilePath -> ModuleIr -> ModuleIr
 applyOpts opts path ir =
   let
@@ -83,6 +95,29 @@ applyOpts opts path ir =
         , irSource =
             if T.null (irSource ir) then T.pack path else irSource ir
         }
+
+-- | Drop declarations whose signature contains a nullable nested inside a
+-- container or callback. The emitter does not convert those at the foreign
+-- boundary, so leaving them in would pass tagged objects to native code;
+-- the matching 'Diagnostic' is still reported.
+pruneUnsupported :: ModuleIr -> ModuleIr
+pruneUnsupported ir =
+  ir
+    { irFuns = filter (not . funNested) (irFuns ir)
+    , irClasses = map pruneClass (irClasses ir)
+    , irConsts = filter (not . constNested) (irConsts ir)
+    }
+ where
+  funNested f =
+    any tyHasNestedOption (fnRet f : map pTy (fnParams f))
+  propNested p = tyHasNestedOption (prTy p)
+  constNested c = tyHasNestedOption (cnTy c)
+  pruneClass c =
+    c
+      { clCtors = filter (not . funNested) (clCtors c)
+      , clMethods = filter (not . funNested) (clMethods c)
+      , clProps = filter (not . propNested) (clProps c)
+      }
 
 qualifyPrefix :: ModuleIr -> ModuleIr
 qualifyPrefix ir

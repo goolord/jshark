@@ -41,8 +41,6 @@ lifeStep = fromSyntax $ do
 main :: IO ()
 main = do
   start <- getMonotonicTime
-  let
-    bytes = emitLen lifeStep
+  bytes <- evaluate (emitLen lifeStep)
   end <- getMonotonicTime
-  evaluate bytes
   putStrLn $ show bytes ++ "," ++ show (end - start)

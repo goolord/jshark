@@ -336,6 +336,13 @@ mainJS = do
     )
     waveEls
 
+  -- Register a dispose hook so a hot reload tears the audio graph down
+  -- instead of leaking the old AudioContext (and its oscillators).
+  toSyntax_ $
+    ffi
+      "ctx => { window.__JSHARK_DISPOSE__ = function () { try { ctx.close(); } catch (_) {} }; }"
+      (arg ctx <: RecNil)
+
   -- The only per-frame work: read the analyser, resize one bar.
   Timers.foreverFrame $ \_ -> do
     Audio.byteFrequencyData ana spectrum

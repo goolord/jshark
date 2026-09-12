@@ -9,14 +9,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults -Wno-incomplete-patterns #-}
+{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-export-lists -Wno-missing-signatures -Wno-type-defaults #-}
 
 -- | Flat IR → JavaScript (effectful compile path).
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Codegen.Flat where
 
-import Control.Monad (forM_)
 import Control.Monad.ST (runST)
-import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import Data.Maybe (fromMaybe, isJust, isNothing)
@@ -31,7 +32,6 @@ import JShark.Compiler.Binder
   ( pattern Name
   )
 import JShark.Compiler.Codegen.Core
-import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
 import JShark.Compiler.Codegen.Stmt
   ( asStmt
   , assignResult
@@ -65,8 +65,10 @@ import JShark.Compiler.Evaluate
   , jsBigIntLit
   , jsQuote
   , jsUint8ArrayLit
+  , jsUint8ClampedArrayLit
   )
 import qualified JShark.Compiler.Flat as Flat
+import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
 
 resultPayloadRef :: Maybe JS -> JS
 resultPayloadRef = fromMaybe "undefined"
@@ -103,13 +105,23 @@ flatRenderLiteral env s0 = \case
   ValueString s -> (s0, Code mempty (jsQuote s))
   ValueFunction _ -> error "JShark.flatPureAST: ValueFunction is eval-only"
   ValueUnit -> (s0, mempty)
-  ValueOption (Just x) -> flatRenderLiteral env s0 x
-  ValueOption Nothing -> (s0, Code mempty "null")
+  ValueOption (Just x) ->
+    let
+      (s1, MkCode d r fx) = flatRenderLiteral env s0 x
+     in
+      ( s1
+      , MkCode
+          d
+          (Just ("{some: true, value: " <> fromMaybe "undefined" r <> "}"))
+          fx
+      )
+  ValueOption Nothing -> (s0, Code mempty "{some: false}")
   ValueResult (Right x) -> flatRenderResultLit True s0 x
   ValueResult (Left x) -> flatRenderResultLit False s0 x
   ValueRegex s ->
     (s0, Code mempty ("new RegExp" <> parens (jsQuote s)))
   ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))
+  ValueUint8ClampedArray ba -> (s0, Code mempty (jsUint8ClampedArrayLit ba))
   ValueBool True -> (s0, Code mempty "true")
   ValueBool False -> (s0, Code mempty "false")
   ValueFrozen {} -> error "JShark.flatPureAST: ValueFrozen is eval-only"
@@ -184,6 +196,52 @@ flatRenderBin ctx op s0 view xId yId =
         )
     )
 
+-- | @&&@ / @||@: the left operand always evaluates, the right only when
+-- the operator selects it. When the right side needs declarations they
+-- must be guarded, not hoisted above the operator.
+flatRenderShortCircuit ctx s0 view isAnd xId yId =
+  let
+    (s1, MkCode xDecl xRef _) = flatChild ctx s0 xId
+   in
+    case flatChild ctx s1 yId of
+      (s2, MkCode Nothing yRef _) ->
+        ( s2
+        , MkCode
+            xDecl
+            ( Just
+                ( flatWrapOperand view xId (fromMaybe "undefined" xRef)
+                    <+> (if isAnd then "&&" else "||")
+                    <+> flatWrapOperand view yId (fromMaybe "undefined" yRef)
+                )
+            )
+            False
+        )
+      (s2, MkCode (Just yDecl) yRef _) ->
+        let
+          (n, s3) = allocIdent s2
+          rv = identName s3 n
+          cond = if isAnd then jsText rv else "!" <> parens (jsText rv)
+          guard =
+            yDecl
+              $$ (jsText rv <+> "=" <+> fromMaybe "undefined" yRef)
+              <> semi
+          xInit =
+            ( "let"
+                <+> jsText rv
+                <+> "="
+                <+> flatWrapOperand view xId (fromMaybe "undefined" xRef)
+            )
+              <> semi
+         in
+          ( s3
+          , MkCode
+              ( Just
+                  (fromMaybe mempty xDecl $$ xInit $$ ("if" <+> parens cond <+> blockBody guard))
+              )
+              (Just (jsText rv))
+              False
+          )
+
 flatRenderArgListSeq ctx s0 args =
   let
     go s = \case
@@ -239,6 +297,8 @@ flatRenderArrayLit ctx s0 es =
         (brackets (hcat (punctuate ", " (codesRefs cs))))
     )
 
+flatRenderFixed ::
+  FlatEmitCtx -> CG -> Flat.FlatSoA -> Flat.FlatFixed -> (CG, Code)
 flatRenderFixed ctx s0 view = \case
   Flat.FlatFixedU op xId
     | Just name <- Prim.math1Name op ->
@@ -265,6 +325,13 @@ flatRenderFixed ctx s0 view = \case
       (s1, Code rDecl rRef) = flatChild ctx s0 xId
      in
       (s1, Code rDecl (Prim.fixedUnaryJS op (flatWrapOperand view xId rRef)))
+  Flat.FlatFixedB FixGroupBy xId yId ->
+    let
+      (s1, Code rDecl rRef) = flatChild ctx s0 xId
+      (s2, Code aDecl aRef) = flatChild ctx s1 yId
+      (s3, call) = emitGroupBy s2 (flatWrapOperand view xId rRef) aRef
+     in
+      (s3, Code (rDecl $$ aDecl) call)
   Flat.FlatFixedB op xId yId ->
     let
       (s1, Code rDecl rRef) = flatChild ctx s0 xId
@@ -326,8 +393,8 @@ flatRenderKernel ctx s0 view = \case
       (s1, Code xDecl xRef) = flatChild ctx s0 x
      in
       (s1, Code xDecl $ "-" <> parens xRef)
-  Flat.FE_KAnd x y -> flatRenderBin ctx "&&" s0 view x y
-  Flat.FE_KOr x y -> flatRenderBin ctx "||" s0 view x y
+  Flat.FE_KAnd x y -> flatRenderShortCircuit ctx s0 view True x y
+  Flat.FE_KOr x y -> flatRenderShortCircuit ctx s0 view False x y
   Flat.FE_KEq structural x y
     | structural ->
         let
@@ -451,14 +518,45 @@ flatResultPrelude ctx env s0 resId tagE =
 flatRenderResultCase ctx env s0 resId tagE errId _tagO okId =
   let
     (s3, obj, prelude) = flatResultPrelude ctx env s0 resId tagE
-    (s4, Code eDecl eRef) = flatChild ctx s3 errId
-    (s5, Code oDecl oRef) = flatChild ctx s4 okId
+    (s4, MkCode eDecl eRef _) = flatChild ctx s3 errId
+    (s5, MkCode oDecl oRef _) = flatChild ctx s4 okId
+    cond = jsText obj <> ".ok"
    in
-    ( s5
-    , Code
-        (prelude $$ eDecl $$ oDecl)
-        (parens ((jsText obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
-    )
+    if isNothing eDecl && isNothing oDecl
+      then
+        ( s5
+        , MkCode
+            (Just prelude)
+            ( Just
+                ( parens
+                    ( cond
+                        <+> "?"
+                        <+> fromMaybe "undefined" oRef
+                        <+> ":"
+                        <+> fromMaybe "undefined" eRef
+                    )
+                )
+            )
+            False
+        )
+      else
+        -- Keep each arm's declarations inside its branch; hoisting both
+        -- would evaluate the untaken arm.
+        let
+          (n, s6) = allocIdent s5
+          resultVar = identName s6 n
+         in
+          ( s6
+          , MkCode
+              ( Just
+                  ( prelude
+                      $$ letResult resultVar
+                      $$ ifAssignOrStmt (Just resultVar) cond oDecl oRef eDecl eRef
+                  )
+              )
+              (Just (jsText resultVar))
+              False
+          )
 
 flatSeqEffect ctx s0 xId yId =
   let
@@ -583,16 +681,24 @@ flatRenderStringCaseE ctx s0 view nid scrutId ai defId =
 
 type FlatCodeTable = V.Vector Code
 
-newtype FlatTableRead = FlatTableRead (MV.IOVector Code)
+-- | Codes already emitted, keyed by node id. Immutable: the emit driver
+-- folds child-before-parent, so a lookup can only see an already-emitted
+-- child. This replaces the old mutable vector whose reads were wrapped in
+-- @unsafePerformIO@ (pure-looking reads of a table being mutated).
+newtype FlatTableRead = FlatTableRead (IM.IntMap Code)
 
-flatTableLookup (FlatTableRead mv) i =
-  unsafePerformIO (MV.read mv i)
+flatTableLookup :: FlatTableRead -> Flat.NodeId -> Code
+flatTableLookup (FlatTableRead m) i =
+  case IM.lookup i m of
+    Just c -> c
+    Nothing ->
+      error ("JShark.Compiler.Codegen.Flat: node " <> show i <> " emitted before its child")
 {-# NOINLINE flatTableLookup #-}
 
 data FlatEmitPlan = FlatEmitPlan
   { fepEnv :: !(V.Vector (Maybe Env))
   , fepBind :: !(V.Vector (Maybe Int))
-  , fepLayers :: !(V.Vector (V.Vector Flat.NodeId))
+  , fepOrder :: !(V.Vector Flat.NodeId)
   }
 
 data FlatEmitCtx = FlatEmitCtx
@@ -719,8 +825,8 @@ flatEmitApplyArgs ctx s0 xs =
     (s0, mempty, [])
     xs
 
--- | Emit a child node: a table lookup keyed by node id (layer order was
--- fixed by 'Flat.flatSoaLayerBuckets', so children are already emitted).
+-- | Emit a child node: a table lookup keyed by node id (emit order was
+-- fixed by 'Flat.flatSoaEmitOrder', so children are already emitted).
 flatChild ctx s cId = (s, flatTableLookup (fecTable ctx) cId)
 
 flatNodeKindEffect view nid =
@@ -833,9 +939,13 @@ buildFlatEmitPlan view root s0 =
                 Flat.FE_MethFilter arr tag bodyId ->
                   planGo env arr Prelude.>> scopedBody [tag] 1 bodyId
                 Flat.FE_MethReduce arr z tagA tagB bodyId ->
-                  planGo env arr Prelude.>> planGo env z Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                  planGo env arr
+                    Prelude.>> planGo env z
+                    Prelude.>> scopedBody [tagA, tagB] 2 bodyId
                 Flat.FE_MethReduceRight arr z tagA tagB bodyId ->
-                  planGo env arr Prelude.>> planGo env z Prelude.>> scopedBody [tagA, tagB] 2 bodyId
+                  planGo env arr
+                    Prelude.>> planGo env z
+                    Prelude.>> scopedBody [tagA, tagB] 2 bodyId
                 Flat.FE_MethToSorted arr tagA tagB bodyId ->
                   planGo env arr Prelude.>> scopedBody [tagA, tagB] 2 bodyId
                 Flat.FE_MethFrom lenId tag bodyId ->
@@ -897,35 +1007,31 @@ buildFlatEmitPlan view root s0 =
         ( FlatEmitPlan
             { fepEnv = envF
             , fepBind = bindF
-            , fepLayers = Flat.flatSoaLayerBuckets view root
+            , fepOrder = Flat.flatSoaEmitOrder view root
             }
         , sFinal
         )
 
 flatEmitLayered view root plan s0 =
-  unsafePerformIO $ do
-    let
-      n = Flat.flatSoaNodeCount view
-      emitOrder = concatMap V.toList (V.toList (fepLayers plan))
-    tableMV <- MV.new n
-    MV.set tableMV (Code mempty mempty)
-    let
-      tableRead = FlatTableRead tableMV
-    sRef <- newIORef s0
-    forM_ emitOrder $ \nid -> do
-      s <- readIORef sRef
-      let
-        ctx = FlatEmitCtx {fecTable = tableRead, fecPlan = plan}
-        env = flatPlanEnv plan nid
-        (s', code) =
-          if flatNodeKindEffect view nid
-            then flatEffectfulASTGo ctx env s view nid
-            else flatPureASTGo ctx env s view nid
-      MV.write tableMV nid code
-      writeIORef sRef s'
-    sFinal <- readIORef sRef
-    rootCode <- MV.read tableMV root
-    pure (sFinal, rootCode)
+  let
+    emitOrder = V.toList (fepOrder plan)
+    (!tableFinal, !sFinal) =
+      foldl'
+        ( \(!table, !s) nid ->
+            let
+              ctx = FlatEmitCtx {fecTable = FlatTableRead table, fecPlan = plan}
+              env = flatPlanEnv plan nid
+              (s', code) =
+                if flatNodeKindEffect view nid
+                  then flatEffectfulASTGo ctx env s view nid
+                  else flatPureASTGo ctx env s view nid
+             in
+              (IM.insert nid code table, s')
+        )
+        (IM.empty, s0)
+        emitOrder
+   in
+    (sFinal, flatTableLookup (FlatTableRead tableFinal) root)
 {-# NOINLINE flatEmitLayered #-}
 
 flatPureASTGo !ctx !env !sIn view nid =
@@ -987,29 +1093,80 @@ flatPureASTGo !ctx !env !sIn view nid =
       Flat.FE_EmbedEff eId -> flatChild ctx s0 eId
       Flat.FE_If cId tId eId ->
         let
-          (s1, Code cDecl cRef) = flatChild ctx s0 cId
-          (s2, Code tDecl tRef) = flatChild ctx s1 tId
-          (s3, Code eDecl eRef) = flatChild ctx s2 eId
+          (s1, MkCode cDecl cRef _) = flatChild ctx s0 cId
+          (s2, MkCode tDecl tRef tFX) = flatChild ctx s1 tId
+          (s3, MkCode eDecl eRef eFX) = flatChild ctx s2 eId
+          cJs = fromMaybe mempty cRef
          in
-          ( s3
-          , Code
-              (cDecl $$ tDecl $$ eDecl)
-              (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
-          )
+          if isNothing tDecl && isNothing eDecl && not tFX && not eFX
+            then
+              ( s3
+              , MkCode
+                  cDecl
+                  ( Just
+                      ( parens
+                          ( cJs
+                              <+> "?"
+                              <+> fromMaybe "undefined" tRef
+                              <+> ":"
+                              <+> fromMaybe "undefined" eRef
+                          )
+                      )
+                  )
+                  False
+              )
+            else
+              -- Branch-local declarations must not run until their branch is
+              -- selected: hoisting both would evaluate (and possibly throw
+              -- from) the untaken side.
+              let
+                (n, s4) = allocIdent s3
+                rv = identName s4 n
+               in
+                ( s4
+                , MkCode
+                    ( Just
+                        ( fromMaybe mempty cDecl
+                            $$ letResult rv
+                            $$ ifAssignOrStmt (Just rv) cJs tDecl tRef eDecl eRef
+                        )
+                    )
+                    (Just (jsText rv))
+                    False
+                )
       Flat.FE_OptionCase oId nId _tag sId ->
         let
-          (s1, Code optDecl optRef) = flatChild ctx s0 oId
-          (nBind, s2) = flatPlanIdent ctx s1 nid
-          optVar = identName s2 nBind
-          (s3, Code noneDecl noneRef) = flatChild ctx s2 nId
-          (s4, Code someDecl someRef) = flatChild ctx s3 sId
+          (s1, MkCode optDecl optRef _) = flatChild ctx s0 oId
+          (nOpt, s2) = allocIdent s1
+          optVar = identName s2 nOpt
+          (nVal, s3) = flatPlanIdent ctx s2 nid
+          (s4, MkCode noneDecl noneRef _) = flatChild ctx s3 nId
+          (s5, MkCode someDecl someRef _) = flatChild ctx s4 sId
+          optBind = constBind s5 nOpt (fromMaybe "null" optRef)
+          cond = jsText optVar <+> ".some"
+          -- The some branch was lowered against the tag binder; bind it to
+          -- the unwrapped payload.
+          valBind = constBind s5 nVal (jsText optVar <> ".value")
+          (nRes, s6) = allocIdent s5
+          rv = identName s6 nRes
          in
-          ( s4
-          , Code
-              (optDecl $$ constBind s2 nBind optRef $$ noneDecl $$ someDecl)
-              ( parens
-                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+          ( s6
+          , MkCode
+              ( Just
+                  ( fromMaybe mempty optDecl
+                      $$ optBind
+                      $$ letResult rv
+                      $$ ifAssignOrStmt
+                        (Just rv)
+                        cond
+                        (Just (valBind $$ fromMaybe mempty someDecl))
+                        someRef
+                        noneDecl
+                        noneRef
+                  )
               )
+              (Just (jsText rv))
+              False
           )
       Flat.FE_ResultOk xId ->
         let
@@ -1044,7 +1201,17 @@ flatPureASTGo !ctx !env !sIn view nid =
       Flat.FE_Fixed fixed -> flatRenderFixed ctx s0 view fixed
       Flat.FE_FnLit tags _names bodyId ->
         flatRenderFnLit ctx env s0 tags bodyId
-      Flat.FE_UnsafeNullable xId -> flatChild ctx s0 xId
+      Flat.FE_UnsafeNullable xId ->
+        let
+          (s1, Code d r) = flatChild ctx s0 xId
+         in
+          ( s1
+          , Code
+              d
+              ( "((v) => v == null ? {some: false} : {some: true, value: v})"
+                  <> parens r
+              )
+          )
       Flat.FE_FrozenLit gi -> flatRenderObjectLit ctx s0 view gi
       Flat.FE_GetField ti oId ->
         let
@@ -1191,12 +1358,37 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           (s1, MkCode condDecl condRef _) = flatChild ctx s0 cId
           (s2, MkCode bodyDecl bodyRef _) = flatChild ctx s1 bId
           bodyStmt = asStmt bodyDecl bodyRef
-          whileStmt =
-            "while"
-              <+> parens (fromMaybe mempty condRef)
-              <+> blockBody bodyStmt
+          cJs = fromMaybe "false" condRef
          in
-          (s2, MkCode (Just (fromMaybe mempty condDecl $$ whileStmt)) Nothing False)
+          case condDecl of
+            Nothing ->
+              ( s2
+              , MkCode
+                  (Just ("while" <+> parens cJs <+> blockBody bodyStmt))
+                  Nothing
+                  False
+              )
+            Just decl ->
+              -- The condition may need declarations (a bound scrutinee, a
+              -- loop-carried read). Keep them inside the loop so the whole
+              -- condition is evaluated on every iteration, and break out
+              -- instead of testing a stale hoisted value.
+              let
+                check =
+                  decl
+                    $$ ("if" <+> parens ("!" <> parens cJs) <+> blockBody "break;")
+               in
+                ( s2
+                , MkCode
+                    ( Just
+                        ( "while"
+                            <+> parens "true"
+                            <+> blockBody (check $$ bodyStmt)
+                        )
+                    )
+                    Nothing
+                    False
+                )
       Flat.FX_ForRange startId endId _tag bodyId ->
         let
           (s1, MkCode startDecl startRef _) = flatChild ctx s0 startId
@@ -1247,18 +1439,22 @@ flatEffectfulASTGo !ctx !env !sIn view nid =
           s0
           ( \s ->
               let
-                (s1, Code oDecl oRef) = flatChild ctx s oId
-                (nBind, s2) = flatPlanIdent ctx s1 nid
+                (s1, MkCode oDecl oRef _) = flatChild ctx s oId
+                (nOpt, s2) = allocIdent s1
+                (nBind, s3) = flatPlanIdent ctx s2 nid
+                oBind = constBind s3 nOpt (fromMaybe "null" oRef)
+                valBind =
+                  constBind s3 nBind (jsText (identName s3 nOpt) <> ".value")
                in
-                (s2, oDecl $$ constBind s2 nBind oRef, nBind)
+                (s3, fromMaybe mempty oDecl $$ oBind $$ valBind, (nOpt, nBind))
           )
-          ( \mRes nBind s ->
+          ( \mRes (nOpt, _nBind) s ->
               let
                 (s1, MkCode nDecl nRef _) = flatChild ctx s nId
                 (s2, MkCode sDecl sRef _) = flatChild ctx s1 sId
-                cond = nJS s nBind <+> "===" <+> "null"
+                cond = nJS s nOpt <+> ".some"
                in
-                (s2, ifAssignOrStmt mRes cond nDecl nRef sDecl sRef)
+                (s2, ifAssignOrStmt mRes cond sDecl sRef nDecl nRef)
           )
       Flat.FX_ResultCaseE resId tagE errId tagO okId ->
         flatRenderResultCaseE ctx env s0 view nid resId tagE errId tagO okId
@@ -1358,5 +1554,3 @@ pureAST = pureASTWith idiomaticStyle
 pureASTWith :: EmitStyle -> ClosedExpr u -> JS
 pureASTWith style e =
   uncurry renderWithPreamble (flatPureCodegenWith style e)
-
--- | Stmt-only codegen for branching effects (no shared @let result@).

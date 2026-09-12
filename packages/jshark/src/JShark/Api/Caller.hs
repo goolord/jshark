@@ -6,6 +6,7 @@ module JShark.Api.Caller
   )
 where
 
+import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -55,8 +56,3 @@ skippedModules =
   [ "JShark.Api"
   , "JShark.Compiler"
   ]
-
-isPrefixOf :: Eq a => [a] -> [a] -> Bool
-isPrefixOf [] _ = True
-isPrefixOf _ [] = False
-isPrefixOf (x : xs) (y : ys) = x == y && isPrefixOf xs ys

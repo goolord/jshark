@@ -4,29 +4,26 @@
 
 module Main (main) where
 
-import qualified Data.Text as T
+import qualified Data.ByteString as BS
 import GHC.Clock (getMonotonicTime)
 import GHC.IO (evaluate)
-import JShark (effectfulAST, optimizedEffectSize, renderJS)
+import JShark (renderJS)
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect)
 import qualified JShark.Api.Types as Ty
 import JShark.Example.Life (mainJS)
+import JShark.Internal (effectfulAST, optimizedEffectSize)
 
 life :: ClosedEffect Ty.Unit
 life = stmts mainJS
 
 main :: IO ()
 main = do
-  putStrLn $ "rawNodes," ++ show (optimizedEffectSize life)
+  raw <- evaluate (optimizedEffectSize life)
+  putStrLn $ "rawNodes," ++ show raw
+  -- 'effectfulAST' returns a 'Data.ByteString.Builder.Builder', so the only
+  -- honest measurement is end-to-end: force the rendered bytes.
   t1 <- getMonotonicTime
-  let
-    doc = effectfulAST life
+  bytes <- evaluate (BS.length (renderJS (effectfulAST life)))
   t2 <- getMonotonicTime
-  evaluate doc
-  putStrLn $ "effectfulAST," ++ show (t2 - t1)
-  let
-    bytes = T.length (renderJS doc)
-  t3 <- getMonotonicTime
-  evaluate bytes
-  putStrLn $ show bytes ++ "," ++ show (t3 - t2)
+  putStrLn $ show bytes ++ "," ++ show (t2 - t1)
