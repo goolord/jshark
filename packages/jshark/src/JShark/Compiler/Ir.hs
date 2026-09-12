@@ -45,7 +45,7 @@ import Data.Bits (xor, (.&.), (.|.))
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.List (lookup)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -647,6 +647,16 @@ isIdentityEffect tag = \case
   IrLift x -> isIdentityIr tag x
   _ -> False
 
+-- | Only a closed lambda may be hoisted to a shared @$name@ binding: a
+-- capturing body would reference binders that are not in scope in the
+-- preamble. @md@ is the body metadata including the lambda's own binder.
+closeHoist :: Int -> LamInfo -> IrMeta -> LamInfo
+closeHoist tag info md
+  | isJust (lamTag info)
+  , not (IM.null (irFree (bindMeta tag md))) =
+      info {lamTag = Nothing}
+  | otherwise = info
+
 -- | Shared let\/bind eliminator. 'IrLet' and 'IrBind' differ in how a kept
 -- binding is rebuilt, how a dead one is rebuilt (@IrThenE@ drops the
 -- binder), and which right-hand sides count as aliases.
@@ -777,7 +787,7 @@ optIr !t0 node = case node of
       (t2, g', mdG) = optIr t1 g
      in
       ( t2
-      , IrApply (IrLambda bindTag info g') x'
+      , IrApply (IrLambda bindTag (closeHoist bindTag info mdG) g') x'
       , nodeMeta mdX mdG
       )
   IrApply (IrLambda tag LamInfo {lamTag = Nothing} g) x ->
@@ -816,8 +826,9 @@ optIrNode !t0 node = case node of
   IrLambda tag hoist g ->
     let
       (t1, g', md) = optIr t0 g
+      bound = bindMeta tag md
      in
-      (t1, IrLambda tag hoist g', bindMeta tag md)
+      (t1, IrLambda tag (closeHoist tag hoist md) g', bound)
   IrApply f x ->
     let
       (t1, f', mdF) = optIr t0 f

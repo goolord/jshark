@@ -26,6 +26,9 @@
     hoisted above the loop. They run inside a `while (true)` body with an
     explicit `if (!cond) break`, so the whole condition is re-evaluated
     every iteration.
+  * A named lambda that captures an outer binder is no longer hoisted to a
+    shared @$name@ preamble binding, where the capture was out of scope.
+    Only closed named lambdas hoist; capturing ones render inline.
 
 * Negative zero literals now compile to `-0.0` instead of `0`.
 

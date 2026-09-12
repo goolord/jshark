@@ -1789,6 +1789,13 @@ optimizeTests =
         )
         "const n0 = Math.sin(1);\np => {const n2 = p + 2;\nreturn ((n2 + n2) + n0) + n0}"
     , pureCodeCase
+        "capturing named lambda is not hoisted"
+        ( let_
+            (sin (number 1))
+            (\n -> namedLambda "f" (\x -> (x + n) + n))
+        )
+        "const n0 = Math.sin(1);\nn1 => (n1 + n0) + n0"
+    , pureCodeCase
         "array index of a literal folds"
         (Array.index numArray (number 0))
         "1"
