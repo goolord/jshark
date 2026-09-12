@@ -307,6 +307,14 @@ bunEvalTests =
                 u8ReadBeforeWrite
                 "0"
             , effectCase
+                "runtime-indexed read bound before a write keeps the value"
+                runtimeIndexReadBeforeWrite
+                "0"
+            , effectCase
+                "two allocations keep distinct identity"
+                allocationIdentity
+                "true"
+            , effectCase
                 "unsafeOptionToNative passes null / value to a foreign call"
                 optionArgNative
                 "42"
@@ -523,6 +531,25 @@ u8ReadBeforeWrite = fromSyntax $ do
   old <- bindExpr (expr (u8Index buf (number 0)))
   toSyntax_ (u8Set buf (number 0) (number 7))
   yield old
+
+-- | Same as 'u8ReadBeforeWrite' but the index comes from a runtime call, so
+-- constant folding cannot hide a reordering.
+runtimeIndexReadBeforeWrite :: forall f. Effect f 'Number
+runtimeIndexReadBeforeWrite = fromSyntax $ do
+  buf <- bindExpr (newByteArray (number 4))
+  i <- bindExpr (ffi "(() => 0)" RecNil)
+  old <- bindExpr (expr (u8Index buf i))
+  toSyntax_ (u8Set buf i (number 9))
+  yield old
+
+-- | Two independent allocations stay distinct: writing one does not touch
+-- the other.
+allocationIdentity :: forall f. Effect f 'Bool
+allocationIdentity = fromSyntax $ do
+  a <- bindExpr (newByteArray (number 1))
+  b <- bindExpr (newByteArray (number 1))
+  toSyntax_ (u8Set a (number 0) (number 1))
+  yield ((u8Index a (number 0) .== number 1) .&& (u8Index b (number 0) .== number 0))
 
 -- | A foreign callee that expects @number | null@. The tagged 'Option'
 -- must be unwrapped at the boundary: @none@ becomes native @null@ and
