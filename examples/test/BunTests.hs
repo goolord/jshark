@@ -38,6 +38,7 @@ import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
+import JShark.Promise (Promise, promiseCatch, promiseThen)
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Test.Support
@@ -306,6 +307,18 @@ bunEvalTests =
                 "a promise result is awaited, not stringified as {}"
                 (ffi "Promise.resolve" (arg (number 7) <: RecNil) :: Effect f 'Number)
                 "7"
+            , effectCase
+                "promiseThen resolves the handler result"
+                promiseThenValue
+                "6"
+            , effectCase
+                "promiseCatch receives the rejection reason"
+                promiseCatchReason
+                "\"caught:boom\""
+            , effectCase
+                "promiseThen adopts a returned promise"
+                promiseThenAdopt
+                "7"
             , testCase "a rejected promise fails the run" $ do
                 r <-
                   Ex.try
@@ -504,6 +517,39 @@ jsonStringifyBigInt :: forall f. Effect f 'String
 jsonStringifyBigInt = fromSyntax $ do
   s <- bindExpr (catch_ (Json.stringify (bigInt 1)) (\_ -> expr none))
   yield (orElse s (string "caught"))
+
+promiseThenValue :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseThenValue = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 5) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  r <- promiseThen p (\x -> expr (Var x + number 1))
+  toSyntax r
+
+promiseCatchReason :: forall f. Effect f ('MutableObject (Promise 'String))
+promiseCatchReason = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.reject" (arg (string "boom") <: RecNil) ::
+          Effect f ('MutableObject (Promise 'String))
+      )
+  r <- promiseCatch p (\e -> expr (Concat (string "caught:") (Var e)))
+  toSyntax r
+
+promiseThenAdopt :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseThenAdopt = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 1) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  r <-
+    promiseThen
+      p
+      (\_ -> ffi "Promise.resolve" (arg (number 7) <: RecNil) :: Effect f 'Number)
+  toSyntax r
 
 logHi :: forall f. Effect f 'Unit
 logHi = fromSyntax (Console.log (string "hi" :: Expr f 'String) *> done)

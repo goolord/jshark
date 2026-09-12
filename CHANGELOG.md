@@ -39,6 +39,14 @@
   throw. `stringifyPure` keeps the trusted, pure `Std` form for values the
   caller knows are JSON-safe.
 
+* `JShark.Promise.promiseThen`/`promiseCatch` now return the Promise the
+  call produced (a reusable `hold` handle) instead of a binder typed as
+  the resolved value; `promiseCatch`'s handler takes a caller-chosen
+  rejection-reason universe. `JShark.Ajax.fetch` is typed as
+  `Promise ('MutableObject FetchResponse)`. Bun tests cover resolution,
+  catch pass-through of the rejection reason, and returned-Promise
+  adoption.
+
 * `jshark-hotreload` WAI middleware: raw WAI responses are now passed
   through untouched (they are the wire output) instead of rewriting their
   fallback; HTML injection drops the now-stale `Content-Length` and skips

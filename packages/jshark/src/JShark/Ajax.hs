@@ -20,6 +20,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Promise (Promise)
 import Network.HTTP.Types
 
 -- | @new XMLHttpRequest()@, held so reuse references the object.
@@ -78,8 +79,11 @@ type instance Field FetchResponse "ok" = 'Bool
 
 type instance Field FetchResponse "status" = 'Number
 
--- | @fetch(url)@ — a 'FetchResponse' Promise; chain with
--- JShark.Promise.promiseThen.
+-- | @fetch(url)@ — the Promise of a 'FetchResponse', bound as a reusable
+-- handle. Chain with JShark.Promise.promiseThen.
 fetch ::
-  Expr f 'String -> EffectSyntax f (Effect f ('MutableObject FetchResponse))
+  Expr f 'String
+  -> EffectSyntax
+       f
+       (Effect f ('MutableObject (Promise ('MutableObject FetchResponse))))
 fetch url = hold $ ffi "fetch" (arg url <: RecNil)
