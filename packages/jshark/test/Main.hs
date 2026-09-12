@@ -336,6 +336,16 @@ codegenTests =
         "effectful console.log FFI call"
         (fromSyntax (Console.log ("hi" :: Expr f 'String) *> toSyntax noOp))
         "console.log(\"hi\");"
+    , effectContains
+        "sequencing a do-block statement preserves its effects"
+        ( fromSyntax $
+            ( do
+                x <- toSyntax fooE
+                toSyntax_ (ffi "bar" (arg (Var x) <: RecNil))
+            )
+              *> done
+        )
+        ["foo()", "bar("]
     , pureCodeCase "OverloadedStrings Expr literal" ("hi" :: Expr f 'String) "\"hi\""
     , pureCodeCase
         "OverloadedStrings Value via Literal"
@@ -1753,6 +1763,16 @@ optimizeTests =
         "multi-use let inside a lambda stays inside the function"
         (lambda (\x -> let_ (x + x) (\y -> y + y)))
         "n0 => {const n1 = n0 + n0;\nreturn n1 + n1}"
+    , pureCodeCase
+        "fnLit body keeps the enclosing binding distinct"
+        ( let_
+            (sin (number 1))
+            ( \z ->
+                fnLit @'[Param "p" 'Number] $ \p ->
+                  let_ (p.p + number 2) (\q -> q + q + z + z)
+            )
+        )
+        "const n0 = Math.sin(1);\np => {const n2 = p + 2;\nreturn ((n2 + n2) + n0) + n0}"
     , pureCodeCase
         "array index of a literal folds"
         (Array.index numArray (number 0))

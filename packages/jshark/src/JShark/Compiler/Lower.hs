@@ -540,26 +540,28 @@ lowerFnBodyAt ::
 lowerFnBodyAt !t0 body =
   let
     (tags, tEnd) = allocFnTags t0 body
-    (names, body') = lowerFnBodyTags tags body
+    (t1, names, body') = lowerFnBodyTags tEnd tags body
    in
-    (tEnd, tags, names, body')
+    (t1, tags, names, body')
 
-lowerFnBodyTags :: [Int] -> FnBody Stamp us r -> ([(Maybe Text)], Ir.IrNode)
-lowerFnBodyTags _ (JfNil e) = ([], lowerExpr e)
-lowerFnBodyTags (t : ts) (JfCons pn k) =
+-- | Lower the body under the parameter tags. @tEnd@ is the first stamp
+-- below every parameter tag; threading it (rather than restarting at
+-- 'lowerExpr' / @-2@) keeps binder IDs fresh against the enclosing
+-- expression and against the parameters themselves.
+lowerFnBodyTags ::
+  Int -> [Int] -> FnBody Stamp us r -> (Int, [(Maybe Text)], Ir.IrNode)
+lowerFnBodyTags tEnd _ (JfNil e) =
   let
-    (restNames, body') = lowerFnBodyTags ts (k (Name t))
+    (t1, e') = lowerExprAt tEnd e
    in
-    (pn : restNames, body')
-lowerFnBodyTags [] (JfCons {}) =
+    (t1, [], e')
+lowerFnBodyTags tEnd (t : ts) (JfCons pn k) =
+  let
+    (t1, restNames, body') = lowerFnBodyTags tEnd ts (k (Name t))
+   in
+    (t1, pn : restNames, body')
+lowerFnBodyTags _ [] (JfCons {}) =
   error "JShark.lowerFnBodyTags: arity mismatch"
-
-lowerExpr :: Expr Stamp u -> Ir.IrNode
-lowerExpr e =
-  let
-    (!_, !ir) = lowerExprAt (-2) e
-   in
-    ir
 
 lowerEffectClosed :: ClosedEffect u -> Ir.IrNode
 lowerEffectClosed (e :: ClosedEffect u) =

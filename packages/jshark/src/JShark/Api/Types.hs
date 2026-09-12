@@ -1341,7 +1341,10 @@ instance Applicative (EffectSyntax v) where
   pure = EffectSyntaxPure
   (<*>) = ap
   EffectSyntaxPure _ *> b = b
-  EffectSyntaxUnpure _ m _ *> b = EffectSyntaxThen m b
+  -- Bind the effect, discard the binder, then run the continuation
+  -- @g@. Dropping @g@ would silently lose every effect it sequences.
+  EffectSyntaxUnpure hint m g *> b =
+    EffectSyntaxUnpure hint m (\x -> g x *> b)
   EffectSyntaxThen m g *> b = EffectSyntaxThen m (g *> b)
 
 -- Analogous to the Monad instance for RelativeMSyntax in section 3.3.
