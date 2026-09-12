@@ -18,15 +18,11 @@ life = stmts mainJS
 
 main :: IO ()
 main = do
-  putStrLn $ "rawNodes," ++ show (optimizedEffectSize life)
+  raw <- evaluate (optimizedEffectSize life)
+  putStrLn $ "rawNodes," ++ show raw
+  -- 'effectfulAST' returns a lazy 'TextBuilder', so the only honest
+  -- measurement is end-to-end: force the rendered bytes.
   t1 <- getMonotonicTime
-  let
-    doc = effectfulAST life
+  bytes <- evaluate (T.length (renderJS (effectfulAST life)))
   t2 <- getMonotonicTime
-  evaluate doc
-  putStrLn $ "effectfulAST," ++ show (t2 - t1)
-  let
-    bytes = T.length (renderJS doc)
-  t3 <- getMonotonicTime
-  evaluate bytes
-  putStrLn $ show bytes ++ "," ++ show (t3 - t2)
+  putStrLn $ show bytes ++ "," ++ show (t2 - t1)
