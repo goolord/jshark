@@ -228,6 +228,9 @@ reduceRight arr z f = Std (Method (MethReduceRight arr z (\a x -> f (var a) (var
 
 -- | @[x]@. One-element array; used by 'JShark.Api.Classes.pure'.
 singleton :: Expr f u -> Expr f ('Array u)
+-- A literal element makes a literal singleton array (@[x]@), avoiding a
+-- @[undefined].map@ that has to allocate and call back.
+singleton (Literal v) = Literal (ValueArray [v])
 singleton x = map (Literal (ValueArray [ValueUnit])) (\_ -> x)
 
 -- | @[{key, items}]@ in first-seen key order. One @$groupBy@ pass using a

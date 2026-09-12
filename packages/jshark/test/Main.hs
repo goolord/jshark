@@ -1042,8 +1042,7 @@ stdlibTests =
         True
     , testCase "Array.singleton is a one-element array" $ do
         evaluateNumber (Array.length (Array.singleton (number 7))) @?= 1
-        T.isInfixOf "[]" (renderJsText (pureAST (Array.singleton (number 7))))
-          @?= False
+        renderJsText (pureAST (Array.singleton (number 7))) @?= "[7]"
     , pureCodeCase
         "unit array literal keeps its slots"
         (Literal (ValueArray [ValueUnit, ValueUnit]))

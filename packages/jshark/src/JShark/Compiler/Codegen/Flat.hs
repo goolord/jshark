@@ -17,9 +17,7 @@
 -- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Codegen.Flat where
 
-import Control.Monad (forM_)
 import Control.Monad.ST (runST)
-import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.IntMap.Strict as IM
 import Data.List (mapAccumL)
 import Data.Maybe (fromMaybe, isJust, isNothing)
@@ -683,10 +681,18 @@ flatRenderStringCaseE ctx s0 view nid scrutId ai defId =
 
 type FlatCodeTable = V.Vector Code
 
-newtype FlatTableRead = FlatTableRead (MV.IOVector Code)
+-- | Codes already emitted, keyed by node id. Immutable: the emit driver
+-- folds child-before-parent, so a lookup can only see an already-emitted
+-- child. This replaces the old mutable vector whose reads were wrapped in
+-- @unsafePerformIO@ (pure-looking reads of a table being mutated).
+newtype FlatTableRead = FlatTableRead (IM.IntMap Code)
 
-flatTableLookup (FlatTableRead mv) i =
-  unsafePerformIO (MV.read mv i)
+flatTableLookup :: FlatTableRead -> Flat.NodeId -> Code
+flatTableLookup (FlatTableRead m) i =
+  case IM.lookup i m of
+    Just c -> c
+    Nothing ->
+      error ("JShark.Compiler.Codegen.Flat: node " <> show i <> " emitted before its child")
 {-# NOINLINE flatTableLookup #-}
 
 data FlatEmitPlan = FlatEmitPlan
@@ -1007,29 +1013,25 @@ buildFlatEmitPlan view root s0 =
         )
 
 flatEmitLayered view root plan s0 =
-  unsafePerformIO $ do
-    let
-      n = Flat.flatSoaNodeCount view
-      emitOrder = concatMap V.toList (V.toList (fepLayers plan))
-    tableMV <- MV.new n
-    MV.set tableMV (Code mempty mempty)
-    let
-      tableRead = FlatTableRead tableMV
-    sRef <- newIORef s0
-    forM_ emitOrder $ \nid -> do
-      s <- readIORef sRef
-      let
-        ctx = FlatEmitCtx {fecTable = tableRead, fecPlan = plan}
-        env = flatPlanEnv plan nid
-        (s', code) =
-          if flatNodeKindEffect view nid
-            then flatEffectfulASTGo ctx env s view nid
-            else flatPureASTGo ctx env s view nid
-      MV.write tableMV nid code
-      writeIORef sRef s'
-    sFinal <- readIORef sRef
-    rootCode <- MV.read tableMV root
-    pure (sFinal, rootCode)
+  let
+    emitOrder = concatMap V.toList (V.toList (fepLayers plan))
+    (!tableFinal, !sFinal) =
+      foldl'
+        ( \(!table, !s) nid ->
+            let
+              ctx = FlatEmitCtx {fecTable = FlatTableRead table, fecPlan = plan}
+              env = flatPlanEnv plan nid
+              (s', code) =
+                if flatNodeKindEffect view nid
+                  then flatEffectfulASTGo ctx env s view nid
+                  else flatPureASTGo ctx env s view nid
+             in
+              (IM.insert nid code table, s')
+        )
+        (IM.empty, s0)
+        emitOrder
+   in
+    (sFinal, flatTableLookup (FlatTableRead tableFinal) root)
 {-# NOINLINE flatEmitLayered #-}
 
 flatPureASTGo !ctx !env !sIn view nid =

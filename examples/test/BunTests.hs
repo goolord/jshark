@@ -319,6 +319,10 @@ bunEvalTests =
                 optionArgNative
                 "42"
             , effectCase "Map insert then lookup" mapRoundTrip "\"v\""
+            , effectCase
+                "groupBy skips holes and keeps first-seen key order"
+                groupBySparseKeys
+                "\"a,b\""
             , effectCase "Set insert then member" setMember "true"
             , effectCase "Map foldM sums values" mapFold "3"
             , effectCase "Map mapM_ runs" mapForEach "undefined"
@@ -575,6 +579,21 @@ mapRoundTrip = fromSyntax $ Map.withMap $ \m -> do
   _ <- Map.insert m (string "k") (string "v")
   v <- Map.lookup m (string "k")
   yield (orElse v (string "missing"))
+
+-- | A sparse array (holes at 0) with first-seen keys @a@, @b@, @a@: the
+-- generated @$groupBy@ must skip the hole and keep first-seen key order.
+groupBySparseKeys :: forall f. Effect f 'String
+groupBySparseKeys = fromSyntax $ do
+  arr <-
+    bindExpr
+      ( ffiExpr
+          "(function(){var a=[];a[1]='a';a[2]='b';a[3]='a';return a;})()"
+          RecNil ::
+          Effect f ('Array 'String)
+      )
+  g <- bindExpr (expr (Array.groupBy arr (\x -> x)))
+  keys <- bindExpr (expr (Array.map g (\grp -> grp.key)))
+  yield (Array.join keys (string ","))
 
 setMember :: forall f. Effect f 'Bool
 setMember = fromSyntax $ Set.withSet $ \s -> do
