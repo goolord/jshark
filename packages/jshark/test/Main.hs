@@ -44,6 +44,8 @@ import JShark.Internal
   , effectfulAST
   , effectfulASTWith
   , pureAST
+  , validateOptimizedEffect
+  , validateOptimizedExpr
   )
 import qualified JShark.Json as Json
 import qualified JShark.Map as Map
@@ -71,6 +73,8 @@ tests =
   testGroup
     "jshark"
     [ evaluatorTests
+    , evaluationOutcomeTests
+    , validationTests
     , rewriteRuleTests
     , bigIntTests
     , codegenTests
@@ -82,6 +86,114 @@ tests =
     , flatSoATests
     , compilerTests
     , ergonomicsTests
+    ]
+
+-- | Host evaluation must separate success from JS-like failure and from
+-- unsupported constructs, rather than collapsing all three into @error@.
+evaluationOutcomeTests :: TestTree
+evaluationOutcomeTests =
+  testGroup
+    "evaluation outcomes"
+    [ testCase "success is Right" $ do
+        r <- tryEvaluate (number 1 + number 2 :: ClosedExpr 'Number)
+        case r of
+          Right (ValueNumber d) -> d @?= 3
+          Left e -> assertFailure ("unexpected failure: " <> show e)
+    , testCase "Error node is a JS-like failure" $ do
+        r <- tryEvaluate (Error (string "boom") :: ClosedExpr 'Number)
+        case r of
+          Left (EvalJsFailure msg) -> msg @?= "boom"
+          Left other -> assertFailure ("expected EvalJsFailure, got " <> show other)
+          Right _ -> assertFailure "expected a failure, got a value"
+    , testCase "out-of-bounds index is a JS-like failure" $ do
+        let
+          e :: ClosedExpr 'Number
+          e = Index (Literal (ValueArray [ValueNumber 1])) (number 3)
+        r <- tryEvaluate e
+        case r of
+          Left (EvalJsFailure msg) ->
+            assertBool
+              ("bounds message: " <> T.unpack msg)
+              ("out of bounds" `T.isInfixOf` msg)
+          Left other -> assertFailure ("expected EvalJsFailure, got " <> show other)
+          Right _ -> assertFailure "expected a failure, got a value"
+    , testCase "an op with no host rule is unsupported" $ do
+        r <- tryEvaluate (Str.toUpper (string "a") :: ClosedExpr 'String)
+        case r of
+          Left (EvalUnsupported _) -> pure ()
+          Left other -> assertFailure ("expected EvalUnsupported, got " <> show other)
+          Right _ -> assertFailure "expected a failure, got a value"
+    ]
+
+validationMutation :: forall f. Effect f 'Number
+validationMutation = fromSyntax $ do
+  buf <- bindExpr (newByteArray (number 1))
+  old <- bindExpr (expr (u8Index buf (number 0)))
+  toSyntax_ (u8Set buf (number 0) (number 7))
+  yield old
+
+validationExcept :: forall f. Effect f 'Number
+validationExcept = catch_ (throw_ (string "boom")) (\_ -> expr (number 7))
+
+validationShortCircuit :: forall f. Effect f 'Number
+validationShortCircuit = fromSyntax $ do
+  a <- bindExpr (ffi "condA" RecNil)
+  b <- bindExpr (ffi "condB" RecNil)
+  yield (if_ (And a b) (number 1) (number 2))
+
+validationCapture :: forall f. Effect f 'Number
+validationCapture = fromSyntax $ do
+  x <- bindExpr (ffi "n" RecNil)
+  let f = lambda (\y -> y + x)
+  yield (apply f (number 1))
+
+validationCollision :: forall f. Effect f 'Number
+validationCollision = fromSyntax $ do
+  a <- bindExpr (ffi "a" RecNil)
+  b <- bindExpr (ffi "a" RecNil)
+  yield (a + b)
+
+captureExpr :: ClosedExpr 'Number
+captureExpr =
+  let_ (number 2) (\x -> apply (lambda (\y -> y * x)) (number 21))
+
+-- | The optimizer and substitution passes must keep every variable bound
+-- with fresh binders. These cover mutation order, exceptions, loops,
+-- short-circuiting, captures, name collisions, and shared inputs.
+validationTests :: TestTree
+validationTests =
+  testGroup
+    "ir validation"
+    [ testCase "mutation order" $
+        validateOptimizedEffect validationMutation @?= []
+    , testCase "exception handling" $
+        validateOptimizedEffect validationExcept @?= []
+    , testCase "short-circuit" $
+        validateOptimizedEffect validationShortCircuit @?= []
+    , testCase "captures" $
+        validateOptimizedEffect validationCapture @?= []
+    , testCase "name collisions" $
+        validateOptimizedEffect validationCollision @?= []
+    , testCase "loop with conditional write" $
+        validateOptimizedEffect
+          ( fromSyntax $ do
+              buf <- bindExpr (newByteArray (number 4))
+              _ <-
+                forRange_ (number 0) (number 4) $ \i ->
+                  whenS (i .< number 2) (toSyntax (u8Set buf i (number 1)))
+              yield (u8Index buf (number 1))
+          )
+          @?= []
+    , testCase "option and result cases" $
+        validateOptimizedEffect
+          ( fromSyntax $ do
+              o <- bindExpr (expr (some (number 3)))
+              n <- bindExpr (expr (optionCase o (number 0) (\x -> x + number 1)))
+              yield n
+          )
+          @?= []
+    , testCase "pure capture is well-scoped" $
+        validateOptimizedExpr captureExpr @?= []
     ]
 
 bigIntTests :: TestTree
@@ -716,11 +828,11 @@ stdlibTests =
         evaluateNumber (Array.index numArray (number 1.9)) @?= 2
     , testCase "Array.index out of bounds throws" $
         assertThrows
-          "evaluate: array index"
+          "array index out of bounds"
           (evaluateNumber (Array.index numArray (number 9)))
     , testCase "Array.index NaN is out of bounds" $
         assertThrows
-          "evaluate: array index"
+          "array index out of bounds"
           (evaluateNumber (Array.index numArray (number (0 / 0))))
     , effectContains
         "Array.index truncates and throws out of bounds"

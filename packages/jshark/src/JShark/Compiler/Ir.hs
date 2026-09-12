@@ -36,6 +36,7 @@ module JShark.Compiler.Ir
   , optIr
   , occursIr
   , lazyOccursIr
+  , validateIr
   , effectMd
   , optStep
   , optSmall
@@ -370,6 +371,51 @@ forceIr node = case node of
   IrLiteral _ -> ()
   IrVar _ -> ()
   _ -> foldl' (\ !() c -> forceIr c) () (irNodeChildren node)
+
+-- | Validate that every 'IrVar' is bound and every binder is unique along
+-- its scope path. Returns one message per problem; @[]@ means well-scoped
+-- with fresh binders. Sibling scopes may reuse tags. Used to police the
+-- optimizer and substitution passes (especially alias inlining and
+-- hoisting), which are the places a binder can escape or collide.
+validateIr :: IrNode -> [Text]
+validateIr = go []
+ where
+  go :: [Int] -> IrNode -> [Text]
+  go scope node = case node of
+    IrVar i -> [T.pack "unbound variable #" <> tshow i | i `notElem` scope]
+    IrLiteral _ -> []
+    IrLet tag _ x b -> go scope x <> under tag scope b
+    IrLetRec tag r b -> under tag scope r <> under tag scope b
+    IrLambda tag _ b -> under tag scope b
+    IrOptionCase o n tag s -> go scope o <> go scope n <> under tag scope s
+    IrResultCase o tagE er tagO ok ->
+      go scope o <> under tagE scope er <> under tagO scope ok
+    IrFnLit tags _ b ->
+      let
+        (errs, scope') = foldl' addOne ([], scope) tags
+        addOne (es, sc) t
+          | t `elem` sc = (es <> [dupMsg t], sc)
+          | otherwise = (es, t : sc)
+       in
+        errs <> go scope' b
+    IrBind tag _ x b -> go scope x <> under tag scope b
+    IrBindRec tag r b -> under tag scope r <> under tag scope b
+    IrLambdaE tag b -> under tag scope b
+    IrForRange s e tag b -> go scope s <> go scope e <> under tag scope b
+    IrOptionCaseE o n tag s -> go scope o <> go scope n <> under tag scope s
+    IrResultCaseE o tagE er tagO ok ->
+      go scope o <> under tagE scope er <> under tagO scope ok
+    IrTry a tag k -> go scope a <> under tag scope k
+    _ -> concatMap (go scope) (irNodeChildren node)
+
+  under :: Int -> [Int] -> IrNode -> [Text]
+  under tag scope body
+    | tag `elem` scope = dupMsg tag : go (tag : scope) body
+    | otherwise = go (tag : scope) body
+  dupMsg :: Int -> Text
+  dupMsg tag = T.pack "duplicate binder #" <> tshow tag
+  tshow :: Int -> Text
+  tshow = T.pack . show
 
 -- | Does @t@ occur anywhere in @node@? Unlike a free-variable map this
 -- short-circuits on the first hit and allocates nothing.

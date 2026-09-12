@@ -1,4 +1,6 @@
+{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Deliberate internal access for tests, benchmarks, and tooling.
 --
@@ -19,6 +21,8 @@ module JShark.Internal
   , flatSoaNodeCount
   , optimizedExprSize
   , optimizedEffectSize
+  , validateOptimizedEffect
+  , validateOptimizedExpr
 
     -- * JsShim
   , Builtin (ValueEq)
@@ -26,6 +30,8 @@ module JShark.Internal
   )
 where
 
+import Data.Text (Text)
+import JShark.Api.Types (ClosedEffect, ClosedExpr)
 import JShark.Compiler.Codegen.Core (flatPrepareCore)
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
@@ -41,6 +47,17 @@ import JShark.Compiler.JsShim
   )
 import JShark.Compiler.Lower
   ( irEffectFromClosed
+  , lowerOptExprIr
   , optimizedEffectSize
   , optimizedExprSize
   )
+import qualified JShark.Compiler.Ir as Ir
+
+-- | Scope/binder problems in the optimized IR of a closed effect (@[]@ is
+-- valid). Cheap enough for tests; not run in the production path.
+validateOptimizedEffect :: ClosedEffect u -> [Text]
+validateOptimizedEffect e = Ir.validateIr (irEffectFromClosed e)
+
+-- | 'validateOptimizedEffect' for a closed pure expression.
+validateOptimizedExpr :: ClosedExpr u -> [Text]
+validateOptimizedExpr e = Ir.validateIr (fst (lowerOptExprIr False e))

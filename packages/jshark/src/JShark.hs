@@ -113,6 +113,8 @@ module JShark
     , ArrayLit
     )
   , evaluate
+  , tryEvaluate
+  , EvalFailure (..)
   , evaluateNumber
   , evaluateBigInt
   , packUint8
@@ -137,11 +139,13 @@ import JShark.Compiler.Codegen.Flat
   )
 import JShark.Compiler.Emit (JS, renderJS)
 import JShark.Compiler.Evaluate
-  ( escapeJsString
+  ( EvalFailure (..)
+  , escapeJsString
   , evaluate
   , evaluateBigInt
   , evaluateNumber
   , packUint8
+  , tryEvaluate
   , uint8Elems
   )
 

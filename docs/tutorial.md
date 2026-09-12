@@ -107,10 +107,23 @@ compose statements, `while_` loops, `forRange_` is the counting loop,
 
 Options are tagged JS values: `none` is `{some: false}`, `some x` is
 `{some: true, value: x}` (so `Option (Option a)` faithfully nests).
-`unsafeNullable` converts a native @null@/value from an FFI boundary into
-a tagged option. `Result` is `{ok, value}`. Branch with `optionCase`
-(expressions), `optionCaseE` + `whenSomeS`/`whenNoneS` (statements),
-`resultCase` / `resultCaseE`.
+At a foreign boundary `unsafeNullable` converts a native `null`/value
+from an FFI result into a tagged option, and `unsafeOptionToNative`
+unwraps a tagged option back to native `null`/value when passing it to a
+foreign parameter declared `T | null`; generated bindings use both.
+`Result` is `{ok, value}`. Branch with `optionCase` (expressions),
+`optionCaseE` + `whenSomeS`/`whenNoneS` (statements), `resultCase` /
+`resultCaseE`.
+
+Host evaluation mirrors the compiled semantics for pure terms, but keeps
+failures distinct: `evaluate` returns a `Value` (and throws), while
+`tryEvaluate` reports `EvalJsFailure` for a JS-like throw (including a
+checked index out of bounds) and `EvalUnsupported` for constructs the
+interpreter does not model (functions, effectful object fields, ops with
+no host rule). Structural equality (`structuralEq`/`.==`) compares
+arrays, objects, options, and results by value; reference `===` is not
+exposed. JS numeric edge cases are preserved (`NaN`, `±Infinity`, `-0`,
+`Math.round` halves toward `+Infinity`).
 
 ## DOM and typed events
 

@@ -237,14 +237,16 @@ assertJSContains needle haystack =
       <> " in:\n"
       <> T.unpack haystack
 
--- | Force @x@ to WHNF and assert it throws an 'ErrorCall' containing @needle@.
+-- | Force @x@ to WHNF and assert it throws an 'EvalFailure' or 'ErrorCall'
+-- whose rendered message contains @needle@.
 assertThrows :: Show a => String -> a -> IO ()
 assertThrows needle x = do
   r <- E.try (E.evaluate x)
   case r of
-    Left (E.ErrorCall msg)
-      | T.pack needle `T.isInfixOf` T.pack msg -> pure ()
-      | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+    Left (e :: E.SomeException)
+      | T.pack needle `T.isInfixOf` T.pack (E.displayException e) -> pure ()
+      | otherwise ->
+          assertFailure ("unexpected exception: " <> E.displayException e)
     Right v -> assertFailure ("expected throw, got " <> show v)
 
 requireBiome :: IO ()
