@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+* **Breaking:** optimized IR metadata now carries independent movement,
+  discard, purity, and cost permissions instead of a single `irPure` bit.
+  Mutable reads (`u8[i]`, generic array indexing, array-reading fixed ops)
+  and `IrError`/`IrTry` are no longer treated as movable/effect-free, so a
+  read bound before a write is not inlined across it (`u8Index buffer 0`
+  followed by a write now logs the pre-write byte). `IrMeta` gained
+  `irMove`/`irDrop`; `JShark.Compiler.Ir` also exposes `validateIr`.
+
+* **Breaking:** `Promise.promiseThen` reflects JS adoption through the
+  `Resolved` type family (a handler returning `Promise v` yields
+  `Promise v`), and `Promise.promiseCatch` now requires the handler to
+  recover to the original resolution type `u`, returning `Promise u`.
+  `promiseThenValue`/`promiseCatchReason` consumers are unchanged.
+
+* **Breaking:** `JShark.Api` adds `unsafeOptionToNative` and
+  `unsafeOptionToNativeEffect` (tagged `Option` to native `null`/value, the
+  inverse of `unsafeNullable`). `jshark-bindgen` emits them so a
+  `T | null` argument is unwrapped at the boundary instead of passing a
+  tagged object to native JS; nested nullables (arrays/callbacks) are
+  reported as diagnostics rather than converted silently.
+
+* **Breaking:** host evaluation distinguishes outcomes. `tryEvaluate`
+  returns an `EvalFailure` (`EvalJsFailure` for a JS-like throw such as an
+  out-of-bounds checked index, `EvalUnsupported` for functions/effectful
+  fields/ops with no host rule); `evaluate` still throws. `UnsafeNullable`
+  keeps a tagged nested `Option` present rather than collapsing it.
+
+* `jshark-bindgen` extractor JSON is versioned and validated on decode;
+  TypeScript 5.9.3 is pinned; every overload is extracted with a stable
+  identity and emitted under a distinct name; the extractor resolves
+  TypeScript from an env override, the extractor's directory, or the
+  consumer's `node_modules`. Golden modules for every fixture are compiled,
+  and a generated wrapper is executed against a JS fixture.
+
+* Hot reload publishes status and events in one transaction with a
+  monotonic revision on the snapshot; the SSE loop polls so a disconnected
+  client is torn down without waiting for the next broadcast; rewritten HTML
+  drops stale `ETag`/`Content-MD5`; and the watcher drain worker is joined on
+  dispose.
+
+* `JShark.Lucid` replaces render-time `error` strings with structured
+  `TemplateError` values (element path + message) and a `templateErrors`
+  validator for orphan modifiers and void-element children.
+
+* The release workflow verifies tag/version agreement, builds and tests the
+  unpacked source distributions outside the monorepo, installs
+  `jshark-bindgen`, runs it on a shipped fixture, and publishes only the
+  tarballs that passed verification (`scripts/check-tag-version.sh`,
+  `scripts/verify-sdists.sh`). The library packages now allow
+  `containers < 0.9` for GHC 9.14's boot library.
+
 * **Breaking:** compiler output is now strict `ByteString`, built with
   `Data.ByteString.Builder` instead of `Text`/`text-builder`. `renderJS`
   returns `ByteString`, and `compileEffect`, `compileEffectPure`,

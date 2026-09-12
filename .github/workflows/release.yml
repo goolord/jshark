@@ -1,9 +1,9 @@
 name: Release
 
-# Cut a release by pushing a tag like `v0.1.0.0`. Builds source
-# distributions, verifies each package with `cabal check`, publishes the
-# four library packages to Hackage (when HACKAGE_TOKEN is configured), and
-# creates a GitHub Release with the tarballs attached.
+# Cut a release by pushing a tag like `v0.1.0.0`. The tag must match every
+# published package's cabal version. Everything is built and tested from the
+# unpacked source distributions before anything is uploaded, and only the
+# tarballs that passed verification are published.
 
 on:
   push:
@@ -14,10 +14,25 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install LLVM 20
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-20
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install Biome
+        run: bun install -g @biomejs/biome@2.5.11
 
       - uses: haskell-actions/setup@v2
         id: setup
@@ -27,16 +42,44 @@ jobs:
 
       - run: cabal update
 
+      - name: Tag and package versions agree
+        if: github.ref_type == 'tag'
+        run: ./scripts/check-tag-version.sh "$GITHUB_REF_NAME"
+
+      - name: Build and test the checkout
+        run: cabal test all --test-show-details=direct --test-options='+RTS -N1 -M4G -RTS -t120'
+
       - name: Hackage checks
         run: |
           for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
             (cd "packages/$p" && cabal check)
           done
 
-      - name: Source distributions
-        run: cabal sdist jshark jshark-lucid jshark-bindgen jshark-hotreload
+      # Builds/tests the unpacked sdists outside the monorepo (no root
+      # overrides), installs jshark-bindgen, and runs it on a shipped fixture.
+      # Leaves the exact verified tarballs in dist-newstyle/sdist.
+      - name: Verify source distributions
+        run: ./scripts/verify-sdists.sh
 
-      - name: Upload to Hackage
+      - name: Collect verified tarballs
+        id: tarballs
+        run: |
+          version=$(sed -n 's/^version:[[:space:]]*//p' packages/jshark/jshark.cabal | head -1 | tr -d '[:space:]')
+          paths=""
+          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+            t="dist-newstyle/sdist/$p-$version.tar.gz"
+            test -f "$t" || { echo "missing verified tarball $t" >&2; exit 1; }
+            paths="$paths $t"
+          done
+          echo "paths=$paths" >> "$GITHUB_OUTPUT"
+
+      - name: Upload verified tarballs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-sdists
+          path: ${{ steps.tarballs.outputs.paths }}
+
+      - name: Publish to Hackage
         env:
           HACKAGE_TOKEN: ${{ secrets.HACKAGE_TOKEN }}
         run: |
@@ -44,14 +87,14 @@ jobs:
             echo "HACKAGE_TOKEN is not set; skipping Hackage upload."
             exit 0
           fi
-          # jshark first so dependents resolve; Hackage accepts an upload
-          # even while dependencies are still being ingested.
+          # jshark first so dependents resolve.
+          version=$(sed -n 's/^version:[[:space:]]*//p' packages/jshark/jshark.cabal | head -1 | tr -d '[:space:]')
           for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
-            cabal upload --publish --token="$HACKAGE_TOKEN" dist-newstyle/sdist/$p-*.tar.gz
+            cabal upload --publish --token="$HACKAGE_TOKEN" "dist-newstyle/sdist/$p-$version.tar.gz"
           done
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist-newstyle/sdist/*.tar.gz
+          files: ${{ steps.tarballs.outputs.paths }}

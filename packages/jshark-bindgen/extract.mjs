@@ -11,11 +11,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
 function loadTypescript() {
+  // A loaded module must look like the TypeScript compiler API; a stray
+  // global `typescript` shim would otherwise fail deep inside the extractor.
+  const asCompiler = (mod) =>
+    mod && typeof mod.createProgram === "function" && mod.ModuleResolutionKind
+      ? mod
+      : null;
   // Explicit override: path to a typescript package directory.
   const override = process.env.JSHARK_BINDGEN_TYPESCRIPT;
   if (override) {
     try {
-      return require(resolve(override));
+      const ts = asCompiler(require(resolve(override)));
+      if (ts) return ts;
     } catch {
       // fall through to the other candidates
     }
@@ -37,23 +44,28 @@ function loadTypescript() {
       continue;
     }
     try {
-      return require(c);
+      const ts = asCompiler(require(c));
+      if (ts) return ts;
+      tried.push(c + " (not the TypeScript API)");
     } catch {
       tried.push(c);
     }
   }
   try {
-    return require("typescript");
+    const ts = asCompiler(require("typescript"));
+    if (ts) return ts;
+    tried.push("typescript (not the TypeScript API)");
   } catch {
-    console.error(
-      "jshark-bindgen: typescript not found.\n" +
-        "  Install it next to extract.mjs (`cd jshark-bindgen && bun install`),\n" +
-        "  add it to the consuming project, or set JSHARK_BINDGEN_TYPESCRIPT\n" +
-        "  to a typescript package directory.\n  searched:\n    " +
-        tried.join("\n    "),
-    );
-    process.exit(2);
+    tried.push("typescript");
   }
+  console.error(
+    "jshark-bindgen: typescript not found.\n" +
+      "  Install it next to extract.mjs (`cd jshark-bindgen && bun install`),\n" +
+      "  add it to the consuming project, or set JSHARK_BINDGEN_TYPESCRIPT\n" +
+      "  to a typescript package directory.\n  searched:\n    " +
+      tried.join("\n    "),
+  );
+  process.exit(2);
 }
 
 const ts = loadTypescript();
