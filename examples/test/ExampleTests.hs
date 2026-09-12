@@ -46,6 +46,12 @@ exampleTests =
       , parseExampleCase "todo-mvc" (stmts TodoMvc.mainJS)
       , parseExampleCase "synth" (stmts Synth.mainJS)
       , parseExampleCase "life" (stmts Life.mainJS)
+      , testCase "synth registers an audio dispose hook" $ do
+          js <- renderExample (stmts Synth.mainJS)
+          assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
+      , testCase "life registers a renderer dispose hook" $ do
+          js <- renderExample (stmts Life.mainJS)
+          assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
       ]
 
 parseExampleCase :: String -> ClosedEffect 'Unit -> TestTree

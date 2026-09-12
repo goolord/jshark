@@ -142,6 +142,12 @@ boot ::
   -> EffectSyntax f (f 'Unit)
 boot canvas app = do
   appH <- hold (expr app)
+  -- Register a dispose hook so a hot reload destroys the old Pixi renderer
+  -- (and its textures) instead of leaking a WebGL context per reload.
+  toSyntax_ $
+    ffi
+      "app => { window.__JSHARK_DISPOSE__ = function () { try { app.destroy(true, { children: true, texture: true, baseTexture: true }); } catch (_) {} }; }"
+      (arg app <: RecNil)
   viewport <- initViewport
   Profile.install canvas viewport
   renderDirty <- hold (toObject (RenderDirty 0 0 0 0 False False))

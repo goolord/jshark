@@ -132,8 +132,8 @@ lifeTests =
               js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTFromSoA soa))
               -- Mutable array reads (u8Index, FixArrLen, …) are no longer
               -- moved/inlined across writes, so a handful stay as bindings.
-              irNodes @?= 70672
-              T.length js @?= 880486
+              irNodes @?= 70675
+              T.length js @?= 880643
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $
               renderJS
                 ( effectfulAST
