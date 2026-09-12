@@ -4,7 +4,7 @@ module Main (main) where
 
 import BunTests (bunEvalTests)
 import CatalogTests (catalogTests)
-import ExampleTests (exampleTests)
+import ExampleTests (exampleTests, watchMappingTests)
 import LifeTests (lifeTests)
 import LifeWorkerTests (lifeWorkerTests)
 import PerfTests (perfTests)
@@ -23,6 +23,7 @@ tests =
     , catalogTests
     , lifeWorkerTests
     , staticCssTests
+    , watchMappingTests
     , exampleTests
     , perfTests
     ]

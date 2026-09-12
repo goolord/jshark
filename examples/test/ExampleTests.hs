@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 -- | Every example must emit JavaScript that parses.
@@ -15,9 +16,10 @@
 -- Each case compiles only its own example via 'compileEffect' +
 -- 'readableConfig' (optimized 'effectfulAST', no minifier). Cases do not
 -- share a setup hook, so a slow example like Life cannot block Breakout.
-module ExampleTests (exampleTests) where
+module ExampleTests (exampleTests, watchMappingTests) where
 
 import BunGate (bunPathTestName)
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.Text as T
 import JShark.Api (stmts)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
@@ -27,6 +29,11 @@ import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life
 import qualified JShark.Example.Synth as Synth
 import qualified JShark.Example.TodoMvc as TodoMvc
+import JShark.Example.Watch
+  ( exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
+  )
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -39,6 +46,12 @@ exampleTests =
       , parseExampleCase "todo-mvc" (stmts TodoMvc.mainJS)
       , parseExampleCase "synth" (stmts Synth.mainJS)
       , parseExampleCase "life" (stmts Life.mainJS)
+      , testCase "synth registers an audio dispose hook" $ do
+          js <- renderExample (stmts Synth.mainJS)
+          assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
+      , testCase "life registers a renderer dispose hook" $ do
+          js <- renderExample (stmts Life.mainJS)
+          assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
       ]
 
 parseExampleCase :: String -> ClosedEffect 'Unit -> TestTree
@@ -51,4 +64,39 @@ parseExampleCase name eff = testCase name $ do
 
 renderExample :: ClosedEffect 'Unit -> IO String
 renderExample eff =
-  T.unpack <$> compileEffect readableConfig eff
+  BC.unpack <$> compileEffect readableConfig eff
+
+-- | The example-specific watch-path mapping moved out of
+-- @jshark-hotreload@; it lives here now.
+watchMappingTests :: TestTree
+watchMappingTests =
+  testGroup
+    "example watch mapping"
+    [ testCase "exampleAppForHs maps Client.hs paths" $ do
+        assertEqual
+          "todo"
+          (Just "todo-mvc")
+          (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Client.hs")
+        assertEqual
+          "breakout"
+          (Just "breakout")
+          (exampleAppForHs "examples\\src\\JShark\\Example\\Breakout\\Types.hs")
+        assertEqual
+          "page maps"
+          (Just "todo-mvc")
+          (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Page.hs")
+        assertEqual
+          "server skip"
+          Nothing
+          (exampleAppForHs "examples/app/server/DevServer.hs")
+        assertEqual
+          "theme all"
+          ["breakout", "todo-mvc", "synth", "life"]
+          (exampleAppsForHs "examples/src/JShark/Example/Theme.hs")
+        assertBool
+          "lucid shell"
+          (isLucidShellPath "examples/src/JShark/Example/Breakout/Page.hs")
+        assertBool
+          "not lucid"
+          (not (isLucidShellPath "examples/src/JShark/Example/Breakout/Client.hs"))
+    ]

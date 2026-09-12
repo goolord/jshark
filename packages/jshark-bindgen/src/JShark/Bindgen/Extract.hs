@@ -65,6 +65,7 @@ firstExist (p : ps) = do
   ok <- doesFileExist p
   if ok then pure (Just p) else firstExist ps
 
+-- | True when both @bun@ and @extract.mjs@ are available.
 tsExtractorAvailable :: IO Bool
 tsExtractorAvailable = do
   bun <- findExecutable "bun"

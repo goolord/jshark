@@ -25,10 +25,11 @@ import Language.Haskell.TH.Syntax
 -- | Embedded @assets/jshark-reload.js@ served at
 -- @/__jshark/client.js@.
 clientRuntimeScript :: ByteString
-clientRuntimeScript = TE.encodeUtf8 (T.pack clientRuntimeSource)
+clientRuntimeScript = TE.encodeUtf8 clientRuntimeText
 
+-- | The embedded runtime as UTF-8 'Text'.
 clientRuntimeText :: Text
-clientRuntimeText = TE.decodeUtf8 clientRuntimeScript
+clientRuntimeText = T.pack clientRuntimeSource
 
 -- Rebuild this module when the browser runtime changes.
 clientRuntimeSource :: String

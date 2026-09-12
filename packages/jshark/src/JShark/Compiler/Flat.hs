@@ -10,6 +10,9 @@
 {-# LANGUAGE TypeApplications #-}
 
 -- | Untyped flat IR: pack + frozen SoA view + bulk passes.
+--
+-- Internal to the JShark compiler; this module is exposed for tests and
+-- tooling and its API may change between 0.x releases.
 module JShark.Compiler.Flat
   ( NodeId
   , FlatNode (..)
@@ -53,6 +56,8 @@ module JShark.Compiler.Flat
   , flatSoaHoistTag
   , flatSoaParamName
   , flatSoaLayerBuckets
+  , flatSoaEmitOrder
+  , validateFlatSoaEmitOrder
   , soaPureCount
   , soaPureVector
   , constantFoldWithStats
@@ -74,6 +79,7 @@ import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Generic as GV
@@ -1439,21 +1445,72 @@ flatSoaReachableDepths soa root =
       _ <- go root
       V.unsafeFreeze md
 
+-- | Reachable nodes grouped by depth and, within a depth, by ascending node
+-- id (a child-before-parent emit order). Built in a single pass over the
+-- depth column grouped by 'Map', rather than rescanning all @n@ nodes once
+-- per depth, which was @O(maxDepth · n)@.
 flatSoaLayerBuckets :: FlatSoA -> NodeId -> V.Vector (V.Vector NodeId)
 flatSoaLayerBuckets soa root =
   let
     depths = flatSoaReachableDepths soa root
     n = V.length depths
-    maxD = V.foldl' max 0 depths
-    bucket d =
-      V.fromList
-        [ i
+    maxD = V.foldl' max (-1) depths
+    -- Prepend so each depth's list is built with O(1) conses, then reverse.
+    -- 'Map.fromListWith (++)' applies @new ++ old@ (newest first because the
+    -- comprehension is ascending), so the stored list is descending.
+    byDepth =
+      Map.fromListWith (++)
+        [ (d, [i])
         | i <- [0 .. n - 1]
-        , depths V.! i == d
-        , depths V.! i >= 0
+        , let d = depths V.! i
+        , d >= 0
         ]
    in
-    V.fromList [bucket d | d <- [0 .. maxD]]
+    V.fromList
+      [ V.fromList (reverse (Map.findWithDefault [] d byDepth))
+      | d <- [0 .. maxD]
+      ]
+
+-- | 'flatSoaLayerBuckets' flattened into one child-before-parent emit order.
+flatSoaEmitOrder :: FlatSoA -> NodeId -> V.Vector NodeId
+flatSoaEmitOrder soa root =
+  V.concat (V.toList (flatSoaLayerBuckets soa root))
+
+-- | Validate a child-before-parent emit order: every reachable node appears
+-- exactly once, and every pack ref precedes its parent. Returns one message
+-- per problem; @[]@ is valid. A test/assertion helper, not on the compile
+-- path.
+validateFlatSoaEmitOrder :: FlatSoA -> NodeId -> V.Vector NodeId -> [Text]
+validateFlatSoaEmitOrder soa root order =
+  dups <> invalid <> missing <> misordered
+ where
+  n = flatSoaNodeCount soa
+  depths = flatSoaReachableDepths soa root
+  (positions, dups) = V.ifoldl' collect (Map.empty, []) order
+  collect (m, ds) idx nid =
+    case Map.lookup nid m of
+      Just _ -> (m, (T.pack "duplicate node #" <> tshow nid) : ds)
+      Nothing -> (Map.insert nid idx m, ds)
+  invalid =
+    [ T.pack "invalid node #" <> tshow nid
+    | nid <- V.toList order
+    , nid < 0 || nid >= n
+    ]
+  missing =
+    [ T.pack "missing node #" <> tshow i
+    | i <- [0 .. n - 1]
+    , depths V.! i >= 0
+    , not (Map.member i positions)
+    ]
+  misordered =
+    [ T.pack "node #" <> tshow nid <> T.pack " uses #" <> tshow r <> T.pack " after it"
+    | (idx, nid) <- zip [0 :: Int ..] (V.toList order)
+    , nid >= 0
+    , nid < n
+    , r <- flatSoaNodePackRefs soa (flatSoaNode soa nid)
+    , maybe True (>= idx) (Map.lookup r positions)
+    ]
+  tshow = T.pack . show
 
 -- | Per-node purity in one backward sweep. Pack order keeps every child
 -- ref (side-table rows included) below its parent, so children are final
@@ -1610,10 +1667,14 @@ optConstantFoldNumOnce :: FlatSoA -> (FlatSoA, Bool)
 optConstantFoldNumOnce soa0 = runST $ do
   let
     n = VU.length (fsaOpcodes soa0)
-  opM <- VU.unsafeThaw (fsaOpcodes soa0)
-  aM <- VU.unsafeThaw (fsaA soa0)
-  bM <- VU.unsafeThaw (fsaB soa0)
-  litsRef <- newSTRef =<< V.unsafeThaw (fsaLits soa0)
+  -- 'thaw' copies. The input 'soa0' is immutable and may be shared by the
+  -- caller (e.g. a stable-input test compares it after optimizing), so
+  -- mutating its backing store with 'unsafeThaw' would corrupt it.
+  opM <- VU.thaw (fsaOpcodes soa0)
+  aM <- VU.thaw (fsaA soa0)
+  bM <- VU.thaw (fsaB soa0)
+  litsRef <- newSTRef =<< V.thaw (fsaLits soa0)
+  litCountRef <- newSTRef (V.length (fsaLits soa0))
   changedRef <- newSTRef False
   let
     readOp i = flatOpOf <$> MVU.read opM i
@@ -1622,13 +1683,18 @@ optConstantFoldNumOnce soa0 = runST $ do
       litsM <- readSTRef litsRef
       v <- GM.read litsM (fromIntegral (li :: Int32))
       pure (litAsNumber v)
+    -- Grow geometrically: appending by one would copy the whole literal
+    -- column on every fold.
     addFoldLit d = do
       litsM <- readSTRef litsRef
-      let
-        li = GM.length litsM
-      litsM' <- GM.unsafeGrow litsM 1
-      GM.unsafeWrite litsM' li (FLit (ValueNumber d))
+      li <- readSTRef litCountRef
+      litsM' <-
+        if li < GM.length litsM
+          then pure litsM
+          else GM.grow litsM (max 8 (GM.length litsM))
+      GM.write litsM' li (FLit (ValueNumber d))
       writeSTRef litsRef litsM'
+      writeSTRef litCountRef (li + 1)
       pure (encI32 li)
     tryFold i = do
       op <- readOp i
@@ -1658,10 +1724,20 @@ optConstantFoldNumOnce soa0 = runST $ do
   forM_ [0 .. n - 1] tryFold
   opF <- VU.unsafeFreeze opM
   aF <- VU.unsafeFreeze aM
+  bF <- VU.unsafeFreeze bM
   litsM <- readSTRef litsRef
-  litsF <- V.unsafeFreeze litsM
+  litCount <- readSTRef litCountRef
+  litsF <- V.unsafeFreeze (GM.slice 0 litCount litsM)
   changed <- readSTRef changedRef
-  pure (soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}, changed)
+  pure
+    ( soa0
+        { fsaOpcodes = opF
+        , fsaA = aF
+        , fsaB = bF
+        , fsaLits = litsF
+        }
+    , changed
+    )
 
 soaColumnsEqual :: FlatSoA -> FlatSoA -> Bool
 soaColumnsEqual a b =

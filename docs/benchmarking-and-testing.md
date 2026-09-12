@@ -1,19 +1,23 @@
 # Benchmarking, profiling, and testing
 
-Commands assume the repo root and Cabal v2 (`cabal build`, `cabal test`,
-`cabal bench`). The repo is a cabal project of five packages:
+Run these commands from the repository root unless noted. The Cabal project
+contains five packages:
 
 - `packages/jshark` — core EDSL + compiler (suite `jshark-test`, bench `jshark-compiler`)
 - `packages/jshark-lucid` — Lucid DOM integration (suite `jshark-lucid-test`, bench `jshark-lucid-bench`)
 - `packages/jshark-bindgen` — TypeScript/JS FFI generator (suite `jshark-bindgen-test`)
 - `packages/jshark-hotreload` — hot-reload hub/WAI/watcher (suite `jshark-hotreload-test`)
-- `examples` — the four showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`, plus `jshark-life-*` profiling executables)
+- `examples` — the four showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`)
+
+Shared test/bench support is the `jshark:testing` sublibrary
+(`packages/jshark/test-support/`: `Test.Support`, `CaptureStderr`,
+`Bench.Stages`); it is used by the core suite and by the examples package.
 
 ## Prerequisites
 
 | Tool | Required for |
 |------|----------------|
-| GHC 9.14+ / Cabal 3.x | build, test, bench |
+| GHC 9.14+ / Cabal 3.12+ | build, test, bench |
 | [Bun](https://bun.sh) on `PATH` | `jshark-examples-test` JS engine probes (`BunTests`, `LifeTests`, `ExampleTests`) |
 
 ## Testing
@@ -24,19 +28,19 @@ Run every suite:
 cabal test all --test-show-details=direct
 ```
 
-or one suite:
+Run one suite:
 
 ```bash
 cabal build jshark-test
 cabal test jshark-test --test-show-details=direct
 ```
 
-The suites are **threaded** with a conservative RTS:
+The core and example suites use a threaded runtime with these defaults:
 
 - `-N1` — single capability (avoids parallel compile/metadata contention on large examples)
 - `-M10G` heap cap by default (`jshark-test` / `jshark-examples-test`)
 
-Override RTS when debugging:
+Override the runtime settings when debugging:
 
 ```bash
 cabal test jshark-test --test-options='+RTS -N1 -M4G -RTS' --test-show-details=direct
@@ -86,19 +90,21 @@ On Windows, kill a stuck `jshark-test.exe` / `jshark-examples-test.exe` before r
 
 ## Benchmarks
 
-Benchmarks use **tasty-bench**. They are for **manual** compiler investigation; not all are CI-gated.
+Benchmarks use tasty-bench for compiler investigation. CI checks selected
+performance budgets; run these benchmarks locally for detailed timings.
 
 ### Targets
 
 | Cabal target | Package | Purpose |
 |--------------|---------|---------|
-| `jshark-compiler` | `jshark` | Synthetic compiler microbenchmarks (`packages/jshark/bench/Main.hs`, `Bench.Stages`). Best for attributing **which compiler stage** is slow on synthetic trees. |
+| `jshark-compiler` | `jshark` | Synthetic compiler microbenchmarks (`packages/jshark/bench/Main.hs`, `Bench.Stages` in `jshark:testing`). Best for attributing **which compiler stage** is slow on synthetic trees. |
 | `jshark-examples-bench` | `examples` | Full example ASTs (`examples/bench/Main.hs`: Breakout, TodoMvc, Synth, Life). Life `emit` is very slow. |
 | `jshark-forced` | `examples` | `NFData` / forcing costs on Life |
-| `jshark-life-*` | `examples` | `jshark-life-phases`, `jshark-life-metrics`, `jshark-life-flatopt`, `jshark-life-iropt`, `jshark-life-lower`, `jshark-life-emit`, `jshark-life-full-emit` — Life-only stage profiling executables |
+| `jshark-life-*` | `examples` | `jshark-life-phases`, `jshark-life-emit`, `jshark-life-full-emit`, `jshark-probe` — Life-only stage profiling executables |
 | `jshark-lucid-bench` | `jshark-lucid` | Lucid → DOM compile path |
 
-Default bench RTS: `-N` (multicore), `-M10G`, `-O2`.
+Default bench RTS: `-N` (multicore), `-M10G`; optimization comes from
+`optimization: 2` in `cabal.project`.
 
 ### Run benchmarks
 
@@ -123,12 +129,13 @@ Large paths (`life emit`, `effectfulAST`) can run for minutes under tasty-bench 
 cabal bench jshark-examples-bench -- jshark-examples-bench -t 120s -p 'life.emit'
 ```
 
-A `TIMEOUT` after 120s still means “this path is too slow for the budget”; use profiling to see where CPU went before the cap.
+A timeout identifies a path that exceeds the budget. Profile it to locate
+the expensive work.
 
 ### Stage names
 
-Each effectful microprogram gets a `stages/<name>/` group (see `Bench.Stages` in
-each bench dir):
+Each effectful microprogram gets a `stages/<name>/` group, defined by
+`Bench.Stages` in the `jshark:testing` sublibrary:
 
 | Bench | Meaning |
 |-------|---------|
@@ -136,7 +143,7 @@ each bench dir):
 | `optNodes+emit/bytes` | node count + full emit length |
 | `effectfulAST` | `renderJS . effectfulAST` byte length |
 | `renderJS` / `emit` | compact render |
-| `emit/bytes` | `T.length . renderJS . effectfulAST` (full compile path used by `compileEffect` before pretty) |
+| `emit/bytes` | `BS.length . renderJS . effectfulAST` (full compile path used by `compileEffect` before pretty) |
 | `effectfulProgram` | unoptimized `effectfulProgram` (slow; avoid for routine runs) |
 | `prettyJS/e2e` | emit + pretty printer |
 | `compileEffect/readable/e2e` | full `compileEffect readableConfig` in IO |
@@ -151,7 +158,6 @@ Typical attribution on Life-shaped trees:
 Life-only stage attribution is easiest with the profiling executables:
 
 ```bash
-cabal run jshark-life-metrics    # raw/opt node counts + allocations
 cabal run jshark-life-phases     # wall clock per compiler phase
 cabal run jshark-life-full-emit  # end-to-end emit timing
 ```
@@ -160,19 +166,20 @@ cabal run jshark-life-full-emit  # end-to-end emit timing
 
 ## Profiling
 
-Use GHC time/allocation profiling to find hot functions. **Do not** let hung benches run unbounded; use `-t` and/or a single `-p` filter.
+Use GHC time and allocation profiling to find expensive functions. Select
+one case with `-p` and set a timeout with `-t`.
 
-Write `.prof`, bench stdout, and stderr under **`profile/`** (gitignored). From repo root:
+Keep reports and logs in the gitignored `profile/` directory. From the
+repository root:
 
 ```bash
 mkdir -p profile
-cd profile
 ```
 
 ### 1. Build with profiling
 
 ```bash
-cabal build jshark-test --enable-profiling --ghc-options="-fprof-auto-top -fprof-late"
+cabal build jshark-examples-test --enable-profiling --ghc-options="-fprof-auto-top -fprof-late"
 # or
 cabal build jshark-compiler --enable-profiling --ghc-options="-fprof-auto-top -fprof-late"
 ```
@@ -185,17 +192,16 @@ On Windows, kill a stuck `jshark-compiler.exe` / `jshark-test.exe` before relink
 
 ```bash
 EXE=$(cabal list-bin jshark-examples-test)
-"$EXE" -p 'life' -t 120s +RTS -p -N1 -M4G -RTS 2>&1 | tee profile/life.log
-# → profile/jshark-examples-test.prof when cwd is profile/
+(cd profile && "$EXE" -p 'life' -t 120s +RTS -p -N1 -M4G -RTS 2>&1 | tee life.log)
+# Report: profile/jshark-examples-test.prof
 ```
 
 **Benchmarks:**
 
 ```bash
 EXE=$(cabal list-bin jshark-compiler)
-cd profile
-"$EXE" -t 120s -p 'deepUseChain' +RTS -p -N1 -M4G -RTS 2>&1 | tee lifeStep-emit-bytes.log
-# → profile/jshark-compiler.prof
+(cd profile && "$EXE" -t 120s -p 'deepUseChain' +RTS -p -N1 -M4G -RTS 2>&1 | tee deepUseChain.log)
+# Report: profile/jshark-compiler.prof
 ```
 
 Put **tasty options before RTS flags** when using the cabal wrapper:
@@ -225,13 +231,15 @@ Names look like `All.codepaths.effect.deepUseChain.emit/bytes`; filter with `-p 
 - Prefer **one** `-p` case per run so the `.prof` file matches the hypothesis.
 - Force-killing the process on Windows may **omit** `.prof` output; prefer `-t` timeout so the process exits normally.
 - Match RTS caps to the test suite (`-N1`) when comparing to `cabal test` behavior.
-- Rebuild after `packages/jshark/src/JShark.hs` changes before trusting an old `.prof`.
+- Rebuild after compiler source changes before trusting an old `.prof`.
 
 ---
 
-## For Cursor agents: timeout loop on slow compile
+## Investigating a slow compile
 
-Use this when a bench or test **hangs or exceeds budget**. Goal: attribute **optimize vs emit vs full compile**, capture a `.prof` before the cap, iterate without unbounded runs.
+When a test or benchmark exceeds its budget, compare optimization,
+emission, and full compilation. Use bounded runs and keep a profile for
+each stage.
 
 1. **Kill locked exes** (Windows): `Get-Process jshark-compiler,jshark-test -EA SilentlyContinue | Stop-Process -Force`
 2. **Build profiled bench**: `cabal build jshark-compiler --enable-profiling --ghc-options="-fprof-auto-top -fprof-late"`
@@ -251,9 +259,47 @@ done
 For Life-shaped paths, swap the executable for `jshark-examples-bench`
 (`cabal list-bin jshark-examples-bench`) and filter `-p 'life.…'`.
 
-4. **Interpret**: `optimizeEffect` OK + `emit/bytes` TIMEOUT → codegen/metadata/bind path; both slow → optimizer + shared walks.
-5. **Fix, rebuild, rerun only the failing `-p`**; compare `total alloc` and top cost centres in the new `profile/*.prof`.
-6. **Do not commit** `profile/` contents; commit code/docs only.
+4. If optimization is fast but emission times out, inspect codegen and
+   metadata traversal. If both are slow, inspect the optimizer and shared work.
+5. Fix, rebuild, and rerun the failing case. Compare total allocation and
+   top cost centres in the new report.
+
+---
+
+## Recorded baselines
+
+Performance budgets live in tests beside the workloads they measure:
+
+| Budget | Where | What it gates |
+|--------|-------|---------------|
+| Life raw/opt IR nodes, optimize alloc | `examples/test/PerfTests.hs` | optimizer/storage |
+| Life output UTF-8 bytes and `$`-helper count | `examples/test/PerfTests.hs` | emission/hoisting |
+| Probe 16/32 JS size and alloc | `examples/test/PerfTests.hs` | IR→JS scale |
+| Life golden node/byte counts | `examples/test/LifeTests.hs` | inline/optimizer regressions |
+
+Record a new baseline by measuring on GHC 9.14.1 / `-O2`, keeping enough
+slack for RTS/GC noise, and lowering the ceiling when an intentional win
+lands. Compiler stage attribution (`optimizeEffect` vs `effectfulAST` vs
+`emit`) comes from `jshark-compiler`; full Life stages from
+`jshark-examples-bench` / `jshark-life-phases`. Keep isolated stage timings
+separate from end-to-end numbers.
+
+## Release verification
+
+Run the same checks locally as the release workflow before publishing:
+
+```bash
+./scripts/check-tag-version.sh v0.1.0.0   # tag matches every package version
+./scripts/verify-sdists.sh                # unpack, build, test, install bindgen
+```
+
+`verify-sdists.sh` unpacks the four published source distributions into a
+fresh directory, writes a minimal `cabal.project` that points only at the
+unpacked sources (no root overrides), builds and tests them, installs
+`jshark-bindgen`, and runs it on a shipped fixture. It leaves the verified
+tarballs in `dist-newstyle/sdist/`; publish only those paths. The clean
+project uses GHC's default backend, so it also confirms the packages do not
+require the monorepo's LLVM options.
 
 ---
 
@@ -281,11 +327,11 @@ cabal bench jshark-examples-bench -- jshark-examples-bench -t 120s -p 'life.opti
 | Path | Role |
 |------|------|
 | `packages/jshark/test/Main.hs` | core test tree |
-| `packages/jshark/bench/Main.hs`, `Bench.Stages` (in `jshark-testing`) | synthetic `jshark-compiler` bench |
+| `packages/jshark/bench/Main.hs`, `Bench.Stages` (in `jshark:testing`) | synthetic `jshark-compiler` bench |
 | `examples/test/Main.hs` | example/Life test tree |
 | `examples/test/ExampleTests.hs` | Bun parse tests for every example |
 | `examples/test/LifeTests.hs`, `BunTests.hs` | runtime JS checks |
 | `examples/bench/` | full-example bench + `jshark-life-*` profiling executables |
-| `cabal.project` | project-wide warning flags, tests/benchmarks on |
+| `cabal.project` | project config: tests/benchmarks on, `werror` flag enabled |
 | `profile/` | gitignored `.prof` / bench logs from manual runs |
 | `.cursor/rules/` | `cabal test`, Fourmolu, architecture notes |

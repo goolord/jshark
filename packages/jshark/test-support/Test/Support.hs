@@ -6,6 +6,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
+-- | Shared fixtures and golden-case helpers for the core test suite and the
+--   compiler benchmarks. Not a user-facing API.
 module Test.Support
   ( LitRow
   , Person (..)
@@ -46,23 +48,19 @@ import CaptureStderr (captureStderr)
 import qualified Control.Exception as E
 import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
+import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import JShark
-  ( effectfulAST
-  , effectfulASTWith
-  , evaluate
-  , pureAST
-  , renderJS
-  )
+import JShark (evaluate, renderJS)
 import JShark.Api
 import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Compiler (biomeAvailable)
-import JShark.Compiler.Codegen.Core (EmitStyle)
+import JShark.Internal (EmitStyle, effectfulAST, effectfulASTWith, pureAST)
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -179,17 +177,17 @@ mulDiv = number 6 * number 7 / number 2
 -- | Golden case for a closed effectful program.
 effectCodeCase :: String -> ClosedEffect u -> Text -> TestTree
 effectCodeCase name eff golden =
-  testCase name (renderJS (effectfulAST eff) @?= golden)
+  testCase name (renderJS (effectfulAST eff) @?= TE.encodeUtf8 golden)
 
 -- | Golden case for a closed effectful program under an explicit emit style.
 effectCodeCaseWith :: EmitStyle -> String -> ClosedEffect u -> Text -> TestTree
 effectCodeCaseWith style name eff golden =
-  testCase name (renderJS (effectfulASTWith style eff) @?= golden)
+  testCase name (renderJS (effectfulASTWith style eff) @?= TE.encodeUtf8 golden)
 
 -- | Golden case for a closed pure expression.
 pureCodeCase :: String -> ClosedExpr u -> Text -> TestTree
 pureCodeCase name e golden =
-  testCase name (renderJS (pureAST e) @?= golden)
+  testCase name (renderJS (pureAST e) @?= TE.encodeUtf8 golden)
 
 -- | Smoke case: rendered effect must contain every needle.
 effectContains :: String -> ClosedEffect u -> [Text] -> TestTree
@@ -197,7 +195,9 @@ effectContains name eff needles =
   testCase name $ do
     let
       js = renderJS (effectfulAST eff)
-    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+    mapM_
+      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
+      needles
 
 -- | 'effectContains' under an explicit emit style.
 effectContainsWith ::
@@ -206,7 +206,9 @@ effectContainsWith style name eff needles =
   testCase name $ do
     let
       js = renderJS (effectfulASTWith style eff)
-    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+    mapM_
+      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
+      needles
 
 -- | Smoke case: rendered pure expression must contain every needle.
 pureContains :: String -> ClosedExpr u -> [Text] -> TestTree
@@ -214,7 +216,9 @@ pureContains name e needles =
   testCase name $ do
     let
       js = renderJS (pureAST e)
-    mapM_ (\n -> assertBool (T.unpack n <> " missing") (n `T.isInfixOf` js)) needles
+    mapM_
+      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
+      needles
 
 -- | Evaluate a closed pure Bool expression.
 evalBoolCase :: String -> ClosedExpr 'Bool -> Bool -> TestTree
@@ -232,14 +236,16 @@ assertJSContains needle haystack =
       <> " in:\n"
       <> T.unpack haystack
 
--- | Force @x@ to WHNF and assert it throws an 'ErrorCall' containing @needle@.
+-- | Force @x@ to WHNF and assert it throws an 'EvalFailure' or 'ErrorCall'
+-- whose rendered message contains @needle@.
 assertThrows :: Show a => String -> a -> IO ()
 assertThrows needle x = do
   r <- E.try (E.evaluate x)
   case r of
-    Left (E.ErrorCall msg)
-      | T.pack needle `T.isInfixOf` T.pack msg -> pure ()
-      | otherwise -> assertFailure ("unexpected ErrorCall: " <> msg)
+    Left (e :: E.SomeException)
+      | T.pack needle `T.isInfixOf` T.pack (E.displayException e) -> pure ()
+      | otherwise ->
+          assertFailure ("unexpected exception: " <> E.displayException e)
     Right v -> assertFailure ("expected throw, got " <> show v)
 
 requireBiome :: IO ()

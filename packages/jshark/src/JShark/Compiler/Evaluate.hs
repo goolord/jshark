@@ -16,6 +16,8 @@
 -- | Pure reference interpreter for closed 'Expr' terms.
 module JShark.Compiler.Evaluate
   ( evaluate
+  , tryEvaluate
+  , EvalFailure (..)
   , evaluateNumber
   , evaluateBigInt
   , valueEq
@@ -25,6 +27,7 @@ module JShark.Compiler.Evaluate
   , jsQuote
   , jsBigIntLit
   , jsUint8ArrayLit
+  , jsUint8ClampedArrayLit
   , bigOpJS
   , uint8Elems
   , packUint8
@@ -39,12 +42,15 @@ module JShark.Compiler.Evaluate
   )
 where
 
+import Control.Exception (Exception, throw, try)
+import qualified Control.Exception as E (evaluate)
 import Control.Monad (foldM)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
+import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -77,6 +83,7 @@ import JShark.Compiler.Emit
   , hcat
   , jsDecimal
   , jsString
+  , jsText
   , parens
   , punctuate
   )
@@ -116,9 +123,10 @@ valueEq (ValueResult a) (ValueResult b) = case (a, b) of
   _ -> False
 valueEq (ValueRegex a) (ValueRegex b) = a == b
 valueEq (ValueUint8Array a) (ValueUint8Array b) = a == b
+valueEq (ValueUint8ClampedArray a) (ValueUint8ClampedArray b) = a == b
 valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
 valueEq (ValueFunction _) (ValueFunction _) =
-  error "evaluate: functions cannot be compared for equality"
+  cannotEval "function equality"
 
 isCheapValue :: Value u -> Bool
 isCheapValue = \case
@@ -127,12 +135,13 @@ isCheapValue = \case
   ValueString {} -> True
   ValueBool {} -> True
   ValueUnit -> True
-  ValueOption Nothing -> True
-  ValueOption (Just v) -> isCheapValue v
+  -- A tagged option is an object; never duplicate it.
+  ValueOption _ -> False
   ValueResult (Left v) -> isCheapValue v
   ValueResult (Right v) -> isCheapValue v
   ValueRegex {} -> False
   ValueUint8Array {} -> False
+  ValueUint8ClampedArray {} -> False
   ValueArray {} -> False
   ValueFunction {} -> False
   ValueFrozen {} -> False
@@ -171,9 +180,9 @@ evalFieldLit rec (FieldLitExtra @k e) = FieldLitExtra @k . Literal <$> rec e
 evalFieldLit rec (FieldLitExtraEffect @k (Lift e)) =
   FieldLitExtra @k . Literal <$> rec e
 evalFieldLit _ (FieldLitEffect _) =
-  error "evaluate: effectful object field (FieldLitEffect); not a pure Lift"
+  cannotEval "effectful object field (FieldLitEffect); not a pure Lift"
 evalFieldLit _ (FieldLitExtraEffect _) =
-  error "evaluate: effectful object field (FieldLitExtraEffect); not a pure Lift"
+  cannotEval "effectful object field (FieldLitExtraEffect); not a pure Lift"
 
 fieldLitEq :: forall r. FieldLit Value r -> FieldLit Value r -> Bool
 fieldLitEq (FieldLit @k a) (FieldLit @k' b) = forcedFieldEq @k @k' @r a b
@@ -227,21 +236,22 @@ jsShow (ValueBool True) = "true"
 jsShow (ValueBool False) = "false"
 jsShow ValueUnit = "undefined"
 jsShow (ValueArray xs) = T.intercalate "," (map jsJoinElem xs)
-jsShow (ValueOption Nothing) = "null"
-jsShow (ValueOption (Just x)) = jsShow x
+-- A tagged option is a plain object: `String({some:…})` is `[object Object]`.
+jsShow (ValueOption _) = "[object Object]"
 jsShow ValueResult {} = "[object Object]"
 jsShow (ValueRegex s) = s
 jsShow (ValueUint8Array ba) = jsShowUint8Array ba
+jsShow (ValueUint8ClampedArray ba) = jsShowUint8Array ba
 jsShow ValueFrozen {} = "[object Object]"
-jsShow (ValueFunction _) = error "evaluate: cannot show a function"
+jsShow (ValueFunction _) = cannotEval "show of a function"
 
 -- | One element of @Array.prototype.join@ (and of a nested array's
 -- @toString@). JS renders @null@ and @undefined@ as the empty string
 -- there, not as @\"null\"@ / @\"undefined\"@.
 jsJoinElem :: Value u -> Text
 jsJoinElem = \case
-  ValueOption Nothing -> ""
-  ValueOption (Just v) -> jsJoinElem v
+  -- Objects (including tagged options) join as their `String` form.
+  ValueOption _ -> "[object Object]"
   ValueUnit -> ""
   v -> jsShow v
 
@@ -255,11 +265,11 @@ typeOfValue = \case
   ValueUnit -> "undefined"
   ValueFunction {} -> "function"
   ValueArray {} -> "object"
-  ValueOption Nothing -> "object"
-  ValueOption (Just v) -> typeOfValue v
+  ValueOption _ -> "object"
   ValueResult {} -> "object"
   ValueRegex {} -> "object"
   ValueUint8Array {} -> "object"
+  ValueUint8ClampedArray {} -> "object"
   ValueFrozen {} -> "object"
 
 jsShowNumber :: Double -> String
@@ -269,8 +279,25 @@ jsShowNumber d
  where
   isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
 
+-- | Why the host interpreter could not produce a value.
+data EvalFailure
+  = -- | The term uses something the host denotation does not model
+    -- (functions, effectful object fields, an op with no host rule).
+    EvalUnsupported !Text
+  | -- | A JS-like runtime failure: @throw@, an out-of-bounds checked
+    -- index, @BigInt(1.5)@, a negative shift, invalid @BigInt@ text.
+    EvalJsFailure !Text
+  deriving (Show, Eq)
+
+instance Exception EvalFailure
+
 cannotEval :: String -> a
-cannotEval what = error ("evaluate: cannot evaluate " ++ what)
+cannotEval what = throw (EvalUnsupported (T.pack what))
+
+-- | A JS-like failure. Kept distinct from 'cannotEval' so callers can tell
+-- "the program would throw" from "the interpreter cannot model this".
+jsFailure :: String -> a
+jsFailure what = throw (EvalJsFailure (T.pack what))
 
 arrayValues :: Value ('Array u) -> [Value u]
 arrayValues (ValueArray vs) = vs
@@ -306,8 +333,8 @@ numberToBigInt :: Double -> Integer
 numberToBigInt d
   | isFiniteDouble d && d == fromInteger n = n
   | otherwise =
-      error
-        "evaluate: Number cannot be converted to BigInt because it is not an integer"
+      jsFailure
+        "Number cannot be converted to BigInt because it is not an integer"
  where
   n = truncate d
 
@@ -315,7 +342,7 @@ parseBigIntText :: Text -> Integer
 parseBigIntText s =
   case parseBigIntString (T.unpack s) of
     Just n -> n
-    Nothing -> error "evaluate: invalid BigInt string"
+    Nothing -> jsFailure "invalid BigInt string"
 
 parseBigIntString :: String -> Maybe Integer
 parseBigIntString raw =
@@ -374,12 +401,12 @@ tryEvalBigBin op a b = Just (evalBigBin op a b)
 
 bigShl :: Integer -> Integer -> Integer
 bigShl a b
-  | b < 0 = error "evaluate: BigInt shift count is negative"
+  | b < 0 = jsFailure "BigInt shift count is negative"
   | otherwise = shiftL a (fromInteger b)
 
 bigShr :: Integer -> Integer -> Integer
 bigShr a b
-  | b < 0 = error "evaluate: BigInt shift count is negative"
+  | b < 0 = jsFailure "BigInt shift count is negative"
   | otherwise = shiftR a (fromInteger b)
 
 jsBigIntLit :: Integer -> JS
@@ -464,15 +491,22 @@ jsShowUint8Array :: ByteArray -> Text
 jsShowUint8Array = T.intercalate "," . map (T.pack . show) . uint8Elems
 
 jsUint8ArrayLit :: ByteArray -> JS
-jsUint8ArrayLit ba =
+jsUint8ArrayLit = jsUint8ArrayLitAs "Uint8Array"
+
+jsUint8ClampedArrayLit :: ByteArray -> JS
+jsUint8ClampedArrayLit = jsUint8ArrayLitAs "Uint8ClampedArray"
+
+jsUint8ArrayLitAs :: Text -> ByteArray -> JS
+jsUint8ArrayLitAs ctor ba =
   let
     elems = uint8Elems ba
     n = length elems
    in
     if all (== 0) elems
-      then "new Uint8Array" <> parens (jsDecimal n)
+      then "new " <> jsText ctor <> parens (jsDecimal n)
       else
-        "new Uint8Array"
+        "new "
+          <> jsText ctor
           <> parens
             ( brackets
                 ( hcat
@@ -487,9 +521,15 @@ evaluateBigInt :: ClosedExpr 'BigInt -> Integer
 evaluateBigInt e = unBigInt (evaluate e)
 
 -- | Pure reference interpreter. Shared Haskell heap nodes are walked once
--- per occurrence (no memo table).
+-- per occurrence (no memo table). Throws 'EvalFailure' on failure.
 evaluate :: ClosedExpr u -> Value u
 evaluate = evalValue
+
+-- | 'evaluate' with failures reified as data. Forcing to WHNF catches the
+-- failure; a value whose lazy interior needs a partial operation is only
+-- forced as far as the caller demands.
+tryEvaluate :: ClosedExpr u -> IO (Either EvalFailure (Value u))
+tryEvaluate e = try (E.evaluate (evaluate e))
 
 evalValue :: Expr Value v -> Value v
 evalValue = runIdentity . evalAlg (Identity . evalValue) (\g v -> evalValue (g v))
@@ -536,7 +576,7 @@ evalAlg rec apply = \case
        in
         if isFiniteDouble d && idx >= 0 && idx < length vs
           then pure (vs !! idx)
-          else error "evaluate: array index out of bounds"
+          else jsFailure "array index out of bounds"
   U8Index buf i -> do
     iv <- rec i
     evalAsUint8Array rec buf $ \ba ->
@@ -547,12 +587,20 @@ evalAlg rec apply = \case
        in
         if isFiniteDouble d && idx >= 0 && idx < length elems
           then pure (ValueNumber (fromIntegral (elems !! idx)))
-          else error "evaluate: uint8 index out of bounds"
+          else jsFailure "uint8 index out of bounds"
   Error msg -> do
     m <- rec msg
-    error ("evaluate: " ++ T.unpack (unString m))
+    jsFailure (T.unpack (unString m))
   Std s -> evalStd rec s
-  UnsafeNullable x -> ValueOption . Just <$> rec x
+  UnsafeNullable x -> do
+    v <- rec x
+    -- Match the runtime conversion @v == null ? none : some v@. In the
+    -- host denotation only 'ValueUnit' (JS @undefined@) is absent; a
+    -- tagged 'ValueOption Nothing' is an object and stays a present
+    -- value, so nested options round-trip.
+    pure $ case v of
+      ValueUnit -> ValueOption Nothing
+      _ -> ValueOption (Just v)
   FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit rec) fs
   GetField @k o -> do
     ov <- rec o
@@ -574,13 +622,15 @@ evalAsArray rec xs k = do
 evalAsUint8Array ::
   Monad m =>
   (forall w. Expr Value w -> m (Value w))
-  -> Expr Value 'Uint8Array
+  -> Expr Value u
   -> (ByteArray -> m a)
   -> m a
 evalAsUint8Array rec buf k = do
   arr <- rec buf
   case arr of
     ValueUint8Array ba -> k ba
+    ValueUint8ClampedArray ba -> k ba
+    _ -> error "evaluate: expected a byte buffer"
 
 mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
 mergeSort _ [] = pure []
@@ -703,6 +753,7 @@ evalFixed ::
   -> FixedArgs Value a b c
   -> m (Value u)
 evalFixed rec op args = case (op, args) of
+  (FixSome, ArgsU x) -> ValueOption . Just <$> rec x
   (n, ArgsU x)
     | Just (MathUnary n') <- matchMathUnary n ->
         ValueNumber . Prim.mathUnaryFn n' . unNumber <$> rec x
@@ -749,6 +800,26 @@ evalFixed rec op args = case (op, args) of
     bv <- rec b
     evalAsArray rec xs $ \vs ->
       pure (ValueArray (jsArraySlice vs (unNumber av) (unNumber bv)))
+  (FixGroupBy, ArgsB arr keyFn) -> do
+    as <- arrayValues <$> rec arr
+    fv <- rec keyFn
+    let
+      step (ord, mp) x =
+        let
+          k = unString (unFunction fv x)
+         in
+          case Map.lookup k mp of
+            Just _ -> (ord, Map.adjust (Prelude.++ [x]) k mp)
+            Nothing -> (ord Prelude.++ [k], Map.insert k [x] mp)
+      (order, acc) = foldl' step ([], Map.empty) as
+      groups =
+        [ ValueFrozen
+            [ FieldLit @"key" (Literal (ValueString k))
+            , FieldLit @"items" (Literal (ValueArray (acc Map.! k)))
+            ]
+        | k <- order
+        ]
+    pure (ValueArray groups)
   -- String/regex fixed ops are codegen-only (same as old Un/Bin/Tern gaps).
   _ -> cannotEval "a fixed stdlib op"
 

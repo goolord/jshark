@@ -1,19 +1,19 @@
-# Life WASM SIMD kernels (optional / not wired)
+# Experimental Life WebAssembly kernels
 
-Zig module with SIMD `clearRow` / `copyRow` and LUT `stepRegionLUT`. The Life
-app uses the Haskell/JShark scalar LUT path today; this tree is kept for a
-possible future wasm grid migration.
+Zig kernels for SIMD row operations and lookup-table (LUT) stepping. These
+kernels are not connected to the Life app, which uses the Haskell/JShark
+scalar LUT implementation.
 
 ## Build
 
 ```bash
-cd examples/Life/wasm
+cd examples/src/JShark/Example/Life/wasm
 zig build -Doptimize=ReleaseFast
 # artifact: zig-out/bin/life-simd.wasm (not vendored under js/)
 ```
 
 Requires [Zig](https://ziglang.org/) 0.16+. The build enables wasm `simd128`
-so `@Vector(16, u8)` lowers to real SIMD instructions.
+so `@Vector(16, u8)` compiles to SIMD instructions.
 
 ## Memory layout
 
@@ -36,5 +36,5 @@ After `growTo(w*h*2 + 65536)`:
 | `clearRow(offset, len)` | SIMD zero-fill |
 | `copyRow(src, dst, len)` | SIMD memcpy |
 
-To use this again, allocate engine grids in wasm memory and call the exports
-from JShark instead of the scalar `Lut.stepRegionLUT` loop.
+To integrate the kernels, allocate the engine grids in WebAssembly memory
+and call these exports from JShark in place of `Lut.stepRegionLUT`.

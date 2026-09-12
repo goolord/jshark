@@ -8,11 +8,10 @@ where
 
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (SomeException, catch)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
-import Data.Text (Text)
-import qualified Data.Text.Encoding as TE
 import qualified Streaming.ByteString as Q
 import System.Exit (ExitCode (..))
 import System.IO (Handle)
@@ -30,14 +29,14 @@ import System.Process.Typed
   )
 
 -- | Run @cmd args@ with @source@ on stdin; return stdout or an error message
--- (stderr when non-empty). Callers strip 'Text' as needed.
+-- (stderr when non-empty).
 executeProcessStdin ::
-  FilePath -> [String] -> Text -> IO (Either String Text)
+  FilePath -> [String] -> ByteString -> IO (Either String ByteString)
 executeProcessStdin cmd args source =
   ( do
       let
         pConfig =
-          setStdin (byteStringInput (BL.fromStrict (TE.encodeUtf8 source)))
+          setStdin (byteStringInput (BL.fromStrict source))
             $ setStdout createPipe
             $ setStderr createPipe
             $ proc cmd args
@@ -50,7 +49,7 @@ executeProcessStdin cmd args source =
               errBs' <- wait errA
               pure (exitCode, outBs', errBs')
         case code of
-          ExitSuccess -> pure (Right (TE.decodeUtf8 outBs))
+          ExitSuccess -> pure (Right outBs)
           ExitFailure c ->
             pure
               ( Left

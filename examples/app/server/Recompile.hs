@@ -24,6 +24,11 @@ import Data.Function (on)
 import Data.List (intercalate, isInfixOf, isPrefixOf, nubBy, sortOn)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import JShark.Example.Watch
+  ( exampleAppForHs
+  , exampleAppsForHs
+  , isLucidShellPath
+  )
 import JShark.HotReload.Core
   ( HotReloadEvent (..)
   , HotReloadHub
@@ -32,11 +37,6 @@ import JShark.HotReload.Core
   , registerJs
   , setBuildError
   , setBuildStart
-  )
-import JShark.HotReload.Watcher
-  ( exampleAppForHs
-  , exampleAppsForHs
-  , isLucidShellPath
   )
 import System.Directory
   ( createDirectoryIfMissing

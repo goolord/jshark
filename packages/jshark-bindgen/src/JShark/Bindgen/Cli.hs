@@ -15,6 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import JShark.Bindgen
+import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics)
 import Options.Applicative
   ( Parser
   , ParserInfo
@@ -40,17 +41,21 @@ import Options.Applicative
   , strOption
   )
 import System.Exit (die)
+import System.IO (hPutStrLn, stderr)
 
+-- | Parsed arguments: generation options, optional output path, input file.
 data Cli = Cli
   { cliOpts :: BindgenOpts
   , cliOut :: Maybe FilePath
   , cliFile :: FilePath
   }
 
+-- | optparse-applicative preferences: show help on error and on empty input.
 parserPrefs :: ParserPrefs
 parserPrefs =
   prefs (showHelpOnError <> showHelpOnEmpty)
 
+-- | Full parser description for the @jshark-bindgen@ command.
 parserInfo :: ParserInfo Cli
 parserInfo =
   info (helper <*> cliParser) $
@@ -101,6 +106,7 @@ bindgenOptsParser =
             )
       )
 
+-- | Parse an argument vector into 'Cli', reporting failures as 'Left'.
 parseCliArgs :: [String] -> Either String Cli
 parseCliArgs args =
   case execParserPure parserPrefs parserInfo args of
@@ -108,16 +114,28 @@ parseCliArgs args =
     Failure err -> Left (show err)
     CompletionInvoked _ -> Left "shell completion invoked"
 
+-- | Parse @argv@ and run the CLI; the executable entry point.
 runMain :: IO ()
 runMain =
   customExecParser parserPrefs parserInfo >>= runCli
 
+-- | Run the generator for a parsed 'Cli', writing to file or stdout.
 runCli :: Cli -> IO ()
 runCli cli = do
   ir <- parseIrFromFile (cliOpts cli) (cliFile cli)
   case ir of
     Left e -> die e
-    Right x -> writeOut (cliOut cli) (generateFromIr x)
+    Right x -> do
+      mapM_ (hPutStrLn stderr . renderDiagnostic) (irDiagnostics x)
+      writeOut (cliOut cli) (generateFromIr x)
+
+-- | One-line stderr rendering of an extractor or binding diagnostic.
+renderDiagnostic :: Diagnostic -> String
+renderDiagnostic d =
+  "jshark-bindgen: ["
+    <> T.unpack (dgCategory d)
+    <> "] "
+    <> T.unpack (dgMessage d)
 
 writeOut :: Maybe FilePath -> Text -> IO ()
 writeOut Nothing t = TIO.putStr t

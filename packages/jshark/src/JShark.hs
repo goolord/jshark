@@ -113,74 +113,46 @@ module JShark
     , ArrayLit
     )
   , evaluate
+  , tryEvaluate
+  , EvalFailure (..)
   , evaluateNumber
   , evaluateBigInt
   , packUint8
   , uint8Elems
-  , optimizedExprSize
-  , optimizedEffectSize
-  , pureAST
-  , pureASTWith
-  , effectfulAST
-  , effectfulASTWith
-  , effectfulASTFromSoA
-  , irEffectFromClosed
-  , flatPrepareCore
-  , flatPrepareFromIr
-  , profileFlatOptFromIr
-  , profileIrOptFromClosed
-  , profileIrOptFromIr
-  , profileLowerFromClosed
-  , flatSoaNodeCount
   , pureProgram
   , effectfulProgram
+  , JS
   , renderJS
   , escapeJsString
   , structuralEq
   , structuralNEq
-  , Builtin (ValueEq)
-  , builtinSrc
   )
 where
 
 import JShark.Api.Types
 import JShark.Compiler.Codegen.Core
-  ( flatPrepareCore
-  , flatPrepareFromIr
-  , profileFlatOptFromIr
-  , profileIrOptFromClosed
-  , profileIrOptFromIr
-  , profileLowerFromClosed
-  , renderIIFE
+  ( renderIIFE
   )
-import JShark.Compiler.Flat (flatSoaNodeCount)
 import JShark.Compiler.Codegen.Flat
-  ( effectfulAST
-  , effectfulASTFromSoA
-  , effectfulASTWith
-  , flatEffectfulCodegen
+  ( flatEffectfulCodegen
   , flatPureCodegen
-  , pureAST
-  , pureASTWith
   )
 import JShark.Compiler.Emit (JS, renderJS)
 import JShark.Compiler.Evaluate
-  ( escapeJsString
+  ( EvalFailure (..)
+  , escapeJsString
   , evaluate
   , evaluateBigInt
   , evaluateNumber
   , packUint8
+  , tryEvaluate
   , uint8Elems
   )
-import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
-import JShark.Compiler.Lower
-  ( irEffectFromClosed
-  , optimizedEffectSize
-  , optimizedExprSize
-  )
 
+-- | Compile a closed pure expression to a JavaScript IIFE.
 pureProgram :: ClosedExpr u -> JS
 pureProgram e = uncurry renderIIFE (flatPureCodegen e)
 
+-- | Compile a closed effectful program to a JavaScript IIFE.
 effectfulProgram :: ClosedEffect u -> JS
 effectfulProgram e = uncurry renderIIFE (flatEffectfulCodegen e)

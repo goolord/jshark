@@ -5,10 +5,12 @@
 
 module Main (main) where
 
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import JShark
 import JShark.Api
 import JShark.Api.Rec (Rec (..))
+import JShark.Internal (effectfulAST, optimizedEffectSize)
 import JShark.Lucid
 import Lucid (button_, class_, div_, label_, li_, type_)
 import System.CPUTime
@@ -58,7 +60,7 @@ main = do
       timeIt "  unoptimized" $ do
         let
           !js = renderJS (effectfulAST (benchmarkTemplate n))
-        printf "    js length: %d\n" (T.length js)
+        printf "    js length: %d\n" (BS.length js)
 
   test 1
   test 5

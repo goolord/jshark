@@ -11,6 +11,8 @@ module BunTests (bunEvalTests) where
 
 import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
+import Data.Array.Byte (ByteArray)
+import qualified Data.ByteString.Char8 as BC
 import Data.List (intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -27,16 +29,18 @@ import JShark.Bun
   , evaluateEffectJSON
   , evaluateEffectJSONWith
   )
-import JShark.Bun.Internal (runJS, runJSWith)
+import JShark.Bun.Internal (runJS, runJSTagged, runJSWith)
 import qualified JShark.Canvas as Canvas
 import JShark.Compiler
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.Example.Life (initialCatalogCells, initialPop, soupSeedPop)
 import JShark.Example.Life.GridApi (seedLiveCells, seedSoupRegion)
+import qualified JShark.Json as Json
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import qualified JShark.Object as Object
+import JShark.Promise (Promise, promiseCatch, promiseThen)
 import qualified JShark.Set as Set
 import qualified JShark.Storage as Storage
 import Test.Support
@@ -61,6 +65,18 @@ bunEvalTests =
             , bunCase "bigint add via toString" (toString (bigInt 10 + bigInt 3))
             , bunCase "bigint exact via toString" (toString (bigInt (2 ^ (80 :: Int) + 1)))
             , bunCase "bigint literal via toString" (toString (bigInt 42))
+            , taggedCase "tagged NaN" (Literal (ValueNumber (0 / 0))) "number:NaN"
+            , taggedCase "tagged +Infinity" (Literal (ValueNumber (1 / 0))) "number:Infinity"
+            , taggedCase
+                "tagged -Infinity"
+                (Literal (ValueNumber (-1 / 0)))
+                "number:-Infinity"
+            , taggedCase
+                "tagged negative zero"
+                (Literal (ValueNumber (-0.0)))
+                "number:-0"
+            , taggedCase "tagged undefined" (Literal ValueUnit) "undefined"
+            , taggedCase "tagged bigint" (bigInt 42) "bigint:42"
             , bunCase "subtraction" ((number 5 :: Expr f 'Number) - number 2)
             , bunCase
                 "multiplication and division"
@@ -87,6 +103,67 @@ bunEvalTests =
                 "let in if_ branch"
                 (let_ (number 5) (\x -> if_ (bool True) x (number 0)))
             , bunCase
+                "if_ does not evaluate its untaken branch"
+                ( apply
+                    ( apply
+                        ( lambda $ \b ->
+                            lambda $ \i ->
+                              if_
+                                b
+                                ( let_
+                                    ( Array.index
+                                        (Literal (ValueArray [ValueNumber 1, ValueNumber 2]))
+                                        i
+                                    )
+                                    (\x -> x + x)
+                                )
+                                (number 0)
+                        )
+                        (bool False)
+                    )
+                    (number 99)
+                )
+            , bunCase
+                "|| does not evaluate a short-circuited right side"
+                ( apply
+                    ( apply
+                        ( lambda $ \b ->
+                            lambda $ \i ->
+                              Or
+                                b
+                                ( let_
+                                    ( Array.index
+                                        (Literal (ValueArray [ValueNumber 1, ValueNumber 2]))
+                                        i
+                                    )
+                                    (\x -> x .== x)
+                                )
+                        )
+                        (bool True)
+                    )
+                    (number 99)
+                )
+            , bunCase
+                "&& does not evaluate a short-circuited right side"
+                ( apply
+                    ( apply
+                        ( lambda $ \b ->
+                            lambda $ \i ->
+                              And
+                                b
+                                ( let_
+                                    ( Array.index
+                                        (Literal (ValueArray [ValueNumber 1, ValueNumber 2]))
+                                        i
+                                    )
+                                    (\x -> x .== x)
+                                )
+                        )
+                        (bool False)
+                    )
+                    (number 99)
+                )
+            , bunCase
                 "optionCase Some"
                 ( optionCase
                     (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
@@ -99,7 +176,16 @@ bunEvalTests =
             , bunCase
                 "some is the wrapped value"
                 (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
-            , bunCase "none is null" (none :: Expr f ('Option 'Number))
+            , bunCase "none is tagged none" (none :: Expr f ('Option 'Number))
+            , bunCase
+                "some none nests faithfully"
+                (JShark.Api.some (none :: Expr f ('Option 'Number)))
+            , bunCase
+                "unsafeNullable of undefined is none"
+                (unsafeNullable (Literal ValueUnit))
+            , bunCase
+                "unsafeNullable preserves a tagged none as present"
+                (unsafeNullable (none :: Expr f ('Option 'Number)))
             , bunCase "string concat" (Concat (string "a") (string "b"))
             , bunCase "Show number" (Show (number 3))
             , bunCase "Eq numbers" (number 1 .== number 1)
@@ -172,6 +258,10 @@ bunEvalTests =
                 )
                 "true"
             , effectCase
+                "u8Set wraps a Uint8Array and clamps a Uint8ClampedArray"
+                clampVsWrap
+                "44255"
+            , effectCase
                 "catalog seed stamps non-zero species"
                 catalogSeedSpecies
                 "46"
@@ -192,9 +282,9 @@ bunEvalTests =
                 (Show (uint8Array (packUint8 [1, 2, 3])))
             , testCase "compileEffect ifE+LambdaE evaluates" $ do
                 out <- compileEffect defaultCompilerConfig prettyIfLambda
-                got <- T.unpack <$> runJS (T.unpack out)
+                got <- T.unpack <$> runJS (BC.unpack out)
                 assertEqual
-                  ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> T.unpack out)
+                  ("expected 6\nbun JSON: " <> got <> "\njs:\n" <> BC.unpack out)
                   "6"
                   got
             ]
@@ -212,10 +302,33 @@ bunEvalTests =
                 (ffi "Math.max" (arg (number 2) <: arg (number 9) <: RecNil) :: Effect f 'Number)
                 "9"
             , effectCase "object set then get" mutSetGet "21"
+            , effectCase
+                "u8 read bound before a write keeps the pre-write value"
+                u8ReadBeforeWrite
+                "0"
+            , effectCase
+                "runtime-indexed read bound before a write keeps the value"
+                runtimeIndexReadBeforeWrite
+                "0"
+            , effectCase
+                "two allocations keep distinct identity"
+                allocationIdentity
+                "true"
+            , effectCase
+                "unsafeOptionToNative passes null / value to a foreign call"
+                optionArgNative
+                "42"
             , effectCase "Map insert then lookup" mapRoundTrip "\"v\""
+            , effectCase
+                "groupBy skips holes and keeps first-seen key order"
+                groupBySparseKeys
+                "\"a,b\""
             , effectCase "Set insert then member" setMember "true"
             , effectCase "Map foldM sums values" mapFold "3"
             , effectCase "Map mapM_ runs" mapForEach "undefined"
+            , effectCase "JSON.stringify of a number" jsonStringify "\"1\""
+            , effectCase "JSON.stringify of undefined is none" jsonStringifyUnit "\"none\""
+            , effectCase "JSON.stringify of BigInt throws" jsonStringifyBigInt "\"caught\""
             , effectCase
                 "catch_ of throw_"
                 (catch_ (throw_ (string "boom")) (\_ -> expr (number 7)))
@@ -229,6 +342,26 @@ bunEvalTests =
                 "a promise result is awaited, not stringified as {}"
                 (ffi "Promise.resolve" (arg (number 7) <: RecNil) :: Effect f 'Number)
                 "7"
+            , effectCase
+                "promiseThen resolves the handler result"
+                promiseThenValue
+                "6"
+            , effectCase
+                "promiseCatch receives the rejection reason"
+                promiseCatchReason
+                "\"caught:boom\""
+            , effectCase
+                "promiseCatch passes a fulfilled value through"
+                promiseCatchFulfilled
+                "5"
+            , effectCase
+                "promiseThen adopts a returned promise"
+                promiseThenAdopt
+                "7"
+            , effectCase
+                "promiseThen adopts then chains the adopted promise"
+                promiseThenAdoptChain
+                "8"
             , testCase "a rejected promise fails the run" $ do
                 r <-
                   Ex.try
@@ -271,7 +404,7 @@ bunEvalTests =
             , testCase "a non-terminating program hits the timeout" $ do
                 let
                   spin =
-                    T.unpack (renderJS (effectfulProgram (while_ (expr (bool True)) noOp)))
+                    BC.unpack (renderJS (effectfulProgram (while_ (expr (bool True)) noOp)))
                 r <- Ex.try (runJSWith 1000000 spin)
                 case r of
                   Right out -> assertFailure ("expected a timeout, got " <> T.unpack out)
@@ -301,15 +434,30 @@ bunEvalTests =
                       domClass
                       "\"on\""
                   , domCase
+                      "a missing attribute is None"
+                      "<div id=\"a\"></div>"
+                      domAttrMissing
+                      "\"missing\""
+                  , domCase
                       "createElement and appendChild are visible to querySelectorAll"
                       "<div id=\"a\"></div>"
                       domAppend
                       "1"
                   , domCase
-                      "getElementById of a missing id is null"
+                      "lookupSelector yields a real Array (map works)"
+                      "<div id=\"a\"><span></span><span></span><span></span></div>"
+                      domSelectorMap
+                      "3"
+                  , domCase
+                      "getElementById of a missing id is none"
                       "<div id=\"other\"></div>"
                       domMissing
-                      "null"
+                      "{\"some\":false}"
+                  , domCase
+                      "lookupIdOption of a missing id is none"
+                      "<div id=\"other\"></div>"
+                      domMissingOption
+                      "\"absent\""
                   , domCase "localStorage round trip" "" domStorage "\"v\""
                   , domCase
                       "happy-dom has no 2D canvas, and the Option says so"
@@ -334,6 +482,14 @@ bunEvalTests =
 
 bunCase :: String -> (forall f. Expr f u) -> TestTree
 bunCase name e = testCase name (assertBunAgrees e)
+
+-- | Assert the tagged observation of a compiled expression. Unlike the
+-- plain-JSON path this keeps NaN, the infinities, @-0@, @undefined@, and
+-- @BigInt@ distinct.
+taggedCase :: String -> (forall f. Expr f u) -> Text -> TestTree
+taggedCase name e expected = testCase name $ do
+  got <- runJSTagged (BC.unpack (renderJS (pureProgram e)))
+  assertEqual name expected got
 
 effectCase :: String -> (forall f. Effect f u) -> String -> TestTree
 effectCase name e expected = testCase name $ do
@@ -371,11 +527,73 @@ mutSetGet = fromSyntax $ do
   x <- (Var o).x
   yield x
 
+-- | Read a byte before writing it. The read is a mutable access and must
+-- not be moved across the write, so the bound value stays the zeroed byte.
+u8ReadBeforeWrite :: forall f. Effect f 'Number
+u8ReadBeforeWrite = fromSyntax $ do
+  buf <- bindExpr (newByteArray (number 1))
+  old <- bindExpr (expr (u8Index buf (number 0)))
+  toSyntax_ (u8Set buf (number 0) (number 7))
+  yield old
+
+-- | Same as 'u8ReadBeforeWrite' but the index comes from a runtime call, so
+-- constant folding cannot hide a reordering.
+runtimeIndexReadBeforeWrite :: forall f. Effect f 'Number
+runtimeIndexReadBeforeWrite = fromSyntax $ do
+  buf <- bindExpr (newByteArray (number 4))
+  i <- bindExpr (ffi "(() => 0)" RecNil)
+  old <- bindExpr (expr (u8Index buf i))
+  toSyntax_ (u8Set buf i (number 9))
+  yield old
+
+-- | Two independent allocations stay distinct: writing one does not touch
+-- the other.
+allocationIdentity :: forall f. Effect f 'Bool
+allocationIdentity = fromSyntax $ do
+  a <- bindExpr (newByteArray (number 1))
+  b <- bindExpr (newByteArray (number 1))
+  toSyntax_ (u8Set a (number 0) (number 1))
+  yield ((u8Index a (number 0) .== number 1) .&& (u8Index b (number 0) .== number 0))
+
+-- | A foreign callee that expects @number | null@. The tagged 'Option'
+-- must be unwrapped at the boundary: @none@ becomes native @null@ and
+-- @some n@ becomes @n@.
+optionArgNative :: forall f. Effect f 'Number
+optionArgNative = fromSyntax $ do
+  absent <-
+    bindExpr
+      ( ffi
+          "((x) => x === null ? 1 : x)"
+          (arg (unsafeOptionToNative (none :: Expr f ('Option 'Number))) <: RecNil)
+      )
+  present <-
+    bindExpr
+      ( ffi
+          "((x) => x === null ? 1 : x)"
+          (arg (unsafeOptionToNative (some (number 41))) <: RecNil)
+      )
+  yield (absent + present)
+
 mapRoundTrip :: forall f. Effect f 'String
 mapRoundTrip = fromSyntax $ Map.withMap $ \m -> do
   _ <- Map.insert m (string "k") (string "v")
   v <- Map.lookup m (string "k")
   yield (orElse v (string "missing"))
+
+-- | A sparse array (holes at 0) with first-seen keys @a@, @b@, @a@: the
+-- generated @$groupBy@ must skip the hole and keep first-seen key order.
+groupBySparseKeys :: forall f. Effect f 'String
+groupBySparseKeys = fromSyntax $ do
+  arr <-
+    bindExpr
+      ( ffiExpr
+          "(function(){var a=[];a[1]='a';a[2]='b';a[3]='a';return a;})()"
+          RecNil ::
+          Effect f ('Array 'String)
+      )
+  g <- bindExpr (expr (Array.groupBy arr (\x -> x)))
+  keys <- bindExpr (expr (Array.map g (\grp -> grp.key)))
+  yield (Array.join keys (string ","))
 
 setMember :: forall f. Effect f 'Bool
 setMember = fromSyntax $ Set.withSet $ \s -> do
@@ -394,6 +612,103 @@ mapForEach :: forall f. Effect f 'Unit
 mapForEach = fromSyntax $ Map.withMap $ \m -> do
   _ <- Map.insert m (string "x") (number 1)
   Map.mapM_ (\_ _ -> toSyntax noOp) m
+
+-- | A 300 write wraps to 44 on a @Uint8Array@ and clamps to 255 on a
+-- @Uint8ClampedArray@: @44*1000 + 255@.
+clampVsWrap :: forall f. Effect f 'Number
+clampVsWrap = fromSyntax $ do
+  u8 <- bindExpr (newByteArray (number 1))
+  c8 <-
+    bindExpr
+      (ffi "(() => new Uint8ClampedArray(1))" RecNil :: Effect f 'Uint8ClampedArray)
+  toSyntax_ (u8Set u8 (number 0) (number 300))
+  toSyntax_ (u8Set c8 (number 0) (number 300))
+  a <- bindExpr (expr (u8Index u8 (number 0)))
+  b <- bindExpr (expr (u8Index c8 (number 0)))
+  yield (a * number 1000 + b)
+
+jsonStringify :: forall f. Effect f 'String
+jsonStringify = fromSyntax $ do
+  s <- bindExpr (Json.stringify (number 1))
+  yield (orElse s (string "none"))
+
+jsonStringifyUnit :: forall f. Effect f 'String
+jsonStringifyUnit = fromSyntax $ do
+  s <- bindExpr (Json.stringify (Literal ValueUnit))
+  yield (orElse s (string "none"))
+
+jsonStringifyBigInt :: forall f. Effect f 'String
+jsonStringifyBigInt = fromSyntax $ do
+  s <- bindExpr (catch_ (Json.stringify (bigInt 1)) (\_ -> expr none))
+  yield (orElse s (string "caught"))
+
+promiseThenValue :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseThenValue = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 5) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  r <- promiseThen p (\x -> expr (Var x + number 1))
+  toSyntax r
+
+promiseCatchReason :: forall f. Effect f ('MutableObject (Promise 'String))
+promiseCatchReason = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.reject" (arg (string "boom") <: RecNil) ::
+          Effect f ('MutableObject (Promise 'String))
+      )
+  r <- promiseCatch p (\e -> expr (Concat (string "caught:") (Var e)))
+  toSyntax r
+
+-- | A fulfilled promise passes its value through @.catch@ untouched; the
+-- handler only runs on rejection. Recovery must preserve the resolution
+-- type, which is why @promiseCatch@ returns @Promise u@.
+promiseCatchFulfilled :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseCatchFulfilled = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 5) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  r <- promiseCatch p (\_ -> expr (number 99))
+  toSyntax r
+
+promiseThenAdopt :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseThenAdopt = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 1) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  r <-
+    promiseThen
+      p
+      ( \_ ->
+          ffi "Promise.resolve" (arg (number 7) <: RecNil) ::
+            Effect f ('MutableObject (Promise 'Number))
+      )
+  toSyntax r
+
+-- | Adoption keeps the resolution type usable: chain another @.then@ on
+-- the adopted promise and map its number.
+promiseThenAdoptChain :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseThenAdoptChain = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 1) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  adopted <-
+    promiseThen
+      p
+      ( \_ ->
+          ffi "Promise.resolve" (arg (number 7) <: RecNil) ::
+            Effect f ('MutableObject (Promise 'Number))
+      )
+  r <- promiseThen adopted (\x -> expr (Var x + number 1))
+  toSyntax r
 
 logHi :: forall f. Effect f 'Unit
 logHi = fromSyntax (Console.log (string "hi" :: Expr f 'String) *> done)
@@ -421,7 +736,13 @@ domClass = fromSyntax $ do
   el <- Dom.lookupId (string "a")
   _ <- Dom.classAdd el (string "on")
   c <- Dom.getAttribute el "class"
-  yield c
+  yield (orElse c (string ""))
+
+domAttrMissing :: forall f. Effect f 'String
+domAttrMissing = fromSyntax $ do
+  el <- Dom.lookupId (string "a")
+  c <- Dom.getAttribute el "data-nope"
+  yield (orElse c (string "missing"))
 
 domAppend :: forall f. Effect f 'Number
 domAppend = fromSyntax $ do
@@ -432,11 +753,24 @@ domAppend = fromSyntax $ do
   n <- toSyntax nodes
   yield (Array.length (Var n))
 
+-- | @Array.map@ only exists on a real array. If @lookupSelector@ returned a
+-- raw @NodeList@ this program would fail at runtime.
+domSelectorMap :: forall f. Effect f 'Number
+domSelectorMap = fromSyntax $ do
+  nodes <- Dom.lookupSelector (string "#a span")
+  n <- toSyntax nodes
+  yield (Array.length (Array.map (Var n) (\_ -> number 1)))
+
 domMissing :: forall f. Effect f ('Option ('MutableObject Dom.DomElement))
 domMissing = fromSyntax $ do
   el <- Dom.lookupId (string "a")
   handle <- toSyntax el
   yield (unsafeNullable (Var handle))
+
+domMissingOption :: forall f. Effect f 'String
+domMissingOption = fromSyntax $ do
+  opt <- Dom.lookupIdOption (string "nope") >>= bindExpr
+  yield (optionCase opt (string "absent") (\_ -> string "present"))
 
 domStorage :: forall f. Effect f 'String
 domStorage = fromSyntax $ do
@@ -460,7 +794,7 @@ assertBunAgrees :: (forall f. Expr f u) -> IO ()
 assertBunAgrees e = do
   let
     expected = encodeJSValue (evaluate e)
-    program = T.unpack (renderJS (pureProgram e))
+    program = BC.unpack (renderJS (pureProgram e))
   got <- T.unpack <$> runJS program
   assertEqual
     ("evaluate JSON: " <> expected <> "\nbun JSON: " <> got <> "\njs:\n" <> program)
@@ -475,22 +809,26 @@ encodeJSValue = \case
   ValueString s -> encodeJSString (T.unpack s)
   ValueUnit -> "undefined"
   ValueArray xs -> "[" ++ intercalate "," (map encodeJSValue xs) ++ "]"
-  ValueOption Nothing -> "null"
-  ValueOption (Just x) -> encodeJSValue x
+  ValueOption Nothing -> "{\"some\":false}"
+  ValueOption (Just x) -> "{\"some\":true,\"value\":" ++ encodeJSValue x ++ "}"
   ValueResult (Right x) -> encodeResult True x
   ValueResult (Left x) -> encodeResult False x
   ValueRegex s -> encodeJSString (T.unpack s)
-  ValueUint8Array ba ->
-    "{"
-      ++ intercalate
-        ","
-        [ encodeJSString (show i) ++ ":" ++ show w
-        | (i, w) <- zip [0 :: Int ..] (uint8Elems ba)
-        ]
-      ++ "}"
+  ValueUint8Array ba -> encodeU8 ba
+  ValueUint8ClampedArray ba -> encodeU8 ba
   ValueFrozen {} -> error "encodeJSValue: frozen objects are not JSON"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
   ValueBigInt {} -> error "encodeJSValue: bigint is not JSON"
+
+encodeU8 :: ByteArray -> String
+encodeU8 ba =
+  "{"
+    ++ intercalate
+      ","
+      [ encodeJSString (show i) ++ ":" ++ show w
+      | (i, w) <- zip [0 :: Int ..] (uint8Elems ba)
+      ]
+    ++ "}"
 
 encodeResult :: Bool -> Value u -> String
 encodeResult okFlag payload =

@@ -5,6 +5,7 @@ module Main (main) where
 import Data.List (partition)
 import qualified Data.List as List
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import DevServer (Example (..), ServeMode (..), exportExamples, serveExamples)
 import JShark.Compiler
   ( CompilerConfig (..)
@@ -50,10 +51,11 @@ main = do
           (exampleJobs paneCfg)
   let
     lookupIn srcs label =
-      case List.lookup label (zip labels srcs) of
-        Just js -> js
-        Nothing ->
-          error (T.unpack ("examples: missing compile output for " <> label))
+      TE.decodeUtf8 $
+        case List.lookup label (zip labels srcs) of
+          Just js -> js
+          Nothing ->
+            error (T.unpack ("examples: missing compile output for " <> label))
     lookupCompiled = lookupIn compiled
     lookupPane = lookupIn paneCompiled
     breakoutJs = lookupCompiled "breakout"

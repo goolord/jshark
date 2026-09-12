@@ -23,6 +23,7 @@ import qualified Data.Text.Lazy.IO as TL
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import qualified JShark.Example.Life as Life
 import JShark.Example.Theme (githubCorner, themeLinks)
+import JShark.Example.Watch (exampleWatchTargets)
 import JShark.HotReload.Core
   ( HotReloadConfig (..)
   , HotReloadHub
@@ -35,7 +36,6 @@ import JShark.HotReload.Core
 import JShark.HotReload.Wai (hotReloadMiddleware)
 import JShark.HotReload.Watcher
   ( WatchTargets (..)
-  , defaultWatchTargets
   , startWatcher
   )
 import Lucid
@@ -178,7 +178,7 @@ serveExamples mode startPort examples = do
       onHs <- startHsRecompiler hub hot
       let
         targets =
-          (defaultWatchTargets ["examples"])
+          (exampleWatchTargets ["examples"])
             { onHaskellSource = onHs
             }
       _ <- startWatcher hub targets

@@ -17,7 +17,8 @@ where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark.Api.Types (ClosedEffect, Universe (Unit), fromSyntax)
+import JShark.Api.Syntax (fromSyntax)
+import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import JShark.Compiler (CompilerConfig)
 import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life

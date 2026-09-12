@@ -4,10 +4,16 @@
 module BindgenTests (bindgenTests) where
 
 import BindgenToy
+import qualified BindgenJs
+import qualified BindgenMs
+import qualified BindgenPlain
 import Control.Monad (unless)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BC
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import JShark (effectfulProgram, renderJS)
 import JShark.Api
 import JShark.Bindgen
 import JShark.Bindgen.Cli
@@ -15,10 +21,11 @@ import JShark.Bindgen.Cli
   , parseCliArgs
   )
 import JShark.Bindgen.Extract (tsExtractorAvailable)
+import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics, irFuns)
+import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
 import JShark.Compiler (compileEffect, readableConfig)
-import System.Directory (doesFileExist, getCurrentDirectory)
-import System.Environment (getExecutablePath)
-import System.FilePath (takeDirectory, (</>))
+import Paths_jshark_bindgen (getDataFileName)
+import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 
@@ -26,47 +33,31 @@ import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 fixture :: FilePath -> FilePath
 fixture name = "test/fixtures/jshark-bindgen/" <> name
 
--- | Repo root (contains @cabal.project@). Test exes run from the build tree,
--- so anchor on the executable path rather than the process CWD.
-repoRoot :: IO FilePath
-repoRoot = do
-  exe <- getExecutablePath
-  go (takeDirectory exe)
- where
-  go dir = do
-    let
-      proj = dir </> "cabal.project"
-    present <- doesFileExist proj
-    if present
-      then pure dir
-      else do
-        let
-          up = takeDirectory dir
-        if up == dir
-          then getCurrentDirectory
-          else go up
-
--- | Absolute fixture path under @packages/jshark-bindgen@.
+-- | Fixture path from the package's data files, so it resolves both in the
+-- checkout and from an unpacked source distribution.
 fixtureAbs :: FilePath -> IO FilePath
-fixtureAbs name = do
-  root <- repoRoot
-  pure
-    ( root
-        </> "packages/jshark-bindgen/test/fixtures/jshark-bindgen"
-        </> name
-    )
+fixtureAbs name =
+  getDataFileName ("test" </> "fixtures" </> "jshark-bindgen" </> name)
 
--- | Absolute path of a file under @packages/jshark-bindgen@.
+-- | A file shipped as package data.
 pkgFileAbs :: FilePath -> IO FilePath
-pkgFileAbs rel = do
-  root <- repoRoot
-  pure (root </> "packages/jshark-bindgen" </> rel)
+pkgFileAbs rel = getDataFileName rel
+
+-- | The generated header records the resolved absolute fixture path; rewrite
+-- it to the checkout-relative form the golden uses. 'getDataFileName' can
+-- insert an extra @.@ segment, so collapse it first.
+relativizeSource :: FilePath -> FilePath -> Text -> Text
+relativizeSource fx name =
+  T.replace normalizedFx (T.pack ("test/fixtures/jshark-bindgen/" <> name))
+ where
+  normalizedFx =
+    T.replace "\\.\\" "\\" (T.replace "/./" "/" (T.pack fx))
 
 mustGenWith :: BindgenOpts -> FilePath -> IO Text
 mustGenWith opts name = do
   fx <- fixtureAbs name
   r <- generateFromFile opts fx
-  either fail pure r
+  either fail (pure . relativizeSource fx name) r
 
 mustGen :: FilePath -> IO Text
 mustGen = mustGenWith defaultBindgenOpts
@@ -136,16 +127,11 @@ bindgenTests =
           mustGenWith
             defaultBindgenOpts {optModuleName = Just "BindgenToy"}
             "toy.d.ts"
-        root <- repoRoot
-        let
-          -- the golden records the package-relative source path
-          normalized =
-            T.replace (T.pack (root </> "packages/jshark-bindgen/")) "" hs
-        golden <- TIO.readFile =<< pkgFileAbs "test/BindgenToy.hs"
+        golden <- TIO.readFile =<< pkgFileAbs ("test" </> "BindgenToy.hs")
         assertEqual
           "golden"
           (T.strip golden)
-          (T.strip normalized)
+          (T.strip hs)
     , testCase "CLI parses module / prefix flags" $ do
         case parseCliArgs
           [ "-m"
@@ -184,11 +170,82 @@ bindgenTests =
           Right _ -> fail "expected extra-arg parse error"
     , testCase "generated wrappers compileEffect to JS" $ do
         js <- compileEffect readableConfig toyDemo
-        assertBool "greet" ("toy.greet" `T.isInfixOf` js)
-        assertBool "add" ("toy.add" `T.isInfixOf` js)
-        assertBool "new Widget" ("new toy.Widget" `T.isInfixOf` js)
-        assertBool "resize" ("resize" `T.isInfixOf` js)
+        assertBool "greet" ("toy.greet" `BS.isInfixOf` js)
+        assertBool "add" ("toy.add" `BS.isInfixOf` js)
+        assertBool "new Widget" ("new toy.Widget" `BS.isInfixOf` js)
+        assertBool "resize" ("resize" `BS.isInfixOf` js)
+    , testCase "nullable arguments are unwrapped to native null/value" $ do
+        hs <- mustGen "toy.d.ts"
+        assertBool
+          "primitive option arg"
+          ("arg (unsafeOptionToNative w)" `T.isInfixOf` hs)
+        assertBool
+          "handle option arg"
+          ( "ArgEffect (unsafeOptionToNativeEffect fallback)"
+              `T.isInfixOf` hs
+          )
+        js <- compileEffect readableConfig toyNullableArgs
+        assertBool
+          "native null/value sentinel"
+          ("o.some ? o.value : null" `BS.isInfixOf` js)
+    , testCase "overloads get distinct Haskell names" $ do
+        hs <- mustGen "ms.d.ts"
+        assertBool "first overload" ("ms ::" `T.isInfixOf` hs)
+        assertBool "second overload" ("ms2 ::" `T.isInfixOf` hs)
+    , testCase "generated BindgenMs.hs is a golden of ms.d.ts" $
+        assertGolden "BindgenMs"
+          (defaultBindgenOpts {optModuleName = Just "BindgenMs"})
+          "ms.d.ts"
+    , testCase "generated BindgenPlain.hs is a golden of plain.d.ts" $
+        assertGolden "BindgenPlain"
+          (defaultBindgenOpts {optModuleName = Just "BindgenPlain"})
+          "plain.d.ts"
+    , testCase "generated BindgenJs.hs is a golden of toy.js" $
+        assertGolden "BindgenJs"
+          (defaultBindgenOpts {optModuleName = Just "BindgenJs"})
+          "toy.js"
+    , testCase "every fixture wrapper module compiles to JS" $ do
+        js <- compileEffect readableConfig allFixtureWrappers
+        assertBool "toy.greet" ("toy.greet" `BS.isInfixOf` js)
+        assertBool "toy.add" ("toy.add" `BS.isInfixOf` js)
+        -- plain.d.ts and toy.js both export unqualified `greet`.
+        assertBool "unqualified greet" ("greet(" `BS.isInfixOf` js)
+        assertBool "ms overloads" ("ms(" `BS.isInfixOf` js)
+    , testCase "representative wrapper executes against a JS fixture" $ do
+        let
+          js = renderJS (effectfulProgram msRun)
+          prog =
+            JSProgram
+              { jsFlags = []
+              , jsPrelude =
+                  "globalThis.ms = (v) => typeof v === \"string\" ? v.length : String(v);"
+              , jsExpression = BC.unpack js
+              , jsEpilogue = ""
+              }
+        got <- runProgram bunTimeoutMicroseconds prog
+        assertEqual "ms(\"abcd\") === 4" "4" got
+    , testCase "nested nullable declarations surface a diagnostic" $ do
+        fx <- fixtureAbs "nested.d.ts"
+        r <- parseIrFromFile defaultBindgenOpts fx
+        case r of
+          Left e -> fail e
+          Right ir -> do
+            let cats = map dgCategory (irDiagnostics ir)
+            assertBool
+              ("unsupported-nullable diagnostic, got " <> show cats)
+              ("unsupported-nullable" `elem` cats)
+            assertEqual
+              "nested-nullable declarations are pruned"
+              []
+              (irFuns ir)
     ]
+
+-- | Generate @name@ from @fixture@ and compare against the committed golden.
+assertGolden :: FilePath -> BindgenOpts -> FilePath -> IO ()
+assertGolden moduleNameSym opts fixtureName = do
+  hs <- mustGenWith opts fixtureName
+  golden <- TIO.readFile =<< pkgFileAbs ("test" </> moduleNameSym <> ".hs")
+  assertEqual "golden" (T.strip golden) (T.strip hs)
 
 toyDemo :: Effect f 'Unit
 toyDemo = fromSyntax $ do
@@ -198,3 +255,35 @@ toyDemo = fromSyntax $ do
   w <- newWidget (string "a")
   resize w n n
   done
+
+-- | Exercise a nullable primitive and nullable handle argument so the
+-- generated conversion shows up in compiled JS.
+toyNullableArgs :: Effect f 'Unit
+toyNullableArgs = fromSyntax $ do
+  setWidth (string "a") none
+  setWidth (string "a") (some (number 4))
+  _ <- pickWidget (string "a") (expr none)
+  done
+
+-- | One program touching every fixture module, so all generated wrappers
+-- are compiled (and type-checked) by the test suite.
+allFixtureWrappers :: Effect f 'Unit
+allFixtureWrappers = fromSyntax $ do
+  t <- greet (string "toy")
+  log_ t
+  n <- add (number 1) (number 2)
+  _ <- BindgenPlain.greet (string "plain")
+  p <- BindgenPlain.add (number 1) (number 2)
+  _ <- BindgenJs.greet (string "js")
+  j <- BindgenJs.add (number 2) (number 3)
+  m1 <- BindgenMs.ms (string "abcd")
+  m2 <- BindgenMs.ms2 (number 7)
+  _ <- add (n + p + j + m1) (number 0)
+  log_ m2
+  done
+
+-- | A wrapper whose foreign fixture is supplied by the test prelude.
+msRun :: Effect f 'Number
+msRun = fromSyntax $ do
+  n <- BindgenMs.ms (string "abcd")
+  yield n

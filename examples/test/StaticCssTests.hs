@@ -22,8 +22,8 @@ import JShark.Example.Synth.Keys
   , primaryKey
   )
 import Numeric (showFFloat)
-import System.Directory (doesFileExist, getCurrentDirectory, getFileSize)
-import System.FilePath (takeDirectory, (</>))
+import Paths_jshark_examples (getDataFileName)
+import System.Directory (doesFileExist, getFileSize)
 import System.IO
   ( IOMode (ReadMode)
   , hSetEncoding
@@ -38,22 +38,11 @@ import Test.Tasty.HUnit
 readUtf8 :: FilePath -> IO T.Text
 readUtf8 p = withFile p ReadMode (\h -> hSetEncoding h utf8 >> TIO.hGetContents h)
 
--- | Repo root (contains @cabal.project@), independent of the test CWD.
-repoRoot :: IO FilePath
-repoRoot = getCurrentDirectory >>= go
- where
-  go dir = do
-    let
-      proj = dir </> "cabal.project"
-    ok <- doesFileExist proj
-    if ok
-      then pure dir
-      else do
-        let
-          up = takeDirectory dir
-        if up == dir
-          then fail "static css test: cabal.project not found above cwd"
-          else go up
+-- | The pinned Pico version. The repo-level @scripts/pico-version@ is not
+-- part of this package's data files, so the pin is kept here; the vendored
+-- @static/pico/VERSION@ must match it.
+picoVersionPin :: T.Text
+picoVersionPin = "2.1.1"
 
 staticCssTests :: TestTree
 staticCssTests =
@@ -63,32 +52,29 @@ staticCssTests =
     , testCase "pico version matches pin" assertPicoVersion
     , testCase "synth key labels match keyBindings" assertSynthKeyLabels
     , testCase "synth-keys.css matches Keys layout" $
-        assertCssFile "examples/static/css/synth-keys.css" genSynthKeysCss
+        assertCssFile "static/css/synth-keys.css" genSynthKeysCss
     , testCase "life-tool-preview.css matches species colors" $
         assertCssFile
-          "examples/static/css/life-tool-preview.css"
+          "static/css/life-tool-preview.css"
           genLifeToolPreviewCss
     ]
 
 assertStaticAssets :: IO ()
-assertStaticAssets = do
-  root <- repoRoot
-  mapM_ (assertAsset root) requiredStaticAssets
+assertStaticAssets = mapM_ assertAsset requiredStaticAssets
  where
   requiredStaticAssets =
-    [ "examples/static/css/tokens.css"
-    , "examples/static/css/base.css"
-    , "examples/static/pico/pico.min.css"
-    , "examples/static/pico/VERSION"
-    , "examples/static/js/source-pane.js"
-    , "examples/static/css/synth-keys.css"
-    , "examples/static/css/life-tool-preview.css"
-    , "examples/static/speed-highlight/index.js"
-    , "examples/static/speed-highlight/themes/github-dark.css"
+    [ "static/css/tokens.css"
+    , "static/css/base.css"
+    , "static/pico/pico.min.css"
+    , "static/pico/VERSION"
+    , "static/js/source-pane.js"
+    , "static/css/synth-keys.css"
+    , "static/css/life-tool-preview.css"
+    , "static/speed-highlight/index.js"
+    , "static/speed-highlight/themes/github-dark.css"
     ]
-  assertAsset root rel = do
-    let
-      path = root </> rel
+  assertAsset rel = do
+    path <- getDataFileName rel
     exists <- doesFileExist path
     assertBool (rel ++ " missing — run " ++ vendorHint rel) exists
 
@@ -101,13 +87,8 @@ vendorHint rel
 
 assertPicoVersion :: IO ()
 assertPicoVersion = do
-  root <- repoRoot
-  let
-    pinPath = root </> "scripts/pico-version"
-    vendoredPath = root </> "examples/static/pico/VERSION"
-    cssPath = root </> "examples/static/pico/pico.min.css"
-  pinExists <- doesFileExist pinPath
-  assertBool "scripts/pico-version missing" pinExists
+  vendoredPath <- getDataFileName "static/pico/VERSION"
+  cssPath <- getDataFileName "static/pico/pico.min.css"
   cssExists <- doesFileExist cssPath
   assertBool
     ( "examples/static/pico/pico.min.css missing — commit examples/static/pico/"
@@ -126,13 +107,12 @@ assertPicoVersion = do
         ++ " (or scripts/vendor-pico.sh to refresh)"
     )
     vendoredExists
-  pin <- readUtf8 pinPath
   ver <- readUtf8 vendoredPath
   assertEqual
     ( "pico version drift — commit examples/static/pico/"
         ++ " (or scripts/vendor-pico.sh to refresh)"
     )
-    (T.strip pin)
+    picoVersionPin
     (T.strip ver)
 
 assertSynthKeyLabels :: IO ()
@@ -147,8 +127,7 @@ assertSynthKeyLabels =
 
 assertCssFile :: FilePath -> T.Text -> IO ()
 assertCssFile rel expected = do
-  root <- repoRoot
-  onDisk <- readUtf8 (root </> rel)
+  onDisk <- readUtf8 =<< getDataFileName rel
   assertEqual
     (rel ++ " drift — rerun scripts/gen-*-css.sh")
     (normalizeCss expected)
