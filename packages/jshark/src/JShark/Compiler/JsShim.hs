@@ -50,6 +50,7 @@ data Builtin
   | ArrayEq
   | DeepEqual
   | Uint8ArrayEq
+  | GroupBy
   deriving (Eq, Ord, Enum, Bounded, Show)
 
 -- | Runtime shims plus hoisted program lambdas, printed once ahead of
@@ -177,6 +178,7 @@ builtinName = \case
   ArrayEq -> "$arrayEq"
   DeepEqual -> "$deepEqual"
   Uint8ArrayEq -> "$uint8ArrayEq"
+  GroupBy -> "$groupBy"
 
 builtinSrc :: Builtin -> Text
 builtinSrc = \case
@@ -190,3 +192,5 @@ builtinSrc = \case
     "function(a,b){if(a===b)return true;if(a instanceof Date&&b instanceof Date)return a.getTime()===b.getTime();if(a instanceof RegExp&&b instanceof RegExp)return a.toString()===b.toString();var ka=Object.keys(a),kb=Object.keys(b);if(ka.length!==kb.length)return false;for(var i=0;i<ka.length;i++){var k=ka[i];if(!Object.prototype.hasOwnProperty.call(b,k))return false;var v1=a[k],v2=b[k],o=v1&&v2&&typeof v1==='object'&&typeof v2==='object';if(o){if(Array.isArray(v1)){if(!$arrayEq(v1,v2))return false}else if(v1 instanceof Uint8Array){if(!$uint8ArrayEq(v1,v2))return false}else if(!$deepEqual(v1,v2))return false}else if(v1!==v2&&!(Number.isNaN(v1)&&Number.isNaN(v2)))return false}return true}"
   Uint8ArrayEq ->
     "function(a,b){if(a===b)return true;if(a.length!==b.length)return false;for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true}"
+  GroupBy ->
+    "function(arr,key){var m=new Map(),out=[];for(var i=0;i<arr.length;i++){if(!(i in arr))continue;var x=arr[i],k=key(x),e=m.get(k);if(e===undefined){e={key:k,items:[]};m.set(k,e);out.push(e)}e.items.push(x)}return out}"

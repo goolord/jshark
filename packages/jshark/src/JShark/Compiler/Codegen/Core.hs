@@ -66,7 +66,7 @@ import JShark.Compiler.Emit
 import qualified JShark.Compiler.Flat as FlatSoA
 import qualified JShark.Compiler.Ir as Ir
 import JShark.Compiler.JsShim
-  ( Builtin (CheckedIndex, ValueEq)
+  ( Builtin (CheckedIndex, GroupBy, ValueEq)
   , Preamble
   , emptyPreamble
   , hoistTagName
@@ -91,6 +91,9 @@ emitBuiltin s b args =
 
 emitCheckedIndex :: CG -> JS -> JS -> (CG, JS)
 emitCheckedIndex s arr idx = emitBuiltin s CheckedIndex [arr, idx]
+
+emitGroupBy :: CG -> JS -> JS -> (CG, JS)
+emitGroupBy s arr key = emitBuiltin s GroupBy [arr, key]
 
 emitValueEq :: CG -> JS -> JS -> (CG, JS)
 emitValueEq s a b = emitBuiltin s ValueEq [a, b]

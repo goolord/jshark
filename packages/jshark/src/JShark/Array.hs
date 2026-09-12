@@ -199,55 +199,14 @@ reduceRight arr z f = Std (Method (MethReduceRight arr z (\a x -> f (var a) (var
 singleton :: Expr f u -> Expr f ('Array u)
 singleton x = map (Literal (ValueArray [ValueUnit])) (\_ -> x)
 
--- | @[{key, items}]@ in first-seen key order. One 'reduce' pass; 'keyFn'
--- runs once per element.
+-- | @[{key, items}]@ in first-seen key order. One @$groupBy@ pass using a
+-- local @Map@ and append-only group arrays; 'keyFn' runs once per
+-- (non-hole) element.
 groupBy ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f 'String)
   -> Expr f ('Array ('Object (GroupBy u)))
-groupBy arr keyFn = applyNamed2 groupByChecked arr (toLambda keyFn)
-
-groupByChecked ::
-  forall f u.
-  Expr
-    f
-    ( 'Function
-        ('Array u)
-        ('Function ('Function u 'String) ('Array ('Object (GroupBy u))))
-    )
-groupByChecked =
-  namedLambdaRow
-    @('[Param "arr" ('Array u), Param "keyFn" ('Function u 'String)])
-    "groupBy"
-    $ \p ->
-      applyNamed2
-        reduceChecked
-        (reduceSeed p.arr (Literal (ValueArray [])))
-        ( toLambda $ \acc x ->
-            let
-              k = Apply p.keyFn x
-             in
-              let_
-                ( reduce acc (Literal (ValueBool False)) $ \found g ->
-                    Or found (GetField @"key" g .== k)
-                )
-                $ \found ->
-                  if_
-                    found
-                    ( map acc $ \g ->
-                        if_
-                          (GetField @"key" g .== k)
-                          (groupEntry k (concat (GetField @"items" g) (singleton x)))
-                          g
-                    )
-                    (concat acc (singleton (groupEntry k (singleton x))))
-        )
-
--- | @{key, items}@ object used by 'groupBy'.
-groupEntry ::
-  Expr f 'String -> Expr f ('Array u) -> Expr f ('Object (GroupBy u))
-groupEntry k items =
-  FrozenLit [FieldLit @"key" k, FieldLit @"items" items]
+groupBy arr keyFn = expr2 FixGroupBy arr (toLambda keyFn)
 
 -- | @zipWith@; result length is 'Math.min'. One hoisted @$zipWith@ helper.
 zipWith ::

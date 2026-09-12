@@ -297,6 +297,8 @@ flatRenderArrayLit ctx s0 es =
         (brackets (hcat (punctuate ", " (codesRefs cs))))
     )
 
+flatRenderFixed ::
+  FlatEmitCtx -> CG -> Flat.FlatSoA -> Flat.FlatFixed -> (CG, Code)
 flatRenderFixed ctx s0 view = \case
   Flat.FlatFixedU op xId
     | Just name <- Prim.math1Name op ->
@@ -323,6 +325,13 @@ flatRenderFixed ctx s0 view = \case
       (s1, Code rDecl rRef) = flatChild ctx s0 xId
      in
       (s1, Code rDecl (Prim.fixedUnaryJS op (flatWrapOperand view xId rRef)))
+  Flat.FlatFixedB FixGroupBy xId yId ->
+    let
+      (s1, Code rDecl rRef) = flatChild ctx s0 xId
+      (s2, Code aDecl aRef) = flatChild ctx s1 yId
+      (s3, call) = emitGroupBy s2 (flatWrapOperand view xId rRef) aRef
+     in
+      (s3, Code (rDecl $$ aDecl) call)
   Flat.FlatFixedB op xId yId ->
     let
       (s1, Code rDecl rRef) = flatChild ctx s0 xId

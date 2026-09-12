@@ -595,6 +595,10 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   -- | Uncurried call @(f)(x, y)@ for hoisted two-arg helpers ('applyNamed2').
   FixCall2 ::
     FixedOp ('Function a ('Function b r)) a b r
+  -- | @groupBy(arr, keyFn)@ — one pass, first-seen key order, append-only
+  -- groups. Codegen emits the local-Map @$groupBy@ shim.
+  FixGroupBy ::
+    FixedOp ('Array u) ('Function u 'String) 'Unit ('Array ('Object (GroupBy u)))
   -- | Tagged @Option@ @some@: @{some: true, value: x}@. Native null\/value
   -- is 'UnsafeNullable', not this.
   FixSome ::

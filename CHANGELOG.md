@@ -44,6 +44,14 @@
   `unsafeGrow`-by-one per folded literal, which was quadratic in the
   number of folds.
 
+* `Array.groupBy` now emits a `$groupBy` shim that builds groups with a
+  local `Map` and append-only arrays in one pass, preserving first-seen
+  key order and element order and evaluating the key once per non-hole
+  element. The previous pure `reduce`/`map` chain rescanned and recopied
+  every group per element. The host evaluator implements the same
+  algorithm, and the generated helper is now a fixed shim in the
+  preamble.
+
 * `JShark.Dom.lookupSelector` now returns a real `Array`
   (`Array.from(document.querySelectorAll(...))`). It was typed as an
   `Array` but returned a `NodeList`, so array methods other than index and

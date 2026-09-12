@@ -710,12 +710,13 @@ stdlibTests =
         case evaluate (Eq keys (Literal (ValueArray [ValueString "one", ValueString "two"]))) of
           ValueBool b -> b @?= True
         evaluateNumber (Array.length firstItems) @?= 2
-    , testCase "Array.groupBy hoists $groupBy helper" $ do
+    , testCase "Array.groupBy emits the $groupBy shim" $ do
         let
           js = renderJS (pureAST (Array.groupBy numArray (\_ -> string "k")))
         T.isInfixOf "const $groupBy =" js @?= True
-        T.isInfixOf "=>" js @?= True
-        T.isInfixOf ".reduce" js @?= True
+        T.isInfixOf "new Map()" js @?= True
+        T.isInfixOf "items:[]" js @?= True
+        T.isInfixOf ".reduce" js @?= False
         T.isInfixOf "key" js @?= True
         T.isInfixOf "($groupBy)(n0)(n1)" js @?= False
     , testCase "Array.groupBy hoists once when used twice" $ do
@@ -729,8 +730,7 @@ stdlibTests =
                   )
               )
         T.count "const $groupBy =" js @?= 1
-        T.isInfixOf "const $groupBy = (arr, keyFn) =>" js @?= True
-        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
+        T.isInfixOf "const $groupBy = function(arr,key)" js @?= True
     , testCase "binary hoists match in pureAST and effectfulAST" $ do
         let
           pureJs =

@@ -45,6 +45,7 @@ import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
+import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -755,6 +756,26 @@ evalFixed rec op args = case (op, args) of
     bv <- rec b
     evalAsArray rec xs $ \vs ->
       pure (ValueArray (jsArraySlice vs (unNumber av) (unNumber bv)))
+  (FixGroupBy, ArgsB arr keyFn) -> do
+    as <- arrayValues <$> rec arr
+    fv <- rec keyFn
+    let
+      step (ord, mp) x =
+        let
+          k = unString (unFunction fv x)
+         in
+          case Map.lookup k mp of
+            Just _ -> (ord, Map.adjust (Prelude.++ [x]) k mp)
+            Nothing -> (ord Prelude.++ [k], Map.insert k [x] mp)
+      (order, acc) = foldl' step ([], Map.empty) as
+      groups =
+        [ ValueFrozen
+            [ FieldLit @"key" (Literal (ValueString k))
+            , FieldLit @"items" (Literal (ValueArray (acc Map.! k)))
+            ]
+        | k <- order
+        ]
+    pure (ValueArray groups)
   -- String/regex fixed ops are codegen-only (same as old Un/Bin/Tern gaps).
   _ -> cannotEval "a fixed stdlib op"
 
