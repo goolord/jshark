@@ -75,6 +75,7 @@ library
     JShark.Api.Generic
     JShark.Api.Params
     JShark.Api.Rec
+    JShark.Api.Syntax
     JShark.Api.Types
     JShark.Internal
     JShark.Prelude

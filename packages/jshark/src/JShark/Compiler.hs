@@ -57,7 +57,7 @@ import JShark
   , pureProgram
   , renderJS
   )
-import JShark.Api.Types (EffectSyntax, fromSyntax)
+import JShark.Api.Syntax (EffectSyntax, fromSyntax)
 import qualified JShark.Compiler.CompileProgress as CP
 import JShark.Compiler.Emit (JS)
 import JShark.Compiler.JsFormat

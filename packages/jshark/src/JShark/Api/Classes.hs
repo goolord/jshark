@@ -98,7 +98,7 @@ import JShark.Api
   , (.==)
   , (.||)
   )
-import JShark.Api.Types hiding ((>>))
+import JShark.Api.Types
 import qualified JShark.Array as A
 import Prelude
   ( Bool (False, True)

@@ -216,6 +216,7 @@ import JShark.Api.Params
   , toLambda
   )
 import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Syntax
 import JShark.Api.Types
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object

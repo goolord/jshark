@@ -40,6 +40,7 @@ import qualified Data.Text as T
 import GHC.Records (HasField (..))
 import GHC.TypeLits
 import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Syntax
 import JShark.Api.Types
 
 -- | @o.k@. With @OverloadedRecordDot@, mutable @n <- o.fullName@ is

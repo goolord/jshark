@@ -60,11 +60,13 @@ import GHC.TypeLits
   )
 import JShark.Api
   ( expr
+  , fromSyntax
   , hold
   , ifE
   , none
   , string
   , throw_
+  , toSyntax
   , unsafeNullable
   , var
   , (.==)

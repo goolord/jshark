@@ -69,6 +69,12 @@
   module for tests, benchmarks, and tooling; `pureProgram` and
   `effectfulProgram` stay public.
 
+* The `EffectSyntax` do-notation bridge moved from `JShark.Api.Types` to
+  `JShark.Api.Syntax`, so the raw AST and the construction monad are
+  separate modules. `JShark.Api` re-exports the syntax names, so ordinary
+  imports are unchanged; direct `JShark.Api.Types` importers use
+  `JShark.Api.Syntax`.
+
 * The optimizer entry points force the optimized tree with a lightweight
   `forceIr` instead of calling `metaIr`, which recomputed and discarded a
   per-node `IntMap`. Life emit drops ~5%.
