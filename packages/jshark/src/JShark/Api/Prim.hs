@@ -121,6 +121,7 @@ mathUnaryFn = \case
   -- matches JS's semantics. Non-finite inputs are the identity.
   FixRound -> jsToIntegral (floor . (+ 0.5))
   FixTrunc -> jsToIntegral truncate
+  _ -> error "JShark.Api.Prim.mathUnaryFn: not a Math unary op"
 
 mathBinaryFn :: FixedOp Number Number 'Unit Number -> Double -> Double -> Double
 mathBinaryFn = \case

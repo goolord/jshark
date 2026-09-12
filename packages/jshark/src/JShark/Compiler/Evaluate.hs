@@ -25,6 +25,7 @@ module JShark.Compiler.Evaluate
   , jsQuote
   , jsBigIntLit
   , jsUint8ArrayLit
+  , jsUint8ClampedArrayLit
   , bigOpJS
   , uint8Elems
   , packUint8
@@ -78,6 +79,7 @@ import JShark.Compiler.Emit
   , hcat
   , jsDecimal
   , jsString
+  , jsText
   , parens
   , punctuate
   )
@@ -117,6 +119,7 @@ valueEq (ValueResult a) (ValueResult b) = case (a, b) of
   _ -> False
 valueEq (ValueRegex a) (ValueRegex b) = a == b
 valueEq (ValueUint8Array a) (ValueUint8Array b) = a == b
+valueEq (ValueUint8ClampedArray a) (ValueUint8ClampedArray b) = a == b
 valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
 valueEq (ValueFunction _) (ValueFunction _) =
   error "evaluate: functions cannot be compared for equality"
@@ -134,6 +137,7 @@ isCheapValue = \case
   ValueResult (Right v) -> isCheapValue v
   ValueRegex {} -> False
   ValueUint8Array {} -> False
+  ValueUint8ClampedArray {} -> False
   ValueArray {} -> False
   ValueFunction {} -> False
   ValueFrozen {} -> False
@@ -233,6 +237,7 @@ jsShow (ValueOption _) = "[object Object]"
 jsShow ValueResult {} = "[object Object]"
 jsShow (ValueRegex s) = s
 jsShow (ValueUint8Array ba) = jsShowUint8Array ba
+jsShow (ValueUint8ClampedArray ba) = jsShowUint8Array ba
 jsShow ValueFrozen {} = "[object Object]"
 jsShow (ValueFunction _) = error "evaluate: cannot show a function"
 
@@ -260,6 +265,7 @@ typeOfValue = \case
   ValueResult {} -> "object"
   ValueRegex {} -> "object"
   ValueUint8Array {} -> "object"
+  ValueUint8ClampedArray {} -> "object"
   ValueFrozen {} -> "object"
 
 jsShowNumber :: Double -> String
@@ -464,15 +470,22 @@ jsShowUint8Array :: ByteArray -> Text
 jsShowUint8Array = T.intercalate "," . map (T.pack . show) . uint8Elems
 
 jsUint8ArrayLit :: ByteArray -> JS
-jsUint8ArrayLit ba =
+jsUint8ArrayLit = jsUint8ArrayLitAs "Uint8Array"
+
+jsUint8ClampedArrayLit :: ByteArray -> JS
+jsUint8ClampedArrayLit = jsUint8ArrayLitAs "Uint8ClampedArray"
+
+jsUint8ArrayLitAs :: Text -> ByteArray -> JS
+jsUint8ArrayLitAs ctor ba =
   let
     elems = uint8Elems ba
     n = length elems
    in
     if all (== 0) elems
-      then "new Uint8Array" <> parens (jsDecimal n)
+      then "new " <> jsText ctor <> parens (jsDecimal n)
       else
-        "new Uint8Array"
+        "new "
+          <> jsText ctor
           <> parens
             ( brackets
                 ( hcat
@@ -580,13 +593,15 @@ evalAsArray rec xs k = do
 evalAsUint8Array ::
   Monad m =>
   (forall w. Expr Value w -> m (Value w))
-  -> Expr Value 'Uint8Array
+  -> Expr Value u
   -> (ByteArray -> m a)
   -> m a
 evalAsUint8Array rec buf k = do
   arr <- rec buf
   case arr of
     ValueUint8Array ba -> k ba
+    ValueUint8ClampedArray ba -> k ba
+    _ -> error "evaluate: expected a byte buffer"
 
 mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
 mergeSort _ [] = pure []

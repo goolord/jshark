@@ -238,7 +238,8 @@ putImageDataRegion ctx img dx dy sx sy sw sh = do
 
 -- | @img.data@ — the @Uint8ClampedArray@ bytes (@RGBA@ per pixel).
 imageDataBytes ::
-  Expr f ('MutableObject ImageData) -> EffectSyntax f (Expr f 'Uint8Array)
+  Expr f ('MutableObject ImageData)
+  -> EffectSyntax f (Expr f 'Uint8ClampedArray)
 imageDataBytes img = getProp (expr img) "data"
 
 -- | Path and state primitives: @beginPath@ / @closePath@ delimit a path,

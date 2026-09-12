@@ -42,6 +42,7 @@
 -- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
 module JShark.Api.Types
   ( Universe (..)
+  , U8Buffer
   , Value (..)
   , Effect (..)
   , Arg (..)
@@ -181,6 +182,10 @@ data Universe
     -- allocation has identity). Not a 'MutableObject' row —
     -- 'JShark.Object.set' must not typecheck. JS can write the object.
     Uint8Array
+  | -- | JS @Uint8ClampedArray@. Same shape as 'Uint8Array' but element
+    -- writes clamp to @0…255@ instead of wrapping mod 256. Not a
+    -- 'MutableObject' row; 'JShark.Canvas.imageDataBytes' yields one.
+    Uint8ClampedArray
   | -- | JS @Map@. Phantom key/value universes; native @Map@, not a plain
     -- object. Not a 'MutableObject' row — 'JShark.Object.set' must not
     -- typecheck on it. No host 'Value' / 'evaluate' support: live handles
@@ -192,6 +197,16 @@ data Universe
     Object Type
   | -- | Mutable JS object. Same row @r@ as 'Object'.
     MutableObject Type
+
+-- | Byte buffers whose element writes the JS engine clamps
+-- ('Uint8ClampedArray') or wraps mod 256 ('Uint8Array'). The emitted
+-- @arr[i] = v@ is identical; the array's own type picks the semantics, so
+-- the operations are shared and only the type distinguishes them.
+class U8Buffer (u :: Universe)
+
+instance U8Buffer 'Uint8Array
+
+instance U8Buffer 'Uint8ClampedArray
 
 -- | A fully evaluated host value indexed by its 'Universe'. This is the
 -- host denotation used by 'JShark.evaluate' (@f = Value@).
@@ -220,6 +235,10 @@ data Value :: Universe -> Type where
     ByteArray
     -> Value 'Uint8Array
     -- ^ Contents of a @Uint8Array@ (unpinned 'ByteArray').
+  ValueUint8ClampedArray ::
+    ByteArray
+    -> Value 'Uint8ClampedArray
+    -- ^ Contents of a @Uint8ClampedArray@ (unpinned 'ByteArray').
   ValueFrozen ::
     [FieldLit Value r]
     -> Value ('Object r)
@@ -302,13 +321,16 @@ data Effect :: (Universe -> Type) -> Universe -> Type where
     -> Effect f 'Unit
     -- ^ @for (let i = start; i < end; i++)@. Emits a C-style counted loop, not @forEach@.
   U8Set ::
-    Expr f 'Uint8Array
+    U8Buffer u =>
+    Expr f u
     -> Expr f 'Number
     -> Expr f 'Number
     -> Effect f 'Unit
-    -- ^ @u8[i] = v@.
+    -- ^ @u8[i] = v@. Wraps for 'Uint8Array', clamps for
+    -- 'Uint8ClampedArray' (the array's own write semantics).
   U8Fill ::
-    Expr f 'Uint8Array
+    U8Buffer u =>
+    Expr f u
     -> Expr f 'Number
     -> Effect f 'Unit
     -- ^ @u8.fill(v)@.
@@ -506,7 +528,8 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> Expr f u
     -- ^ JS @a[i]@. 'JShark.Array.index' wraps this with trunc / bounds / 'Error'.
   U8Index ::
-    Expr f 'Uint8Array
+    U8Buffer u =>
+    Expr f u
     -> Expr f 'Number
     -> Expr f 'Number
     -- ^ JS @u8[i]@ without the bounds shim.
@@ -576,7 +599,7 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixToLower :: FixedOp 'String 'Unit 'Unit 'String
   FixTrim :: FixedOp 'String 'Unit 'Unit 'String
   FixArrLen :: FixedOp ('Array u) 'Unit 'Unit 'Number
-  FixU8Len :: FixedOp 'Uint8Array 'Unit 'Unit 'Number
+  FixU8Len :: U8Buffer u => FixedOp u 'Unit 'Unit 'Number
   FixStrLen :: FixedOp 'String 'Unit 'Unit 'Number
   FixStringify :: FixedOp u 'Unit 'Unit 'String
   FixIndexOf :: FixedOp 'String 'String 'Unit 'Number

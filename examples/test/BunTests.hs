@@ -11,6 +11,7 @@ module BunTests (bunEvalTests) where
 
 import BunGate (bunGated, bunPathTestName)
 import qualified Control.Exception as Ex
+import Data.Array.Byte (ByteArray)
 import Data.List (intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -252,6 +253,10 @@ bunEvalTests =
                     )
                 )
                 "true"
+            , effectCase
+                "u8Set wraps a Uint8Array and clamps a Uint8ClampedArray"
+                clampVsWrap
+                "44255"
             , effectCase
                 "catalog seed stamps non-zero species"
                 catalogSeedSpecies
@@ -514,6 +519,20 @@ mapForEach = fromSyntax $ Map.withMap $ \m -> do
   _ <- Map.insert m (string "x") (number 1)
   Map.mapM_ (\_ _ -> toSyntax noOp) m
 
+-- | A 300 write wraps to 44 on a @Uint8Array@ and clamps to 255 on a
+-- @Uint8ClampedArray@: @44*1000 + 255@.
+clampVsWrap :: forall f. Effect f 'Number
+clampVsWrap = fromSyntax $ do
+  u8 <- bindExpr (newByteArray (number 1))
+  c8 <-
+    bindExpr
+      (ffi "(() => new Uint8ClampedArray(1))" RecNil :: Effect f 'Uint8ClampedArray)
+  toSyntax_ (u8Set u8 (number 0) (number 300))
+  toSyntax_ (u8Set c8 (number 0) (number 300))
+  a <- bindExpr (expr (u8Index u8 (number 0)))
+  b <- bindExpr (expr (u8Index c8 (number 0)))
+  yield (a * number 1000 + b)
+
 jsonStringify :: forall f. Effect f 'String
 jsonStringify = fromSyntax $ do
   s <- bindExpr (Json.stringify (number 1))
@@ -666,17 +685,21 @@ encodeJSValue = \case
   ValueResult (Right x) -> encodeResult True x
   ValueResult (Left x) -> encodeResult False x
   ValueRegex s -> encodeJSString (T.unpack s)
-  ValueUint8Array ba ->
-    "{"
-      ++ intercalate
-        ","
-        [ encodeJSString (show i) ++ ":" ++ show w
-        | (i, w) <- zip [0 :: Int ..] (uint8Elems ba)
-        ]
-      ++ "}"
+  ValueUint8Array ba -> encodeU8 ba
+  ValueUint8ClampedArray ba -> encodeU8 ba
   ValueFrozen {} -> error "encodeJSValue: frozen objects are not JSON"
   ValueFunction _ -> error "encodeJSValue: functions are not JSON"
   ValueBigInt {} -> error "encodeJSValue: bigint is not JSON"
+
+encodeU8 :: ByteArray -> String
+encodeU8 ba =
+  "{"
+    ++ intercalate
+      ","
+      [ encodeJSString (show i) ++ ":" ++ show w
+      | (i, w) <- zip [0 :: Int ..] (uint8Elems ba)
+      ]
+    ++ "}"
 
 encodeResult :: Bool -> Value u -> String
 encodeResult okFlag payload =

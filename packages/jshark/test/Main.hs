@@ -1263,6 +1263,14 @@ stdlibTests =
             )
         )
         "const n0 = {};\nn0.a = 1;\nn0.b = 2;"
+    , pureCodeCase
+        "clamped array literal renders new Uint8ClampedArray"
+        (uint8ClampedArray (packUint8 [0, 0, 5]))
+        "new Uint8ClampedArray([0, 0, 5])"
+    , pureCodeCase
+        "u8Len works on a clamped array"
+        (u8Len (uint8ClampedArray (packUint8 [1, 2, 3])))
+        "new Uint8ClampedArray([1, 2, 3]).length"
     , -- A Uint8Array is mutable, so propagating the literal to each use
       -- would hand out separate arrays: whoever fills one would not be
       -- seen by whoever reads the other. Guarded by `isCheapValue`.

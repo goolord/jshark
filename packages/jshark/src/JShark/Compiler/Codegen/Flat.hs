@@ -67,6 +67,7 @@ import JShark.Compiler.Evaluate
   , jsBigIntLit
   , jsQuote
   , jsUint8ArrayLit
+  , jsUint8ClampedArrayLit
   )
 import qualified JShark.Compiler.Flat as Flat
 import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
@@ -122,6 +123,7 @@ flatRenderLiteral env s0 = \case
   ValueRegex s ->
     (s0, Code mempty ("new RegExp" <> parens (jsQuote s)))
   ValueUint8Array ba -> (s0, Code mempty (jsUint8ArrayLit ba))
+  ValueUint8ClampedArray ba -> (s0, Code mempty (jsUint8ClampedArrayLit ba))
   ValueBool True -> (s0, Code mempty "true")
   ValueBool False -> (s0, Code mempty "false")
   ValueFrozen {} -> error "JShark.flatPureAST: ValueFrozen is eval-only"

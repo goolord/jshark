@@ -50,6 +50,7 @@ module JShark.Api
   , false_
   , string
   , uint8Array
+  , uint8ClampedArray
   , emptyArray
   , toString
 
@@ -477,6 +478,11 @@ string = Literal . ValueString
 uint8Array :: ByteArray -> Expr f 'Uint8Array
 uint8Array = Literal . ValueUint8Array
 
+-- | @new Uint8ClampedArray([…])@ from a host 'ByteArray'. Element writes
+-- clamp to @0…255@ rather than wrapping mod 256.
+uint8ClampedArray :: ByteArray -> Expr f 'Uint8ClampedArray
+uint8ClampedArray = Literal . ValueUint8ClampedArray
+
 -- | @new Uint8Array(n)@ — @n@ zeroed bytes.
 --
 -- 'uint8Array' is for bytes the host already has; this is for a buffer whose
@@ -488,31 +494,33 @@ newByteArray ::
 newByteArray n =
   FFI (FFILambda "n => new Uint8Array(n)") (arg n <: RecNil)
 
--- | @arr[i]@ — read one byte of a 'Uint8Array'.
-u8Index :: Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number
+-- | @arr[i]@ — read one byte of a 'Uint8Array' / 'Uint8ClampedArray'.
+u8Index :: U8Buffer u => Expr f u -> Expr f 'Number -> Expr f 'Number
 u8Index = U8Index
 
--- | @arr[i] = b@ — write one byte of a 'Uint8Array'.
+-- | @arr[i] = b@ — write one byte. Wraps mod 256 for 'Uint8Array' and
+-- clamps to @0…255@ for 'Uint8ClampedArray' (the array's own semantics).
 u8Set ::
-  Expr f 'Uint8Array
+  U8Buffer u =>
+  Expr f u
   -> Expr f 'Number
   -> Expr f 'Number
   -> Effect f 'Unit
 u8Set = U8Set
 
--- | @arr.fill(b)@ — fill a 'Uint8Array' with a byte.
-u8Fill :: Expr f 'Uint8Array -> Expr f 'Number -> Effect f 'Unit
+-- | @arr.fill(b)@ — fill a byte buffer with one byte.
+u8Fill :: U8Buffer u => Expr f u -> Expr f 'Number -> Effect f 'Unit
 u8Fill = U8Fill
 
--- | @dst.set(src)@ — copy one @Uint8Array@ into another of the same length.
-u8Copy :: Expr f 'Uint8Array -> Expr f 'Uint8Array -> Effect f 'Unit
+-- | @dst.set(src)@ — copy one byte buffer into another of the same length.
+u8Copy :: Expr f u -> Expr f u -> Effect f 'Unit
 u8Copy dst src =
   FFI
     (FFILambda "(d,s)=>{d.set(s);}")
     (arg dst <: arg src <: RecNil)
 
--- | @arr.length@ — the length of a 'Uint8Array'.
-u8Len :: Expr f 'Uint8Array -> Expr f 'Number
+-- | @arr.length@ — the length of a byte buffer.
+u8Len :: U8Buffer u => Expr f u -> Expr f 'Number
 u8Len = expr1 FixU8Len
 
 -- | @for (let i = start; i < end; i++) body@ — the loop index is

@@ -52,6 +52,11 @@
   algorithm, and the generated helper is now a fixed shim in the
   preamble.
 
+* Clamped and wrapping byte arrays are now distinct: a `Uint8ClampedArray`
+  universe with a `U8Buffer` class shared by the `u8*` operations.
+  `Canvas.imageDataBytes` returns `Expr f 'Uint8ClampedArray`, so a write
+  clamps rather than wraps (a bun test pins `300 -> 44` vs `300 -> 255`).
+
 * `Array.indexChecked` names the checked indexing contract explicitly, and
   the native return values are available: `Array.pushLen` (new length) and
   `Map.deleteReturning` / `Set.deleteReturning` (whether the key/element
