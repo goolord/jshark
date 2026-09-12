@@ -29,6 +29,12 @@
   `Array` but returned a `NodeList`, so array methods other than index and
   `length` failed at runtime.
 
+* `jshark-hotreload` WAI middleware: raw WAI responses are now passed
+  through untouched (they are the wire output) instead of rewriting their
+  fallback; HTML injection drops the now-stale `Content-Length` and skips
+  encoded bodies; and the SSE keepalive and event loop serialize through
+  one write lock so concurrent frames cannot interleave.
+
 * Testing: `JShark.Bun.Internal` gains `runJSTagged`/`runProgramTagged`,
   which serialize through a tagger that keeps `undefined` vs `null`, `NaN`,
   the infinities, `-0`, and `BigInt` distinct; added gated `bun` tests for

@@ -33,6 +33,7 @@ import JShark.HotReload.Core
 import JShark.HotReload.Wai
   ( handleClientScript
   , hotReloadMiddleware
+  , injectHotReloadClient
   , injectScriptIntoHtml
   )
 import JShark.HotReload.Watcher
@@ -81,6 +82,9 @@ hotReloadTests =
     , testCase "broadcast reaches subscribers" sseBroadcastOk
     , testCase "HTML inject inserts client script before </head>" injectOk
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
+    , testCase "raw responses are never rewritten" rawResponsePreserved
+    , testCase "inject drops a stale Content-Length" injectDropsLength
+    , testCase "inject skips an encoded body" injectSkipsCompressed
     , testCase "exampleAppForHs maps Client.hs paths" exampleAppMapOk
     , testCase "startWatcher sees a second same-size save" watcherSecondSaveOk
     , testCase "startWatcher sees an atomic-rename save" watcherRenameSaveOk
@@ -206,6 +210,61 @@ middlewareInjectOk = do
   assertBool "client script" ("/__jshark/client.js" `BS8.isInfixOf` strict)
   assertBool "no defer" (not ("defer" `BS8.isInfixOf` strict))
   assertBool "still has body close" ("</body>" `BS8.isInfixOf` strict)
+
+-- | A raw response's fallback may be HTML, but the middleware must hand the
+-- raw response back unchanged (it is the wire output).
+rawResponsePreserved :: IO ()
+rawResponsePreserved = do
+  let
+    fallback =
+      responseLBS
+        status200
+        [("Content-Type", "text/html; charset=utf-8")]
+        "<html><body></body></html>"
+    raw = ResponseRaw (\_ _ -> pure ()) fallback
+  case injectHotReloadClient defaultHotReloadConfig raw of
+    ResponseRaw {} -> pure ()
+    other ->
+      assertFailure ("raw response was rewritten: " <> show (responseSummary other))
+
+injectDropsLength :: IO ()
+injectDropsLength = do
+  let
+    resp =
+      ResponseBuilder
+        status200
+        [("Content-Type", "text/html"), ("Content-Length", "13")]
+        (B.byteString "<html></html>")
+    out = injectHotReloadClient defaultHotReloadConfig resp
+  assertEqual
+    "stale length is dropped"
+    Nothing
+    (lookup "Content-Length" (responseHeadersOf out))
+  body <- responseBodyLBS out
+  assertBool
+    "client is injected"
+    ("/__jshark/client.js" `BS8.isInfixOf` LBS.toStrict body)
+
+injectSkipsCompressed :: IO ()
+injectSkipsCompressed = do
+  let
+    resp =
+      ResponseBuilder
+        status200
+        [("Content-Type", "text/html"), ("Content-Encoding", "gzip")]
+        (B.byteString "<html></html>")
+    out = injectHotReloadClient defaultHotReloadConfig resp
+  body <- responseBodyLBS out
+  assertBool
+    "encoded body is left alone"
+    (not ("/__jshark/client.js" `BS8.isInfixOf` LBS.toStrict body))
+
+responseSummary :: Response -> String
+responseSummary = \case
+  ResponseBuilder _ hs _ -> "ResponseBuilder " <> show (map fst hs)
+  ResponseFile _ hs _ _ -> "ResponseFile " <> show (map fst hs)
+  ResponseStream _ hs _ -> "ResponseStream " <> show (map fst hs)
+  ResponseRaw {} -> "ResponseRaw"
 
 exampleAppMapOk :: IO ()
 exampleAppMapOk = do

@@ -12,7 +12,8 @@ module JShark.HotReload.Wai
   )
 where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, bracket, try)
 import qualified Data.ByteString as BS
@@ -84,20 +85,23 @@ handleSseRequest hub _req respond = do
   merr <- lastBuildError hub
   compiling <- lastCompiling hub
   alive <- newTVarIO True
+  -- One writer: the keepalive worker and the event loop share the response's
+  -- @write@/@flush@, so interleaving them would corrupt SSE frames.
+  writeLock <- newMVar ()
   respond $
     responseStream status200 headers $ \write flush ->
       bracket
-        (forkIO (keepaliveLoop alive write flush))
-        (\_ -> atomically (writeTVar alive False))
+        (forkIO (keepaliveLoop writeLock alive write flush))
+        (\tid -> atomically (writeTVar alive False) >> killThread tid)
         ( \_ -> do
-            writeEvent write flush (Hello hashes)
+            writeEvent writeLock write flush (Hello hashes)
             case merr of
-              Just msg -> writeEvent write flush (BuildError msg)
+              Just msg -> writeEvent writeLock write flush (BuildError msg)
               Nothing -> pure ()
             case compiling of
-              Just app -> writeEvent write flush (BuildStart app)
+              Just app -> writeEvent writeLock write flush (BuildStart app)
               Nothing -> pure ()
-            eventLoop alive write flush next
+            eventLoop writeLock alive write flush next
         )
  where
   headers =
@@ -108,25 +112,26 @@ handleSseRequest hub _req respond = do
     ]
 
 eventLoop ::
-  TVar Bool
+  MVar ()
+  -> TVar Bool
   -> (B.Builder -> IO ())
   -> IO ()
   -> IO HotReloadEvent
   -> IO ()
-eventLoop alive write flush next = do
+eventLoop lock alive write flush next = do
   still <- atomically (readTVar alive)
   if not still
     then pure ()
     else do
       ev <- next
-      ok <- try (writeEvent write flush ev) :: IO (Either SomeException ())
+      ok <- try (writeEvent lock write flush ev) :: IO (Either SomeException ())
       case ok of
         Left _ -> atomically (writeTVar alive False)
-        Right () -> eventLoop alive write flush next
+        Right () -> eventLoop lock alive write flush next
 
 keepaliveLoop ::
-  TVar Bool -> (B.Builder -> IO ()) -> IO () -> IO ()
-keepaliveLoop alive write flush = go
+  MVar () -> TVar Bool -> (B.Builder -> IO ()) -> IO () -> IO ()
+keepaliveLoop lock alive write flush = go
  where
   go = do
     threadDelay (15 * 1000 * 1000)
@@ -135,21 +140,26 @@ keepaliveLoop alive write flush = go
       then pure ()
       else do
         ok <-
-          try (write (B.byteString ": keepalive\n\n") >> flush) ::
+          try (withMVar lock (\_ -> write (B.byteString ": keepalive\n\n") >> flush)) ::
             IO (Either SomeException ())
         case ok of
           Left _ -> atomically (writeTVar alive False)
           Right () -> go
 
 writeEvent ::
-  (B.Builder -> IO ()) -> IO () -> HotReloadEvent -> IO ()
-writeEvent write flush ev = do
-  let
-    payload = TE.encodeUtf8 (encodeEvent ev)
-  write (B.byteString "data: ")
-  write (B.byteString payload)
-  write (B.byteString "\n\n")
-  flush
+  MVar ()
+  -> (B.Builder -> IO ())
+  -> IO ()
+  -> HotReloadEvent
+  -> IO ()
+writeEvent lock write flush ev =
+  withMVar lock $ \_ -> do
+    let
+      payload = TE.encodeUtf8 (encodeEvent ev)
+    write (B.byteString "data: ")
+    write (B.byteString payload)
+    write (B.byteString "\n\n")
+    flush
 
 -- | Serve the embedded browser runtime at @/__jshark/client.js@.
 handleClientScript :: (Response -> IO a) -> IO a
@@ -169,14 +179,35 @@ injectHotReloadClient cfg resp =
   case resp of
     ResponseBuilder status headers builder ->
       rewrite status headers (B.toLazyByteString builder)
-    ResponseRaw _ original -> injectHotReloadClient cfg original
+    -- Raw responses (WebSocket upgrades and other opaque streams) must go
+    -- to the server untouched; rewriting the fallback would corrupt them.
+    ResponseRaw {} -> resp
     -- Streaming / file responses: leave untouched (use Lucid helper).
     _ -> resp
  where
   rewrite status headers body
-    | isHtml headers && not (alreadyInjected body) =
-        responseLBS status headers (injectScriptIntoHtml (scriptTag cfg) body)
+    | isRewritableHtml headers && not (alreadyInjected body) =
+        responseLBS
+          status
+          (dropContentLength headers)
+          (injectScriptIntoHtml (scriptTag cfg) body)
     | otherwise = resp
+
+-- | Inject only into uncompressed HTML: a compressed or otherwise encoded
+-- body is not text we can edit.
+isRewritableHtml :: [(HeaderName, BS.ByteString)] -> Bool
+isRewritableHtml hdrs = isHtml hdrs && identityEncoded hdrs
+
+identityEncoded :: [(HeaderName, BS.ByteString)] -> Bool
+identityEncoded hdrs =
+  case lookup "Content-Encoding" hdrs of
+    Nothing -> True
+    Just ce -> BS.null ce || ce == "identity"
+
+-- | The body grew, so a declared length is now wrong.
+dropContentLength ::
+  [(HeaderName, BS.ByteString)] -> [(HeaderName, BS.ByteString)]
+dropContentLength = filter ((/= "Content-Length") . fst)
 
 isHtml :: [(HeaderName, BS.ByteString)] -> Bool
 isHtml hdrs =
