@@ -13,7 +13,7 @@
     enclosing `let`.
   * Pure `if_` and `optionCase`, and `&&`/`||`, keep branch-local
     declarations inside their branch instead of hoisting both sides and
-    evaluating the untaken one.
+    evaluating the untaken one. Pure `resultCase` does the same.
   * `optConstantFoldNumOnce` copies its input with `thaw` and freezes every
     written column; it no longer mutates the caller's `FlatSoA` (and no
     longer relies on that mutation for the `B` column).

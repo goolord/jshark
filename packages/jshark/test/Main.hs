@@ -1877,6 +1877,15 @@ optimizeTests =
             (ffi "body" RecNil)
         )
         "while (true) {const n0 = tick();\nif (!((n0 + 1) > 1)) {break;}\nbody();}"
+    , pureCodeCase
+        "resultCase keeps branch declarations conditional"
+        ( lambda $ \r ->
+            resultCase
+              r
+              (\_ -> number 0)
+              (\x -> let_ (sin (number 1)) (\y -> y + y + x))
+        )
+        "n0 => {const n4 = n0;\nconst n2 = n4.value;\nlet n5;\nif (n4.ok) {const n3 = Math.sin(1);\nn5 = (n3 + n3) + n2;}\nelse {n5 = 0;}\nreturn n5}"
     , effectCodeCase
         "ifE of True takes the true branch"
         (ifE (expr (bool True)) (ffi "foo" RecNil) (ffi "bar" RecNil))

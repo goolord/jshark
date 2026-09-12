@@ -500,14 +500,45 @@ flatResultPrelude ctx env s0 resId tagE =
 flatRenderResultCase ctx env s0 resId tagE errId _tagO okId =
   let
     (s3, obj, prelude) = flatResultPrelude ctx env s0 resId tagE
-    (s4, Code eDecl eRef) = flatChild ctx s3 errId
-    (s5, Code oDecl oRef) = flatChild ctx s4 okId
+    (s4, MkCode eDecl eRef _) = flatChild ctx s3 errId
+    (s5, MkCode oDecl oRef _) = flatChild ctx s4 okId
+    cond = jsText obj <> ".ok"
    in
-    ( s5
-    , Code
-        (prelude $$ eDecl $$ oDecl)
-        (parens ((jsText obj <> ".ok") <+> "?" <+> oRef <+> ":" <+> eRef))
-    )
+    if isNothing eDecl && isNothing oDecl
+      then
+        ( s5
+        , MkCode
+            (Just prelude)
+            ( Just
+                ( parens
+                    ( cond
+                        <+> "?"
+                        <+> fromMaybe "undefined" oRef
+                        <+> ":"
+                        <+> fromMaybe "undefined" eRef
+                    )
+                )
+            )
+            False
+        )
+      else
+        -- Keep each arm's declarations inside its branch; hoisting both
+        -- would evaluate the untaken arm.
+        let
+          (n, s6) = allocIdent s5
+          resultVar = identName s6 n
+         in
+          ( s6
+          , MkCode
+              ( Just
+                  ( prelude
+                      $$ letResult resultVar
+                      $$ ifAssignOrStmt (Just resultVar) cond oDecl oRef eDecl eRef
+                  )
+              )
+              (Just (jsText resultVar))
+              False
+          )
 
 flatSeqEffect ctx s0 xId yId =
   let
