@@ -439,6 +439,20 @@ controlFlowTests =
         evaluateNumber
           (optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1))
           @?= 0
+    , testCase "unsafeNullable of tagged none is a present value" $
+        evaluateNumber
+          ( optionCase
+              ( unsafeNullable (none :: Expr f ('Option 'Number))
+                  :: Expr f ('Option ('Option 'Number))
+              )
+              (number 0)
+              (const (number 1))
+          )
+          @?= 1
+    , testCase "unsafeNullable of undefined is none" $
+        evaluateNumber
+          (optionCase (unsafeNullable (Literal ValueUnit)) (number 0) (const (number 1)))
+          @?= 0
     , effectCodeCase
         "ifE renders an if/else statement with a shared result variable"
         ( fromSyntax
@@ -460,6 +474,19 @@ controlFlowTests =
             )
         )
         ["for (let n0 = 0; n0 < 3; n0++)", "new Uint8Array(1)[n0] = 1;"]
+    , testCase "u8 read bound before a write is not moved after it" $ do
+        let
+          js =
+            renderJsText
+              ( effectfulAST
+                  ( fromSyntax $ do
+                      buf <- bindExpr (newByteArray (number 1))
+                      old <- bindExpr (expr (u8Index buf (number 0)))
+                      toSyntax_ (u8Set buf (number 0) (number 7))
+                      yield old
+                  )
+              )
+        assertJSContains "const n1 = n0[0];\nn0[0] = 7;" js
     , effectContainsWith
         minifiedStyle
         "flat forRange_ emits u8Set in loop body"

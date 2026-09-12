@@ -130,8 +130,10 @@ lifeTests =
                 life = stmts mainJS
               (soa, _, irNodes, _) <- flatPrepareCore life
               js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTFromSoA soa))
-              irNodes @?= 70651
-              T.length js @?= 880045
+              -- Mutable array reads (u8Index, FixArrLen, …) are no longer
+              -- moved/inlined across writes, so a handful stay as bindings.
+              irNodes @?= 70672
+              T.length js @?= 880486
           , testCase "seedLiveCells stamps sparse pairs into zeroed buffers" $
               renderJS
                 ( effectfulAST

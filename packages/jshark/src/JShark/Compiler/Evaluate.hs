@@ -567,10 +567,12 @@ evalAlg rec apply = \case
   Std s -> evalStd rec s
   UnsafeNullable x -> do
     v <- rec x
-    -- Match the runtime conversion: null/undefined become none.
+    -- Match the runtime conversion @v == null ? none : some v@. In the
+    -- host denotation only 'ValueUnit' (JS @undefined@) is absent; a
+    -- tagged 'ValueOption Nothing' is an object and stays a present
+    -- value, so nested options round-trip.
     pure $ case v of
       ValueUnit -> ValueOption Nothing
-      ValueOption Nothing -> ValueOption Nothing
       _ -> ValueOption (Just v)
   FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit rec) fs
   GetField @k o -> do

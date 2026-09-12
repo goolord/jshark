@@ -23,12 +23,14 @@ import JShark.HotReload.Client (clientRuntimeText)
 import JShark.HotReload.Core
   ( HotReloadConfig (..)
   , HotReloadEvent (..)
+  , HotReloadSnapshot (..)
   , broadcastEvent
   , defaultHotReloadConfig
   , encodeEvent
   , newHotReloadHub
   , registerJs
   , subscribe
+  , subscribeWithSnapshot
   )
 import JShark.HotReload.Wai
   ( handleClientScript
@@ -76,6 +78,9 @@ hotReloadTests =
     , testCase "middleware serves client.js" middlewareClientOk
     , testCase "SSE response is event-stream" eventsHeaderOk
     , testCase "broadcast reaches subscribers" sseBroadcastOk
+    , testCase
+        "snapshot and subscription are coherent"
+        sseSnapshotCoherent
     , testCase "HTML inject inserts client script before </head>" injectOk
     , testCase "middleware auto-injects client into HTML" middlewareInjectOk
     , testCase "raw responses are never rewritten" rawResponsePreserved
@@ -173,6 +178,32 @@ sseBroadcastOk = do
   ev <- next
   assertEqual "event" (CssUpdate "/static/todo-mvc.css" 42) ev
   assertBool "json" ("css-update" `T.isInfixOf` encodeEvent ev)
+
+-- | The snapshot and the subscription must cover the whole timeline with
+-- no gap: anything published before the atomic connect is in the snapshot;
+-- anything published after is delivered on the stream. This pins the
+-- boundary that the old snapshot-then-subscribe pair could straddle.
+sseSnapshotCoherent :: IO ()
+sseSnapshotCoherent = do
+  hub <- newHotReloadHub defaultHotReloadConfig
+  -- A publish that completed before the client connects is snapshotted.
+  h1 <- registerJs hub "app" "v1"
+  broadcastEvent hub (JsUpdate "app" "/app.js" h1)
+  (snap, _) <- subscribeWithSnapshot hub
+  assertEqual
+    "pre-connect hash is in the snapshot"
+    [("app", h1)]
+    (snapshotJsHashes snap)
+  -- A publish after the atomic connect is delivered, never lost.
+  (_, next) <- subscribeWithSnapshot hub
+  h2 <- registerJs hub "app" "v2"
+  broadcastEvent hub (JsUpdate "app" "/app.js" h2)
+  ev <- next
+  assertEqual "post-connect update is delivered" (JsUpdate "app" "/app.js" h2) ev
+  -- Build status is part of the same coherent view.
+  broadcastEvent hub (BuildError "boom")
+  (snap2, _) <- subscribeWithSnapshot hub
+  assertEqual "snapshot error" (Just "boom") (snapshotBuildError snap2)
 
 injectOk :: IO ()
 injectOk = do

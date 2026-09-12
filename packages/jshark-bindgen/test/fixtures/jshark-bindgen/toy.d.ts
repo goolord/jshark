@@ -25,6 +25,10 @@ export function findWidget(id: string): Widget | null;
 
 export function findWidth(id: string): number | null;
 
+export function setWidth(id: string, w: number | null): void;
+
+export function pickWidget(id: string, fallback: Widget | null): Widget;
+
 export declare namespace util {
   function clamp(n: number, lo: number, hi: number): number;
 }

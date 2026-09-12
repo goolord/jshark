@@ -167,6 +167,20 @@ bindgenTests =
         assertBool "add" ("toy.add" `BS.isInfixOf` js)
         assertBool "new Widget" ("new toy.Widget" `BS.isInfixOf` js)
         assertBool "resize" ("resize" `BS.isInfixOf` js)
+    , testCase "nullable arguments are unwrapped to native null/value" $ do
+        hs <- mustGen "toy.d.ts"
+        assertBool
+          "primitive option arg"
+          ("arg (unsafeOptionToNative w)" `T.isInfixOf` hs)
+        assertBool
+          "handle option arg"
+          ( "ArgEffect (unsafeOptionToNativeEffect fallback)"
+              `T.isInfixOf` hs
+          )
+        js <- compileEffect readableConfig toyNullableArgs
+        assertBool
+          "native null/value sentinel"
+          ("o.some ? o.value : null" `BS.isInfixOf` js)
     ]
 
 toyDemo :: Effect f 'Unit
@@ -176,4 +190,13 @@ toyDemo = fromSyntax $ do
   n <- add (number 2) (number 3)
   w <- newWidget (string "a")
   resize w n n
+  done
+
+-- | Exercise a nullable primitive and nullable handle argument so the
+-- generated conversion shows up in compiled JS.
+toyNullableArgs :: Effect f 'Unit
+toyNullableArgs = fromSyntax $ do
+  setWidth (string "a") none
+  setWidth (string "a") (some (number 4))
+  _ <- pickWidget (string "a") (expr none)
   done

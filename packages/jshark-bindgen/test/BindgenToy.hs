@@ -14,6 +14,8 @@ module BindgenToy
   , log_
   , findWidget
   , findWidth
+  , setWidth
+  , pickWidget
   , clamp
   , newWidget
   , resize
@@ -67,6 +69,18 @@ findWidth ::
   -> EffectSyntax f (Expr f ('Option ('Number)))
 findWidth id_ = fmap unsafeNullable (bindExpr $ ffi "toy.findWidth" (arg id_ <: RecNil))
 
+setWidth ::
+  Expr f ('String)
+  -> Expr f ('Option ('Number))
+  -> EffectSyntax f ()
+setWidth id_ w = toSyntax_ $ ffi "toy.setWidth" (arg id_ <: arg (unsafeOptionToNative w) <: RecNil)
+
+pickWidget ::
+  Expr f ('String)
+  -> Effect f ('Option ('MutableObject Widget))
+  -> EffectSyntax f (Effect f ('MutableObject Widget))
+pickWidget id_ fallback = hold $ ffi "toy.pickWidget" (arg id_ <: ArgEffect (unsafeOptionToNativeEffect fallback) <: RecNil)
+
 clamp ::
   Expr f ('Number)
   -> Expr f ('Number)
@@ -90,3 +104,4 @@ size ::
   Effect f ('MutableObject Widget)
   -> EffectSyntax f (Effect f ('MutableObject Size))
 size self = hold $ callMethod self "size" RecNil
+

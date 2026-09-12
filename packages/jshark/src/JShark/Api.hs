@@ -113,6 +113,8 @@ module JShark.Api
   , whenNoneS
   , whenSomeE
   , unsafeNullable
+  , unsafeOptionToNative
+  , unsafeOptionToNativeEffect
   , orElse
 
     -- * Result
@@ -651,6 +653,19 @@ optionCaseE opt noneBranch someBranch = OptionCaseE opt noneBranch (\x -> someBr
 -- 'Option': @null@ \/ @undefined@ become 'none', anything else 'some'.
 unsafeNullable :: Expr f u -> Expr f ('Option u)
 unsafeNullable = UnsafeNullable
+
+-- | Foreign-boundary adapter: unwrap a tagged 'Option' to a native
+-- @null@\/value for a foreign parameter declared @T | null@. Inverse of
+-- 'unsafeNullable'; generated bindings emit it around 'Option' arguments.
+-- Not a general eliminator — use 'optionCase' inside JShark.
+unsafeOptionToNative :: Expr f ('Option u) -> Expr f u
+unsafeOptionToNative = expr1 FixOptionToNative
+
+-- | 'unsafeOptionToNative' for an effectful argument (an 'Option' handle),
+-- binding the effect first.
+unsafeOptionToNativeEffect :: Effect f ('Option u) -> Effect f u
+unsafeOptionToNativeEffect m =
+  Bind Nothing m (\x -> Lift (unsafeOptionToNative (Var x)))
 
 -- | @o ?? d@ — the option if present, the default otherwise.
 orElse :: Expr f ('Option u) -> Expr f u -> Expr f u

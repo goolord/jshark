@@ -28,11 +28,9 @@ import JShark.HotReload.Core
   ( HotReloadConfig (..)
   , HotReloadEvent (..)
   , HotReloadHub
-  , currentJsHashes
+  , HotReloadSnapshot (..)
   , encodeEvent
-  , lastBuildError
-  , lastCompiling
-  , subscribe
+  , subscribeWithSnapshot
   )
 import Network.HTTP.Types
   ( HeaderName
@@ -80,14 +78,11 @@ pathSegments =
 -- | Standalone SSE application (also used by the middleware).
 handleSseRequest :: HotReloadHub -> Application
 handleSseRequest hub _req respond = do
-  -- Snapshot first, then subscribe: any event broadcast after the
-  -- subscription is newer than the snapshot, so a client can never apply a
-  -- newer event and then an older snapshot. Subscribing first would let an
-  -- event slip in between and be replayed after a stale 'Hello'.
-  hashes <- currentJsHashes hub
-  merr <- lastBuildError hub
-  compiling <- lastCompiling hub
-  next <- subscribe hub
+  -- Snapshot and subscription in one atomic transaction: every event
+  -- published before this point is reflected in the snapshot, and every
+  -- event after it is delivered on the stream. Taking the snapshot and
+  -- then subscribing could otherwise lose an update broadcast in between.
+  (snap, next) <- subscribeWithSnapshot hub
   alive <- newTVarIO True
   -- One writer: the keepalive worker and the event loop share the response's
   -- @write@/@flush@, so interleaving them would corrupt SSE frames.
@@ -98,11 +93,11 @@ handleSseRequest hub _req respond = do
         (forkIO (keepaliveLoop writeLock alive write flush))
         (\tid -> atomically (writeTVar alive False) >> killThread tid)
         ( \_ -> do
-            writeEvent writeLock write flush (Hello hashes)
-            case merr of
+            writeEvent writeLock write flush (Hello (snapshotJsHashes snap))
+            case snapshotBuildError snap of
               Just msg -> writeEvent writeLock write flush (BuildError msg)
               Nothing -> pure ()
-            case compiling of
+            case snapshotCompiling snap of
               Just app -> writeEvent writeLock write flush (BuildStart app)
               Nothing -> pure ()
             eventLoop writeLock alive write flush next

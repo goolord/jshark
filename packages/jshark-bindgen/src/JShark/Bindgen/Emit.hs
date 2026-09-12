@@ -391,6 +391,13 @@ recArgs pns =
     "(" <> T.intercalate " <: " bits <> " <: RecNil)"
  where
   recArg (p, n)
+    -- A declared @T | null@ argument is a tagged 'Option' inside JShark;
+    -- unwrap it to the native null/value the foreign API expects.
+    | TyOption _ <- pTy p
+    , isHandle (pTy p) =
+        "ArgEffect (unsafeOptionToNativeEffect " <> n <> ")"
+    | TyOption _ <- pTy p =
+        "arg (unsafeOptionToNative " <> n <> ")"
     | isHandle (pTy p) = "ArgEffect " <> n
     | otherwise = "arg " <> n
 

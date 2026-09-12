@@ -17,6 +17,8 @@ module JShark.Api.Prim
   , fixedBinaryJS
   , fixedTernaryJS
   , isPureFixed
+  , isMoveFixed
+  , isDropFixed
   , isFiniteDouble
   , MathUnary (..)
   , MathBinary (..)
@@ -175,6 +177,33 @@ isPureFixed :: FixedOp a b c u -> Bool
 isPureFixed FixStringify = False
 isPureFixed _ = True
 
+-- | May the result of this op be moved across other evaluations? Array
+-- reads (length, membership, concatenation, slicing, grouping) depend on
+-- mutable array contents, so they are move-unsafe. String/math ops read
+-- immutable inputs. @FixStringify@ walks a mutable object and is likewise
+-- immovable (it is also impure).
+isMoveFixed :: FixedOp a b c u -> Bool
+isMoveFixed = \case
+  FixArrLen -> False
+  FixIncludes -> False
+  FixConcat -> False
+  FixJoin -> False
+  FixArrSlice -> False
+  FixGroupBy -> False
+  FixStringify -> False
+  -- A call may read mutable state; conservatively immovable.
+  FixCall2 -> False
+  _ -> True
+
+-- | May the result be discarded when unused? A discardable op is total and
+-- effect-free. @FixStringify@ may run a value's @toJSON@ and is excluded;
+-- the array reads above are total for a real array and safe to drop.
+isDropFixed :: FixedOp a b c u -> Bool
+isDropFixed = \case
+  FixStringify -> False
+  FixCall2 -> False
+  _ -> True
+
 fixedUnaryJS :: FixedOp a b c u -> JS -> JS
 fixedUnaryJS n r = case n of
   FixToUpper -> r <> ".toUpperCase()"
@@ -188,6 +217,7 @@ fixedUnaryJS n r = case n of
   FixFromBigInt -> "Number" <> parens r
   FixParseBigInt -> "BigInt" <> parens r
   FixSome -> "{some: true, value: " <> r <> "}"
+  FixOptionToNative -> "((o) => o.some ? o.value : null)" <> parens r
   _ -> error "JShark.Api.Prim.fixedUnaryJS: not a std unary op"
  where
   dotLength = r <> ".length"

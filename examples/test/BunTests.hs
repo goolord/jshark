@@ -183,6 +183,9 @@ bunEvalTests =
             , bunCase
                 "unsafeNullable of undefined is none"
                 (unsafeNullable (Literal ValueUnit))
+            , bunCase
+                "unsafeNullable preserves a tagged none as present"
+                (unsafeNullable (none :: Expr f ('Option 'Number)))
             , bunCase "string concat" (Concat (string "a") (string "b"))
             , bunCase "Show number" (Show (number 3))
             , bunCase "Eq numbers" (number 1 .== number 1)
@@ -299,6 +302,14 @@ bunEvalTests =
                 (ffi "Math.max" (arg (number 2) <: arg (number 9) <: RecNil) :: Effect f 'Number)
                 "9"
             , effectCase "object set then get" mutSetGet "21"
+            , effectCase
+                "u8 read bound before a write keeps the pre-write value"
+                u8ReadBeforeWrite
+                "0"
+            , effectCase
+                "unsafeOptionToNative passes null / value to a foreign call"
+                optionArgNative
+                "42"
             , effectCase "Map insert then lookup" mapRoundTrip "\"v\""
             , effectCase "Set insert then member" setMember "true"
             , effectCase "Map foldM sums values" mapFold "3"
@@ -328,9 +339,17 @@ bunEvalTests =
                 promiseCatchReason
                 "\"caught:boom\""
             , effectCase
+                "promiseCatch passes a fulfilled value through"
+                promiseCatchFulfilled
+                "5"
+            , effectCase
                 "promiseThen adopts a returned promise"
                 promiseThenAdopt
                 "7"
+            , effectCase
+                "promiseThen adopts then chains the adopted promise"
+                promiseThenAdoptChain
+                "8"
             , testCase "a rejected promise fails the run" $ do
                 r <-
                   Ex.try
@@ -496,6 +515,34 @@ mutSetGet = fromSyntax $ do
   x <- (Var o).x
   yield x
 
+-- | Read a byte before writing it. The read is a mutable access and must
+-- not be moved across the write, so the bound value stays the zeroed byte.
+u8ReadBeforeWrite :: forall f. Effect f 'Number
+u8ReadBeforeWrite = fromSyntax $ do
+  buf <- bindExpr (newByteArray (number 1))
+  old <- bindExpr (expr (u8Index buf (number 0)))
+  toSyntax_ (u8Set buf (number 0) (number 7))
+  yield old
+
+-- | A foreign callee that expects @number | null@. The tagged 'Option'
+-- must be unwrapped at the boundary: @none@ becomes native @null@ and
+-- @some n@ becomes @n@.
+optionArgNative :: forall f. Effect f 'Number
+optionArgNative = fromSyntax $ do
+  absent <-
+    bindExpr
+      ( ffi
+          "((x) => x === null ? 1 : x)"
+          (arg (unsafeOptionToNative (none :: Expr f ('Option 'Number))) <: RecNil)
+      )
+  present <-
+    bindExpr
+      ( ffi
+          "((x) => x === null ? 1 : x)"
+          (arg (unsafeOptionToNative (some (number 41))) <: RecNil)
+      )
+  yield (absent + present)
+
 mapRoundTrip :: forall f. Effect f 'String
 mapRoundTrip = fromSyntax $ Map.withMap $ \m -> do
   _ <- Map.insert m (string "k") (string "v")
@@ -569,6 +616,19 @@ promiseCatchReason = fromSyntax $ do
   r <- promiseCatch p (\e -> expr (Concat (string "caught:") (Var e)))
   toSyntax r
 
+-- | A fulfilled promise passes its value through @.catch@ untouched; the
+-- handler only runs on rejection. Recovery must preserve the resolution
+-- type, which is why @promiseCatch@ returns @Promise u@.
+promiseCatchFulfilled :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseCatchFulfilled = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 5) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  r <- promiseCatch p (\_ -> expr (number 99))
+  toSyntax r
+
 promiseThenAdopt :: forall f. Effect f ('MutableObject (Promise 'Number))
 promiseThenAdopt = fromSyntax $ do
   p <-
@@ -579,7 +639,29 @@ promiseThenAdopt = fromSyntax $ do
   r <-
     promiseThen
       p
-      (\_ -> ffi "Promise.resolve" (arg (number 7) <: RecNil) :: Effect f 'Number)
+      ( \_ ->
+          ffi "Promise.resolve" (arg (number 7) <: RecNil) ::
+            Effect f ('MutableObject (Promise 'Number))
+      )
+  toSyntax r
+
+-- | Adoption keeps the resolution type usable: chain another @.then@ on
+-- the adopted promise and map its number.
+promiseThenAdoptChain :: forall f. Effect f ('MutableObject (Promise 'Number))
+promiseThenAdoptChain = fromSyntax $ do
+  p <-
+    hold
+      ( ffi "Promise.resolve" (arg (number 1) <: RecNil) ::
+          Effect f ('MutableObject (Promise 'Number))
+      )
+  adopted <-
+    promiseThen
+      p
+      ( \_ ->
+          ffi "Promise.resolve" (arg (number 7) <: RecNil) ::
+            Effect f ('MutableObject (Promise 'Number))
+      )
+  r <- promiseThen adopted (\x -> expr (Var x + number 1))
   toSyntax r
 
 logHi :: forall f. Effect f 'Unit

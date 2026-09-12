@@ -616,6 +616,11 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   -- is 'UnsafeNullable', not this.
   FixSome ::
     FixedOp u 'Unit 'Unit ('Option u)
+  -- | Foreign-boundary adapter: unwrap a tagged 'Option' to a native
+  -- @null@\/value. Inverse of 'UnsafeNullable'; emitted only when passing
+  -- an 'Option' to a foreign parameter declared @T | null@.
+  FixOptionToNative ::
+    FixedOp ('Option u) 'Unit 'Unit u
 
 -- | Argument list for a 'FixedOp', matching its arity.
 data FixedArgs f a b c where
