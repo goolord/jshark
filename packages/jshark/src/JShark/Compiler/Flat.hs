@@ -1620,6 +1620,7 @@ optConstantFoldNumOnce soa0 = runST $ do
   aM <- VU.thaw (fsaA soa0)
   bM <- VU.thaw (fsaB soa0)
   litsRef <- newSTRef =<< V.thaw (fsaLits soa0)
+  litCountRef <- newSTRef (V.length (fsaLits soa0))
   changedRef <- newSTRef False
   let
     readOp i = flatOpOf <$> MVU.read opM i
@@ -1628,13 +1629,18 @@ optConstantFoldNumOnce soa0 = runST $ do
       litsM <- readSTRef litsRef
       v <- GM.read litsM (fromIntegral (li :: Int32))
       pure (litAsNumber v)
+    -- Grow geometrically: appending by one would copy the whole literal
+    -- column on every fold.
     addFoldLit d = do
       litsM <- readSTRef litsRef
-      let
-        li = GM.length litsM
-      litsM' <- GM.unsafeGrow litsM 1
-      GM.unsafeWrite litsM' li (FLit (ValueNumber d))
+      li <- readSTRef litCountRef
+      litsM' <-
+        if li < GM.length litsM
+          then pure litsM
+          else GM.grow litsM (max 8 (GM.length litsM))
+      GM.write litsM' li (FLit (ValueNumber d))
       writeSTRef litsRef litsM'
+      writeSTRef litCountRef (li + 1)
       pure (encI32 li)
     tryFold i = do
       op <- readOp i
@@ -1666,7 +1672,8 @@ optConstantFoldNumOnce soa0 = runST $ do
   aF <- VU.unsafeFreeze aM
   bF <- VU.unsafeFreeze bM
   litsM <- readSTRef litsRef
-  litsF <- V.unsafeFreeze litsM
+  litCount <- readSTRef litCountRef
+  litsF <- V.unsafeFreeze (GM.slice 0 litCount litsM)
   changed <- readSTRef changedRef
   pure
     ( soa0

@@ -19,6 +19,7 @@ import FlatTest
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
   , flatSoaPureNodeCount
+  , optConstantFoldManyLits
   , optConstantFoldPreservesInput
   , optIrEffectForRangeImpure
   )
@@ -1954,6 +1955,8 @@ flatSoATests =
         flatOpcodeRoundTripOk @?= True
     , testCase "constant fold does not mutate its input" $
         optConstantFoldPreservesInput @?= True
+    , testCase "constant fold grows literal storage geometrically" $
+        optConstantFoldManyLits 50 @?= True
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number

@@ -24,6 +24,11 @@
 
 * Negative zero literals now compile to `-0.0` instead of `0`.
 
+* Compiler performance: the flat constant-fold pass grows its literal
+  column geometrically (and freezes only the used slice) instead of
+  `unsafeGrow`-by-one per folded literal, which was quadratic in the
+  number of folds.
+
 * `JShark.Dom.lookupSelector` now returns a real `Array`
   (`Array.from(document.querySelectorAll(...))`). It was typed as an
   `Array` but returned a `NodeList`, so array methods other than index and

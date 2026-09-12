@@ -15,6 +15,7 @@ module FlatTest
   , flatOpcodeRoundTripOk
   , optIrEffectForRangeImpure
   , optConstantFoldPreservesInput
+  , optConstantFoldManyLits
   )
 where
 
@@ -101,6 +102,53 @@ optConstantFoldPreservesInput =
       && VU.toList (Flat.fsaB soa) == b0
       && V.length (Flat.fsaLits soa) == length lits0
       && Flat.fsaOpcodes folded /= VU.fromList ops0
+
+-- | @k@ independent @1 + 2@ triples. One pass folds all of them and appends
+-- @k@ literals, exercising the geometric literal-column growth; the result
+-- must contain exactly @2 + k@ literals, none of them stale capacity.
+optConstantFoldManyLits :: Int -> Bool
+optConstantFoldManyLits k =
+  let
+    soa =
+      Flat.FlatSoA
+        { Flat.fsaOpcodes =
+            VU.fromList
+              ( concat
+                  [ [ Flat.opCode Flat.FE_LITERAL
+                    , Flat.opCode Flat.FE_LITERAL
+                    , Flat.opCode Flat.FE_KPLUS
+                    ]
+                  | _ <- [1 .. k]
+                  ]
+              )
+        , Flat.fsaA =
+            VU.fromList
+              (concat [[0, 1, fromIntegral (3 * i :: Int)] | i <- [0 .. k - 1]])
+        , Flat.fsaB =
+            VU.fromList
+              (concat [[0, 0, fromIntegral (3 * i + 1 :: Int)] | i <- [0 .. k - 1]])
+        , Flat.fsaC = VU.replicate (3 * k) 0
+        , Flat.fsaD = VU.replicate (3 * k) 0
+        , Flat.fsaE = VU.replicate (3 * k) 0
+        , Flat.fsaFixed = V.empty
+        , Flat.fsaFnLit = V.empty
+        , Flat.fsaArrayGroups = V.empty
+        , Flat.fsaLits = V.fromList [Flat.FLit (ValueNumber 1), Flat.FLit (ValueNumber 2)]
+        , Flat.fsaTexts = V.empty
+        , Flat.fsaFFIs = V.empty
+        , Flat.fsaStrCases = V.empty
+        , Flat.fsaFieldGroups = V.empty
+        , Flat.fsaArgGroups = V.empty
+        , Flat.fsaHoistTags = V.empty
+        , Flat.fsaParamNames = V.empty
+        , Flat.fsaRoot = 3 * k - 1
+        }
+    (folded, changed) = Flat.optConstantFoldNumOnce soa
+   in
+    changed
+      && VU.all (== Flat.opCode Flat.FE_LITERAL) (Flat.fsaOpcodes folded)
+      && V.length (Flat.fsaLits folded) == 2 + k
+      && V.length (Flat.fsaLits soa) == 2
 
 -- | Every opcode ('Flat.FlatOp', 'Flat.Bounded') decodes, and re-encoding the
 -- decoded node yields the same opcode and operand columns (side-table
