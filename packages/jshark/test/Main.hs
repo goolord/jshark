@@ -1713,6 +1713,10 @@ optimizeTests =
     "optimize"
     [ pureCodeCase "literal arithmetic folds" (number 1 + number 2) "3"
     , pureCodeCase
+        "negative zero keeps its sign"
+        (Literal (ValueNumber (-0.0)))
+        "-0.0"
+    , pureCodeCase
         "nested single-use lets fold"
         (let_ (number 1) (\x -> let_ (number 2) (\y -> y + x)))
         "3"

@@ -444,6 +444,9 @@ jsCallN f args = parens f <> parens (hcat (punctuate ", " args))
 jsNumber style d
   | esIntLiterals style
   , not (isNaN d || isInfinite d)
+  , -- @-0.0@ compares equal to @0@ but is a distinct JS value, so it must
+    -- not take the integer path and lose its sign.
+    not (isNegativeZero d)
   , let
       n = round d :: Integer
   , fromInteger n == d

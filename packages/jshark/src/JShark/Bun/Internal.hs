@@ -11,8 +11,11 @@ module JShark.Bun.Internal
   ( JSProgram (..)
   , plainProgram
   , runProgram
+  , runProgramTagged
   , runJS
   , runJSWith
+  , runJSTagged
+  , runJSTaggedWith
   , bunTimeoutMicroseconds
   )
 where
@@ -93,9 +96,34 @@ runJS = runJSWith bunTimeoutMicroseconds
 runJSWith :: Int -> String -> IO Text
 runJSWith limit = runProgram limit . plainProgram
 
--- | 'runJS' for a program that needs a prelude or bun flags.
+-- | Like 'runJS' but observe the result with 'taggedSerializer' instead of
+-- @JSON.stringify@: plain JSON collapses @NaN@, the infinities, @-0@, and
+-- @undefined@, and cannot carry a @BigInt@. The tagged form keeps them.
+runJSTagged :: String -> IO Text
+runJSTagged = runJSTaggedWith bunTimeoutMicroseconds
+
+-- | 'runJSTagged' with an explicit timeout in microseconds.
+runJSTaggedWith :: Int -> String -> IO Text
+runJSTaggedWith limit = runProgramTagged limit . plainProgram
+
+-- | 'runProgram' with a JSON result.
 runProgram :: Int -> JSProgram -> IO Text
-runProgram limit p = do
+runProgram limit = runProgramWith limit (resultSerializer False)
+
+-- | 'runProgram' with a tagged result. See 'runJSTagged'.
+runProgramTagged :: Int -> JSProgram -> IO Text
+runProgramTagged limit = runProgramWith limit (resultSerializer True)
+
+-- | The JavaScript expression that turns the awaited result into the text
+-- written to the result file. Tagged mode distinguishes values JSON
+-- cannot.
+resultSerializer :: Bool -> String
+resultSerializer tagged
+  | tagged = "$jsharkTag($jshark)"
+  | otherwise = "JSON.stringify($jshark)"
+
+runProgramWith :: Int -> String -> JSProgram -> IO Text
+runProgramWith limit serializer p = do
   bun <- requireBun
   tmp <- getTemporaryDirectory
   withRunDir tmp $ \dir -> do
@@ -104,7 +132,7 @@ runProgram limit p = do
       resultPath = dir </> "result.json"
       outPath = dir </> "stdout.txt"
       errPath = dir </> "stderr.txt"
-      source = script resultPath
+      source = script serializer resultPath
       -- Report the whole module: when the prelude is what failed (a DOM
       -- environment that could not be resolved), the expression alone
       -- points at the wrong place.
@@ -135,10 +163,11 @@ runProgram limit p = do
   -- The result leaves through 'resultPath'. Using stdout would mix it
   -- with whatever the program itself logs. ES imports hoist, so the
   -- prelude may carry its own.
-  script resultPath =
+  script ser resultPath =
     unlines
       [ "import { writeFileSync } from \"node:fs\";"
       , jsPrelude p
+      , taggedSerializer
       , "try {"
       , "  const $raw = (" ++ jsExpression p ++ ");"
       , "  const $thenable ="
@@ -149,15 +178,40 @@ runProgram limit p = do
         -- microtask tick, letting a pending timer fire before the result
         -- is read.
         "  const $jshark = $thenable ? await $raw : $raw;"
-      , "  const $json = JSON.stringify($jshark);"
+      , "  const $out = " ++ ser ++ ";"
       , "  writeFileSync("
           ++ jsString resultPath
-          ++ ", $json === undefined ? \"undefined\" : $json);"
+          ++ ", $out === undefined ? \"undefined\" : $out);"
       , "} finally {"
       , jsEpilogue p
       , "}"
       ]
   jsString s = '"' : escapeJsString s ++ "\""
+
+-- | JS serializer that preserves the distinctions plain JSON loses:
+-- @undefined@ vs @null@, @NaN@ / the infinities, @-0@, and @BigInt@.
+taggedSerializer :: String
+taggedSerializer =
+  unlines
+    [ "function $jsharkTag(v) {"
+    , "  if (v === undefined) return \"undefined\";"
+    , "  if (v === null) return \"null\";"
+    , "  const t = typeof v;"
+    , "  if (t === \"number\") {"
+    , "    if (Number.isNaN(v)) return \"number:NaN\";"
+    , "    if (v === Infinity) return \"number:Infinity\";"
+    , "    if (v === -Infinity) return \"number:-Infinity\";"
+    , "    if (Object.is(v, -0)) return \"number:-0\";"
+    , "    return \"number:\" + String(v);"
+    , "  }"
+    , "  if (t === \"bigint\") return \"bigint:\" + v.toString();"
+    , "  if (t === \"boolean\") return \"boolean:\" + String(v);"
+    , "  if (t === \"string\") return \"string:\" + JSON.stringify(v);"
+    , "  if (t === \"function\") return \"function\";"
+    , "  if (Array.isArray(v)) return \"array:[\" + v.map($jsharkTag).join(\",\") + \"]\";"
+    , "  return \"object:{\" + Object.keys(v).map(function (k) { return JSON.stringify(k) + \":\" + $jsharkTag(v[k]); }).join(\",\") + \"}\";"
+    , "}"
+    ]
 
 readIfPresent :: FilePath -> IO Text
 readIfPresent path = do

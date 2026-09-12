@@ -27,7 +27,7 @@ import JShark.Bun
   , evaluateEffectJSON
   , evaluateEffectJSONWith
   )
-import JShark.Bun.Internal (runJS, runJSWith)
+import JShark.Bun.Internal (runJS, runJSTagged, runJSWith)
 import qualified JShark.Canvas as Canvas
 import JShark.Compiler
 import qualified JShark.Console as Console
@@ -61,6 +61,18 @@ bunEvalTests =
             , bunCase "bigint add via toString" (toString (bigInt 10 + bigInt 3))
             , bunCase "bigint exact via toString" (toString (bigInt (2 ^ (80 :: Int) + 1)))
             , bunCase "bigint literal via toString" (toString (bigInt 42))
+            , taggedCase "tagged NaN" (Literal (ValueNumber (0 / 0))) "number:NaN"
+            , taggedCase "tagged +Infinity" (Literal (ValueNumber (1 / 0))) "number:Infinity"
+            , taggedCase
+                "tagged -Infinity"
+                (Literal (ValueNumber (-1 / 0)))
+                "number:-Infinity"
+            , taggedCase
+                "tagged negative zero"
+                (Literal (ValueNumber (-0.0)))
+                "number:-0"
+            , taggedCase "tagged undefined" (Literal ValueUnit) "undefined"
+            , taggedCase "tagged bigint" (bigInt 42) "bigint:42"
             , bunCase "subtraction" ((number 5 :: Expr f 'Number) - number 2)
             , bunCase
                 "multiplication and division"
@@ -395,6 +407,14 @@ bunEvalTests =
 
 bunCase :: String -> (forall f. Expr f u) -> TestTree
 bunCase name e = testCase name (assertBunAgrees e)
+
+-- | Assert the tagged observation of a compiled expression. Unlike the
+-- plain-JSON path this keeps NaN, the infinities, @-0@, @undefined@, and
+-- @BigInt@ distinct.
+taggedCase :: String -> (forall f. Expr f u) -> Text -> TestTree
+taggedCase name e expected = testCase name $ do
+  got <- runJSTagged (T.unpack (renderJS (pureProgram e)))
+  assertEqual name expected got
 
 effectCase :: String -> (forall f. Effect f u) -> String -> TestTree
 effectCase name e expected = testCase name $ do
