@@ -187,6 +187,52 @@ flatRenderBin ctx op s0 view xId yId =
         )
     )
 
+-- | @&&@ / @||@: the left operand always evaluates, the right only when
+-- the operator selects it. When the right side needs declarations they
+-- must be guarded, not hoisted above the operator.
+flatRenderShortCircuit ctx s0 view isAnd xId yId =
+  let
+    (s1, MkCode xDecl xRef _) = flatChild ctx s0 xId
+   in
+    case flatChild ctx s1 yId of
+      (s2, MkCode Nothing yRef _) ->
+        ( s2
+        , MkCode
+            xDecl
+            ( Just
+                ( flatWrapOperand view xId (fromMaybe "undefined" xRef)
+                    <+> (if isAnd then "&&" else "||")
+                    <+> flatWrapOperand view yId (fromMaybe "undefined" yRef)
+                )
+            )
+            False
+        )
+      (s2, MkCode (Just yDecl) yRef _) ->
+        let
+          (n, s3) = allocIdent s2
+          rv = identName s3 n
+          cond = if isAnd then jsText rv else "!" <> parens (jsText rv)
+          guard =
+            yDecl
+              $$ (jsText rv <+> "=" <+> fromMaybe "undefined" yRef)
+              <> semi
+          xInit =
+            ( "let"
+                <+> jsText rv
+                <+> "="
+                <+> flatWrapOperand view xId (fromMaybe "undefined" xRef)
+            )
+              <> semi
+         in
+          ( s3
+          , MkCode
+              ( Just
+                  (fromMaybe mempty xDecl $$ xInit $$ ("if" <+> parens cond <+> blockBody guard))
+              )
+              (Just (jsText rv))
+              False
+          )
+
 flatRenderArgListSeq ctx s0 args =
   let
     go s = \case
@@ -329,8 +375,8 @@ flatRenderKernel ctx s0 view = \case
       (s1, Code xDecl xRef) = flatChild ctx s0 x
      in
       (s1, Code xDecl $ "-" <> parens xRef)
-  Flat.FE_KAnd x y -> flatRenderBin ctx "&&" s0 view x y
-  Flat.FE_KOr x y -> flatRenderBin ctx "||" s0 view x y
+  Flat.FE_KAnd x y -> flatRenderShortCircuit ctx s0 view True x y
+  Flat.FE_KOr x y -> flatRenderShortCircuit ctx s0 view False x y
   Flat.FE_KEq structural x y
     | structural ->
         let
@@ -994,30 +1040,93 @@ flatPureASTGo !ctx !env !sIn view nid =
       Flat.FE_EmbedEff eId -> flatChild ctx s0 eId
       Flat.FE_If cId tId eId ->
         let
-          (s1, Code cDecl cRef) = flatChild ctx s0 cId
-          (s2, Code tDecl tRef) = flatChild ctx s1 tId
-          (s3, Code eDecl eRef) = flatChild ctx s2 eId
+          (s1, MkCode cDecl cRef _) = flatChild ctx s0 cId
+          (s2, MkCode tDecl tRef tFX) = flatChild ctx s1 tId
+          (s3, MkCode eDecl eRef eFX) = flatChild ctx s2 eId
+          cJs = fromMaybe mempty cRef
          in
-          ( s3
-          , Code
-              (cDecl $$ tDecl $$ eDecl)
-              (parens (cRef <+> "?" <+> tRef <+> ":" <+> eRef))
-          )
+          if isNothing tDecl && isNothing eDecl && not tFX && not eFX
+            then
+              ( s3
+              , MkCode
+                  cDecl
+                  ( Just
+                      ( parens
+                          ( cJs
+                              <+> "?"
+                              <+> fromMaybe "undefined" tRef
+                              <+> ":"
+                              <+> fromMaybe "undefined" eRef
+                          )
+                      )
+                  )
+                  False
+              )
+            else
+              -- Branch-local declarations must not run until their branch is
+              -- selected: hoisting both would evaluate (and possibly throw
+              -- from) the untaken side.
+              let
+                (n, s4) = allocIdent s3
+                rv = identName s4 n
+               in
+                ( s4
+                , MkCode
+                    ( Just
+                        ( fromMaybe mempty cDecl
+                            $$ letResult rv
+                            $$ ifAssignOrStmt (Just rv) cJs tDecl tRef eDecl eRef
+                        )
+                    )
+                    (Just (jsText rv))
+                    False
+                )
       Flat.FE_OptionCase oId nId _tag sId ->
         let
-          (s1, Code optDecl optRef) = flatChild ctx s0 oId
+          (s1, MkCode optDecl optRef _) = flatChild ctx s0 oId
           (nBind, s2) = flatPlanIdent ctx s1 nid
           optVar = identName s2 nBind
-          (s3, Code noneDecl noneRef) = flatChild ctx s2 nId
-          (s4, Code someDecl someRef) = flatChild ctx s3 sId
+          (s3, MkCode noneDecl noneRef nFX) = flatChild ctx s2 nId
+          (s4, MkCode someDecl someRef sFX) = flatChild ctx s3 sId
+          optBind =
+            constBind s4 nBind (fromMaybe mempty optRef)
+          cond = jsText optVar <+> "===" <+> "null"
          in
-          ( s4
-          , Code
-              (optDecl $$ constBind s2 nBind optRef $$ noneDecl $$ someDecl)
-              ( parens
-                  (jsText optVar <+> "===" <+> "null" <+> "?" <+> noneRef <+> ":" <+> someRef)
+          if isNothing noneDecl && isNothing someDecl && not nFX && not sFX
+            then
+              ( s4
+              , MkCode
+                  (Just (fromMaybe mempty optDecl $$ optBind))
+                  ( Just
+                      ( parens
+                          ( cond
+                              <+> "?"
+                              <+> fromMaybe "undefined" noneRef
+                              <+> ":"
+                              <+> fromMaybe "undefined" someRef
+                          )
+                      )
+                  )
+                  False
               )
-          )
+            else
+              -- Branch-local declarations must stay inside their branch.
+              let
+                (n, s5) = allocIdent s4
+                rv = identName s5 n
+               in
+                ( s5
+                , MkCode
+                    ( Just
+                        ( fromMaybe mempty optDecl
+                            $$ optBind
+                            $$ letResult rv
+                            $$ ifAssignOrStmt (Just rv) cond noneDecl noneRef someDecl someRef
+                        )
+                    )
+                    (Just (jsText rv))
+                    False
+                )
       Flat.FE_ResultOk xId ->
         let
           (s1, MkCode d r _) = flatChild ctx s0 xId

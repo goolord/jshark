@@ -87,6 +87,67 @@ bunEvalTests =
                 "let in if_ branch"
                 (let_ (number 5) (\x -> if_ (bool True) x (number 0)))
             , bunCase
+                "if_ does not evaluate its untaken branch"
+                ( apply
+                    ( apply
+                        ( lambda $ \b ->
+                            lambda $ \i ->
+                              if_
+                                b
+                                ( let_
+                                    ( Array.index
+                                        (Literal (ValueArray [ValueNumber 1, ValueNumber 2]))
+                                        i
+                                    )
+                                    (\x -> x + x)
+                                )
+                                (number 0)
+                        )
+                        (bool False)
+                    )
+                    (number 99)
+                )
+            , bunCase
+                "|| does not evaluate a short-circuited right side"
+                ( apply
+                    ( apply
+                        ( lambda $ \b ->
+                            lambda $ \i ->
+                              Or
+                                b
+                                ( let_
+                                    ( Array.index
+                                        (Literal (ValueArray [ValueNumber 1, ValueNumber 2]))
+                                        i
+                                    )
+                                    (\x -> x .== x)
+                                )
+                        )
+                        (bool True)
+                    )
+                    (number 99)
+                )
+            , bunCase
+                "&& does not evaluate a short-circuited right side"
+                ( apply
+                    ( apply
+                        ( lambda $ \b ->
+                            lambda $ \i ->
+                              And
+                                b
+                                ( let_
+                                    ( Array.index
+                                        (Literal (ValueArray [ValueNumber 1, ValueNumber 2]))
+                                        i
+                                    )
+                                    (\x -> x .== x)
+                                )
+                        )
+                        (bool False)
+                    )
+                    (number 99)
+                )
+            , bunCase
                 "optionCase Some"
                 ( optionCase
                     (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
