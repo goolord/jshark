@@ -18,11 +18,16 @@ module JShark.Internal
     -- * IR + flat entry points
   , irEffectFromClosed
   , flatPrepareCore
-  , flatSoaNodeCount
   , optimizedExprSize
   , optimizedEffectSize
   , validateOptimizedEffect
   , validateOptimizedExpr
+  , EmitStyle (..)
+  , minifiedStyle
+
+    -- * Compiler internals (IR, Flat, SoA) re-exported for tests/tooling
+  , module JShark.Compiler.Flat
+  , module JShark.Compiler.Ir
 
     -- * JsShim
   , Builtin (ValueEq)
@@ -32,7 +37,7 @@ where
 
 import Data.Text (Text)
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
-import JShark.Compiler.Codegen.Core (flatPrepareCore)
+import JShark.Compiler.Codegen.Core (EmitStyle (..), flatPrepareCore, minifiedStyle)
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
   , effectfulASTFromSoA
@@ -40,7 +45,8 @@ import JShark.Compiler.Codegen.Flat
   , pureAST
   , pureASTWith
   )
-import JShark.Compiler.Flat (flatSoaNodeCount)
+import JShark.Compiler.Flat
+import JShark.Compiler.Ir
 import JShark.Compiler.JsShim
   ( Builtin (ValueEq)
   , builtinSrc
@@ -51,13 +57,12 @@ import JShark.Compiler.Lower
   , optimizedEffectSize
   , optimizedExprSize
   )
-import qualified JShark.Compiler.Ir as Ir
 
 -- | Scope/binder problems in the optimized IR of a closed effect (@[]@ is
 -- valid). Cheap enough for tests; not run in the production path.
 validateOptimizedEffect :: ClosedEffect u -> [Text]
-validateOptimizedEffect e = Ir.validateIr (irEffectFromClosed e)
+validateOptimizedEffect e = validateIr (irEffectFromClosed e)
 
 -- | 'validateOptimizedEffect' for a closed pure expression.
 validateOptimizedExpr :: ClosedExpr u -> [Text]
-validateOptimizedExpr e = Ir.validateIr (fst (lowerOptExprIr False e))
+validateOptimizedExpr e = validateIr (fst (lowerOptExprIr False e))

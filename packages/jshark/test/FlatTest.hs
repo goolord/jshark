@@ -30,9 +30,9 @@ import JShark.Api.Types
   , FixedOp (FixArrLen)
   , Value (..)
   )
-import qualified JShark.Compiler.Flat as Flat
-import qualified JShark.Compiler.Ir as Ir
 import JShark.Internal (irEffectFromClosed)
+import qualified JShark.Internal as Flat
+import qualified JShark.Internal as Ir
 
 flatDirectPackDeterministic :: ClosedEffect u -> Bool
 flatDirectPackDeterministic e =

@@ -35,7 +35,6 @@ import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
 import JShark.Compiler
-import JShark.Compiler.Codegen.Core (minifiedStyle)
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.Internal
@@ -43,6 +42,7 @@ import JShark.Internal
   , builtinSrc
   , effectfulAST
   , effectfulASTWith
+  , minifiedStyle
   , pureAST
   , validateOptimizedEffect
   , validateOptimizedExpr

@@ -85,11 +85,6 @@ library
     JShark.Bun.Internal
     JShark.Canvas
     JShark.Compiler
-    JShark.Compiler.Codegen.Core
-    JShark.Compiler.CompileProgress
-    JShark.Compiler.CompileTiming
-    JShark.Compiler.Flat
-    JShark.Compiler.Ir
     JShark.Console
     JShark.Dom
     JShark.Json
@@ -104,14 +99,20 @@ library
     JShark.Timers
     JShark.Worker
   other-modules:
-    -- compiler internals: compiled with the library but not exposed
-    -- (the JShark facade and JShark.Compiler carry the public surface)
+    -- compiler internals: compiled with the library but not exposed.
+    -- Tests and tooling reach them through 'JShark.Internal', which
+    -- re-exports the IR/Flat/codegen surface without a second copy.
     JShark.Api.Prim
     JShark.Compiler.Binder
+    JShark.Compiler.Codegen.Core
     JShark.Compiler.Codegen.Flat
     JShark.Compiler.Codegen.Stmt
+    JShark.Compiler.CompileProgress
+    JShark.Compiler.CompileTiming
     JShark.Compiler.Emit
     JShark.Compiler.Evaluate
+    JShark.Compiler.Flat
+    JShark.Compiler.Ir
     JShark.Compiler.JsFormat
     JShark.Compiler.JsNum
     JShark.Compiler.JsShim
