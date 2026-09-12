@@ -69,6 +69,10 @@
   module for tests, benchmarks, and tooling; `pureProgram` and
   `effectfulProgram` stay public.
 
+* The optimizer entry points force the optimized tree with a lightweight
+  `forceIr` instead of calling `metaIr`, which recomputed and discarded a
+  per-node `IntMap`. Life emit drops ~5%.
+
 * Example-specific watcher/asset mapping (`exampleAppForHs`,
   `exampleAppsForHs`, `isLucidShellPath`, the `/static` CSS URL, and
   `exampleWatchTargets`) moved from `jshark-hotreload` to

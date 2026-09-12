@@ -595,7 +595,7 @@ lowerOptExprIr keepLets (e :: ClosedExpr u) =
       (!_, !irOpt, !mdOpt) = Ir.optIr (-2) ir
       !nodes = Ir.irSize mdOpt
      in
-      Ir.metaIr irOpt `seq` (irOpt, nodes)
+      Ir.forceIr irOpt `seq` (irOpt, nodes)
 {-# NOINLINE lowerOptExprIr #-}
 
 lowerOptEffectAt ::
@@ -617,7 +617,7 @@ lowerOptEffectIrWith keepLets e =
       (!_, !irOpt, !mdOpt) = lowerOptEffectAt (-2) e
       !nodes = Ir.irSize mdOpt
      in
-      Ir.metaIr irOpt `seq` (irOpt, nodes)
+      Ir.forceIr irOpt `seq` (irOpt, nodes)
 {-# NOINLINE lowerOptEffectIrWith #-}
 
 irEffectFromClosed :: ClosedEffect u -> Ir.IrNode

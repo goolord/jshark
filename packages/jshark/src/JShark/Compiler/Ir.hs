@@ -32,6 +32,7 @@ module JShark.Compiler.Ir
   , irNodeChildren
   , SomeFixedOp (..)
   , metaIr
+  , forceIr
   , optIr
   , occursIr
   , lazyOccursIr
@@ -337,6 +338,15 @@ metaIr !node = case node of
 -- per-constructor child layout, so this is a plain fold over it.
 childMeta :: IrNode -> IrMeta
 childMeta = strictFoldMap metaIr . irNodeChildren
+
+-- | Deep-force a tree without building metadata. The optimizer entry points
+-- used to call 'metaIr' just to force the result; that allocates an
+-- 'IntMap' per node. This walks the same children and discards the result.
+forceIr :: IrNode -> ()
+forceIr node = case node of
+  IrLiteral _ -> ()
+  IrVar _ -> ()
+  _ -> foldl' (\ !() c -> forceIr c) () (irNodeChildren node)
 
 -- | Does @t@ occur anywhere in @node@? Unlike a free-variable map this
 -- short-circuits on the first hit and allocates nothing.
