@@ -379,6 +379,11 @@ bunEvalTests =
                       domAppend
                       "1"
                   , domCase
+                      "lookupSelector yields a real Array (map works)"
+                      "<div id=\"a\"><span></span><span></span><span></span></div>"
+                      domSelectorMap
+                      "3"
+                  , domCase
                       "getElementById of a missing id is null"
                       "<div id=\"other\"></div>"
                       domMissing
@@ -512,6 +517,14 @@ domAppend = fromSyntax $ do
   nodes <- Dom.lookupSelector (string "#a span")
   n <- toSyntax nodes
   yield (Array.length (Var n))
+
+-- | @Array.map@ only exists on a real array. If @lookupSelector@ returned a
+-- raw @NodeList@ this program would fail at runtime.
+domSelectorMap :: forall f. Effect f 'Number
+domSelectorMap = fromSyntax $ do
+  nodes <- Dom.lookupSelector (string "#a span")
+  n <- toSyntax nodes
+  yield (Array.length (Array.map (Var n) (\_ -> number 1)))
 
 domMissing :: forall f. Effect f ('Option ('MutableObject Dom.DomElement))
 domMissing = fromSyntax $ do

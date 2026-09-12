@@ -24,6 +24,11 @@
 
 * Negative zero literals now compile to `-0.0` instead of `0`.
 
+* `JShark.Dom.lookupSelector` now returns a real `Array`
+  (`Array.from(document.querySelectorAll(...))`). It was typed as an
+  `Array` but returned a `NodeList`, so array methods other than index and
+  `length` failed at runtime.
+
 * Testing: `JShark.Bun.Internal` gains `runJSTagged`/`runProgramTagged`,
   which serialize through a tagger that keeps `undefined` vs `null`, `NaN`,
   the infinities, `-0`, and `BigInt` distinct; added gated `bun` tests for

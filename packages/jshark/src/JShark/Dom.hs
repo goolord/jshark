@@ -69,10 +69,17 @@ lookupId ::
   Expr f 'String -> EffectSyntax f (Effect f ('MutableObject DomElement))
 lookupId x = hold $ ffi "document.getElementById" (arg x <: RecNil)
 
--- | @document.querySelectorAll(selector)@ — all matching elements as an array.
+-- | @Array.from(document.querySelectorAll(selector))@ — all matching
+-- elements as a real array. @querySelectorAll@ returns a @NodeList@, which
+-- has @length@ and index access but none of the array methods, so convert
+-- at the boundary and keep the 'Array' type truthful.
 lookupSelector ::
   Expr f 'String -> EffectSyntax f (Effect f ('Array ('MutableObject DomElement)))
-lookupSelector x = hold $ ffi "document.querySelectorAll" (arg x <: RecNil)
+lookupSelector x =
+  hold $
+    ffi
+      "((s) => Array.from(document.querySelectorAll(s)))"
+      (arg x <: RecNil)
 
 classOp ::
   Text
