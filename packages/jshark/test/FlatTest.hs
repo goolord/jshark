@@ -14,6 +14,7 @@ module FlatTest
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
   , optIrEffectForRangeImpure
+  , optConstantFoldPreservesInput
   )
 where
 
@@ -58,6 +59,48 @@ flatDirectPackOptimizeStable e =
     soa2 = Flat.optimizeFlatPack soa1
    in
     Flat.soaColumnsEqual soa1 soa2
+
+-- | Constant folding must be a pure function of its input: the caller may
+-- still hold (and reuse) the 'FlatSoA' it passed in. Mutating the immutable
+-- input's backing store in place would corrupt it. Build a minimal
+-- @1 + 2@ program that forces a fold, then check the input columns.
+optConstantFoldPreservesInput :: Bool
+optConstantFoldPreservesInput =
+  let
+    soa =
+      Flat.FlatSoA
+        { Flat.fsaOpcodes =
+            VU.fromList (map Flat.opCode [Flat.FE_LITERAL, Flat.FE_LITERAL, Flat.FE_KPLUS])
+        , Flat.fsaA = VU.fromList [0, 1, 0]
+        , Flat.fsaB = VU.fromList [0, 0, 1]
+        , Flat.fsaC = VU.replicate 3 0
+        , Flat.fsaD = VU.replicate 3 0
+        , Flat.fsaE = VU.replicate 3 0
+        , Flat.fsaFixed = V.empty
+        , Flat.fsaFnLit = V.empty
+        , Flat.fsaArrayGroups = V.empty
+        , Flat.fsaLits = V.fromList [Flat.FLit (ValueNumber 1), Flat.FLit (ValueNumber 2)]
+        , Flat.fsaTexts = V.empty
+        , Flat.fsaFFIs = V.empty
+        , Flat.fsaStrCases = V.empty
+        , Flat.fsaFieldGroups = V.empty
+        , Flat.fsaArgGroups = V.empty
+        , Flat.fsaHoistTags = V.empty
+        , Flat.fsaParamNames = V.empty
+        , Flat.fsaRoot = 2
+        }
+    ops0 = VU.toList (Flat.fsaOpcodes soa)
+    a0 = VU.toList (Flat.fsaA soa)
+    b0 = VU.toList (Flat.fsaB soa)
+    lits0 = V.toList (Flat.fsaLits soa)
+    (folded, changed) = Flat.optConstantFoldNumOnce soa
+   in
+    changed
+      && VU.toList (Flat.fsaOpcodes soa) == ops0
+      && VU.toList (Flat.fsaA soa) == a0
+      && VU.toList (Flat.fsaB soa) == b0
+      && V.length (Flat.fsaLits soa) == length lits0
+      && Flat.fsaOpcodes folded /= VU.fromList ops0
 
 -- | Every opcode ('Flat.FlatOp', 'Flat.Bounded') decodes, and re-encoding the
 -- decoded node yields the same opcode and operand columns (side-table

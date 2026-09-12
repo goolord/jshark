@@ -19,6 +19,7 @@ import FlatTest
   , flatDirectPackOptimizeStable
   , flatOpcodeRoundTripOk
   , flatSoaPureNodeCount
+  , optConstantFoldPreservesInput
   , optIrEffectForRangeImpure
   )
 import JShark
@@ -1938,6 +1939,8 @@ flatSoATests =
         flatDirectPackOptimizeStable kernelAndLambdaUse @?= True
     , testCase "every opcode decodes and re-encodes" $
         flatOpcodeRoundTripOk @?= True
+    , testCase "constant fold does not mutate its input" $
+        optConstantFoldPreservesInput @?= True
     ]
  where
   kernelAndLambdaUse :: Effect f 'Number

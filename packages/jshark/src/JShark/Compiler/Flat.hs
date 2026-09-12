@@ -1613,10 +1613,13 @@ optConstantFoldNumOnce :: FlatSoA -> (FlatSoA, Bool)
 optConstantFoldNumOnce soa0 = runST $ do
   let
     n = VU.length (fsaOpcodes soa0)
-  opM <- VU.unsafeThaw (fsaOpcodes soa0)
-  aM <- VU.unsafeThaw (fsaA soa0)
-  bM <- VU.unsafeThaw (fsaB soa0)
-  litsRef <- newSTRef =<< V.unsafeThaw (fsaLits soa0)
+  -- 'thaw' copies. The input 'soa0' is immutable and may be shared by the
+  -- caller (e.g. a stable-input test compares it after optimizing), so
+  -- mutating its backing store with 'unsafeThaw' would corrupt it.
+  opM <- VU.thaw (fsaOpcodes soa0)
+  aM <- VU.thaw (fsaA soa0)
+  bM <- VU.thaw (fsaB soa0)
+  litsRef <- newSTRef =<< V.thaw (fsaLits soa0)
   changedRef <- newSTRef False
   let
     readOp i = flatOpOf <$> MVU.read opM i
@@ -1661,10 +1664,19 @@ optConstantFoldNumOnce soa0 = runST $ do
   forM_ [0 .. n - 1] tryFold
   opF <- VU.unsafeFreeze opM
   aF <- VU.unsafeFreeze aM
+  bF <- VU.unsafeFreeze bM
   litsM <- readSTRef litsRef
   litsF <- V.unsafeFreeze litsM
   changed <- readSTRef changedRef
-  pure (soa0 {fsaOpcodes = opF, fsaA = aF, fsaLits = litsF}, changed)
+  pure
+    ( soa0
+        { fsaOpcodes = opF
+        , fsaA = aF
+        , fsaB = bF
+        , fsaLits = litsF
+        }
+    , changed
+    )
 
 soaColumnsEqual :: FlatSoA -> FlatSoA -> Bool
 soaColumnsEqual a b =
