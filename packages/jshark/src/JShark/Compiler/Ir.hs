@@ -674,7 +674,14 @@ elimBinder ctorKeep ctorDead dropPure extraOnce preserve !mdX !hint !tag !x !bod
     uses = IM.findWithDefault 0 tag (irFree mdBody)
     closed = bindMeta tag mdBody
     spliced = closed <> mdX
-    once = extraOnce x P.|| irCheap mdX P.|| not (lazyOccursIr tag body)
+    -- A single use may be inlined only when moving the bound term to that
+    -- use is safe. Pure terms are referentially transparent, so their
+    -- position does not matter. An impure term may only move as an alias
+    -- (a rename); splicing a real effect past other effects would reorder
+    -- evaluation. The cheap/once estimates only refine the pure case.
+    once =
+      extraOnce x
+        P.|| (irPure mdX P.&& (irCheap mdX P.|| not (lazyOccursIr tag body)))
     keep = preserve x tag body
    in
     case uses of

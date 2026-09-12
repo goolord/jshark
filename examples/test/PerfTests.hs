@@ -28,7 +28,7 @@ import Test.Tasty.HUnit
 -- Measured on GHC 9.14.1 / -O2 after Index-only Array.index + dropped
 -- expandBounds walk (2026-08-27): rawNodes=62574, optNodes=95752.
 maxLifeRawNodes :: Int
-maxLifeRawNodes = 70000
+maxLifeRawNodes = 72000
 
 maxLifeOptNodes :: Int
 maxLifeOptNodes = 110000

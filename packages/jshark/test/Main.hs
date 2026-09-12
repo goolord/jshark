@@ -1733,6 +1733,15 @@ optimizeTests =
         "unused FFI let is kept as a statement"
         (Bind Nothing fooE (\_ -> Lift (number 1)))
         "foo();\n1"
+    , effectCodeCaseWith
+        minifiedStyle
+        "minified bind does not reorder effects"
+        ( fromSyntax
+            ( toSyntax fooE >>= \x ->
+                toSyntax_ (ffi "bar" RecNil) *> toSyntax (expr (Var x))
+            )
+        )
+        "const n0 = foo();\nbar();\nn0"
     , testCase "top-level do-notation bind chain compiles" $ do
         let
           chain =
