@@ -23,7 +23,6 @@ module JShark.Compiler
   ( -- * Compiler Configuration
     CompilerConfig (..)
   , defaultCompilerConfig
-  , passthroughConfig
   , readableConfig
   , OutputStyle (..)
 
@@ -102,11 +101,6 @@ data CompilerConfig = CompilerConfig
 -- | Compact IIFE output from codegen. Minify with an external tool if wanted.
 defaultCompilerConfig :: CompilerConfig
 defaultCompilerConfig = CompilerConfig Minified False False
-
--- | Alias of 'defaultCompilerConfig', kept for call sites that previously
--- skipped external minification.
-passthroughConfig :: CompilerConfig
-passthroughConfig = defaultCompilerConfig
 
 -- | Human-readable JS: no IIFE, formatted with Biome when available.
 readableConfig :: CompilerConfig
@@ -265,20 +259,20 @@ mergeJobConfig job =
     , configQuiet = True
     }
 
--- | Recognized compiler CLI flags (for example servers and build tools).
-isCompilerFlag :: String -> Bool
-isCompilerFlag = \case
-  "--progress" -> True
-  "--readable" -> True
-  _ -> False
+-- | The compiler CLI flags, and what each one sets. Single source of truth
+-- for 'isCompilerFlag' and 'applyCompilerArgs', which must agree.
+compilerFlags :: [(String, CompilerConfig -> CompilerConfig)]
+compilerFlags =
+  [ ("--progress", \cfg -> cfg {configProgress = True})
+  , ("--readable", \cfg -> cfg {configStyle = Readable})
+  ]
 
--- | Apply recognized CLI flags to a 'CompilerConfig'.
+-- | Whether the argument is a compiler flag, so a caller can split it out of
+-- its own argument list (for example servers and build tools).
+isCompilerFlag :: String -> Bool
+isCompilerFlag arg = any ((== arg) . fst) compilerFlags
+
+-- | Apply recognized CLI flags to a 'CompilerConfig'; ignore anything else.
 applyCompilerArgs :: [String] -> CompilerConfig -> CompilerConfig
 applyCompilerArgs args cfg =
-  foldl' applyCompilerArg cfg args
-
-applyCompilerArg :: CompilerConfig -> String -> CompilerConfig
-applyCompilerArg cfg = \case
-  "--progress" -> cfg {configProgress = True}
-  "--readable" -> cfg {configStyle = Readable}
-  _ -> cfg
+  foldl' (\c a -> maybe c ($ c) (lookup a compilerFlags)) cfg args

@@ -106,7 +106,8 @@ perfTests =
     , probeCase 16 maxProbe16Chars maxProbe16Alloc
     , probeCase 32 maxProbe32Chars maxProbe32Alloc
     , testCase "Life output bytes and helper count" $ do
-        let js = renderJS (effectfulAST life)
+        let
+          js = renderJS (effectfulAST life)
         assertCeiling "lifeBytes" (BS.length js) maxLifeBytes
         assertCeiling
           "lifeHelpers"

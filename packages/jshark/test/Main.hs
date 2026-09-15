@@ -18,8 +18,8 @@ import qualified Data.Text.Encoding as TE
 import FlatTest
   ( flatDirectPackDeterministic
   , flatDirectPackForRangeOk
-  , flatEmitOrderValidates
   , flatDirectPackOptimizeStable
+  , flatEmitOrderValidates
   , flatOpcodeRoundTripOk
   , flatSoaPureNodeCount
   , optConstantFoldManyLits
@@ -147,7 +147,8 @@ validationShortCircuit = fromSyntax $ do
 validationCapture :: forall f. Effect f 'Number
 validationCapture = fromSyntax $ do
   x <- bindExpr (ffi "n" RecNil)
-  let f = lambda (\y -> y + x)
+  let
+    f = lambda (\y -> y + x)
   yield (apply f (number 1))
 
 validationCollision :: forall f. Effect f 'Number
@@ -349,13 +350,11 @@ evaluatorTests =
               Expr f ('Object LitRow)
         case evaluate (structuralEq o1 o2) of
           ValueBool b -> b @?= True
-        T.isInfixOf
+        assertJSContains
           "$deepEqual"
-          ( ( renderJsText
-                (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
-            )
+          ( renderJsText
+              (pureAST (toLambda (\(a :: Expr f u) (b :: Expr f u) -> structuralEq a b)))
           )
-          @?= True
     , testCase "GetField of FrozenLit evaluates" $
         evaluateNumber
           ((Object.frozen [Object.field @"x" (number 21)] :: Expr f ('Object LitRow)).x)
@@ -557,8 +556,8 @@ controlFlowTests =
     , testCase "unsafeNullable of tagged none is a present value" $
         evaluateNumber
           ( optionCase
-              ( unsafeNullable (none :: Expr f ('Option 'Number))
-                  :: Expr f ('Option ('Option 'Number))
+              ( unsafeNullable (none :: Expr f ('Option 'Number)) ::
+                  Expr f ('Option ('Option 'Number))
               )
               (number 0)
               (const (number 1))
@@ -772,13 +771,13 @@ controlFlowTests =
                         )
                   )
               )
-        T.isInfixOf "switch (" js @?= True
-        T.isInfixOf "case \"a\":" js @?= True
-        T.isInfixOf "case \"b\":" js @?= True
-        T.isInfixOf "default:" js @?= True
-        T.isInfixOf "break;" js @?= True
-        T.isInfixOf "foo()" js @?= True
-        T.isInfixOf "=;" js @?= False
+        assertJSContains "switch (" js
+        assertJSContains "case \"a\":" js
+        assertJSContains "case \"b\":" js
+        assertJSContains "default:" js
+        assertJSContains "break;" js
+        assertJSContains "foo()" js
+        assertJSOmits "=;" js
     , testCase "stringCaseE of values keeps the result bind" $ do
         let
           js =
@@ -794,13 +793,13 @@ controlFlowTests =
                         )
                   )
               )
-        T.isInfixOf "let n" js @?= True
-        T.isInfixOf "switch (" js @?= True
-        T.isInfixOf "case \"a\":" js @?= True
-        T.isInfixOf " = 1" js @?= True
-        T.isInfixOf " = 0" js @?= True
-        T.isInfixOf "break;" js @?= True
-        T.isInfixOf "=;" js @?= False
+        assertJSContains "let n" js
+        assertJSContains "switch (" js
+        assertJSContains "case \"a\":" js
+        assertJSContains " = 1" js
+        assertJSContains " = 0" js
+        assertJSContains "break;" js
+        assertJSOmits "=;" js
     , testCase "stringCaseE switches on the scrutinee ref" $ do
         let
           js =
@@ -816,9 +815,9 @@ controlFlowTests =
                         )
                   )
               )
-        T.isInfixOf "switch (typeof " js @?= True
-        T.isInfixOf " = typeof" js @?= False
-        T.isInfixOf "case \"number\":" js @?= True
+        assertJSContains "switch (typeof " js
+        assertJSOmits " = typeof" js
+        assertJSContains "case \"number\":" js
     ]
 
 stdlibTests :: TestTree
@@ -868,12 +867,12 @@ stdlibTests =
     , testCase "Array.groupBy emits the $groupBy shim" $ do
         let
           js = renderJsText (pureAST (Array.groupBy numArray (\_ -> string "k")))
-        T.isInfixOf "const $groupBy =" js @?= True
-        T.isInfixOf "new Map()" js @?= True
-        T.isInfixOf "items:[]" js @?= True
-        T.isInfixOf ".reduce" js @?= False
-        T.isInfixOf "key" js @?= True
-        T.isInfixOf "($groupBy)(n0)(n1)" js @?= False
+        assertJSContains "const $groupBy =" js
+        assertJSContains "new Map()" js
+        assertJSContains "items:[]" js
+        assertJSOmits ".reduce" js
+        assertJSContains "key" js
+        assertJSOmits "($groupBy)(n0)(n1)" js
     , testCase "Array.groupBy hoists once when used twice" $ do
         let
           js =
@@ -885,7 +884,7 @@ stdlibTests =
                   )
               )
         T.count "const $groupBy =" js @?= 1
-        T.isInfixOf "const $groupBy = function(arr,key)" js @?= True
+        assertJSContains "const $groupBy = function(arr,key)" js
     , testCase "binary hoists match in pureAST and effectfulAST" $ do
         let
           pureJs =
@@ -895,17 +894,17 @@ stdlibTests =
               ( effectfulAST
                   (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index)
               )
-        T.isInfixOf "=>" pureJs @?= True
-        T.isInfixOf "($groupBy)(n0)(n1)" pureJs @?= False
-        T.isInfixOf "const $checkedIndex =" effJs @?= True
-        T.isInfixOf "$checkedIndex(" effJs @?= True
-        T.isInfixOf "(($checkedIndex)(n0)(n1)" effJs @?= False
+        assertJSContains "=>" pureJs
+        assertJSOmits "($groupBy)(n0)(n1)" pureJs
+        assertJSContains "const $checkedIndex =" effJs
+        assertJSContains "$checkedIndex(" effJs
+        assertJSOmits "(($checkedIndex)(n0)(n1)" effJs
     , testCase "Array.zipWith hoists $zipWith helper" $ do
         let
           js = renderJsText (pureAST (Array.zipWith (+) numArray numArray))
-        T.isInfixOf "const $zipWith =" js @?= True
-        T.isInfixOf "=>" js @?= True
-        T.isInfixOf "($zipWith)(n0)(n1)" js @?= False
+        assertJSContains "const $zipWith =" js
+        assertJSContains "=>" js
+        assertJSOmits "($zipWith)(n0)(n1)" js
     , pureContains
         "Array.toSorted hoists $toSorted helper"
         (Array.toSorted numArray (\a b -> if_ (a .> b) (number 1) (number (-1))))
@@ -925,7 +924,7 @@ stdlibTests =
                   )
               )
         T.count "const $reduce =" js @?= 1
-        T.isInfixOf "const $reduce = (seed, f) =>" js @?= True
+        assertJSContains "const $reduce = (seed, f) =>" js
     , pureContains
         "hoisted $reduce keeps seed/f after a seed binder"
         ( Let (Just "seed") (number 1) $ \s ->
@@ -1017,10 +1016,9 @@ stdlibTests =
     , testCase "Classes.foldr is reduceRight" $ do
         evaluateNumber (C.foldr (-) (number 0) numArray) @?= -1
         evaluateNumber (C.foldl (-) (number 0) numArray) @?= -3
-        T.isInfixOf
+        assertJSContains
           ".reduceRight"
           (renderJsText (pureAST (C.foldr (+) (number 0) numArray)))
-          @?= True
     , testCase "LetRec value rhs evaluates" $
         evaluateNumber (letRec (\_ -> number 1 + number 2) (\n -> n)) @?= 3
     , testCase "Classes.mfix Function" $
@@ -1265,7 +1263,7 @@ stdlibTests =
               | i `elem` ctxIds = True
               | fuel <= (0 :: Int) = False
               | otherwise = any (resolvesToCtx (fuel - 1)) (aliasOf i)
-          T.isInfixOf "=;" js @?= False
+          assertJSOmits "=;" js
           (not (null ctxIds) && resolvesToCtx 8 nullId) @?= True
     , effectCodeCase
         "Canvas.fillRect renders a 2D call"
@@ -1442,8 +1440,8 @@ stdlibTests =
     , testCase "locationHash is window.location.hash, not a bracket key" $ do
         let
           js = renderJsText (effectfulAST (fromSyntax (locationHash *> toSyntax noOp)))
-        T.isInfixOf "window.location.hash" js @?= True
-        T.isInfixOf "[\"location.hash\"]" js @?= False
+        assertJSContains "window.location.hash" js
+        assertJSOmits "[\"location.hash\"]" js
     , effectCodeCase
         "forEach param name matches body uses"
         ( fromSyntax
@@ -1484,7 +1482,7 @@ stdlibTests =
                   (toLambda (\(a :: Expr f 'Number) (b :: Expr f 'Number) -> (a + b) .== (a + b)))
               )
         T.count "const $valueEq" js @?= 0
-        T.isInfixOf "===" js @?= True
+        assertJSContains "===" js
     , testCase "bound Number .== uses === (not $valueEq)" $ do
         let
           js =
@@ -1492,25 +1490,25 @@ stdlibTests =
               ( pureAST
                   (toLambda (\(a :: Expr f 'Number) (_ :: Expr f 'Number) -> a .== number 1))
               )
-        T.isInfixOf "$valueEq" js @?= False
-        T.isInfixOf "===" js @?= True
+        assertJSOmits "$valueEq" js
+        assertJSContains "===" js
     , testCase "$valueEq shim includes null/object fast-path" $ do
         let
           body = builtinSrc ValueEq
-        T.isInfixOf "typeof" body @?= True
-        T.isInfixOf "null" body @?= True
+        assertJSContains "typeof" body
+        assertJSContains "null" body
     , testCase "frozen Number literals fold to === in .==" $ do
         let
           js =
             renderJsText
               (pureAST (number 1 .== number 1))
-        T.isInfixOf "true" js @?= True
-        T.isInfixOf "$valueEq" js @?= False
+        assertJSContains "true" js
+        assertJSOmits "$valueEq" js
     , testCase ".== hoists $valueEq (=== then structural; never ==)" $ do
         let
           js = renderJsText (effectfulAST (with2 fooE barE structuralEq))
-        T.isInfixOf "$valueEq" js @?= True
-        T.isInfixOf " == " js @?= False
+        assertJSContains "$valueEq" js
+        assertJSOmits " == " js
     , effectContains
         ".!= is !$valueEq"
         (with2 fooE barE structuralNEq)
@@ -1674,10 +1672,10 @@ goodPartsTests =
     , testCase "toSorted emits a binary compare callback" $ do
         let
           js = renderJsText (pureAST (Array.toSorted numArray (\a b -> a - b)))
-        T.isInfixOf "const $toSorted =" js @?= True
-        T.isInfixOf "=>" js @?= True
-        T.isInfixOf ".toSorted" js @?= True
-        T.isInfixOf "($toSorted)([1.0, 2.0])" js @?= False
+        assertJSContains "const $toSorted =" js
+        assertJSContains "=>" js
+        assertJSContains ".toSorted" js
+        assertJSOmits "($toSorted)([1.0, 2.0])" js
     , testCase "toSorted evaluates" $
         evaluateNumber
           (Array.index (Array.toSorted numArray (\a b -> a - b)) (number 1))
@@ -1821,10 +1819,10 @@ genericTests =
               ( effectfulAST
                   (G.whenTag @"Red" (G.toSum Red) (\_ -> expr (string "yes")) (expr (string "no")))
               )
-        T.isInfixOf ".tag" js @?= True
-        T.isInfixOf "\"Red\"" js @?= True
-        T.isInfixOf "===" js @?= True
-        T.isInfixOf "$valueEq" js @?= False
+        assertJSContains ".tag" js
+        assertJSContains "\"Red\"" js
+        assertJSContains "===" js
+        assertJSOmits "$valueEq" js
     , effectContains
         "whenTag unary payload is the value"
         (G.whenTag @"Circle" (G.toSum (Circle 1.5)) (\r -> expr r) (expr (number 0)))
@@ -1855,13 +1853,13 @@ genericTests =
                       $ G.CaseEnd
                   )
               )
-        T.isInfixOf ".tag" js @?= True
-        T.isInfixOf "===" js @?= True
-        T.isInfixOf "$valueEq" js @?= False
-        T.isInfixOf "\"Red\"" js @?= True
-        T.isInfixOf "\"Green\"" js @?= True
-        T.isInfixOf "\"Blue\"" js @?= True
-        T.isInfixOf "throw" js @?= True
+        assertJSContains ".tag" js
+        assertJSContains "===" js
+        assertJSOmits "$valueEq" js
+        assertJSContains "\"Red\"" js
+        assertJSContains "\"Green\"" js
+        assertJSContains "\"Blue\"" js
+        assertJSContains "throw" js
     , testCase "caseSum Case_ is a suffix wildcard" $ do
         let
           js =
@@ -1872,9 +1870,9 @@ genericTests =
                       $ G.Case_ (\_ -> expr (string "other"))
                   )
               )
-        T.isInfixOf "\"Red\"" js @?= True
-        T.isInfixOf "\"Green\"" js @?= False
-        T.isInfixOf "\"Blue\"" js @?= False
+        assertJSContains "\"Red\"" js
+        assertJSOmits "\"Green\"" js
+        assertJSOmits "\"Blue\"" js
     , effectContains
         "caseSum unary payload is the value"
         ( G.caseSum @Shape (ffi "shape" RecNil)
@@ -2156,10 +2154,10 @@ optimizeTests =
           js = renderJsText (effectfulAST eff)
         -- Row index must depend on the loop counter (not constant-folded to
         -- the first coordinate); column index 0 is expected to stay literal.
-        T.isInfixOf "sink(" js @?= True
-        T.isInfixOf "sink(1.0)" js @?= False
-        T.isInfixOf "$checkedIndex" js @?= True
-        T.isInfixOf "(($checkedIndex)(n0)(n1)" js @?= False
+        assertJSContains "sink(" js
+        assertJSOmits "sink(1.0)" js
+        assertJSContains "$checkedIndex" js
+        assertJSOmits "(($checkedIndex)(n0)(n1)" js
     ]
 
 flatSoATests :: TestTree
@@ -2252,7 +2250,7 @@ compilerTests =
   testGroup
     "compiler"
     [ testCase "compilePure passthrough emits an IIFE" $ do
-        out <- compilePure passthroughConfig (number 1 + number 2)
+        out <- compilePure defaultCompilerConfig (number 1 + number 2)
         out @?= renderJS (pureProgram (number 1 + number 2))
         assertBool "IIFE wrapper present" ("(() => {" `BS.isInfixOf` out)
         assertBool

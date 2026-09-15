@@ -46,12 +46,13 @@ import Data.Aeson (ToJSON (..), encode, object, (.=))
 import qualified Data.Aeson.Key as Key
 import Data.Bits (xor)
 import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
+import Data.Word (Word32)
+import Text.Printf (printf)
 
 -- | Server → browser hot-reload notifications (SSE payloads).
 -- Positional fields avoid -Wpartial-fields across sum constructors.
@@ -93,19 +94,19 @@ defaultHotReloadConfig =
 
 -- | Shared broadcast channel, artifact caches, and build-status refs.
 --
--- The SSE-facing state ('hubJs', 'hubError', 'hubCompiling') lives in 'TVar's
--- so a client's snapshot and its subscription can be taken in one atomic
--- transaction (see 'subscribeWithSnapshot').
+-- Every mutable field is a 'TVar' so a client's snapshot and its
+-- subscription can be taken in one atomic transaction (see
+-- 'subscribeWithSnapshot').
 data HotReloadHub = HotReloadHub
   { hubConfig :: HotReloadConfig
   , hubChan :: TChan HotReloadEvent
-  , hubJs :: TVar (Map.Map Text (Text, Text))
-  , hubHtml :: IORef (Map.Map Text (Text, Text))
+  , hubJs :: TVar ArtifactCache
+  , hubHtml :: TVar ArtifactCache
   , hubError :: TVar (Maybe Text)
   , hubCompiling :: TVar (Maybe Text)
-  , -- | Monotonic publication counter: increments on every broadcast, so
-    -- clients and tests can order snapshots against events.
-    hubRevision :: TVar Int64
+  , hubRevision :: TVar Int64
+  -- ^ Monotonic publication counter: increments on every broadcast, so
+  -- clients and tests can order snapshots against events.
   }
 
 -- | A coherent point-in-time view for a new SSE client: cached JS hashes,
@@ -118,6 +119,9 @@ data HotReloadSnapshot = HotReloadSnapshot
   }
   deriving (Show, Eq)
 
+-- | Cached artifact source keyed by app name, paired with its 'jsHash'.
+type ArtifactCache = Map.Map Text (Text, Text)
+
 -- | The 'HotReloadConfig' the hub was created with.
 hotReloadConfig :: HotReloadHub -> HotReloadConfig
 hotReloadConfig = hubConfig
@@ -127,7 +131,7 @@ newHotReloadHub :: HotReloadConfig -> IO HotReloadHub
 newHotReloadHub cfg = do
   chan <- newBroadcastTChanIO
   js <- newTVarIO Map.empty
-  html <- newIORef Map.empty
+  html <- newTVarIO Map.empty
   err <- newTVarIO Nothing
   compiling <- newTVarIO Nothing
   rev <- newTVarIO 0
@@ -188,7 +192,7 @@ subscribeWithSnapshot hub =
     let
       snap =
         HotReloadSnapshot
-          { snapshotJsHashes = [(k, h) | (k, (_, h)) <- Map.toList js]
+          { snapshotJsHashes = cacheHashes js
           , snapshotBuildError = err
           , snapshotCompiling = comp
           , snapshotRevision = rev
@@ -237,56 +241,47 @@ instance ToJSON HotReloadEvent where
 
 -- | Cache compiled JS and return its content hash.
 registerJs :: HotReloadHub -> Text -> Text -> IO Text
-registerJs hub name source = do
-  let
-    h = jsHash source
-  atomically $ modifyTVar' (hubJs hub) (Map.insert name (source, h))
-  pure h
+registerJs hub = register (hubJs hub)
 
 -- | Look up cached JS source and hash by app name.
 lookupJs :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
-lookupJs hub name = Map.lookup name <$> readTVarIO (hubJs hub)
+lookupJs hub = lookupCached (hubJs hub)
 
 -- | Cache rendered Lucid HTML and return its content hash.
 registerHtml :: HotReloadHub -> Text -> Text -> IO Text
-registerHtml hub name source = do
-  let
-    h = jsHash source
-  atomicModifyIORef' (hubHtml hub) $ \m ->
-    (Map.insert name (source, h) m, ())
-  pure h
+registerHtml hub = register (hubHtml hub)
 
 -- | Look up cached HTML source and hash by app name.
 lookupHtml :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
-lookupHtml hub name = Map.lookup name <$> readIORef (hubHtml hub)
+lookupHtml hub = lookupCached (hubHtml hub)
 
+register :: TVar ArtifactCache -> Text -> Text -> IO Text
+register cache name source = do
+  let
+    h = jsHash source
+  atomically $ modifyTVar' cache (Map.insert name (source, h))
+  pure h
+
+lookupCached :: TVar ArtifactCache -> Text -> IO (Maybe (Text, Text))
+lookupCached cache name = Map.lookup name <$> readTVarIO cache
+
+cacheHashes :: ArtifactCache -> [(Text, Text)]
+cacheHashes m = [(k, h) | (k, (_, h)) <- Map.toList m]
+
+-- | Short content fingerprint: character length and FNV-1a, as
+-- @\<len\>-\<hex\>@. 'Word32' makes the multiply wrap at 32 bits, which is
+-- what FNV-1a specifies.
 jsHash :: Text -> Text
-jsHash t =
-  -- Short fingerprint: length + FNV-1a 32-bit hex (no extra deps).
-  T.pack (show (T.length t)) <> "-" <> T.pack (pad8 (showHex fnv))
+jsHash t = T.pack (printf "%d-%08x" (T.length t) (T.foldl' step seed t))
  where
-  fnv = T.foldl' step (2166136261 :: Int) t
-  step h c =
-    let
-      h' = h `xor` fromEnum c
-     in
-      h' * 16777619
-  showHex n =
-    let
-      digits = "0123456789abcdef"
-      go 0 acc = acc
-      go x acc = go (x `div` 16) (digits !! (x `mod` 16) : acc)
-     in
-      if n == 0 then "0" else go (abs n) ""
-  pad8 s = replicate (max 0 (8 - length s)) '0' <> take 8 s
+  seed = 2166136261 :: Word32
+  step h c = (h `xor` fromIntegral (fromEnum c)) * 16777619
 
 -- | Snapshot the app-name to JS hash map for a new SSE client. Prefer
 -- 'subscribeWithSnapshot', which reads this together with the channel in
 -- one transaction.
 currentJsHashes :: HotReloadHub -> IO [(Text, Text)]
-currentJsHashes hub = do
-  m <- readTVarIO (hubJs hub)
-  pure [(k, h) | (k, (_, h)) <- Map.toList m]
+currentJsHashes hub = cacheHashes <$> readTVarIO (hubJs hub)
 
 -- | The current monotonic publication revision.
 currentRevision :: HotReloadHub -> IO Int64

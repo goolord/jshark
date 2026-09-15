@@ -10,7 +10,9 @@
 --    @forRange_@ and @u8Set@; irregular edit paths (@stampPatternCells@,
 --    @eraseCircleCells@) stay in FFI for zero-alloc scratch writes.
 module JShark.Example.Life.Grid
-  ( BoundScratch (..)
+  ( CellGrids (..)
+  , StepRegion (..)
+  , BoundScratch (..)
   , RenderDirty (..)
   , StepScratch (..)
   , StepCtx (..)
@@ -405,17 +407,29 @@ clampLiveBounds w h x0 y0 x1 y1 margin =
    in
     (xStart, yStart, xEnd + number 1, yEnd + number 1)
 
+-- | The four cell grids a generation reads and writes. They are all
+-- @Uint8Array@, so passing them positionally made any two of them
+-- interchangeable to the type checker.
+data CellGrids f = CellGrids
+  { cgAlive :: Expr f 'Uint8Array
+  , cgSpecies :: Expr f 'Uint8Array
+  , cgNextAlive :: Expr f 'Uint8Array
+  , cgNextSpecies :: Expr f 'Uint8Array
+  }
+
+-- | World size, and the inclusive cell rectangle to step within it.
+data StepRegion f = StepRegion
+  { srW :: Expr f 'Number
+  , srH :: Expr f 'Number
+  , srX0 :: Expr f 'Number
+  , srY0 :: Expr f 'Number
+  , srX1 :: Expr f 'Number
+  , srY1 :: Expr f 'Number
+  }
+
 stepGrid ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
+  CellGrids f
+  -> StepRegion f
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
   -> Expr f ('Array 'Number)
@@ -427,16 +441,13 @@ stepGrid ::
   -> Expr f 'Uint8Array
   -> EffectSyntax f (Expr f 'Number)
 stepGrid
-  alive
-  species
-  nextAlive
-  nextSpecies
-  w
-  h
-  x0
-  y0
-  x1
-  y1
+  CellGrids
+    { cgAlive = alive
+    , cgSpecies = species
+    , cgNextAlive = nextAlive
+    , cgNextSpecies = nextSpecies
+    }
+  StepRegion {srW = w, srH = h, srX0 = x0, srY0 = y0, srX1 = x1, srY1 = y1}
   prevLiveList
   nextLiveList
   nextChangedList

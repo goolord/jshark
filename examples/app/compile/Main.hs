@@ -10,7 +10,7 @@ import qualified Data.ByteString as BS
 import Data.List (partition)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as TL
 import JShark.Compiler
   ( CompilerConfig
@@ -65,7 +65,9 @@ main = do
       htmlOut = cacheDir </> (lab <> ".html")
       html = TL.toStrict (renderText (pageLabel lab script))
     BS.writeFile jsOut js
-    T.writeFile htmlOut html
+    -- Encode explicitly: Data.Text.IO would use the locale encoding, which
+    -- cannot represent the page on a non-UTF-8 machine.
+    BS.writeFile htmlOut (TE.encodeUtf8 html)
     putStrLn jsOut
     putStrLn htmlOut
     hFlush stdout

@@ -44,10 +44,10 @@ module JShark.Compiler.CompileProgress
   )
 where
 
-import Control.Concurrent (ThreadId, myThreadId, threadDelay)
-import Control.Exception (bracket_, finally)
+import Control.Concurrent (ThreadId, myThreadId)
+import Control.Concurrent.MVar (MVar, newMVar, putMVar, tryTakeMVar, withMVar)
+import Control.Exception (bracket, finally)
 import Control.Monad (when)
-import Data.Atomics (casIORef, peekTicket, readForCAS)
 import Data.Atomics.Counter
   ( AtomicCounter
   , incrCounter_
@@ -167,9 +167,11 @@ reportPackPhase EmitCtx {ecBoard, ecSlot} idx tot =
 progressActive :: IORef (Map.Map ThreadId ActiveJobState)
 progressActive = unsafePerformIO (newIORef Map.empty)
 
+-- | Held while a thread is drawing, so concurrent jobs do not interleave
+-- their redraws. Full means free.
 {-# NOINLINE progressGate #-}
-progressGate :: IORef Int
-progressGate = unsafePerformIO (newIORef 0)
+progressGate :: MVar ()
+progressGate = unsafePerformIO (newMVar ())
 
 {-# NOINLINE progressRedraw #-}
 progressRedraw :: IORef (Maybe (IO ()))
@@ -179,48 +181,33 @@ progressRedraw = unsafePerformIO (newIORef Nothing)
 pendingRedraw :: IORef Bool
 pendingRedraw = unsafePerformIO (newIORef False)
 
-gateSpinMicros :: Int
-gateSpinMicros = 1000
-
-releaseProgressGate :: IO ()
-releaseProgressGate = writeIORef progressGate 0
-
-acquireProgressGate :: IO ()
-acquireProgressGate = do
-  t <- readForCAS progressGate
-  case peekTicket t of
-    0 -> do
-      (ok, _) <- casIORef progressGate t 1
-      if ok then pure () else acquireProgressGate
-    _ -> threadDelay gateSpinMicros >> acquireProgressGate
-
+-- | Run @io@ with the gate held, without waiting for it: 'Nothing' when
+-- another thread is already drawing.
 tryProgressIO :: IO a -> IO (Maybe a)
-tryProgressIO io = do
-  t <- readForCAS progressGate
-  case peekTicket t of
-    0 -> do
-      (ok, _) <- casIORef progressGate t 1
-      if ok
-        then Just <$> bracket_ (pure ()) releaseProgressGate io
-        else tryProgressIO io
-    _ -> pure Nothing
+tryProgressIO io =
+  bracket (tryTakeMVar progressGate) restore $ \case
+    Nothing -> pure Nothing
+    Just () -> Just <$> io
+ where
+  restore = maybe (pure ()) (putMVar progressGate)
 
+-- | Draw a redraw a worker deferred while the gate was busy.
+--
+-- Called from inside 'withProgressIO', so the gate is already held and the
+-- redraw runs directly. Routing it through 'tryProgressIO' would never
+-- re-acquire the gate, so the deferred redraw was dropped instead of drawn.
 flushPendingRedraw :: IO ()
 flushPendingRedraw = do
   pending <- readIORef pendingRedraw
   when pending $ do
     writeIORef pendingRedraw False
-    m <- readIORef progressRedraw
-    case m of
-      Nothing -> pure ()
-      Just io ->
-        tryProgressIO io >>= \case
-          Nothing -> writeIORef pendingRedraw True
-          Just _ -> pure ()
+    readIORef progressRedraw >>= sequence_
 
+-- | Serialize terminal output, waiting for the gate if another thread holds
+-- it, and drain any redraw deferred meanwhile on the way out.
 withProgressIO :: IO a -> IO a
 withProgressIO io =
-  bracket_ acquireProgressGate releaseProgressGate $ do
+  withMVar progressGate $ \() -> do
     r <- io
     flushPendingRedraw
     pure r
@@ -231,6 +218,8 @@ setProgressRedraw io = writeIORef progressRedraw (Just io)
 clearProgressRedraw :: IO ()
 clearProgressRedraw = writeIORef progressRedraw Nothing
 
+-- | Redraw now if no other thread is drawing; otherwise mark it pending so
+-- that whoever holds the gate flushes it on the way out.
 maybeRedraw :: IO ()
 maybeRedraw = do
   m <- readIORef progressRedraw

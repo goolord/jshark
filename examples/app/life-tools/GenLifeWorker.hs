@@ -5,7 +5,8 @@
 --   cabal run gen-life-worker
 module Main (main) where
 
-import qualified Data.Text.IO as T
+import qualified Data.ByteString as BS
+import qualified Data.Text.Encoding as TE
 import JShark.Example.Life (engineWorkerJs)
 import System.Environment (getArgs)
 
@@ -16,5 +17,5 @@ main = do
     path = case args of
       (p : _) -> p
       _ -> "examples/src/JShark/Example/Life/js/EngineWorker.js"
-  T.writeFile path engineWorkerJs
+  BS.writeFile path (TE.encodeUtf8 engineWorkerJs)
   putStrLn $ "wrote " ++ path

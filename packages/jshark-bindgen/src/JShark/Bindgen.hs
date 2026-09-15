@@ -22,6 +22,8 @@ module JShark.Bindgen
 where
 
 import Data.Char (isAlpha, toUpper)
+import Data.List (isSuffixOf)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Bindgen.Emit (emitModule)
@@ -84,9 +86,9 @@ generateFromIr = emitModule
 applyOpts :: BindgenOpts -> FilePath -> ModuleIr -> ModuleIr
 applyOpts opts path ir =
   let
-    m = maybe (irModule ir) id (optModuleName opts)
+    m = fromMaybe (irModule ir) (optModuleName opts)
     m' = if T.null m then moduleFromPath path else m
-    p = maybe (irPrefix ir) id (optPrefix opts)
+    p = fromMaybe (irPrefix ir) (optPrefix opts)
    in
     qualifyPrefix $
       ir
@@ -129,29 +131,25 @@ qualifyPrefix ir
         , irClasses = fmap (qualClass (irPrefix ir)) (irClasses ir)
         }
 
+-- | Qualify a foreign name with the module prefix, unless it already is
+-- the prefix or sits under it.
+qualify :: Text -> Text -> Text
+qualify p n
+  | n == p || (p <> ".") `T.isPrefixOf` n = n
+  | otherwise = p <> "." <> n
+
 qualFun :: Text -> Fun -> Fun
-qualFun p f
-  | fnFfi f == p = f
-  | already (fnFfi f) = f
-  | otherwise = f {fnFfi = p <> "." <> fnFfi f}
- where
-  already n = (p <> ".") `T.isPrefixOf` n
+qualFun p f = f {fnFfi = qualify p (fnFfi f)}
 
 qualConst :: Text -> ConstDecl -> ConstDecl
-qualConst p c
-  | cnFfi c == p = c
-  | (p <> ".") `T.isPrefixOf` cnFfi c = c
-  | otherwise = c {cnFfi = p <> "." <> cnFfi c}
+qualConst p c = c {cnFfi = qualify p (cnFfi c)}
 
 qualClass :: Text -> ClassDecl -> ClassDecl
-qualClass p c
-  | clFfi c == p || (p <> ".") `T.isPrefixOf` clFfi c =
-      c {clCtors = fmap (qualFun p) (clCtors c)}
-  | otherwise =
-      c
-        { clFfi = p <> "." <> clFfi c
-        , clCtors = fmap (qualFun p) (clCtors c)
-        }
+qualClass p c =
+  c
+    { clFfi = qualify p (clFfi c)
+    , clCtors = fmap (qualFun p) (clCtors c)
+    }
 
 moduleFromPath :: FilePath -> Text
 moduleFromPath path =
@@ -166,5 +164,3 @@ moduleFromPath path =
       _ -> 'B' : base
    in
     "JShark." <> T.pack titled
- where
-  isSuffixOf s t = s `T.isSuffixOf` T.pack t

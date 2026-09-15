@@ -25,7 +25,7 @@ where
 
 import Data.Char (isDigit)
 import qualified Data.Char as Char
-import Data.List (nub, sortBy)
+import Data.List (intersperse, nub, sortBy)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text (Text)
@@ -35,7 +35,6 @@ import JShark.Compiler.Emit
   , hcat
   , jsText
   , parens
-  , punctuate
   , semi
   , vcat
   , (<+>)
@@ -169,7 +168,7 @@ preambleToList p =
 
 callShim :: Builtin -> [JS] -> JS
 callShim b args =
-  jsText (builtinName b) <> parens (hcat (punctuate ", " args))
+  jsText (builtinName b) <> parens (hcat (intersperse ", " args))
 
 builtinName :: Builtin -> Text
 builtinName = \case

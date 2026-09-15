@@ -3,7 +3,7 @@
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Browser-side Life frame profiler. Samples land on
---   @window.__jsharkLifeProfile@ for @scripts/profile-life.sh@.
+--   @window.__jsharkLifeProfile@.
 module JShark.Example.Life.Profile (install, sampleFrame) where
 
 import JShark.Api

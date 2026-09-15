@@ -50,6 +50,7 @@ import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
 import Data.Functor.Identity (Identity (..), runIdentity)
+import Data.List (intersperse)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -85,7 +86,6 @@ import JShark.Compiler.Emit
   , jsString
   , jsText
   , parens
-  , punctuate
   )
 import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import Numeric (readInt, showHex)
@@ -510,7 +510,7 @@ jsUint8ArrayLitAs ctor ba =
           <> parens
             ( brackets
                 ( hcat
-                    (punctuate ", " (map (jsDecimal . (fromIntegral :: Word8 -> Int)) elems))
+                    (intersperse ", " (map (jsDecimal . (fromIntegral :: Word8 -> Int)) elems))
                 )
             )
 

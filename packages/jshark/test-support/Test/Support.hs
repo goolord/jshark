@@ -38,6 +38,7 @@ module Test.Support
   , pureContains
   , evalBoolCase
   , assertJSContains
+  , assertJSOmits
   , assertThrows
   , captureStderr
   , requireBiome
@@ -54,7 +55,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import JShark (evaluate, renderJS)
+import JShark (JS, evaluate, renderJS)
 import JShark.Api
 import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Rec (Rec (..), (<:))
@@ -174,51 +175,43 @@ numArray = Literal (ValueArray [ValueNumber 1, ValueNumber 2])
 mulDiv :: forall f. Expr f 'Number
 mulDiv = number 6 * number 7 / number 2
 
+-- | Golden case: rendered JS must equal @golden@ exactly.
+codeCase :: String -> JS -> Text -> TestTree
+codeCase name js golden =
+  testCase name (renderJS js @?= TE.encodeUtf8 golden)
+
+-- | Smoke case: rendered JS must contain every needle.
+containsCase :: String -> JS -> [Text] -> TestTree
+containsCase name js needles =
+  testCase name $ mapM_ (assertJSContains' (renderJS js)) needles
+ where
+  assertJSContains' hay n =
+    assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` hay)
+
 -- | Golden case for a closed effectful program.
 effectCodeCase :: String -> ClosedEffect u -> Text -> TestTree
-effectCodeCase name eff golden =
-  testCase name (renderJS (effectfulAST eff) @?= TE.encodeUtf8 golden)
+effectCodeCase name eff = codeCase name (effectfulAST eff)
 
 -- | Golden case for a closed effectful program under an explicit emit style.
 effectCodeCaseWith :: EmitStyle -> String -> ClosedEffect u -> Text -> TestTree
-effectCodeCaseWith style name eff golden =
-  testCase name (renderJS (effectfulASTWith style eff) @?= TE.encodeUtf8 golden)
+effectCodeCaseWith style name eff = codeCase name (effectfulASTWith style eff)
 
 -- | Golden case for a closed pure expression.
 pureCodeCase :: String -> ClosedExpr u -> Text -> TestTree
-pureCodeCase name e golden =
-  testCase name (renderJS (pureAST e) @?= TE.encodeUtf8 golden)
+pureCodeCase name e = codeCase name (pureAST e)
 
 -- | Smoke case: rendered effect must contain every needle.
 effectContains :: String -> ClosedEffect u -> [Text] -> TestTree
-effectContains name eff needles =
-  testCase name $ do
-    let
-      js = renderJS (effectfulAST eff)
-    mapM_
-      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
-      needles
+effectContains name eff = containsCase name (effectfulAST eff)
 
 -- | 'effectContains' under an explicit emit style.
 effectContainsWith ::
   EmitStyle -> String -> ClosedEffect u -> [Text] -> TestTree
-effectContainsWith style name eff needles =
-  testCase name $ do
-    let
-      js = renderJS (effectfulASTWith style eff)
-    mapM_
-      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
-      needles
+effectContainsWith style name eff = containsCase name (effectfulASTWith style eff)
 
 -- | Smoke case: rendered pure expression must contain every needle.
 pureContains :: String -> ClosedExpr u -> [Text] -> TestTree
-pureContains name e needles =
-  testCase name $ do
-    let
-      js = renderJS (pureAST e)
-    mapM_
-      (\n -> assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` js))
-      needles
+pureContains name e = containsCase name (pureAST e)
 
 -- | Evaluate a closed pure Bool expression.
 evalBoolCase :: String -> ClosedExpr 'Bool -> Bool -> TestTree
@@ -228,10 +221,17 @@ evalBoolCase name e expected =
 
 -- | Assert emitted JS contains @needle@ (layout-independent smoke check).
 assertJSContains :: Text -> Text -> IO ()
-assertJSContains needle haystack =
-  unless (T.isInfixOf needle haystack)
+assertJSContains = assertInfix True
+
+-- | Assert emitted JS does /not/ contain @needle@.
+assertJSOmits :: Text -> Text -> IO ()
+assertJSOmits = assertInfix False
+
+assertInfix :: Bool -> Text -> Text -> IO ()
+assertInfix want needle haystack =
+  unless (T.isInfixOf needle haystack == want)
     $ assertFailure
-    $ "missing "
+    $ (if want then "missing " else "unexpected ")
       <> T.unpack needle
       <> " in:\n"
       <> T.unpack haystack

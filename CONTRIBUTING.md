@@ -11,7 +11,7 @@ For a project overview, see the [README](README.md).
 - [Fourmolu](https://github.com/fourmolu/fourmolu) for formatting
 
 Run `nix develop` for the pinned toolchain, or follow the
-[manual setup](README.md#building-and-development).
+[manual setup](README.md#getting-started).
 
 ## Build, test, and benchmark
 
@@ -29,9 +29,12 @@ filters, RTS settings, and profiling.
 Format before committing:
 
 ```bash
-fourmolu --mode inplace $(git ls-files '*.hs')
-fourmolu --mode check $(git ls-files '*.hs')
+./scripts/format.sh
 ```
+
+Use the script rather than calling `fourmolu` over every file: it skips
+`jshark-bindgen`'s generated test fixtures, which the bindgen tests compare
+byte for byte against a fresh run of the generator.
 
 ## Warnings
 
@@ -51,12 +54,12 @@ byte-for-byte; the golden tests under `packages/jshark/test/` enforce this.
 
 Read the module header of [`JShark`](packages/jshark/src/JShark.hs) for the
 compiler pipeline, then [`JShark.Api`](packages/jshark/src/JShark/Api.hs) for
-the public syntax. See the [package overview](README.md#monorepo-packages)
+the public syntax. See the [package overview](README.md#the-packages)
 for the rest of the repository.
 
 ## Pull requests
 
 - Add or update tests for behavioral changes.
 - Update [CHANGELOG.md](CHANGELOG.md) under `## Unreleased`.
-- Make sure `cabal test all`, `fourmolu --mode check`, and `cabal check` (in each
-  released package directory) pass.
+- Make sure `cabal test all` and `cabal check` (in each released package
+  directory) pass, and that `./scripts/format.sh` leaves no diff.

@@ -12,6 +12,7 @@ module JShark.HotReload.Client
 where
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -31,11 +32,14 @@ clientRuntimeScript = TE.encodeUtf8 clientRuntimeText
 clientRuntimeText :: Text
 clientRuntimeText = T.pack clientRuntimeSource
 
--- Rebuild this module when the browser runtime changes.
+-- Rebuild this module when the browser runtime changes. The asset is read
+-- as bytes and decoded as UTF-8 explicitly: 'readFile' would decode it with
+-- whatever locale the build machine happens to have, which fails outright
+-- under a non-UTF-8 locale.
 clientRuntimeSource :: String
 clientRuntimeSource =
   $( do
        rel <- makeRelativeToProject "assets/jshark-reload.js"
        qAddDependentFile rel
-       runIO (readFile rel) >>= stringE
+       runIO (T.unpack . TE.decodeUtf8 <$> BS.readFile rel) >>= stringE
    )

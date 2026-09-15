@@ -28,14 +28,17 @@ import JShark.Dom (DomElement)
 import JShark.Example.Life.Catalog (catalogInitialCells, stampCatalogCells)
 import JShark.Example.Life.Discover (Registry, discoverLife)
 import JShark.Example.Life.EngineFinish
-  ( finishStep
+  ( EngineGrids (..)
+  , finishStep
   , initEngineGrids
   , reuseEngineGrids
   )
 import JShark.Example.Life.Grid
   ( BoundScratch
+  , CellGrids (..)
   , RenderDirty (..)
   , StepCtx (..)
+  , StepRegion (..)
   , cellIdx
   , drawGridFallback
   , drawGridViewport
@@ -280,6 +283,15 @@ stepGeneration state stepCtx = do
     -- Tags 1/2 alternate; stamps start at 0. Dense scans skip stamps;
     -- sparse dedup requires the active tag never be 0.
     stepTagVal = rem_ gen (number 2) + number 1
+    cells =
+      CellGrids
+        { cgAlive = alive
+        , cgSpecies = species
+        , cgNextAlive = nextAlive
+        , cgNextSpecies = nextSpecies
+        }
+    region =
+      StepRegion {srW = w, srH = h, srX0 = x0, srY0 = y0, srX1 = x1, srY1 = y1}
   Array.clear_ nextLiveList
   Array.clear_ nextChangedList
   ifS
@@ -300,19 +312,13 @@ stepGeneration state stepCtx = do
         engineGridB <- state.engineGridB
         engineOk <-
           finishStep
-            alive
-            species
-            nextAlive
-            nextSpecies
-            engineGridA
-            engineGridB
-            engineLut
-            w
-            h
-            x0
-            y0
-            x1
-            y1
+            EngineGrids
+              { egCells = cells
+              , egGridA = engineGridA
+              , egGridB = engineGridB
+              , egLut = engineLut
+              }
+            region
             nextLiveList
             nextChangedList
             stepCtx
@@ -320,16 +326,8 @@ stepGeneration state stepCtx = do
           do
             v <-
               stepGrid
-                alive
-                species
-                nextAlive
-                nextSpecies
-                w
-                h
-                x0
-                y0
-                x1
-                y1
+                cells
+                region
                 prevLiveList
                 nextLiveList
                 nextChangedList

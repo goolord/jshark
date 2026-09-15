@@ -553,7 +553,8 @@ allocationIdentity = fromSyntax $ do
   a <- bindExpr (newByteArray (number 1))
   b <- bindExpr (newByteArray (number 1))
   toSyntax_ (u8Set a (number 0) (number 1))
-  yield ((u8Index a (number 0) .== number 1) .&& (u8Index b (number 0) .== number 0))
+  yield
+    ((u8Index a (number 0) .== number 1) .&& (u8Index b (number 0) .== number 0))
 
 -- | A foreign callee that expects @number | null@. The tagged 'Option'
 -- must be unwrapped at the boundary: @none@ becomes native @null@ and

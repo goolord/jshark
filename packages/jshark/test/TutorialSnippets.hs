@@ -29,6 +29,12 @@ greet name = fromSyntax $ do
   Console.log ("hello, " <> name)
   done
 
+-- | The one-liner the tutorial and the README pass to
+-- 'compileEffectSyntax'. 'Console.log' alone is @EffectSyntax f ()@, so the
+-- block needs 'done' to close it at @f 'Unit@.
+logHi :: EffectSyntax f (f 'Unit)
+logHi = Console.log "hi" >> done
+
 addFn :: Expr f 'Number -> Expr f 'Number -> Expr f ('Function 'Number 'Number)
 addFn a b = lambda (\x -> x + a + b)
 
@@ -50,7 +56,7 @@ data Person = Person
   { fullName :: Text
   , years :: Double
   }
-  deriving (Generic)
+  deriving Generic
 
 -- | @G.toObject (Person "Ada" 36)@ is already an 'Effect'; compile it
 -- directly (the tutorial previously wrapped it in @fromSyntax@, which does

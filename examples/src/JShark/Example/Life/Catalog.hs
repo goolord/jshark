@@ -39,7 +39,7 @@ import JShark.Example.Life.Patterns
   , initialCatalogCells
   )
 import qualified JShark.Map as Map
-import Numeric (showHex)
+import Text.Printf (printf)
 
 normalizeCells :: [(Int, Int)] -> [(Int, Int)]
 normalizeCells cells =
@@ -275,12 +275,7 @@ jsonString t =
     | otherwise = T.singleton c
 
 jsonHex4 :: Int -> String
-jsonHex4 n =
-  let
-    h = showHex n ""
-    pad = replicate (max 0 (4 - length h)) '0'
-   in
-    pad ++ h
+jsonHex4 = printf "%04x"
 
 prefixes, suffixes, nouns, adjectives, verbsIng :: [Text]
 prefixes =

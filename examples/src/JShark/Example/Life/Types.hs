@@ -88,11 +88,10 @@ module JShark.Example.Life.Types
 where
 
 import Data.Array.Byte (ByteArray)
-import Data.Char (toLower)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Numeric (showHex)
+import Text.Printf (printf)
 
 boardId :: Text
 boardId = "life-board"
@@ -126,12 +125,7 @@ canvasBgHex :: Int
 canvasBgHex = 0x111111
 
 hexColorText :: Int -> Text
-hexColorText n =
-  let
-    h = map toLower (showHex n "")
-    padded = replicate (max 0 (6 - length h)) '0' ++ h
-   in
-    "#" <> T.pack padded
+hexColorText n = T.pack (printf "#%06x" n)
 
 -- | CSS color for shell chrome ('canvasBgHex').
 canvasBg :: Text

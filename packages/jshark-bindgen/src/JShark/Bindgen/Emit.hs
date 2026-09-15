@@ -62,7 +62,9 @@ planModuleNames ir =
         <> fmap (SlotType . hsTypeName . enName) (irEnums ir)
         <> fmap (SlotConst . cnName) (irConsts ir)
         <> concatMap enumMemberSlots (irEnums ir)
-        <> fmap (\fn -> SlotFun (FunKey T.empty (fnName fn) False False (fnOverload fn))) (irFuns ir)
+        <> fmap
+          (\fn -> SlotFun (FunKey T.empty (fnName fn) False False (fnOverload fn)))
+          (irFuns ir)
         <> concatMap classFunSlots (irClasses ir)
     rawNames = fmap slotRaw slots
     finalNames = uniques rawNames
@@ -111,7 +113,8 @@ enumMemberSlots e =
 
 classFunSlots :: ClassDecl -> [Slot]
 classFunSlots c =
-  [ SlotFun (FunKey (clName c) (fnName f) True False (fnOverload f)) | f <- clCtors c
+  [ SlotFun (FunKey (clName c) (fnName f) True False (fnOverload f))
+  | f <- clCtors c
   ]
     <> [ SlotFun (FunKey (clName c) (fnName f) False (fnStatic f) (fnOverload f))
        | f <- clMethods c

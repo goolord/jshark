@@ -26,7 +26,8 @@ module JShark.Bindgen.Ir
   )
 where
 
-import Data.List (nub)
+import Data.List (group, sort)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -66,8 +67,8 @@ data Fun = Fun
   , fnRet :: Ty
   , fnIsCtor :: Bool
   , fnStatic :: Bool
-  , -- | Position among same-named overloads (stable declaration identity).
-    fnOverload :: Int
+  , fnOverload :: Int
+  -- ^ Position among same-named overloads (stable declaration identity).
   }
   deriving (Eq, Show)
 
@@ -197,34 +198,48 @@ validateModule :: ModuleIr -> [Diagnostic]
 validateModule ir =
   concatMap validateFun (irFuns ir)
     <> concatMap validateClass (irClasses ir)
-    <> concatMap (\c -> checkConst c) (irConsts ir)
+    <> concatMap checkConst (irConsts ir)
     <> duplicateDiags
  where
   validateFun f =
     checkUnknown (fnName f) (fnRet f : map pTy (fnParams f))
       <> checkNested (fnName f) (fnRet f : map pTy (fnParams f))
   validateClass c =
-    checkUnknown (clName c) (concatMap propAndFun (clProps c) <> concatMap funTys (clCtors c <> clMethods c))
-      <> checkNested (clName c) (concatMap (\p -> [prTy p]) (clProps c) <> concatMap funTys (clCtors c <> clMethods c))
+    checkUnknown
+      (clName c)
+      (concatMap propAndFun (clProps c) <> concatMap funTys (clCtors c <> clMethods c))
+      <> checkNested
+        (clName c)
+        (map prTy (clProps c) <> concatMap funTys (clCtors c <> clMethods c))
   propAndFun p = [prTy p]
   funTys f = fnRet f : map pTy (fnParams f)
   checkConst c = checkUnknown (cnName c) [cnTy c] <> checkNested (cnName c) [cnTy c]
   checkUnknown who tys
     | any tyUsesUnknown tys =
-        [Diagnostic "unsupported-type" (who <> ": contains a type bindgen could not map")]
+        [ Diagnostic "unsupported-type" (who <> ": contains a type bindgen could not map")
+        ]
     | otherwise = []
   checkNested who tys
     | any tyHasNestedOption tys =
         [ Diagnostic
             "unsupported-nullable"
-            (who <> ": a nullable inside a container or callback is not converted at the boundary")
+            ( who
+                <> ": a nullable inside a container or callback is not converted at the boundary"
+            )
         ]
     | otherwise = []
   duplicateDiags =
     [ Diagnostic "duplicate-declaration" (n <> ": declared more than once")
-    | n <- duplicates (fmap cnName (irConsts ir) <> fmap enName (irEnums ir) <> fmap clName (irClasses ir))
+    | n <-
+        duplicates
+          ( fmap cnName (irConsts ir)
+              <> fmap enName (irEnums ir)
+              <> fmap clName (irClasses ir)
+          )
     ]
-  duplicates xs = [x | x <- nub xs, length (filter (== x) xs) > 1]
+  duplicates = mapMaybe repeated . group . sort
+  repeated (x : _ : _) = Just x
+  repeated _ = Nothing
 
 -- | True when the type or any nested type is a 'TyUnknown'.
 tyUsesUnknown :: Ty -> Bool

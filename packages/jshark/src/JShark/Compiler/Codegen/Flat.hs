@@ -19,7 +19,7 @@ module JShark.Compiler.Codegen.Flat where
 
 import Control.Monad.ST (runST)
 import qualified Data.IntMap.Strict as IM
-import Data.List (mapAccumL)
+import Data.List (intersperse, mapAccumL)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.STRef (modifySTRef, newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector as V
@@ -53,7 +53,6 @@ import JShark.Compiler.Emit
   , jsString
   , jsText
   , parens
-  , punctuate
   , semi
   , vcat
   , vcatNonEmpty
@@ -100,7 +99,7 @@ flatRenderLiteral env s0 = \case
       ( s1
       , Code
           (codesDecls exprs)
-          (brackets (hcat (punctuate ", " (codesRefs exprs))))
+          (brackets (hcat (intersperse ", " (codesRefs exprs))))
       )
   ValueString s -> (s0, Code mempty (jsQuote s))
   ValueFunction _ -> error "JShark.flatPureAST: ValueFunction is eval-only"
@@ -254,7 +253,7 @@ flatRenderArgListSeq ctx s0 args =
           (s'', c : cs')
     (s1, cs) = go s0 args
    in
-    (s1, codesDecls cs, hcat (punctuate ", " (codesRefs cs)))
+    (s1, codesDecls cs, hcat (intersperse ", " (codesRefs cs)))
 
 flatRenderArgList ctx s0 view ai =
   flatRenderArgListSeq ctx s0 (Flat.flatSoaArgGroup view ai)
@@ -276,7 +275,7 @@ flatRenderObjectLit ctx s0 view gi =
     (s1, parts) = mapAccumL (flatRenderField ctx) s0 fs
     (declList, pairs) = unzip parts
    in
-    (s1, Code (vcatNonEmpty declList) (braces (hcat (punctuate ", " pairs))))
+    (s1, Code (vcatNonEmpty declList) (braces (hcat (intersperse ", " pairs))))
 
 flatRenderArrayLit ctx s0 es =
   let
@@ -294,7 +293,7 @@ flatRenderArrayLit ctx s0 es =
     ( s1
     , Code
         (codesDecls cs)
-        (brackets (hcat (punctuate ", " (codesRefs cs))))
+        (brackets (hcat (intersperse ", " (codesRefs cs))))
     )
 
 flatRenderFixed ::
@@ -692,7 +691,8 @@ flatTableLookup (FlatTableRead m) i =
   case IM.lookup i m of
     Just c -> c
     Nothing ->
-      error ("JShark.Compiler.Codegen.Flat: node " <> show i <> " emitted before its child")
+      error
+        ("JShark.Compiler.Codegen.Flat: node " <> show i <> " emitted before its child")
 {-# NOINLINE flatTableLookup #-}
 
 data FlatEmitPlan = FlatEmitPlan

@@ -246,7 +246,8 @@ sseTwoAppsOk = do
   ev2 <- next
   assertEqual "app-b event" (JsUpdate "app-b" "/app-b/app.js" hb) ev2
   (snap, _) <- subscribeWithSnapshot hub
-  let hashes = snapshotJsHashes snap
+  let
+    hashes = snapshotJsHashes snap
   assertBool "app-a hash present" (("app-a", ha) `elem` hashes)
   assertBool "app-b hash present" (("app-b", hb) `elem` hashes)
 

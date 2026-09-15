@@ -334,4 +334,3 @@ cabal bench jshark-examples-bench -- jshark-examples-bench -t 120s -p 'life.opti
 | `examples/bench/` | full-example bench + `jshark-life-*` profiling executables |
 | `cabal.project` | project config: tests/benchmarks on, `werror` flag enabled |
 | `profile/` | gitignored `.prof` / bench logs from manual runs |
-| `.cursor/rules/` | `cabal test`, Fourmolu, architecture notes |
