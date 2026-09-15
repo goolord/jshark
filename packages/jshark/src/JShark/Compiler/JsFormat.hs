@@ -69,7 +69,10 @@ resolveBiome = do
         )
 
 runBiome ::
-  FilePath -> ([String] -> [String]) -> ByteString -> IO (Either String ByteString)
+  FilePath
+  -> ([String] -> [String])
+  -> ByteString
+  -> IO (Either String ByteString)
 runBiome exe wrap source =
   executeProcessStdin
     exe

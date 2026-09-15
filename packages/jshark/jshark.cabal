@@ -9,7 +9,7 @@ description:
   ordinary Haskell values: binders use PHOAS, statements compose with
   @do@ notation, and codegen emits clean JavaScript whose binder names
   and callstack hints are preserved.
-  .
+
   The API separates pure expressions (@Expr@) from side effects
   (@Effect@). Pure terms can be evaluated directly in Haskell, and
   effectful programs run under Bun or a browser with optional

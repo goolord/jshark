@@ -22,7 +22,6 @@ module JShark.Compiler.Emit
   , hcat
   , vcat
   , vcatNonEmpty
-  , punctuate
   , blockBody
   , iifeBody
   , nonEmpty
@@ -130,11 +129,6 @@ nonEmpty b = if isEmpty b then Nothing else Just b
 isEmpty :: JS -> Bool
 isEmpty Empty = True
 isEmpty (NonEmpty _) = False
-
-punctuate :: JS -> [JS] -> [JS]
-punctuate _ [] = []
-punctuate _ [x] = [x]
-punctuate sep (x : xs) = x : concatMap (\y -> [sep, y]) xs
 
 indentLines :: Int -> JS -> JS
 indentLines n body

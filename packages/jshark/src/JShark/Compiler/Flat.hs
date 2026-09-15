@@ -1459,10 +1459,12 @@ flatSoaLayerBuckets soa root =
     -- 'Map.fromListWith (++)' applies @new ++ old@ (newest first because the
     -- comprehension is ascending), so the stored list is descending.
     byDepth =
-      Map.fromListWith (++)
+      Map.fromListWith
+        (++)
         [ (d, [i])
         | i <- [0 .. n - 1]
-        , let d = depths V.! i
+        , let
+            d = depths V.! i
         , d >= 0
         ]
    in
@@ -1503,7 +1505,11 @@ validateFlatSoaEmitOrder soa root order =
     , not (Map.member i positions)
     ]
   misordered =
-    [ T.pack "node #" <> tshow nid <> T.pack " uses #" <> tshow r <> T.pack " after it"
+    [ T.pack "node #"
+        <> tshow nid
+        <> T.pack " uses #"
+        <> tshow r
+        <> T.pack " after it"
     | (idx, nid) <- zip [0 :: Int ..] (V.toList order)
     , nid >= 0
     , nid < n

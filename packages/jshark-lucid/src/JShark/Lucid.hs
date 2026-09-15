@@ -228,21 +228,29 @@ templateErrors (JsHtml (ns, _)) = go False [] ns
   node inElement path = \case
     Modifier _
       | inElement -> []
-      | otherwise ->
-          [TemplateError path "a modifier needs an enclosing element"]
+      | otherwise -> [orphanModifierError path]
     TextNode _ -> []
     Element name _ (JsHtml (cs, _)) -> go True (path <> [name]) cs
     Void name _ (JsHtml (cs, _)) ->
-      [ TemplateError
-          (path <> [name])
-          ("<" <> name <> "> is a void element and cannot have children")
-      | any (not . isModifier) cs
-      ]
+      [voidChildError (path <> [name]) name | any (not . isModifier) cs]
 
--- | Throw the first structural problem, if any. Called by the renderers.
-assertTemplate :: JsHtml f () -> ()
-assertTemplate h = case templateErrors h of
-  [] -> ()
+-- | The two structural problems, built in one place so the checker and the
+-- renderers cannot describe the same fault differently.
+orphanModifierError :: [Text] -> TemplateError
+orphanModifierError path =
+  TemplateError path "a modifier needs an enclosing element"
+
+voidChildError :: [Text] -> Text -> TemplateError
+voidChildError path name =
+  TemplateError
+    path
+    ("<" <> name <> "> is a void element and cannot have children")
+
+-- | Throw the first structural problem, if any. Called by the renderers
+-- before they emit anything, so a bad template fails the build.
+checkTemplate :: Applicative m => JsHtml f () -> m ()
+checkTemplate h = case templateErrors h of
+  [] -> pure ()
   (e : _) -> throw e
 
 formatTemplateError :: TemplateError -> String
@@ -266,7 +274,7 @@ renderInto ::
   -> JsHtml f ()
   -> EffectSyntax f (f 'Unit)
 renderInto parent h@(JsHtml (ns, _)) = do
-  assertTemplate h `seq` pure ()
+  checkTemplate h
   mapM_ (renderNode parent) ns
   done
 
@@ -275,29 +283,25 @@ renderInto parent h@(JsHtml (ns, _)) = do
 renderFragment ::
   JsHtml f () -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 renderFragment h@(JsHtml (ns, _)) = do
-  assertTemplate h `seq` pure ()
+  checkTemplate h
   frag <- hold $ ffi "document.createDocumentFragment" RecNil
   mapM_ (renderNode frag) ns
   pure frag
 
+-- | 'checkTemplate' has already rejected both faulty shapes by the time a
+-- renderer walks the tree; the throws are here so the walk stays total.
 renderNode ::
   Effect f ('MutableObject Dom.DomElement) -> Node f -> EffectSyntax f ()
 renderNode parent = \case
   Element name attrs (JsHtml (ns, _)) -> build parent name attrs ns
   Void name attrs (JsHtml (ns, _))
     | all isModifier ns -> build parent name attrs ns
-    | otherwise -> throw (TemplateError [name] voidChildMessage)
+    | otherwise -> throw (voidChildError [name] name)
   TextNode t -> do
     -- No JShark.Dom wrapper for text nodes; appendChild takes any Node.
     node <- hold (ffi "document.createTextNode" (arg t <: RecNil))
     void (Dom.appendChild parent node)
-  Modifier _ -> throw (TemplateError [] orphanMessage)
-
-voidChildMessage :: Text
-voidChildMessage = "a void element cannot have children"
-
-orphanMessage :: Text
-orphanMessage = "a modifier needs an enclosing element"
+  Modifier _ -> throw (orphanModifierError [])
 
 build ::
   Effect f ('MutableObject Dom.DomElement)

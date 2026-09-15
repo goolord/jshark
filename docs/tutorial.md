@@ -40,7 +40,7 @@ also designed for qualified import.
 Compilation returns JavaScript as bytes and needs no JavaScript runtime:
 
 ```
-ghci> BS.putStrLn =<< compileEffectSyntax readableConfig (Console.log ("hi" :: Expr f 'String))
+ghci> BS.putStrLn =<< compileEffectSyntax readableConfig (Console.log "hi" >> done)
 console.log("hi");
 ```
 

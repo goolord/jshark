@@ -46,9 +46,9 @@ catalogTests =
     , testCase "block stays single-phase" $
         length (phaseHashes block) @?= 1
     , testCase "glider classifies via drift stop" $
-        not (T.null (phaseKey glider)) @?= True
+        assertBool "glider has a phase key" (not (T.null (phaseKey glider)))
     , testCase "unstable pattern rejects without stable phase" $
-        T.null (phaseKey cross) @?= True
+        assertBool "cross has no phase key" (T.null (phaseKey cross))
     , testCase "shapeHash normalizes and sorts coords" $
         shapeHash block @?= "0,0;0,1;1,0;1,1"
     , testCase "classifyAndResolve waits for second sighting" $ do

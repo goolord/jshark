@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+* **Breaking:** `JShark.Compiler` drops `passthroughConfig`, which was an
+  alias of `defaultCompilerConfig`. Use `defaultCompilerConfig`.
+
+* `jshark-hotreload` builds under a non-UTF-8 locale: the embedded browser
+  runtime is now decoded as UTF-8 explicitly rather than through
+  `readFile`'s locale-dependent decoding.
+
+* `jshark-compile` and the Life code generators write their generated files
+  as UTF-8 explicitly. Under a non-UTF-8 locale `jshark-compile` aborted on
+  a non-ASCII character in the page it had just generated.
+
+* A progress redraw deferred by a batch worker while another thread held
+  the terminal is now actually drawn when that thread finishes, instead of
+  being dropped.
+
 * **Breaking:** optimized IR metadata now carries independent movement,
   discard, purity, and cost permissions instead of a single `irPure` bit.
   Mutable reads (`u8[i]`, generic array indexing, array-reading fixed ops)

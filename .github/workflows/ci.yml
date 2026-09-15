@@ -37,10 +37,16 @@ jobs:
         uses: haskell-actions/run-fourmolu@v13
         with:
           version: "0.20.1.0"
+          # jshark-bindgen's Bindgen*.hs fixtures are generator output that
+          # the tests compare byte for byte; see scripts/format.sh.
           pattern: |
             packages/**/*.hs
             examples/**/*.hs
             scripts/**/*.hs
+            !packages/jshark-bindgen/test/BindgenJs.hs
+            !packages/jshark-bindgen/test/BindgenMs.hs
+            !packages/jshark-bindgen/test/BindgenPlain.hs
+            !packages/jshark-bindgen/test/BindgenToy.hs
 
       - name: Fourmolu advisory notice
         if: steps.fourmolu.outcome != 'success'

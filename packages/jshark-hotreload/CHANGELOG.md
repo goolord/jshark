@@ -9,3 +9,5 @@
   loop polls so a disconnected client is torn down promptly. HTML rewrites
   drop stale `ETag`/`Content-MD5`, and the watcher drain worker is joined
   on dispose so start/stop cycles do not leak threads.
+* The embedded browser runtime is decoded as UTF-8 explicitly, so the
+  package builds under a non-UTF-8 locale.

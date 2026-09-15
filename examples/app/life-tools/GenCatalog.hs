@@ -5,7 +5,8 @@
 --   cabal run gen-life-catalog
 module Main (main) where
 
-import qualified Data.Text.IO as T
+import qualified Data.ByteString as BS
+import qualified Data.Text.Encoding as TE
 import JShark.Example.Life (catalogJs)
 import System.Environment (getArgs)
 
@@ -16,5 +17,5 @@ main = do
     path = case args of
       (p : _) -> p
       _ -> "examples/src/JShark/Example/Life/js/catalog.js"
-  T.writeFile path catalogJs
+  BS.writeFile path (TE.encodeUtf8 catalogJs)
   putStrLn $ "wrote " ++ path

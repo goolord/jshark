@@ -37,7 +37,11 @@ where
 
 import Data.Text (Text)
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
-import JShark.Compiler.Codegen.Core (EmitStyle (..), flatPrepareCore, minifiedStyle)
+import JShark.Compiler.Codegen.Core
+  ( EmitStyle (..)
+  , flatPrepareCore
+  , minifiedStyle
+  )
 import JShark.Compiler.Codegen.Flat
   ( effectfulAST
   , effectfulASTFromSoA

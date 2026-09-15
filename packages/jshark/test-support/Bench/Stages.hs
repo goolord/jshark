@@ -35,7 +35,6 @@ import JShark.Compiler
   ( compileEffect
   , compilePure
   , defaultCompilerConfig
-  , passthroughConfig
   , prettyJS
   , readableConfig
   )
@@ -147,7 +146,7 @@ stageBenches name prog =
     , bench "compileEffect/readable/e2e" $
         nfAppClosed (compileEffect readableConfig) prog
     , bench "compileEffect/passthrough/e2e" $
-        nfAppClosed (compileEffect passthroughConfig) prog
+        nfAppClosed (compileEffect defaultCompilerConfig) prog
     , bench "compileEffect/default/e2e" $
         nfAppClosed (compileEffect defaultCompilerConfig) prog
     ]
@@ -169,7 +168,7 @@ stageBenchesPure name prog =
         bench "prettyJS/precomputed" $ nfAppIO (\() -> prettyJS js) ()
     , bench "compilePure/readable/e2e" $ nfAppPure (compilePure readableConfig) prog
     , bench "compilePure/passthrough/e2e" $
-        nfAppPure (compilePure passthroughConfig) prog
+        nfAppPure (compilePure defaultCompilerConfig) prog
     , bench "compilePure/default/e2e" $
         nfAppPure (compilePure defaultCompilerConfig) prog
     ]

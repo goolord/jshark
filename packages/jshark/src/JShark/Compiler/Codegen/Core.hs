@@ -24,6 +24,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.Char as Char
 import qualified Data.IntMap.Strict as IM
+import Data.List (intersperse)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as S
@@ -59,7 +60,6 @@ import JShark.Compiler.Emit
   , jsText
   , nonEmpty
   , parens
-  , punctuate
   , renderJS
   , semi
   , vcat
@@ -445,7 +445,7 @@ varStampJS cg env s =
 
 jsCall f a = parens f <> parens a
 
-jsCallN f args = parens f <> parens (hcat (punctuate ", " args))
+jsCallN f args = parens f <> parens (hcat (intersperse ", " args))
 
 jsNumber style d
   | esIntLiterals style
@@ -485,7 +485,7 @@ renderArrow params mDecl mRef =
         headJs <+> blockBody (d $$ ("return" <+> arrowExpr r))
 
 arrowParams [p] = p
-arrowParams ps = parens (hcat (punctuate ", " ps))
+arrowParams ps = parens (hcat (intersperse ", " ps))
 
 -- | Operand / return expression. Parenthesize only object-literal
 -- returns \/ arrow bodies. Other expressions stay bare so @return n1 * 2@

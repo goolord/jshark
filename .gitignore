@@ -51,6 +51,3 @@ profile/
 # Zig build output
 zig-out/
 .zig-cache/
-
-# Editor debug logs
-.cursor/*.log

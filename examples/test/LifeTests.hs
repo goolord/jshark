@@ -14,13 +14,23 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import JShark (renderJS)
 import JShark.Api
-import JShark.Api.Generic (toObject)
+import JShark.Api.Generic (MutableObjectOf, toObject)
 import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Bun (evaluateEffectJSON)
 import JShark.Example.Life (mainJS)
-import JShark.Example.Life.EngineFinish (finishStep, initEngineGrids)
-import JShark.Example.Life.Grid (StepCtx (StepCtx), rebuildPackedCounts, setU8)
+import JShark.Example.Life.EngineFinish
+  ( EngineGrids (..)
+  , finishStep
+  , initEngineGrids
+  )
+import JShark.Example.Life.Grid
+  ( CellGrids (..)
+  , StepCtx (StepCtx)
+  , StepRegion (..)
+  , rebuildPackedCounts
+  , setU8
+  )
 import JShark.Example.Life.GridApi (paintGridCellsJs, seedLiveCells)
 import JShark.Example.Life.LifeTestSupport
   ( beehiveCoords
@@ -30,6 +40,7 @@ import JShark.Example.Life.LifeTestSupport
   , blockCoords
   , coordsMatch
   , gridPop
+  , newCellGrids
   , runProcessCellAt
   , runStepGridOnce
   , seedBeehive
@@ -53,6 +64,7 @@ import JShark.Internal
   , flatPrepareCore
   )
 import qualified JShark.Math as Math
+import Test.Support (assertJSContains, assertJSOmits)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -68,10 +80,13 @@ lifeTests =
             Just _ -> pure ()
       , testGroup
           "core rules"
-          [ lifeCase "underpopulation kills live cell" testUnderpopulation
-          , lifeCase "survival with two neighbors" testSurvival
-          , lifeCase "overpopulation kills live cell" testOverpopulation
-          , lifeCase "reproduction on three neighbors" testReproduction
+          [ ruleCase "underpopulation kills live cell" [(3, 2), (3, 3)] 0
+          , ruleCase "survival with two neighbors" [(3, 2), (4, 3), (3, 3)] 1
+          , ruleCase
+              "overpopulation kills live cell"
+              [(2, 2), (3, 2), (4, 2), (2, 3), (3, 3), (4, 3)]
+              0
+          , ruleCase "reproduction on three neighbors" [(3, 2), (4, 3), (2, 3)] 1
           ]
       , testGroup
           "stepGrid patterns"
@@ -122,9 +137,9 @@ lifeTests =
               T.count "jshark: index" js @?= 1
               T.count "const $checkedIndex =" js @?= 1
           , testCase "paintGridCells dirty-rect reset (GridApi port)" $ do
-              T.isInfixOf "out.dirtyCx0=0;out.dirtyCy0=0" paintGridCellsJs @?= True
-              T.isInfixOf "out.dirtyCx1=0;out.dirtyCy1=0" paintGridCellsJs @?= True
-              T.isInfixOf "out.dirtyCy1=0;out.dirtyCy1=0" paintGridCellsJs @?= False
+              assertJSContains "out.dirtyCx0=0;out.dirtyCy0=0" paintGridCellsJs
+              assertJSContains "out.dirtyCx1=0;out.dirtyCy1=0" paintGridCellsJs
+              assertJSOmits "out.dirtyCy1=0;out.dirtyCy1=0" paintGridCellsJs
           , testCase "flat prepare size guards IR inline regression" $ do
               let
                 life = stmts mainJS
@@ -241,8 +256,23 @@ testLutGliderSeam = fromSyntax $ do
   LifeAssert.assertEqual (number 5) popN
   done
 
-testFinishStepBlock :: forall f. Effect f 'Unit
-testFinishStepBlock = fromSyntax $ do
+-- | The 8x8 engine fixture the @finishStep@ cases share: four cell grids,
+-- the LUT and its scratch grids, empty output lists, and a fresh
+-- 'StepCtx'. The region is the whole grid.
+data FinishFixture f = FinishFixture
+  { ffGrids :: EngineGrids f
+  , ffRegion :: StepRegion f
+  , ffLive :: Expr f ('Array 'Number)
+  , ffChanged :: Expr f ('Array 'Number)
+  , ffCtx :: Effect f (MutableObjectOf StepCtx)
+  }
+
+-- | The fixture's cell grids.
+ffCells :: FinishFixture f -> CellGrids f
+ffCells = egCells . ffGrids
+
+newFinishFixture :: EffectSyntax f (FinishFixture f)
+newFinishFixture = do
   let
     w = number 8
     h = number 8
@@ -251,90 +281,74 @@ testFinishStepBlock = fromSyntax $ do
   nextAlive <- bindExpr (newByteArray (w * h))
   nextSpecies <- bindExpr (newByteArray (w * h))
   (lut, gridA, gridB) <- initEngineGrids (w * h)
-  seedBlock alive w h
-  rebuildPackedCounts alive w h
   nextLiveList <- bindExpr $ Array.fromEffects []
   nextChangedList <- bindExpr $ Array.fromEffects []
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
-  _ <-
-    finishStep
-      alive
-      species
-      nextAlive
-      nextSpecies
-      gridA
-      gridB
-      lut
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
-      nextLiveList
-      nextChangedList
-      stepCtx
-  popN <- stepCtx.pop
+  pure
+    FinishFixture
+      { ffGrids =
+          EngineGrids
+            { egCells =
+                CellGrids
+                  { cgAlive = alive
+                  , cgSpecies = species
+                  , cgNextAlive = nextAlive
+                  , cgNextSpecies = nextSpecies
+                  }
+            , egGridA = gridA
+            , egGridB = gridB
+            , egLut = lut
+            }
+      , ffRegion =
+          StepRegion
+            { srW = w
+            , srH = h
+            , srX0 = number 0
+            , srY0 = number 0
+            , srX1 = number 7
+            , srY1 = number 7
+            }
+      , ffLive = nextLiveList
+      , ffChanged = nextChangedList
+      , ffCtx = stepCtx
+      }
+
+-- | Rebuild the packed neighbour counts the engine reads, then run it over
+-- the whole fixture grid.
+runFinishStep :: FinishFixture f -> EffectSyntax f (Expr f 'Bool)
+runFinishStep fx = do
+  rebuildPackedCounts
+    (cgAlive (ffCells fx))
+    (srW (ffRegion fx))
+    (srH (ffRegion fx))
+  finishStep (ffGrids fx) (ffRegion fx) (ffLive fx) (ffChanged fx) (ffCtx fx)
+
+-- | Set the given cell indices live.
+setAliveAt :: FinishFixture f -> [Double] -> EffectSyntax f ()
+setAliveAt fx =
+  mapM_ (\i -> setU8 (cgAlive (ffCells fx)) (number i) (number 1))
+
+testFinishStepBlock :: forall f. Effect f 'Unit
+testFinishStepBlock = fromSyntax $ do
+  fx <- newFinishFixture
+  seedBlock (cgAlive (ffCells fx)) (srW (ffRegion fx)) (srH (ffRegion fx))
+  _ <- runFinishStep fx
+  popN <- (ffCtx fx).pop
   LifeAssert.assertEqual (number 4) popN
-  _ <-
-    finishStep
-      alive
-      species
-      nextAlive
-      nextSpecies
-      gridA
-      gridB
-      lut
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
-      nextLiveList
-      nextChangedList
-      stepCtx
-  popN2 <- stepCtx.pop
+  -- A block is still life: stepping it again must not change the count.
+  _ <- runFinishStep fx
+  popN2 <- (ffCtx fx).pop
   LifeAssert.assertEqual (number 4) popN2
   done
 
 testFinishStepPacked :: forall f. Effect f 'Unit
 testFinishStepPacked = fromSyntax $ do
+  fx <- newFinishFixture
   let
-    w = number 8
-    h = number 8
-  alive <- bindExpr (newByteArray (w * h))
-  species <- bindExpr (newByteArray (w * h))
-  nextAlive <- bindExpr (newByteArray (w * h))
-  nextSpecies <- bindExpr (newByteArray (w * h))
-  (lut, gridA, gridB) <- initEngineGrids (w * h)
-  _ <- setU8 alive (number 9) (number 1)
-  _ <- setU8 alive (number 10) (number 1)
-  _ <- setU8 alive (number 17) (number 1)
-  _ <- setU8 alive (number 18) (number 1)
-  rebuildPackedCounts alive w h
-  nextLiveList <- bindExpr $ Array.fromEffects []
-  nextChangedList <- bindExpr $ Array.fromEffects []
-  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
-  _ <-
-    finishStep
-      alive
-      species
-      nextAlive
-      nextSpecies
-      gridA
-      gridB
-      lut
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
-      nextLiveList
-      nextChangedList
-      stepCtx
-  popN <- stepCtx.pop
+    nextAlive = cgNextAlive (ffCells fx)
+  setAliveAt fx [9, 10, 17, 18]
+  _ <- runFinishStep fx
+  popN <- (ffCtx fx).pop
   LifeAssert.assertEqual (number 4) popN
   LifeAssert.assertEqual
     (number 1)
@@ -346,47 +360,19 @@ testFinishStepPacked = fromSyntax $ do
 
 testFinishStepBirthSpecies :: forall f. Effect f 'Unit
 testFinishStepBirthSpecies = fromSyntax $ do
+  fx <- newFinishFixture
   let
-    w = number 8
-    h = number 8
-  alive <- bindExpr (newByteArray (w * h))
-  species <- bindExpr (newByteArray (w * h))
-  nextAlive <- bindExpr (newByteArray (w * h))
-  nextSpecies <- bindExpr (newByteArray (w * h))
-  (lut, gridA, gridB) <- initEngineGrids (w * h)
+    cells = ffCells fx
   -- Three live neighbors above (4,4): species 1 twice, species 2 once.
-  _ <- setU8 alive (number 27) (number 1)
-  _ <- setU8 alive (number 28) (number 1)
-  _ <- setU8 alive (number 29) (number 1)
-  _ <- setU8 species (number 27) (number 1)
-  _ <- setU8 species (number 28) (number 1)
-  _ <- setU8 species (number 29) (number 2)
-  rebuildPackedCounts alive w h
-  nextLiveList <- bindExpr $ Array.fromEffects []
-  nextChangedList <- bindExpr $ Array.fromEffects []
-  stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
-  engineOk <-
-    finishStep
-      alive
-      species
-      nextAlive
-      nextSpecies
-      gridA
-      gridB
-      lut
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
-      nextLiveList
-      nextChangedList
-      stepCtx
-  LifeAssert.assertEqual (number 1) (u8Index nextSpecies (number 36))
+  setAliveAt fx [27, 28, 29]
+  mapM_
+    (\(i, sp) -> setU8 (cgSpecies cells) (number i) (number sp))
+    [(27, 1), (28, 1), (29, 2)]
+  engineOk <- runFinishStep fx
+  LifeAssert.assertEqual (number 1) (u8Index (cgNextSpecies cells) (number 36))
   LifeAssert.assertEqual
     (number 1)
-    (bitAnd (u8Index nextAlive (number 36)) (number 1))
+    (bitAnd (u8Index (cgNextAlive cells) (number 36)) (number 1))
   whenS (not_ engineOk) $
     do
       toSyntax_ $ throw_ (string "finishStep failed")
@@ -449,33 +435,17 @@ miniGrid k = do
   nextSpecies <- bindExpr (newByteArray (w * h))
   k alive species nextAlive nextSpecies w
 
-testUnderpopulation :: forall f. Effect f 'Unit
-testUnderpopulation = fromSyntax $ do
-  miniGrid $ \alive species nextAlive nextSpecies w -> do
-    toSyntax_ (u8Fill alive (number 0))
-    setAlive alive w (number 3) (number 2)
-    setAlive alive w (number 3) (number 3)
-    rebuildPackedCounts alive w (number 7)
-    next <-
-      runProcessCellAt
-        alive
-        species
-        nextAlive
-        nextSpecies
-        w
-        (number 7)
-        (number 3)
-        (number 3)
-    LifeAssert.assertEqual (number 0) next
-    done
+-- | One Conway rule: seed @live@ on an empty 7x7 grid, step the cell at
+-- (3,3), and check whether it comes out alive. The four rules differ only
+-- in those two values.
+ruleCase :: String -> [(Double, Double)] -> Double -> TestTree
+ruleCase name live expected = lifeCase name (ruleProgram live expected)
 
-testSurvival :: forall f. Effect f 'Unit
-testSurvival = fromSyntax $ do
+ruleProgram :: [(Double, Double)] -> Double -> (forall f. Effect f 'Unit)
+ruleProgram live expected = fromSyntax $ do
   miniGrid $ \alive species nextAlive nextSpecies w -> do
     toSyntax_ (u8Fill alive (number 0))
-    setAlive alive w (number 3) (number 2)
-    setAlive alive w (number 4) (number 3)
-    setAlive alive w (number 3) (number 3)
+    mapM_ (\(x, y) -> setAlive alive w (number x) (number y)) live
     rebuildPackedCounts alive w (number 7)
     next <-
       runProcessCellAt
@@ -487,52 +457,7 @@ testSurvival = fromSyntax $ do
         (number 7)
         (number 3)
         (number 3)
-    LifeAssert.assertEqual (number 1) next
-    done
-
-testOverpopulation :: forall f. Effect f 'Unit
-testOverpopulation = fromSyntax $ do
-  miniGrid $ \alive species nextAlive nextSpecies w -> do
-    toSyntax_ (u8Fill alive (number 0))
-    setAlive alive w (number 2) (number 2)
-    setAlive alive w (number 3) (number 2)
-    setAlive alive w (number 4) (number 2)
-    setAlive alive w (number 2) (number 3)
-    setAlive alive w (number 3) (number 3)
-    setAlive alive w (number 4) (number 3)
-    rebuildPackedCounts alive w (number 7)
-    next <-
-      runProcessCellAt
-        alive
-        species
-        nextAlive
-        nextSpecies
-        w
-        (number 7)
-        (number 3)
-        (number 3)
-    LifeAssert.assertEqual (number 0) next
-    done
-
-testReproduction :: forall f. Effect f 'Unit
-testReproduction = fromSyntax $ do
-  miniGrid $ \alive species nextAlive nextSpecies w -> do
-    toSyntax_ (u8Fill alive (number 0))
-    setAlive alive w (number 3) (number 2)
-    setAlive alive w (number 4) (number 3)
-    setAlive alive w (number 2) (number 3)
-    rebuildPackedCounts alive w (number 7)
-    next <-
-      runProcessCellAt
-        alive
-        species
-        nextAlive
-        nextSpecies
-        w
-        (number 7)
-        (number 3)
-        (number 3)
-    LifeAssert.assertEqual (number 1) next
+    LifeAssert.assertEqual (number expected) next
     done
 
 patternGrid ::
@@ -545,34 +470,28 @@ patternGrid ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 patternGrid seed coords expectedPop = do
+  (cells, region) <- newCellGrids (number 8) (number 8)
   let
-    w = number 8
-    h = number 8
-  alive <- bindExpr (newByteArray (w * h))
-  species <- bindExpr (newByteArray (w * h))
-  nextAlive <- bindExpr (newByteArray (w * h))
-  nextSpecies <- bindExpr (newByteArray (w * h))
+    alive = cgAlive cells
+    w = srW region
+    h = srH region
   seed alive w h
   forRange_ (number 0) (number 3) $ \_ -> do
-    _ <-
-      runStepGridOnce
-        alive
-        species
-        nextAlive
-        nextSpecies
-        w
-        h
-        (number 0)
-        (number 0)
-        (number 7)
-        (number 7)
-    toSyntax_ (u8Copy alive nextAlive)
-    rebuildPackedCounts alive w h
-    done
-  cells <- coords
-  coordsMatch alive w cells
+    _ <- runStepGridOnce cells region
+    advanceGeneration cells region
+  expected <- coords
+  coordsMatch alive w expected
   popN <- gridPop alive w h
   LifeAssert.assertEqual expectedPop popN
+  done
+
+-- | Copy the stepped grid back over the live one and rebuild the packed
+-- neighbour counts, so the next generation reads current data.
+advanceGeneration ::
+  CellGrids f -> StepRegion f -> EffectSyntax f (f 'Unit)
+advanceGeneration cells region = do
+  toSyntax_ (u8Copy (cgAlive cells) (cgNextAlive cells))
+  rebuildPackedCounts (cgAlive cells) (srW region) (srH region)
   done
 
 testBlockStable :: forall f. Effect f 'Unit
@@ -583,44 +502,17 @@ testBeehiveStable = fromSyntax (patternGrid seedBeehive beehiveCoords (number 6)
 
 testBlinkerPeriod2 :: forall f. Effect f 'Unit
 testBlinkerPeriod2 = fromSyntax $ do
+  (cells, region) <- newCellGrids (number 8) (number 8)
   let
-    w = number 8
-    h = number 8
-  alive <- bindExpr (newByteArray (w * h))
-  species <- bindExpr (newByteArray (w * h))
-  nextAlive <- bindExpr (newByteArray (w * h))
-  nextSpecies <- bindExpr (newByteArray (w * h))
-  seedBlinkerHorizontal alive w h
-  _ <-
-    runStepGridOnce
-      alive
-      species
-      nextAlive
-      nextSpecies
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
-  vCoords <- blinkerVerticalCoords
-  coordsMatch nextAlive w vCoords
-  toSyntax_ (u8Copy alive nextAlive)
-  rebuildPackedCounts alive w h
-  _ <-
-    runStepGridOnce
-      alive
-      species
-      nextAlive
-      nextSpecies
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
-  hCoords <- blinkerHorizontalCoords
-  coordsMatch nextAlive w hCoords
+    w = srW region
+    nextAlive = cgNextAlive cells
+  seedBlinkerHorizontal (cgAlive cells) w (srH region)
+  -- A horizontal blinker becomes vertical, then horizontal again.
+  _ <- runStepGridOnce cells region
+  coordsMatch nextAlive w =<< blinkerVerticalCoords
+  _ <- advanceGeneration cells region
+  _ <- runStepGridOnce cells region
+  coordsMatch nextAlive w =<< blinkerHorizontalCoords
   done
 
 testViewportGridCoord :: forall f. Effect f 'Unit

@@ -12,30 +12,18 @@ import GHC.IO (evaluate)
 import JShark.Api
 import JShark.Api.Types (ClosedEffect)
 import qualified JShark.Api.Types as T
-import JShark.Example.Life.LifeTestSupport (runStepGridOnce, seedBlock)
+import JShark.Example.Life.Grid (CellGrids (..), StepRegion (..))
+import JShark.Example.Life.LifeTestSupport
+  ( newCellGrids
+  , runStepGridOnce
+  , seedBlock
+  )
 
 lifeStep :: ClosedEffect T.Unit
 lifeStep = fromSyntax $ do
-  let
-    w = number 8
-    h = number 8
-  alive <- bindExpr (newByteArray (w * h))
-  species <- bindExpr (newByteArray (w * h))
-  nextAlive <- bindExpr (newByteArray (w * h))
-  nextSpecies <- bindExpr (newByteArray (w * h))
-  seedBlock alive w h
-  _ <-
-    runStepGridOnce
-      alive
-      species
-      nextAlive
-      nextSpecies
-      w
-      h
-      (number 0)
-      (number 0)
-      (number 7)
-      (number 7)
+  (cells, region) <- newCellGrids (number 8) (number 8)
+  seedBlock (cgAlive cells) (srW region) (srH region)
+  _ <- runStepGridOnce cells region
   done
 
 main :: IO ()

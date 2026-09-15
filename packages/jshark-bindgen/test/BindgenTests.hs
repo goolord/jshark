@@ -3,10 +3,10 @@
 
 module BindgenTests (bindgenTests) where
 
-import BindgenToy
 import qualified BindgenJs
 import qualified BindgenMs
 import qualified BindgenPlain
+import BindgenToy
 import Control.Monad (unless)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -193,15 +193,18 @@ bindgenTests =
         assertBool "first overload" ("ms ::" `T.isInfixOf` hs)
         assertBool "second overload" ("ms2 ::" `T.isInfixOf` hs)
     , testCase "generated BindgenMs.hs is a golden of ms.d.ts" $
-        assertGolden "BindgenMs"
+        assertGolden
+          "BindgenMs"
           (defaultBindgenOpts {optModuleName = Just "BindgenMs"})
           "ms.d.ts"
     , testCase "generated BindgenPlain.hs is a golden of plain.d.ts" $
-        assertGolden "BindgenPlain"
+        assertGolden
+          "BindgenPlain"
           (defaultBindgenOpts {optModuleName = Just "BindgenPlain"})
           "plain.d.ts"
     , testCase "generated BindgenJs.hs is a golden of toy.js" $
-        assertGolden "BindgenJs"
+        assertGolden
+          "BindgenJs"
           (defaultBindgenOpts {optModuleName = Just "BindgenJs"})
           "toy.js"
     , testCase "every fixture wrapper module compiles to JS" $ do
@@ -230,7 +233,8 @@ bindgenTests =
         case r of
           Left e -> fail e
           Right ir -> do
-            let cats = map dgCategory (irDiagnostics ir)
+            let
+              cats = map dgCategory (irDiagnostics ir)
             assertBool
               ("unsupported-nullable diagnostic, got " <> show cats)
               ("unsupported-nullable" `elem` cats)

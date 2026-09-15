@@ -91,26 +91,32 @@ import qualified Prelude as P
 data IrMeta = IrMeta
   { irSize :: {-# UNPACK #-} !Int
   , irFree :: !(IntMap Int)
-  , -- | Effect-free: evaluating it changes no observable state and
-    -- allocates no identity that escapes. Necessary but not sufficient to
-    -- treat a term as referentially transparent: a mutable read is
-    -- effect-free yet its value depends on when it runs.
-    irPure :: !P.Bool
-  , -- | Movement-safe: may be moved across other evaluations without
-    -- changing behavior. False for mutable reads (array element, byte
-    -- buffer), throws, divergence, and unknown calls.
-    irMove :: !P.Bool
-  , -- | Discard-safe: evaluating and dropping the result is unobservable.
-    -- False for effects, writes, throws, and divergence. Implies 'irPure'.
-    irDrop :: !P.Bool
-  , -- | Cheap to duplicate. Only a cost refinement; duplication still
-    -- requires 'irMove' (see 'elimBinder').
-    irCheap :: !P.Bool
+  , irPure :: !P.Bool
+  -- ^ Effect-free: evaluating it changes no observable state and
+  -- allocates no identity that escapes. Necessary but not sufficient to
+  -- treat a term as referentially transparent: a mutable read is
+  -- effect-free yet its value depends on when it runs.
+  , irMove :: !P.Bool
+  -- ^ Movement-safe: may be moved across other evaluations without
+  -- changing behavior. False for mutable reads (array element, byte
+  -- buffer), throws, divergence, and unknown calls.
+  , irDrop :: !P.Bool
+  -- ^ Discard-safe: evaluating and dropping the result is unobservable.
+  -- False for effects, writes, throws, and divergence. Implies 'irPure'.
+  , irCheap :: !P.Bool
+  -- ^ Cheap to duplicate. Only a cost refinement; duplication still
+  -- requires 'irMove' (see 'elimBinder').
   }
 
 instance Semigroup IrMeta where
   IrMeta s1 f1 p1 m1 d1 c1 <> IrMeta s2 f2 p2 m2 d2 c2 =
-    IrMeta (s1 + s2) (IM.unionWith (+) f1 f2) (p1 && p2) (m1 && m2) (d1 && d2) (c1 && c2)
+    IrMeta
+      (s1 + s2)
+      (IM.unionWith (+) f1 f2)
+      (p1 && p2)
+      (m1 && m2)
+      (d1 && d2)
+      (c1 && c2)
 
 instance Monoid IrMeta where
   mempty = IrMeta 0 IM.empty True True True True
@@ -1583,7 +1589,7 @@ recordEq as bs =
 
 rfEq :: RF -> RF -> P.Bool
 rfEq (RF isA na va) (RF isB nb vb) =
-  isA == isB && na == nb && maybe False id (valEq va vb)
+  isA == isB && na == nb && fromMaybe False (valEq va vb)
  where
   valEq (SomeIrValue a) (SomeIrValue b) = sameFamilyEq a b
 

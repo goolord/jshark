@@ -16,7 +16,7 @@
 -- >   done
 -- >
 -- > main :: IO ()
--- > main = compileEffectSyntax readableConfig (Console.log ("hello, " <> string "world")) >>= BS.putStrLn
+-- > main = compileEffect readableConfig (greet (string "world")) >>= BS.putStrLn
 --
 -- Platform bindings ('JShark.Dom', 'JShark.Array', 'JShark.Canvas', …)
 -- stay qualified imports: they share many names with base and with each

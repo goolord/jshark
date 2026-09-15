@@ -14,6 +14,7 @@ module JShark.Example.Life.LifeTestSupport
   , clearBinaryGrid
   , gridPop
   , runProcessCellAt
+  , newCellGrids
   , runStepGridOnce
   , seedBlock
   , seedBeehive
@@ -36,7 +37,9 @@ import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Example.Life.DiscoverRuntime (collectPhaseKey)
 import JShark.Example.Life.Grid
-  ( StepCtx (..)
+  ( CellGrids (..)
+  , StepCtx (..)
+  , StepRegion (..)
   , StepScratch (..)
   , cellIdx
   , processCell
@@ -255,37 +258,48 @@ runProcessCellAt alive species nextAlive nextSpecies w h x y = do
     i = cellIdx w x y
   aliveBit nextAlive i
 
+-- | Four empty cell grids for a @w * h@ world, and a region covering all
+-- of it. Every stepping test starts from this.
+newCellGrids ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> EffectSyntax f (CellGrids f, StepRegion f)
+newCellGrids w h = do
+  alive <- bindExpr (newByteArray (w * h))
+  species <- bindExpr (newByteArray (w * h))
+  nextAlive <- bindExpr (newByteArray (w * h))
+  nextSpecies <- bindExpr (newByteArray (w * h))
+  pure
+    ( CellGrids
+        { cgAlive = alive
+        , cgSpecies = species
+        , cgNextAlive = nextAlive
+        , cgNextSpecies = nextSpecies
+        }
+    , StepRegion
+        { srW = w
+        , srH = h
+        , srX0 = number 0
+        , srY0 = number 0
+        , srX1 = w - number 1
+        , srY1 = h - number 1
+        }
+    )
+
+-- | Run one generation with fresh scratch buffers.
 runStepGridOnce ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (Expr f 'Number)
-runStepGridOnce alive species nextAlive nextSpecies w h x0 y0 x1 y1 = do
+  CellGrids f -> StepRegion f -> EffectSyntax f (Expr f 'Number)
+runStepGridOnce cells region = do
   prevLiveList <- bindExpr $ Array.fromEffects []
   nextLiveList <- bindExpr $ Array.fromEffects []
   nextChangedList <- bindExpr $ Array.fromEffects []
-  stepStamp <- bindExpr (newByteArray (w * h))
+  stepStamp <- bindExpr (newByteArray (srW region * srH region))
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   counts <- bindExpr (newByteArray (number 256))
   touchedBuf <- bindExpr (newByteArray (number 8))
   stepGrid
-    alive
-    species
-    nextAlive
-    nextSpecies
-    w
-    h
-    x0
-    y0
-    x1
-    y1
+    cells
+    region
     prevLiveList
     nextLiveList
     nextChangedList

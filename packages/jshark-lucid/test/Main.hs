@@ -40,7 +40,8 @@ validationTests =
     [ testCase "a valid template has no errors" $
         templateErrors (todoRow (string "x") true_) @?= []
     , testCase "an orphan modifier is reported" $ do
-        let errs = templateErrors orphanModifier
+        let
+          errs = templateErrors orphanModifier
         assertBool
           ("orphan message: " <> show errs)
           (any (T.isInfixOf "enclosing" . teMessage) errs)
