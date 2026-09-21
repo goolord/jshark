@@ -17,7 +17,7 @@ JShark embeds a typed subset of JavaScript in Haskell, inspired by
 Crockford's *JavaScript: The Good Parts*. A program is a Haskell
 value built from two GADTs indexed by a `Universe` kind: `Expr f u` for pure
 expressions and `Effect f u` for effectful statements. GHC typechecks the program, and the
-compiler lowers it to JavaScript with no runtime library. Standard library functions
+jshark compiler lowers it to JavaScript with no runtime library. Standard library functions
 that make the language more sane (structural equality, `groupBy`) are printed in a preamble
 only when a program uses them.
 
