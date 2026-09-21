@@ -62,44 +62,10 @@ typecheck.
 touch the DOM, or call foreign code. Effectful code is written in do-notation
 through `EffectSyntax`, which reifies each bind as an `Effect` node.
 
-The split matters for testing. `Expr` has a host interpreter, `evaluate`,
-that follows JavaScript semantics (including `NaN`, `-0`, and `Math.round`
-rounding halves toward +Infinity), so pure code runs in GHCi with no JS
-engine. `Effect` programs are tested by running the compiled output under
+`Expr` can be evaluated as haskell values using `evaluate`, which is akin to constant folding. 
+`Effect` programs can be tested tested by running the compiled output under
 [Bun](https://bun.sh), with [happy-dom](https://github.com/capricorn86/happy-dom)
 supplying `document` and `window` when a test needs them.
-
-### Compilation
-
-Pure and effectful programs go through the same pipeline:
-
-1. **Lower.** Instantiate the PHOAS binders at integer stamps and translate
-   the term to an untyped first-order IR (`JShark.Compiler.Ir`).
-2. **Optimize.** Fold constants, beta-reduce applied lambdas, drop dead
-   bindings, and inline bindings used once. Each IR node tracks separate
-   movement, discard, and purity permissions, so a read of mutable state is
-   never inlined past a write that could change it.
-3. **Pack.** Flatten the tree into a struct-of-arrays representation
-   (`JShark.Compiler.Flat`) with one opcode per node, where a second
-   constant-folding pass runs.
-4. **Emit.** Generate JavaScript through a `ByteString` builder.
-   `defaultCompilerConfig` wraps the program in an IIFE. `readableConfig`
-   emits a bare snippet and formats it with [Biome](https://biomejs.dev/)
-   if `biome` is on `PATH`.
-
-A binding used more than once stays a `const`:
-
-```haskell
-area :: Expr f ('Function 'Number 'Number)
-area = lambda $ \r -> let_ (r * r) (\squared -> squared * 3.14159 + squared)
-```
-
-```javascript
-(n0) => {
-  const n1 = n0 * n0;
-  return n1 * 3.14159 + n1;
-};
-```
 
 ### Foreign code
 
