@@ -24,7 +24,9 @@ import qualified JShark.Dom as Dom
 import JShark.Example.Life.Catalog (buildDisturbMap)
 import JShark.Example.Life.Discover
   ( IndexTracker
+  , IndexUi (..)
   , Registry
+  , Scan (..)
   , initIndexContainer
   , initIndexTotal
   , initIndexTracker
@@ -1471,15 +1473,7 @@ wirePurgeDiscoveries Ui {..} = do
   addEventListener "click" settingsPurge $ \_ ->
     stmts $ do
       now <- performanceNow
-      purgeEmergentDiscoveries
-        state
-        viewport
-        registry
-        indexTracker
-        seenSpecies
-        typesList
-        indexTotal
-        now
+      purgeEmergentDiscoveries state viewport IndexUi {..} now
       done
   done
 
@@ -1615,26 +1609,11 @@ tickIndex Ui {..} now = do
   whenS (not_ pending .&& (indexLastMs .== 0 .|| now - indexLastMs .>= refresh)) $ do
     alive <- state.alive
     species <- state.species
-    pal <- state.palette
-    liveX0 <- state.boundX0
-    liveY0 <- state.boundY0
-    liveX1 <- state.boundX1
-    liveY1 <- state.boundY1
-    w <- state.worldW
-    h <- state.worldH
-    stepIndexTracker
-      alive
-      species
-      pal
-      registry
-      indexTracker
-      seenSpecies
-      typesList
-      indexTotal
-      now
-      liveX0
-      liveY0
-      liveX1
-      liveY1
-      w
-      h
+    palette <- state.palette
+    x0 <- state.boundX0
+    y0 <- state.boundY0
+    x1 <- state.boundX1
+    y1 <- state.boundY1
+    worldW <- state.worldW
+    worldH <- state.worldH
+    stepIndexTracker Scan {..} IndexUi {..} now

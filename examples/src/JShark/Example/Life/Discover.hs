@@ -3,8 +3,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Runtime discovery of emergent life forms, plus the biomass index.
@@ -13,6 +15,8 @@
 module JShark.Example.Life.Discover
   ( Registry
   , IndexTracker
+  , Scan (..)
+  , IndexUi (..)
   , initRegistry
   , initIndexTracker
   , initIndexContainer
@@ -24,6 +28,8 @@ module JShark.Example.Life.Discover
   )
 where
 
+import Control.Monad (forM_)
+import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, newRecord)
@@ -44,6 +50,7 @@ import JShark.Example.Life.DiscoverRuntime (classifyAndResolveEffect)
 import JShark.Example.Life.Grid
   ( cellIdx
   , clampLiveBounds
+  , inBounds
   , packedIsAlive
   , setU8
   , syncPaletteRgbaSid
@@ -78,6 +85,20 @@ data Registry
 
 data IndexTracker
 
+-- | The world a pass scans: grids, live bounds, and size.
+data Scan f = Scan
+  { alive, species, palette :: Expr f 'Uint8Array
+  , x0, y0, x1, y1, worldW, worldH :: Expr f 'Number
+  }
+
+-- | The species index: its registry, tracker, and DOM.
+data IndexUi f = IndexUi
+  { registry :: Effect f ('MutableObject Registry)
+  , indexTracker :: Effect f ('MutableObject IndexTracker)
+  , seenSpecies :: Effect f ('Set Number)
+  , typesList, indexTotal :: Effect f ('MutableObject Dom.DomElement)
+  }
+
 data DiscoverScratch = DiscoverScratch
   { nextId :: Double
   , stackLen :: Double
@@ -110,27 +131,20 @@ initIndexTracker = do
   _ <- setProp t "rowTemplate" templateE
   pure t
 
-initIndexTotal ::
-  EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-initIndexTotal = do
-  el <- Dom.lookupId (string lifeIndexTotalId)
-  raw <- bindExpr el
-  hold $
-    optionCaseE
-      (unsafeNullable raw)
-      (throw_ (string "missing index total: life-index-total"))
-      (\hit -> expr hit)
+initIndexTotal
+  , initIndexContainer ::
+    EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+initIndexTotal = requireById "total" lifeIndexTotalId
+initIndexContainer = requireById "grid" lifeTypesListId
 
-initIndexContainer ::
-  EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-initIndexContainer = do
-  el <- Dom.lookupId (string lifeTypesListId)
+requireById ::
+  Text -> Text -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
+requireById what elId = do
+  el <- Dom.lookupId (string elId)
   raw <- bindExpr el
-  hold $
-    optionCaseE
-      (unsafeNullable raw)
-      (throw_ (string "missing index grid: life-types"))
-      (\hit -> expr hit)
+  let
+    missing = throw_ (string ("missing index " <> what <> ": " <> elId))
+  hold $ optionCaseE (unsafeNullable raw) missing (\hit -> expr hit)
 
 initSeenSpecies :: EffectSyntax f (Effect f ('Set Number))
 initSeenSpecies = hold Set.new
@@ -175,133 +189,86 @@ initRegistry = do
   _ <- setProp rec "verbsIng" verbsIng
   pure rec
 
+-- | Flood-label unclaimed live components; yields the next free id and
+-- the ids minted this pass.
 discoverLife ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
+  Scan f
   -> Effect f ('MutableObject Registry)
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f ('Array 'Number))
-discoverLife
-  alive
-  species
-  palette
-  registry
-  visited
-  stackX
-  stackY
-  w0
-  h0
-  x0
-  y0
-  x1
-  y1
-  nextId0 = do
-    toSyntax_ (u8Fill visited (number 0))
-    minted <- bindExpr $ Array.fromEffects []
-    scratch <- hold (newRecord @DiscoverScratch)
-    set @"nextId" scratch nextId0
-    set @"stackLen" scratch 0
-    set @"minX" scratch 0
-    set @"minY" scratch 0
-    set @"w" scratch w0
-    set @"h" scratch h0
-    set @"minCells" scratch 3
-    set @"maxCells" scratch 72
-    set @"maxSid" scratch (number (fromIntegral discoverMax))
-    regE <- bindExpr registry
-    _ <- setProp scratch "alive" alive
-    _ <- setProp scratch "species" species
-    _ <- setProp scratch "palette" palette
-    _ <- setProp scratch "registry" regE
-    _ <- setProp scratch "visited" visited
-    _ <- setProp scratch "stackX" stackX
-    _ <- setProp scratch "stackY" stackY
-    _ <- setProp scratch "minted" minted
-    evictCounts <-
-      bindExpr (newByteArray (number (fromIntegral (speciesCount * 2))))
-    _ <- setProp scratch "evictCounts" evictCounts
-    _ <- setProp scratch "evictReady" false_
-    -- Margin 1 so unlabeled seeds on the live-bounds halo still flood in.
-    let
-      (ix0, iy0, ixStop, iyStop) =
-        clampLiveBounds w0 h0 x0 y0 x1 y1 (number 1)
-    whenS (ixStop .> ix0 .&& iyStop .> iy0) $
-      forRange2_ iy0 iyStop ix0 ixStop $ \y x -> do
-        let
-          i = cellIdx w0 x y
-        vis <- u8Get visited i
-        sp <- u8Get species i
-        whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
-          floodComponent scratch i x y
-    nid <- scratch.nextId
-    pure (nid, minted)
+discoverLife Scan {..} registry visited stackX stackY nextId0 = do
+  toSyntax_ (u8Fill visited (number 0))
+  minted <- bindExpr $ Array.fromEffects []
+  scratch <- hold (newRecord @DiscoverScratch)
+  set @"nextId" scratch nextId0
+  set @"stackLen" scratch 0
+  set @"minX" scratch 0
+  set @"minY" scratch 0
+  set @"w" scratch worldW
+  set @"h" scratch worldH
+  set @"minCells" scratch 3
+  set @"maxCells" scratch 72
+  set @"maxSid" scratch (number (fromIntegral discoverMax))
+  regE <- bindExpr registry
+  _ <- setProp scratch "alive" alive
+  _ <- setProp scratch "species" species
+  _ <- setProp scratch "palette" palette
+  _ <- setProp scratch "registry" regE
+  _ <- setProp scratch "visited" visited
+  _ <- setProp scratch "stackX" stackX
+  _ <- setProp scratch "stackY" stackY
+  _ <- setProp scratch "minted" minted
+  evictCounts <-
+    bindExpr (newByteArray (number (fromIntegral (speciesCount * 2))))
+  _ <- setProp scratch "evictCounts" evictCounts
+  _ <- setProp scratch "evictReady" false_
+  -- Margin 1 so unlabeled seeds on the live-bounds halo still flood in.
+  let
+    (ix0, iy0, ixStop, iyStop) =
+      clampLiveBounds worldW worldH x0 y0 x1 y1 (number 1)
+  whenS (ixStop .> ix0 .&& iyStop .> iy0) $
+    forRange2_ iy0 iyStop ix0 ixStop $ \y x -> do
+      let
+        i = cellIdx worldW x y
+      vis <- u8Get visited i
+      sp <- u8Get species i
+      whenS (packedIsAlive alive i .&& vis .== 0 .&& sp .== 0) $
+        floodComponent scratch i x y
+  nid <- scratch.nextId
+  pure (nid, minted)
 
 purgeEmergentDiscoveries ::
   Effect f (MutableObjectOf LifeState)
   -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('MutableObject IndexTracker)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
+  -> IndexUi f
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-purgeEmergentDiscoveries
-  state
-  viewport
-  registry
-  tracker
-  seen
-  container
-  totalEl
-  now = do
-    worldW <- state.worldW
-    worldH <- state.worldH
-    alive <- state.alive
-    species <- state.species
-    nextSpecies <- state.nextSpecies
-    pal <- state.palette
-    paletteRgba <- state.paletteRgba
-    purgeEmergentCells worldW worldH alive species nextSpecies
-    purgeEmergentRegistry registry
-    resetDiscoverPaletteSlots pal paletteRgba
-    set @"nextDiscover" state (fromIntegral discoverMin)
-    set @"recentDiscover" state (string "")
-    set @"sceneDirty" state true_
-    _ <- setProp viewport "renderPanValid" false_
-    _ <- Set.clear seen
-    _ <- setProp tracker "lastMs" (number 0)
-    _ <- setProp tracker "pending" false_
-    liveX0 <- state.boundX0
-    liveY0 <- state.boundY0
-    liveX1 <- state.boundX1
-    liveY1 <- state.boundY1
-    stepIndexTracker
-      alive
-      species
-      pal
-      registry
-      tracker
-      seen
-      container
-      totalEl
-      now
-      liveX0
-      liveY0
-      liveX1
-      liveY1
-      worldW
-      worldH
+purgeEmergentDiscoveries state viewport ix@IndexUi {..} now = do
+  worldW <- state.worldW
+  worldH <- state.worldH
+  alive <- state.alive
+  species <- state.species
+  nextSpecies <- state.nextSpecies
+  palette <- state.palette
+  paletteRgba <- state.paletteRgba
+  purgeEmergentCells worldW worldH alive species nextSpecies
+  purgeEmergentRegistry registry
+  resetDiscoverPaletteSlots palette paletteRgba
+  set @"nextDiscover" state (fromIntegral discoverMin)
+  set @"recentDiscover" state (string "")
+  set @"sceneDirty" state true_
+  _ <- setProp viewport "renderPanValid" false_
+  _ <- Set.clear seenSpecies
+  _ <- setProp indexTracker "lastMs" (number 0)
+  _ <- setProp indexTracker "pending" false_
+  x0 <- state.boundX0
+  y0 <- state.boundY0
+  x1 <- state.boundX1
+  y1 <- state.boundY1
+  stepIndexTracker Scan {..} ix now
 
 purgeEmergentCells ::
   Expr f 'Number
@@ -314,15 +281,43 @@ purgeEmergentCells worldW worldH alive species nextSpecies = do
   let
     soup = number (fromIntegral soupSpecies)
     keep = number (fromIntegral manualSpecies)
+  forLiveCells worldW worldH alive species $ \i sid ->
+    whenS (sid .!= soup .&& sid .!= keep) $ do
+      setU8 species i soup
+      setU8 nextSpecies i soup
+
+-- | Visit every live cell of the world with its species id.
+forLiveCells ::
+  Expr f 'Number
+  -> Expr f 'Number
+  -> Expr f 'Uint8Array
+  -> Expr f 'Uint8Array
+  -> (Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit))
+  -> EffectSyntax f (f 'Unit)
+forLiveCells worldW worldH alive species body =
   forRange2_ (number 0) worldH (number 0) worldW $ \y x -> do
     let
       i = cellIdx worldW x y
     whenS (packedIsAlive alive i) $ do
       sid <- u8Get species i
-      whenS (sid .!= soup .&& sid .!= keep) $ do
-        setU8 species i soup
-        setU8 nextSpecies i soup
+      body i sid
     done
+
+-- | 'forLiveCells' over the scratch world.
+forScratchLive ::
+  Effect f (MutableObjectOf DiscoverScratch)
+  -> ( Expr f 'Uint8Array
+       -> Expr f 'Number
+       -> Expr f 'Number
+       -> EffectSyntax f (f 'Unit)
+     )
+  -> EffectSyntax f (f 'Unit)
+forScratchLive scratch body = do
+  worldW <- scratch.w
+  worldH <- scratch.h
+  alive <- getProp scratch "alive"
+  species <- getProp scratch "species"
+  forLiveCells worldW worldH alive species (body species)
 
 purgeEmergentRegistry ::
   Effect f ('MutableObject Registry) -> EffectSyntax f (f 'Unit)
@@ -346,24 +341,22 @@ resetDiscoverPaletteSlots ::
   Expr f 'Uint8Array
   -> Expr f 'Uint8Array
   -> EffectSyntax f (f 'Unit)
-resetDiscoverPaletteSlots pal paletteRgba = do
-  let
-    defaults = uint8Array paletteBytes
+resetDiscoverPaletteSlots pal paletteRgba =
   forRange_
     (number (fromIntegral discoverMin))
     (number (fromIntegral discoverMax + 1))
     $ \sid -> do
-      let
-        src = sid * number 3
-        dst = sid * number 3
-        r = u8Index defaults src
-        g = u8Index defaults (src + number 1)
-        b = u8Index defaults (src + number 2)
-      setU8 pal dst r
-      setU8 pal (dst + number 1) g
-      setU8 pal (dst + number 2) b
+      resetSlotRgb pal sid
       syncPaletteRgbaSid pal paletteRgba sid
       done
+
+-- | Copy a species' default RGB back into @pal@.
+resetSlotRgb :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f ()
+resetSlotRgb pal sid =
+  forM_ [id, (+ number 1), (+ number 2)] $ \at ->
+    setU8 pal (at src) (u8Index (uint8Array paletteBytes) (at src))
+ where
+  src = sid * number 3
 
 floodComponent ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -378,7 +371,49 @@ floodComponent scratch i x y = do
   visited <- getProp scratch "visited"
   setU8 visited i 1
   _ <- Array.push_ cells i
-  _ <- pushNbrs scratch x y
+  pushNbrs x y
+  drainStack scratch pushNbrs
+  minC <- scratch.minCells
+  maxC <- scratch.maxCells
+  let
+    nCells = Array.length cells
+  ifS
+    (nCells .>= minC .&& nCells .<= maxC)
+    ( do
+        resolveComponent scratch
+        species <- getProp scratch "species"
+        sid0 <- u8Get species (Array.index cells (number 0))
+        whenS (sid0 .== 0) (carveIsolated scratch)
+    )
+    (whenS (nCells .>= minC) (carveIsolated scratch))
+ where
+  pushNbrs cx cy = forM_ floodNbrs $ \(dx, dy) -> tryPush scratch (dx cx) (dy cy)
+
+type Shift f = Expr f 'Number -> Expr f 'Number
+
+-- | Neighbour offsets in flood-fill order.
+floodNbrs :: [(Shift f, Shift f)]
+floodNbrs =
+  [ (inc, id)
+  , (dec, id)
+  , (inc, inc)
+  , (dec, inc)
+  , (inc, dec)
+  , (dec, dec)
+  , (id, inc)
+  , (id, dec)
+  ]
+
+inc, dec :: Shift f
+inc = (+ 1)
+dec = subtract 1
+
+-- | Pop the flood stack until it is empty, visiting each popped cell.
+drainStack ::
+  Effect f (MutableObjectOf DiscoverScratch)
+  -> (Expr f 'Number -> Expr f 'Number -> EffectSyntax f ())
+  -> EffectSyntax f ()
+drainStack scratch visit =
   toSyntax_ $
     while_
       ( fromSyntax $ do
@@ -394,37 +429,23 @@ floodComponent scratch i x y = do
           stackY <- getProp scratch "stackY"
           cx <- u8Get stackX sl
           cy <- u8Get stackY sl
-          _ <- pushNbrs scratch cx cy
+          visit cx cy
           done
       )
-  minC <- scratch.minCells
-  maxC <- scratch.maxCells
-  let
-    nCells = Array.length cells
-  ifS
-    (nCells .>= minC .&& nCells .<= maxC)
-    ( do
-        resolveComponent scratch
-        species <- getProp scratch "species"
-        sid0 <- u8Get species (Array.index cells (number 0))
-        whenS (sid0 .== 0) (carveIsolated scratch)
-    )
-    (whenS (nCells .>= minC) (carveIsolated scratch))
 
-pushNbrs ::
+-- | Push a cell onto the flood stack.
+pushStack ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-pushNbrs scratch cx cy = do
-  _ <- tryPush scratch (cx + 1) cy
-  _ <- tryPush scratch (cx - 1) cy
-  _ <- tryPush scratch (cx + 1) (cy + 1)
-  _ <- tryPush scratch (cx - 1) (cy + 1)
-  _ <- tryPush scratch (cx + 1) (cy - 1)
-  _ <- tryPush scratch (cx - 1) (cy - 1)
-  _ <- tryPush scratch cx (cy + 1)
-  tryPush scratch cx (cy - 1)
+pushStack scratch nx ny = do
+  sl <- scratch.stackLen
+  stackX <- getProp scratch "stackX"
+  stackY <- getProp scratch "stackY"
+  setU8 stackX sl nx
+  setU8 stackY sl ny
+  set @"stackLen" scratch (sl + 1)
 
 tryPush ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -434,7 +455,7 @@ tryPush ::
 tryPush scratch nx ny = do
   w0 <- scratch.w
   h0 <- scratch.h
-  whenS (nx .>= 0 .&& ny .>= 0 .&& nx .< w0 .&& ny .< h0) $ do
+  whenS (inBounds w0 h0 nx ny) $ do
     let
       ni = cellIdx w0 nx ny
     visited <- getProp scratch "visited"
@@ -446,12 +467,7 @@ tryPush scratch nx ny = do
       setU8 visited ni 1
       cells <- getProp scratch "cells"
       _ <- Array.push_ cells ni
-      sl <- scratch.stackLen
-      stackX <- getProp scratch "stackX"
-      stackY <- getProp scratch "stackY"
-      setU8 stackX sl nx
-      setU8 stackY sl ny
-      set @"stackLen" scratch (sl + 1)
+      pushStack scratch nx ny
 
 carveIsolated ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -487,31 +503,26 @@ countLiveNbrs scratch seed = do
     oy = Math.floor (seed / worldW)
   tally <- hold newObject
   _ <- setProp tally "n" (number 0)
-  addNbr tally alive worldW worldH (ox + 1) oy
-  addNbr tally alive worldW worldH (ox - 1) oy
-  addNbr tally alive worldW worldH ox (oy + 1)
-  addNbr tally alive worldW worldH ox (oy - 1)
-  addNbr tally alive worldW worldH (ox + 1) (oy + 1)
-  addNbr tally alive worldW worldH (ox - 1) (oy + 1)
-  addNbr tally alive worldW worldH (ox + 1) (oy - 1)
-  addNbr tally alive worldW worldH (ox - 1) (oy - 1)
-  getProp tally "n"
-
-addNbr ::
-  Effect f ('MutableObject a)
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-addNbr tally alive worldW worldH nx ny =
-  whenS (nx .>= 0 .&& ny .>= 0 .&& nx .< worldW .&& ny .< worldH) $ do
+  let
+    order =
+      [ (inc, id)
+      , (dec, id)
+      , (id, inc)
+      , (id, dec)
+      , (inc, inc)
+      , (dec, inc)
+      , (inc, dec)
+      , (dec, dec)
+      ]
+  forM_ order $ \(dx, dy) -> do
     let
-      ni = cellIdx worldW nx ny
-    whenS (packedIsAlive alive ni) $ do
-      cur <- getProp tally "n"
-      setProp tally "n" (cur + 1)
+      nx = dx ox
+      ny = dy oy
+    whenS (inBounds worldW worldH nx ny) $
+      whenS (packedIsAlive alive (cellIdx worldW nx ny)) $ do
+        cur <- getProp tally "n"
+        setProp tally "n" (cur + 1)
+  getProp tally "n"
 
 isolateAndResolve ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -536,90 +547,33 @@ isolateAndResolve scratch seed = do
   setU8 stackX (number 0) ox
   setU8 stackY (number 0) oy
   set @"stackLen" scratch 1
-  toSyntax_ $
-    while_
-      ( fromSyntax $ do
-          sl <- scratch.stackLen
-          toSyntax $ expr (sl .> 0)
-      )
-      ( fromSyntax $ do
-          sl0 <- scratch.stackLen
-          let
-            sl = sl0 - 1
-          set @"stackLen" scratch sl
-          sx <- getProp scratch "stackX"
-          sy <- getProp scratch "stackY"
-          cx <- u8Get sx sl
-          cy <- u8Get sy sl
-          pushIsoNbrs scratch localCells localVis hitSt ox oy radius cx cy
-          done
-      )
+  let
+    tryIso nx ny = do
+      worldW' <- scratch.w
+      worldH <- scratch.h
+      whenS (inBounds worldW' worldH nx ny) $ do
+        let
+          ni = cellIdx worldW' nx ny
+          dist = Math.max (abs (nx - ox)) (abs (ny - oy))
+        whenS (dist .> radius) (setProp hitSt "wall" true_)
+        whenS (dist .<= radius) $ do
+          seen <- Set.member localVis ni
+          alive <- getProp scratch "alive"
+          species <- getProp scratch "species"
+          sp <- u8Get species ni
+          whenS (not_ seen .&& packedIsAlive alive ni .&& sp .== 0) $ do
+            _ <- Set.insert localVis ni
+            _ <- Array.push_ localCells ni
+            pushStack scratch nx ny
+        done
+  drainStack scratch $ \cx cy ->
+    forM_ floodNbrs $ \(dx, dy) -> tryIso (dx cx) (dy cy)
   wall <- getProp hitSt "wall"
   let
     nIso = Array.length localCells
   whenS (not_ wall .&& nIso .>= number 3 .&& nIso .<= maxIso) $ do
     _ <- setProp scratch "cells" localCells
     resolveComponent scratch
-
-pushIsoNbrs ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f ('Array 'Number)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject a)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-pushIsoNbrs scratch localCells localVis hitSt ox oy radius cx cy = do
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius (cx + 1) cy
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius (cx - 1) cy
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius (cx + 1) (cy + 1)
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius (cx - 1) (cy + 1)
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius (cx + 1) (cy - 1)
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius (cx - 1) (cy - 1)
-  _ <- tryIso scratch localCells localVis hitSt ox oy radius cx (cy + 1)
-  tryIso scratch localCells localVis hitSt ox oy radius cx (cy - 1)
-
-tryIso ::
-  Effect f (MutableObjectOf DiscoverScratch)
-  -> Expr f ('Array 'Number)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject a)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-tryIso scratch localCells localVis hitSt ox oy radius nx ny = do
-  worldW <- scratch.w
-  worldH <- scratch.h
-  whenS (nx .>= 0 .&& ny .>= 0 .&& nx .< worldW .&& ny .< worldH) $ do
-    let
-      ni = cellIdx worldW nx ny
-      dist = Math.max (abs (nx - ox)) (abs (ny - oy))
-    whenS
-      (dist .> radius)
-      (setProp hitSt "wall" true_)
-    whenS (dist .<= radius) $ do
-      seen <- Set.member localVis ni
-      alive <- getProp scratch "alive"
-      species <- getProp scratch "species"
-      sp <- u8Get species ni
-      whenS
-        (not_ seen .&& packedIsAlive alive ni .&& sp .== 0)
-        $ do
-          _ <- Set.insert localVis ni
-          _ <- Array.push_ localCells ni
-          sl <- scratch.stackLen
-          stackX <- getProp scratch "stackX"
-          stackY <- getProp scratch "stackY"
-          setU8 stackX sl nx
-          setU8 stackY sl ny
-          set @"stackLen" scratch (sl + 1)
-    done
 
 resolveComponent ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -708,18 +662,10 @@ adoptSlot scratch sid key hashes = do
 paintDiscoverSlot ::
   Effect f (MutableObjectOf DiscoverScratch)
   -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
+  -> EffectSyntax f ()
 paintDiscoverSlot scratch sid = do
-  let
-    pal0 = uint8Array paletteBytes
-    src = sid * number 3
-    r = u8Index pal0 src
-    g = u8Index pal0 (src + number 1)
-    b = u8Index pal0 (src + number 2)
   palette <- getProp scratch "palette"
-  setU8 palette src r
-  setU8 palette (src + number 1) g
-  setU8 palette (src + number 2) b
+  resetSlotRgb palette sid
 
 evictLowestDiscover ::
   Effect f (MutableObjectOf DiscoverScratch)
@@ -756,20 +702,11 @@ ensureEvictCounts scratch = do
   ready <- getProp scratch "evictReady"
   whenS (not_ ready) $ do
     toSyntax_ (u8Fill counts (number 0))
-    worldW <- scratch.w
-    worldH <- scratch.h
-    alive <- getProp scratch "alive"
-    species <- getProp scratch "species"
     let
       minSid = number (fromIntegral discoverMin)
       lastSid = number (fromIntegral discoverMax)
-    forRange2_ (number 0) worldH (number 0) worldW $ \y x -> do
-      let
-        i = cellIdx worldW x y
-      whenS (packedIsAlive alive i) $ do
-        sid <- u8Get species i
-        whenS (sid .>= minSid .&& sid .<= lastSid) (incCount counts sid)
-      done
+    forScratchLive scratch $ \_ _ sid ->
+      whenS (sid .>= minSid .&& sid .<= lastSid) (incCount counts sid)
     _ <- setProp scratch "evictReady" true_
     done
   pure counts
@@ -807,19 +744,8 @@ evictDiscoverSid ::
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
 evictDiscoverSid scratch victim = do
-  worldW <- scratch.w
-  worldH <- scratch.h
-  alive <- getProp scratch "alive"
-  species <- getProp scratch "species"
-  let
-    soup = number (fromIntegral soupSpecies)
-  forRange2_ (number 0) worldH (number 0) worldW $ \y x -> do
-    let
-      i = cellIdx worldW x y
-    whenS (packedIsAlive alive i) $ do
-      sid <- u8Get species i
-      whenS (sid .== victim) (setU8 species i soup)
-    done
+  forScratchLive scratch $ \species i sid ->
+    whenS (sid .== victim) (setU8 species i (number (fromIntegral soupSpecies)))
   registry <- scratchRegistry scratch
   seenE <- getProp registry "seen"
   namesE <- getProp registry "names"
@@ -845,63 +771,33 @@ sidCount :: Expr f 'Number -> Expr f 'Number -> Expr f ('Object SidCount)
 sidCount sid cnt = frozen [field @"sid" sid, field @"cnt" cnt]
 
 stepIndexTracker ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('MutableObject IndexTracker)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-stepIndexTracker
-  alive
-  species
-  palette
-  registry
-  tracker
-  seen
-  container
-  totalEl
-  now
-  x0
-  y0
-  x1
-  y1
-  w0
-  h0 = do
-    pending <- getProp tracker "pending"
-    lastMs <- getProp tracker "lastMs"
-    let
-      refresh = number (fromIntegral indexRefreshMs)
-      (ix0, iy0, ixStop, iyStop) =
-        clampLiveBounds w0 h0 x0 y0 x1 y1 (number 0)
-    whenS
-      (not_ pending .&& (lastMs .== 0 .|| now - lastMs .>= refresh))
-      ( do
-          _ <- setProp tracker "lastMs" now
-          _ <- setProp tracker "pending" true_
-          counts <- getProp tracker "counts"
-          toSyntax_ (u8Fill counts (number 0))
-          whenS (ixStop .> ix0 .&& iyStop .> iy0) $
-            forRange_ iy0 iyStop $ \y ->
-              forRange_ ix0 ixStop $ \x -> do
-                let
-                  i = cellIdx w0 x y
-                whenS (packedIsAlive alive i) $ do
-                  sid <- u8Get species i
-                  _ <- incCount counts sid
-                  Set.insert seen sid
-          paintIndex tracker counts palette registry seen container totalEl
-          done
-      )
+  Scan f -> IndexUi f -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+stepIndexTracker Scan {..} ix@IndexUi {..} now = do
+  pending <- getProp indexTracker "pending"
+  lastMs <- getProp indexTracker "lastMs"
+  let
+    refresh = number (fromIntegral indexRefreshMs)
+    (ix0, iy0, ixStop, iyStop) =
+      clampLiveBounds worldW worldH x0 y0 x1 y1 (number 0)
+  whenS
+    (not_ pending .&& (lastMs .== 0 .|| now - lastMs .>= refresh))
+    ( do
+        _ <- setProp indexTracker "lastMs" now
+        _ <- setProp indexTracker "pending" true_
+        counts <- getProp indexTracker "counts"
+        toSyntax_ (u8Fill counts (number 0))
+        whenS (ixStop .> ix0 .&& iyStop .> iy0) $
+          forRange_ iy0 iyStop $ \y ->
+            forRange_ ix0 ixStop $ \x -> do
+              let
+                i = cellIdx worldW x y
+              whenS (packedIsAlive alive i) $ do
+                sid <- u8Get species i
+                _ <- incCount counts sid
+                Set.insert seenSpecies sid
+        paintIndex ix counts palette
+        done
+    )
 
 -- | 16-bit count: @lo@ at @sid*2@, @hi@ at @sid*2+1@. Saturates at 65535.
 incCount :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (f 'Unit)
@@ -948,14 +844,12 @@ cloneIndexRow ::
   -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
 cloneIndexRow template palette registry sid cnt maxCnt = do
   row <- hold $ callMethod template "cloneNode" (arg true_ <: RecNil)
-  swatch <-
-    hold $ callMethod row "querySelector" (arg (string ".swatch") <: RecNil)
-  nameEl <-
-    hold $ callMethod row "querySelector" (arg (string ".index-name") <: RecNil)
-  barFill <-
-    hold $ callMethod row "querySelector" (arg (string ".index-bar-fill") <: RecNil)
-  countEl <-
-    hold $ callMethod row "querySelector" (arg (string ".index-count") <: RecNil)
+  let
+    select c = hold $ callMethod row "querySelector" (arg (string c) <: RecNil)
+  swatch <- select ".swatch"
+  nameEl <- select ".index-name"
+  barFill <- select ".index-bar-fill"
+  countEl <- select ".index-count"
   let
     base = sid * number 3
   r <- u8Get palette base
@@ -987,21 +881,17 @@ cloneIndexRow template palette registry sid cnt maxCnt = do
   pure row
 
 paintIndex ::
-  Effect f ('MutableObject IndexTracker)
+  IndexUi f
   -> Expr f 'Uint8Array
   -> Expr f 'Uint8Array
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
   -> EffectSyntax f (f 'Unit)
-paintIndex tracker counts palette registry seen container totalEl = do
+paintIndex IndexUi {..} counts palette = do
   _ <-
     Set.mapM_
       ( \sid ->
-          whenS (countOf counts sid .== 0) (Set.delete seen sid)
+          whenS (countOf counts sid .== 0) (Set.delete seenSpecies sid)
       )
-      seen
+      seenSpecies
   entries <- bindExpr $ Array.fromEffects []
   _ <-
     Set.mapM_
@@ -1010,7 +900,7 @@ paintIndex tracker counts palette registry seen container totalEl = do
             cnt = countOf counts sid
           whenS (cnt .> 0) (Array.push_ entries (sidCount sid cnt))
       )
-      seen
+      seenSpecies
   toSyntax_
     ( Array.sort entries $ \a b ->
         let
@@ -1022,22 +912,22 @@ paintIndex tracker counts palette registry seen container totalEl = do
     n = Array.length entries
     maxCnt =
       if_ (n .> 0) (Array.index entries (number 0)).cnt (number 1)
-  _ <- setProp tracker "indexTotal" (number 0)
+  _ <- setProp indexTracker "indexTotal" (number 0)
   forRange_ (number 0) n $ \idx -> do
     let
       e = Array.index entries idx
-    cur <- getProp tracker "indexTotal"
-    _ <- setProp tracker "indexTotal" (cur + e.cnt)
+    cur <- getProp indexTracker "indexTotal"
+    _ <- setProp indexTracker "indexTotal" (cur + e.cnt)
     done
-  total <- getProp tracker "indexTotal"
+  total <- getProp indexTracker "indexTotal"
   let
     label =
       toString total
         <> string " cells · "
         <> toString n
         <> string " types"
-  _ <- Dom.setTextContent totalEl label
-  templateE <- getProp tracker "rowTemplate"
+  _ <- Dom.setTextContent indexTotal label
+  templateE <- getProp indexTracker "rowTemplate"
   fragH <- hold $ ffi "document.createDocumentFragment" RecNil
   forRange_ (number 0) n $ \idx -> do
     let
@@ -1045,5 +935,5 @@ paintIndex tracker counts palette registry seen container totalEl = do
     row <-
       cloneIndexRow (expr templateE) palette registry e.sid e.cnt maxCnt
     Dom.appendChild fragH row
-  Dom.replaceChildrenFrom container fragH
-  setProp tracker "pending" false_
+  Dom.replaceChildrenFrom typesList fragH
+  setProp indexTracker "pending" false_

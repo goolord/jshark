@@ -28,7 +28,7 @@ import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import JShark.Example.Life.Catalog (catalogInitialCells, stampCatalogCells)
-import JShark.Example.Life.Discover (Registry, discoverLife)
+import JShark.Example.Life.Discover (Registry, Scan (..), discoverLife)
 import JShark.Example.Life.EngineFinish
   ( EngineGrids (..)
   , finishStep
@@ -213,33 +213,19 @@ maybeDiscover state registry = do
   whenS (rem_ gen (number (fromIntegral discoverEvery)) .== 0) $ do
     alive <- state.alive
     species <- state.species
-    pal <- state.palette
+    palette <- state.palette
     visited <- state.discoverVisited
     stackX <- state.discoverStackX
     stackY <- state.discoverStackY
-    liveX0 <- state.boundX0
-    liveY0 <- state.boundY0
-    liveX1 <- state.boundX1
-    liveY1 <- state.boundY1
+    x0 <- state.boundX0
+    y0 <- state.boundY0
+    x1 <- state.boundX1
+    y1 <- state.boundY1
     nextD <- state.nextDiscover
-    wDisc <- state.worldW
-    hDisc <- state.worldH
+    worldW <- state.worldW
+    worldH <- state.worldH
     (nextOut, mintedArr) <-
-      discoverLife
-        alive
-        species
-        pal
-        registry
-        visited
-        stackX
-        stackY
-        wDisc
-        hDisc
-        liveX0
-        liveY0
-        liveX1
-        liveY1
-        nextD
+      discoverLife Scan {..} registry visited stackX stackY nextD
     set @"nextDiscover" state (Math.floor nextOut)
     _ <- refreshTakenNames registry
     paletteRgba <- state.paletteRgba
@@ -248,7 +234,7 @@ maybeDiscover state registry = do
       sid <- pure (Array.index mintedArr i)
       nm <- uniqueNameSid sid registry
       _ <- recordDiscoveredName sid nm registry
-      _ <- syncPaletteRgbaSid pal paletteRgba sid
+      _ <- syncPaletteRgbaSid palette paletteRgba sid
       set @"recentDiscover" state nm
 
 stepGeneration ::
