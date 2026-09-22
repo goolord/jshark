@@ -30,7 +30,6 @@ import qualified Data.Text as T
 import JShark.Api
 import qualified JShark.Array as Array
 import JShark.Example.Life.Grid (setU8)
-import JShark.Example.Life.Names (patternLabel)
 import JShark.Example.Life.Patterns
   ( PatternSpec (..)
   , allPatterns
@@ -97,80 +96,43 @@ catalogJs :: Text
 catalogJs =
   "globalThis.__lifeCatalog=()=>{const c=globalThis.LifeCatalog;if(!c){throw new Error('LifeCatalog missing: load js/catalog.js before app.js');}return c;};"
     <> "globalThis.LifeCatalog="
-    <> knownJson
+    <> objectJson
+      [
+        ( "known"
+        , arrayJson [arrayJson [jsonString h, tshow sid] | (h, sid) <- knownCatalog]
+        )
+      ,
+        ( "names"
+        , arrayJson
+            [ arrayJson [tshow (patId p), jsonString (patName p)]
+            | p <- allPatterns
+            ]
+        )
+      ,
+        ( "disturb"
+        , arrayJson
+            [arrayJson [tshow (patId p), pairsJson (patCells p)] | p <- disturbPatterns]
+        )
+      , ("initialCells", pairsJson initialCatalogCells)
+      ,
+        ( "words"
+        , objectJson [(k, arrayJson (map jsonString ws)) | (k, ws) <- wordLists]
+        )
+      ]
     <> ";\n"
  where
-  knownJson =
-    T.concat
-      [ "{"
-      , "\"known\":"
-      , arrayJson (map knownEntry knownCatalog)
-      , ",\"names\":"
-      , arrayJson (map nameEntry allPatterns)
-      , ",\"disturb\":"
-      , arrayJson (map disturbEntry disturbPatterns)
-      , ",\"initialCells\":"
-      , initialCellsJson
-      , ",\"words\":"
-      , wordsJson
-      , "}"
-      ]
-  knownEntry (hash, sid) =
-    T.concat
-      [ "[\""
-      , hash
-      , "\","
-      , T.pack (show sid)
-      , "]"
-      ]
-  nameEntry p =
-    T.concat
-      [ "["
-      , T.pack (show (patId p))
-      , ","
-      , jsonString (patternLabel (patId p))
-      , "]"
-      ]
-  disturbEntry p =
-    T.concat
-      [ "["
-      , T.pack (show (patId p))
-      , ","
-      , cellsJson (patCells p)
-      , "]"
-      ]
-  cellsJson cells =
-    T.concat
-      [ "["
-      , T.intercalate
-          ","
-          [ "[" <> T.pack (show x) <> "," <> T.pack (show y) <> "]"
-          | (x, y) <- cells
-          ]
-      , "]"
-      ]
-  wordsJson =
-    T.concat
-      [ "{"
-      , "\"prefixes\":"
-      , textArrayJson prefixes
-      , ",\"suffixes\":"
-      , textArrayJson suffixes
-      , ",\"nouns\":"
-      , textArrayJson nouns
-      , ",\"adjectives\":"
-      , textArrayJson adjectives
-      , ",\"verbsIng\":"
-      , textArrayJson verbsIng
-      , "}"
-      ]
   arrayJson items = "[" <> T.intercalate "," items <> "]"
-  textArrayJson xs = arrayJson (map jsonString xs)
-  initialCellsJson =
-    arrayJson
-      [ "[" <> T.pack (show i) <> "," <> T.pack (show w) <> "]"
-      | (i, w) <- initialCatalogCells
-      ]
+  objectJson kvs = "{" <> T.intercalate "," [jsonString k <> ":" <> v | (k, v) <- kvs] <> "}"
+  pairsJson xys = arrayJson [arrayJson [tshow x, tshow y] | (x, y) <- xys]
+  tshow :: Show a => a -> Text
+  tshow = T.pack . show
+  wordLists =
+    [ ("prefixes", prefixes)
+    , ("suffixes", suffixes)
+    , ("nouns", nouns)
+    , ("adjectives", adjectives)
+    , ("verbsIng", verbsIng)
+    ]
 
 buildKnownMap :: EffectSyntax f (Effect f ('Map 'String 'Number))
 buildKnownMap = do
@@ -188,19 +150,18 @@ buildNamesMap = do
     [ Map.insert
         m
         (number (fromIntegral (patId p)))
-        (string (patternLabel (patId p)))
+        (string (patName p))
     | p <- allPatterns
     ]
   pure m
 
-patternCellsArray :: PatternSpec -> Effect f ('Array ('Array 'Number))
-patternCellsArray p =
+-- | @[[x, y], …]@ as an array literal.
+pairsArray :: Integral a => [(Int, a)] -> Effect f ('Array ('Array 'Number))
+pairsArray xys =
   Array.fromEffects
     [ Array.fromEffects
-        [ expr (number (fromIntegral x))
-        , expr (number (fromIntegral y))
-        ]
-    | (x, y) <- patCells p
+        [expr (number (fromIntegral x)), expr (number (fromIntegral y))]
+    | (x, y) <- xys
     ]
 
 buildDisturbMap ::
@@ -209,22 +170,14 @@ buildDisturbMap = do
   m <- hold Map.new
   sequence_
     [ do
-        cells <- bindExpr $ patternCellsArray p
+        cells <- bindExpr $ pairsArray (patCells p)
         Map.insert m (number (fromIntegral (patId p))) cells
     | p <- disturbPatterns
     ]
   pure m
 
-catalogInitialCells ::
-  forall f. Effect f ('Array ('Array 'Number))
-catalogInitialCells =
-  Array.fromEffects
-    [ Array.fromEffects
-        [ expr (number (fromIntegral i))
-        , expr (number (fromIntegral w))
-        ]
-    | (i, w) <- initialCatalogCells
-    ]
+catalogInitialCells :: forall f. Effect f ('Array ('Array 'Number))
+catalogInitialCells = pairsArray initialCatalogCells
 
 stampCatalogCells ::
   Expr f 'Uint8Array
@@ -274,161 +227,42 @@ jsonHex4 = printf "%04x"
 
 prefixes, suffixes, nouns, adjectives, verbsIng :: [Text]
 prefixes =
-  [ "Nova"
-  , "Mira"
-  , "Axon"
-  , "Zeph"
-  , "Luma"
-  , "Vex"
-  , "Quin"
-  , "Orb"
-  , "Nex"
-  , "Sol"
-  , "Kael"
-  , "Rune"
-  , "Pyro"
-  , "Cyan"
-  , "Dusk"
-  , "Astra"
-  , "Brim"
-  , "Coro"
-  , "Echo"
-  , "Flux"
-  , "Gyre"
-  , "Helix"
-  , "Ion"
-  , "Jolt"
-  , "Kite"
-  , "Lux"
-  , "Myrrh"
-  , "Nimbus"
-  , "Onyx"
-  , "Prism"
-  ]
+  wordList
+    [ "Nova Mira Axon Zeph Luma Vex Quin Orb Nex Sol Kael Rune Pyro"
+    , "Cyan Dusk Astra Brim Coro Echo Flux Gyre Helix Ion Jolt Kite Lux"
+    , "Myrrh Nimbus Onyx Prism"
+    ]
 suffixes =
-  [ "Morph"
-  , "Form"
-  , "Life"
-  , "Cell"
-  , "Oid"
-  , "Ium"
-  , "Ula"
-  , "Bit"
-  , "Zen"
-  , "Pod"
-  , "Wave"
-  , "Spark"
-  , "Mote"
-  , "Plex"
-  , "Drift"
-  , "Strand"
-  , "Weave"
-  , "Bloom"
-  , "Pulse"
-  , "Shard"
-  , "Gleam"
-  , "Trace"
-  , "Corpus"
-  , "Matrix"
-  , "Nexus"
-  , "Spore"
-  , "Vesicle"
-  , "Lattice"
-  , "Filament"
-  , "Glyph"
-  ]
+  wordList
+    [ "Morph Form Life Cell Oid Ium Ula Bit Zen Pod Wave Spark Mote"
+    , "Plex Drift Strand Weave Bloom Pulse Shard Gleam Trace Corpus"
+    , "Matrix Nexus Spore Vesicle Lattice Filament Glyph"
+    ]
 nouns =
-  [ "Acuity"
-  , "Artifice"
-  , "Pallor"
-  , "Bloom"
-  , "Bifurcation"
-  , "Luster"
-  , "Vapor"
-  , "Wish"
-  , "Qualia"
-  , "Malady"
-  , "Kindred"
-  , "Susurrus"
-  , "Gossamer"
-  , "Subterfuge"
-  , "Wretch"
-  , "Gibbet"
-  , "Murmur"
-  , "Flicker"
-  , "Shimmer"
-  , "Whir"
-  , "Pulchritude"
-  , "Cadence"
-  , "Chroma"
-  , "Dialect"
-  , "Entropy"
-  , "Fractal"
-  , "Glimmer"
-  , "Horizon"
-  , "Inertia"
-  , "Juxtaposition"
-  , "Kinesis"
-  , "Liminal"
-  , "Meridian"
-  , "Numen"
-  , "Obelisk"
-  , "Parallax"
-  , "Quorum"
-  , "Resonance"
-  , "Synapse"
-  , "Tessera"
-  , "Niumbus"
-  , "Nebula"
-  ]
+  wordList
+    [ "Acuity Artifice Pallor Bloom Bifurcation Luster Vapor Wish"
+    , "Qualia Malady Kindred Susurrus Gossamer Subterfuge Wretch Gibbet"
+    , "Murmur Flicker Shimmer Whir Pulchritude Cadence Chroma Dialect"
+    , "Entropy Fractal Glimmer Horizon Inertia Juxtaposition Kinesis"
+    , "Liminal Meridian Numen Obelisk Parallax Quorum Resonance Synapse"
+    , "Tessera Niumbus Nebula"
+    ]
 adjectives =
-  [ "Pulchritudinous"
-  , "Nascent"
-  , "Affine"
-  , "Hypoxic"
-  , "Ephemeral"
-  , "Derelict"
-  , "Noetic"
-  , "Cogent"
-  , "Inveterate"
-  , "Laconic"
-  , "Mellifluous"
-  , "Oblique"
-  , "Palimpsest"
-  , "Quiescent"
-  , "Sanguine"
-  , "Tenebrous"
-  , "Umbral"
-  , "Verdant"
-  , "Wistful"
-  , "Xenial"
-  , "Undead"
-  ]
+  wordList
+    [ "Pulchritudinous Nascent Affine Hypoxic Ephemeral Derelict Noetic"
+    , "Cogent Inveterate Laconic Mellifluous Oblique Palimpsest"
+    , "Quiescent Sanguine Tenebrous Umbral Verdant Wistful Xenial"
+    , "Undead"
+    ]
 verbsIng =
-  [ "Acceding"
-  , "Capitulating"
-  , "Flickering"
-  , "Whirring"
-  , "Murmuring"
-  , "Exalting"
-  , "Shimmering"
-  , "Acquiescing"
-  , "Languishing"
-  , "Blooming"
-  , "Wishing"
-  , "Vaporing"
-  , "Dissolving"
-  , "Evolving"
-  , "Glimmering"
-  , "Orbiting"
-  , "Pulsing"
-  , "Radiating"
-  , "Spiraling"
-  , "Unfolding"
-  , "Wavering"
-  , "Yielding"
-  , "Zenithing"
-  , "Drifting"
-  , "Bleeding"
-  , "Tremoring"
-  ]
+  wordList
+    [ "Acceding Capitulating Flickering Whirring Murmuring Exalting"
+    , "Shimmering Acquiescing Languishing Blooming Wishing Vaporing"
+    , "Dissolving Evolving Glimmering Orbiting Pulsing Radiating"
+    , "Spiraling Unfolding Wavering Yielding Zenithing Drifting"
+    , "Bleeding Tremoring"
+    ]
+
+-- | Space-separated words, several per line.
+wordList :: [Text] -> [Text]
+wordList = concatMap T.words

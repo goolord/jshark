@@ -1,117 +1,20 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Shared species labels and procedural naming for catalog + discovery.
 module JShark.Example.Life.Names
-  ( patternLabel
-  , lookupDisplayName
+  ( lookupDisplayName
   , uniqueNameSid
   , refreshTakenNames
   , recordDiscoveredName
   )
 where
 
-import Data.Text (Text)
-import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Types (Effect (Lift), Expr (Var))
 import qualified JShark.Array as Array
 import qualified JShark.Map as Map
 import qualified JShark.Set as Set
-
-patternLabel :: Int -> Text
-patternLabel = \case
-  1 -> "Block"
-  2 -> "Beehive"
-  3 -> "Loaf"
-  4 -> "Boat"
-  5 -> "Tub"
-  6 -> "Pond"
-  7 -> "Ship"
-  8 -> "Long Boat"
-  9 -> "Mango"
-  10 -> "Hat"
-  11 -> "Shillelagh"
-  12 -> "Dock"
-  13 -> "Barge"
-  14 -> "Long Snake"
-  15 -> "Cis Hook"
-  16 -> "Elevator"
-  17 -> "Paperclip"
-  18 -> "Table On Table"
-  19 -> "Integral Sign"
-  20 -> "Hook"
-  21 -> "Canoe"
-  22 -> "Aircraft Carrier"
-  23 -> "Trans Barge"
-  24 -> "Cis Fuse"
-  25 -> "Blinker"
-  26 -> "Toad"
-  27 -> "Beacon"
-  28 -> "Pulsar"
-  29 -> "Pentadecathlon"
-  30 -> "Queen Bee"
-  31 -> "Figure Eight"
-  32 -> "Sparkles"
-  33 -> "Unix"
-  34 -> "Tumbler"
-  35 -> "Tripole"
-  36 -> "By Flops"
-  37 -> "Mold"
-  38 -> "Clock"
-  39 -> "Quadpole"
-  40 -> "Butterfly"
-  41 -> "Traffic Circle"
-  42 -> "Pentant"
-  43 -> "Crossroads"
-  44 -> "Pinwheel"
-  45 -> "Glider"
-  46 -> "LWSS"
-  47 -> "MWSS"
-  48 -> "HWSS"
-  49 -> "Glider Alt"
-  50 -> "LWSS Alt"
-  51 -> "Glider Perp"
-  52 -> "LWSS Perp"
-  53 -> "MWSS Alt"
-  54 -> "Dart"
-  55 -> "Crab"
-  56 -> "Loafer"
-  57 -> "Glider Up"
-  58 -> "Glider Down"
-  59 -> "Glider Left"
-  60 -> "R-Pentomino"
-  61 -> "Acorn"
-  62 -> "Diehard"
-  63 -> "Bunnies"
-  64 -> "S-Diehard"
-  65 -> "B-Heptomino"
-  66 -> "Pi-Heptomino"
-  67 -> "R-Acorn"
-  68 -> "Switch Engine"
-  69 -> "Block On Table"
-  70 -> "Eater"
-  71 -> "Eater 2"
-  72 -> "Eater 3"
-  73 -> "Block On Snake"
-  74 -> "Tub With Tail"
-  75 -> "Long Hook With Tail"
-  76 -> "Snake Bridge"
-  77 -> "Mirrored Eater"
-  78 -> "Pre-Block"
-  79 -> "Pre-Beehive"
-  80 -> "Traffic Light"
-  81 -> "Honey Farm"
-  82 -> "Farm"
-  83 -> "Long Boat Tie"
-  84 -> "Cis Long Hook"
-  85 -> "Trans Long Hook"
-  86 -> "Very Long Boat"
-  87 -> "Cis Boat"
-  88 -> "Trans Boat"
-  89 -> "Cis Block"
-  n -> "Type " <> T.pack (show n)
 
 pickWord ::
   Expr f ('Array 'String)

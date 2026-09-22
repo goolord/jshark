@@ -1,7 +1,4 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE UnboxedTuples #-}
 
 -- | Pattern catalog for the life demo. Palette lives in 'Palette'.
 --
@@ -28,41 +25,22 @@ module JShark.Example.Life.Patterns
 where
 
 import Control.Monad (forM_, replicateM_, when)
-import Data.Array.Byte (ByteArray (..))
+import Data.Array.Byte (ByteArray)
 import Data.Array.ST (STUArray, newArray, readArray, writeArray)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
+import Data.Text (Text)
 import Data.Word (Word8)
-import GHC.Exts
-  ( Int (..)
-  , newByteArray#
-  , unsafeFreezeByteArray#
-  , writeWord8Array#
-  , (+#)
-  )
-import GHC.ST (ST (..), runST)
-import GHC.Word (Word8 (..))
+import GHC.ST (ST, runST)
+import JShark (packUint8)
 import JShark.Example.Life.Palette (speciesColor)
 import JShark.Example.Life.Types
-  ( discoverMax
-  , gridH
-  , gridN
-  , gridW
-  , lcgInc
-  , lcgModulus
-  , lcgMult
-  , seedH
-  , seedOx
-  , seedOy
-  , seedW
-  , soupDensity
-  , soupRngSeed
-  )
 
 data PatternSpec = PatternSpec
   { patId :: Int
   , patCount :: Int
+  , patName :: Text
   , patCells :: [(Int, Int)]
   }
 
@@ -71,124 +49,118 @@ allPatterns =
   stillLifes ++ oscillators ++ spaceships ++ methuselahs ++ eaters ++ misc
  where
   stillLifes =
-    [ pat 1 30 block
-    , pat 2 30 beehive
-    , pat 3 28 loaf
-    , pat 4 28 boat
-    , pat 5 28 tub
-    , pat 6 24 pond
-    , pat 7 24 ship
-    , pat 8 20 longBoat
-    , pat 9 18 mango
-    , pat 10 18 hat
-    , pat 11 16 shillelagh
-    , pat 12 16 dock
-    , pat 13 16 barge
-    , pat 14 14 longSnake
-    , pat 15 14 cisHook
-    , pat 16 14 elevator
-    , pat 17 12 paperclip
-    , pat 18 12 tableOnTable
-    , pat 19 12 integralSign
-    , pat 20 12 hook
-    , pat 21 10 canoe
-    , pat 22 10 aircraftCarrier
-    , pat 23 10 transBarge
-    , pat 24 10 cisFuse
+    [ pat 1 30 "Block" block
+    , pat 2 30 "Beehive" beehive
+    , pat 3 28 "Loaf" loaf
+    , pat 4 28 "Boat" boat
+    , pat 5 28 "Tub" tub
+    , pat 6 24 "Pond" pond
+    , pat 7 24 "Ship" ship
+    , pat 8 20 "Long Boat" longBoat
+    , pat 9 18 "Mango" mango
+    , pat 10 18 "Hat" hat
+    , pat 11 16 "Shillelagh" shillelagh
+    , pat 12 16 "Dock" dock
+    , pat 13 16 "Barge" barge
+    , pat 14 14 "Long Snake" longSnake
+    , pat 15 14 "Cis Hook" cisHook
+    , pat 16 14 "Elevator" elevator
+    , pat 17 12 "Paperclip" paperclip
+    , pat 18 12 "Table On Table" tableOnTable
+    , pat 19 12 "Integral Sign" integralSign
+    , pat 20 12 "Hook" hook
+    , pat 21 10 "Canoe" canoe
+    , pat 22 10 "Aircraft Carrier" aircraftCarrier
+    , pat 23 10 "Trans Barge" transBarge
+    , pat 24 10 "Cis Fuse" cisFuse
     ]
   oscillators =
-    [ pat 25 36 blinker
-    , pat 26 32 toad
-    , pat 27 28 beacon
-    , pat 28 8 pulsar
-    , pat 29 6 pentadecathlon
-    , pat 30 6 queenBee
-    , pat 31 22 figureEight
-    , pat 32 18 sparkles
-    , pat 33 16 unix
-    , pat 34 16 tumbler
-    , pat 35 14 tripole
-    , pat 36 12 byFlops
-    , pat 37 10 mold
-    , pat 38 10 clock
-    , pat 39 8 quadpole
-    , pat 40 8 butterfly
-    , pat 41 8 trafficCircle
-    , pat 42 6 pentant
-    , pat 43 6 crossroads
-    , pat 44 6 pinwheel
+    [ pat 25 36 "Blinker" blinker
+    , pat 26 32 "Toad" toad
+    , pat 27 28 "Beacon" beacon
+    , pat 28 8 "Pulsar" pulsar
+    , pat 29 6 "Pentadecathlon" pentadecathlon
+    , pat 30 6 "Queen Bee" queenBee
+    , pat 31 22 "Figure Eight" figureEight
+    , pat 32 18 "Sparkles" sparkles
+    , pat 33 16 "Unix" unix
+    , pat 34 16 "Tumbler" tumbler
+    , pat 35 14 "Tripole" tripole
+    , pat 36 12 "By Flops" byFlops
+    , pat 37 10 "Mold" mold
+    , pat 38 10 "Clock" clock
+    , pat 39 8 "Quadpole" quadpole
+    , pat 40 8 "Butterfly" butterfly
+    , pat 41 8 "Traffic Circle" trafficCircle
+    , pat 42 6 "Pentant" pentant
+    , pat 43 6 "Crossroads" crossroads
+    , pat 44 6 "Pinwheel" pinwheel
     ]
   spaceships =
-    [ pat 45 44 glider
-    , pat 46 22 lwss
-    , pat 47 14 mwss
-    , pat 48 10 hwss
-    , pat 49 36 gliderAlt
-    , pat 50 18 lwssAlt
-    , pat 51 12 gliderPerp
-    , pat 52 10 lwssPerp
-    , pat 53 8 mwssAlt
-    , pat 54 8 dart
-    , pat 55 8 crabCanonical
-    , pat 56 6 loaferSmall
-    , pat 57 6 gliderUp
-    , pat 58 6 gliderDown
-    , pat 59 6 gliderLeft
+    [ pat 45 44 "Glider" glider
+    , pat 46 22 "LWSS" lwss
+    , pat 47 14 "MWSS" mwss
+    , pat 48 10 "HWSS" hwss
+    , pat 49 36 "Glider Alt" gliderAlt
+    , pat 50 18 "LWSS Alt" lwssAlt
+    , pat 51 12 "Glider Perp" gliderPerp
+    , pat 52 10 "LWSS Perp" lwssPerp
+    , pat 53 8 "MWSS Alt" mwssAlt
+    , pat 54 8 "Dart" dart
+    , pat 55 8 "Crab" crabCanonical
+    , pat 56 6 "Loafer" loaferSmall
+    , pat 57 6 "Glider Up" gliderUp
+    , pat 58 6 "Glider Down" gliderDown
+    , pat 59 6 "Glider Left" gliderLeft
     ]
   methuselahs =
-    [ pat 60 20 rPentomino
-    , pat 61 16 acorn
-    , pat 62 14 diehard
-    , pat 63 12 bunnies
-    , pat 64 10 sDiehard
-    , pat 65 10 bHeptomino
-    , pat 66 8 piHeptomino
-    , pat 67 8 rAcorn
-    , pat 68 6 switchEngine
-    , pat 69 6 blockOnTable
+    [ pat 60 20 "R-Pentomino" rPentomino
+    , pat 61 16 "Acorn" acorn
+    , pat 62 14 "Diehard" diehard
+    , pat 63 12 "Bunnies" bunnies
+    , pat 64 10 "S-Diehard" sDiehard
+    , pat 65 10 "B-Heptomino" bHeptomino
+    , pat 66 8 "Pi-Heptomino" piHeptomino
+    , pat 67 8 "R-Acorn" rAcorn
+    , pat 68 6 "Switch Engine" switchEngine
+    , pat 69 6 "Block On Table" blockOnTable
     ]
   eaters =
-    [ pat 70 18 eater
-    , pat 71 14 eater2
-    , pat 72 12 eater3
-    , pat 73 12 blockOnSnake
-    , pat 74 10 tubWithTail
-    , pat 75 10 longHookWithTail
-    , pat 76 8 snakeBridge
-    , pat 77 8 mirroredEater
-    , pat 78 6 preBlock
-    , pat 79 6 preBeehive
+    [ pat 70 18 "Eater" eater
+    , pat 71 14 "Eater 2" eater2
+    , pat 72 12 "Eater 3" eater3
+    , pat 73 12 "Block On Snake" blockOnSnake
+    , pat 74 10 "Tub With Tail" tubWithTail
+    , pat 75 10 "Long Hook With Tail" longHookWithTail
+    , pat 76 8 "Snake Bridge" snakeBridge
+    , pat 77 8 "Mirrored Eater" mirroredEater
+    , pat 78 6 "Pre-Block" preBlock
+    , pat 79 6 "Pre-Beehive" preBeehive
     ]
   misc =
-    [ pat 80 16 trafficLight
-    , pat 81 14 honeyFarm
-    , pat 82 12 farm
-    , pat 83 12 longBoatTie
-    , pat 84 10 cisLongHook
-    , pat 85 10 transLongHook
-    , pat 86 8 veryLongBoat
-    , pat 87 8 cisBoat
-    , pat 88 6 transBoat
-    , pat 89 6 cisBlock
+    [ pat 80 16 "Traffic Light" trafficLight
+    , pat 81 14 "Honey Farm" honeyFarm
+    , pat 82 12 "Farm" farm
+    , pat 83 12 "Long Boat Tie" longBoatTie
+    , pat 84 10 "Cis Long Hook" cisLongHook
+    , pat 85 10 "Trans Long Hook" transLongHook
+    , pat 86 8 "Very Long Boat" veryLongBoat
+    , pat 87 8 "Cis Boat" cisBoat
+    , pat 88 6 "Trans Boat" transBoat
+    , pat 89 6 "Cis Block" cisBlock
     ]
 
-pat :: Int -> Int -> [(Int, Int)] -> PatternSpec
-pat i n cells = PatternSpec i n cells
+pat :: Int -> Int -> Text -> [(Int, Int)] -> PatternSpec
+pat = PatternSpec
+
+-- | Live cells of a picture, row-major; @O@ is alive.
+art :: [String] -> [(Int, Int)]
+art rows = [(x, y) | (y, row) <- zip [0 ..] rows, (x, 'O') <- zip [0 ..] row]
 
 -- | Placement tools after Mouse / Glider / Eraser. HUD order: xWSS,
 --   classic seeds, then eater.
 disturbSids :: [Int]
-disturbSids =
-  [ 46
-  , 47
-  , 48
-  , 60
-  , 61
-  , 62
-  , 63
-  , 68
-  , 70
-  ]
+disturbSids = [46, 47, 48, 60, 61, 62, 63, 68, 70]
 
 disturbPatterns :: [PatternSpec]
 disturbPatterns =
@@ -240,108 +212,40 @@ beacon = [(0, 0), (1, 0), (0, 1), (3, 2), (2, 3), (3, 3)]
 
 pulsar :: [(Int, Int)]
 pulsar =
-  [ (2, 0)
-  , (3, 0)
-  , (4, 0)
-  , (8, 0)
-  , (9, 0)
-  , (10, 0)
-  , (0, 2)
-  , (5, 2)
-  , (7, 2)
-  , (12, 2)
-  , (0, 3)
-  , (5, 3)
-  , (7, 3)
-  , (12, 3)
-  , (0, 4)
-  , (5, 4)
-  , (7, 4)
-  , (12, 4)
-  , (2, 5)
-  , (3, 5)
-  , (4, 5)
-  , (8, 5)
-  , (9, 5)
-  , (10, 5)
-  , (2, 7)
-  , (3, 7)
-  , (4, 7)
-  , (8, 7)
-  , (9, 7)
-  , (10, 7)
-  , (0, 8)
-  , (5, 8)
-  , (7, 8)
-  , (12, 8)
-  , (0, 9)
-  , (5, 9)
-  , (7, 9)
-  , (12, 9)
-  , (0, 10)
-  , (5, 10)
-  , (7, 10)
-  , (12, 10)
-  , (2, 12)
-  , (3, 12)
-  , (4, 12)
-  , (8, 12)
-  , (9, 12)
-  , (10, 12)
-  ]
+  art
+    [ "..OOO...OOO.."
+    , "............."
+    , "O....O.O....O"
+    , "O....O.O....O"
+    , "O....O.O....O"
+    , "..OOO...OOO.."
+    , "............."
+    , "..OOO...OOO.."
+    , "O....O.O....O"
+    , "O....O.O....O"
+    , "O....O.O....O"
+    , "............."
+    , "..OOO...OOO.."
+    ]
 
 pentadecathlon :: [(Int, Int)]
 pentadecathlon =
-  [ (1, 0)
-  , (2, 0)
-  , (3, 0)
-  , (4, 0)
-  , (5, 0)
-  , (6, 0)
-  , (7, 0)
-  , (8, 0)
-  , (9, 0)
-  , (0, 1)
-  , (3, 1)
-  , (10, 1)
-  , (0, 2)
-  , (5, 2)
-  , (7, 2)
-  , (10, 2)
-  , (0, 3)
-  , (5, 3)
-  , (7, 3)
-  , (10, 3)
-  , (3, 4)
-  , (4, 4)
-  , (5, 4)
-  , (6, 4)
-  , (7, 4)
-  ]
+  art
+    [ ".OOOOOOOOO."
+    , "O..O......O"
+    , "O....O.O..O"
+    , "O....O.O..O"
+    , "...OOOOO..."
+    ]
 
 queenBee :: [(Int, Int)]
 queenBee =
-  [ (0, 0)
-  , (1, 0)
-  , (2, 0)
-  , (3, 0)
-  , (4, 0)
-  , (5, 0)
-  , (6, 0)
-  , (0, 1)
-  , (2, 1)
-  , (5, 1)
-  , (6, 1)
-  , (0, 2)
-  , (6, 2)
-  , (0, 3)
-  , (1, 3)
-  , (2, 3)
-  , (3, 3)
-  , (4, 3)
-  , (5, 3)
-  , (6, 3)
-  ]
+  art
+    [ "OOOOOOO"
+    , "O.O..OO"
+    , "O.....O"
+    , "OOOOOOO"
+    ]
 
 figureEight :: [(Int, Int)]
 figureEight = [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (1, 3), (2, 3)]
@@ -379,38 +283,23 @@ lwssAlt = [(0, 0), (3, 0), (4, 1), (0, 2), (4, 2), (0, 3), (1, 3), (2, 3), (3, 3
 
 mwss :: [(Int, Int)]
 mwss =
-  [ (2, 0)
-  , (0, 1)
-  , (0, 2)
-  , (1, 2)
-  , (2, 2)
-  , (3, 2)
-  , (4, 2)
-  , (0, 3)
-  , (4, 3)
-  , (1, 4)
-  , (2, 4)
-  , (3, 4)
-  ]
+  art
+    [ "..O.."
+    , "O...."
+    , "OOOOO"
+    , "O...O"
+    , ".OOO."
+    ]
 
 hwss :: [(Int, Int)]
 hwss =
-  [ (3, 0)
-  , (4, 0)
-  , (0, 1)
-  , (0, 2)
-  , (1, 2)
-  , (2, 2)
-  , (3, 2)
-  , (4, 2)
-  , (5, 2)
-  , (0, 3)
-  , (5, 3)
-  , (1, 4)
-  , (2, 4)
-  , (3, 4)
-  , (4, 4)
-  ]
+  art
+    [ "...OO."
+    , "O....."
+    , "OOOOOO"
+    , "O....O"
+    , ".OOOO."
+    ]
 
 -- Extra still lifes ---------------------------------------------------------
 
@@ -551,17 +440,7 @@ diehard =
 
 -- | LifeWiki Bunnies (9 cells, 8×4): o5bo$2bo3bo$2bo2bobo$bobo!
 bunnies :: [(Int, Int)]
-bunnies =
-  [ (0, 0)
-  , (6, 0)
-  , (2, 1)
-  , (6, 1)
-  , (2, 2)
-  , (5, 2)
-  , (7, 2)
-  , (1, 3)
-  , (3, 3)
-  ]
+bunnies = [(0, 0), (6, 0), (2, 1), (6, 1), (2, 2), (5, 2), (7, 2), (1, 3), (3, 3)]
 
 sDiehard :: [(Int, Int)]
 sDiehard = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 2), (2, 2), (3, 2)]
@@ -667,11 +546,38 @@ buildInitialGrid = runST $ do
   popRef <- newSTRef (0 :: Int)
   boundsRef <- newSTRef (gridW, gridH, -1, -1)
   rngRef <- newSTRef soupRngSeed
+  let
+    seedCell i = do
+      rng <- readSTRef rngRef
+      let
+        (rng', v) = lcg01 rng
+      writeSTRef rngRef rng'
+      when (v < soupDensity) $ do
+        writeArray alive i 1
+        writeArray speciesGrid i 0
+        modifySTRef popRef (+ 1)
+        touchBounds boundsRef (i `mod` gridW) (i `div` gridW)
+    stampOne p = do
+      rng <- readSTRef rngRef
+      let
+        (rng1, ox) = lcgRange rng seedW
+        (rng2, oy) = lcgRange rng1 seedH
+      writeSTRef rngRef rng2
+      forM_ (patCells p) $ \(dx, dy) -> do
+        let
+          x = seedOx + ox + dx
+          y = seedOy + oy + dy
+          i = y * gridW + x
+        when (inGrid x y) $ do
+          wasAlive <- readArray alive i
+          writeArray alive i 1
+          writeArray speciesGrid i (fromIntegral (patId p))
+          when (wasAlive == 0) (modifySTRef popRef (+ 1))
+          touchBounds boundsRef x y
   forM_ [seedOy .. seedOy + seedH - 1] $ \y ->
-    forM_ [seedOx .. seedOx + seedW - 1] $ \x ->
-      seedCell alive speciesGrid popRef boundsRef rngRef (y * gridW + x)
+    forM_ [seedOx .. seedOx + seedW - 1] $ \x -> seedCell (y * gridW + x)
   soupPop <- readSTRef popRef
-  mapM_ (stampPatterns alive speciesGrid popRef boundsRef rngRef) allPatterns
+  forM_ allPatterns $ \p -> replicateM_ (patCount p) (stampOne p)
   pop <- readSTRef popRef
   (bx0, by0, bx1, by1) <- readSTRef boundsRef
   let
@@ -701,90 +607,11 @@ buildInitialGrid = runST $ do
               goRow (x + 1) y (if sp /= 0 then (i, sp) : acc else acc)
             else goRow (x + 1) y acc
 
-type Grid s = STUArray s Int Word8
-
-newGrid :: Word8 -> ST s (Grid s)
+newGrid :: Word8 -> ST s (STUArray s Int Word8)
 newGrid v = newArray (0, gridN - 1) v
-
-seedCell ::
-  Grid s
-  -> Grid s
-  -> STRef s Int
-  -> STRef s (Int, Int, Int, Int)
-  -> STRef s Int
-  -> Int
-  -> ST s ()
-seedCell alive speciesGrid popRef boundsRef rngRef i = do
-  let
-    x = i `mod` gridW
-    y = i `div` gridW
-  rng <- readSTRef rngRef
-  let
-    (rng', v) = lcg01 rng
-  writeSTRef rngRef rng'
-  when (v < soupDensity) $ do
-    writeArray alive i 1
-    writeArray speciesGrid i 0
-    modifySTRef popRef (+ 1)
-    touchBounds boundsRef x y
-
-stampPatterns ::
-  Grid s
-  -> Grid s
-  -> STRef s Int
-  -> STRef s (Int, Int, Int, Int)
-  -> STRef s Int
-  -> PatternSpec
-  -> ST s ()
-stampPatterns alive speciesGrid popRef boundsRef rngRef p =
-  replicateM_ (patCount p) (stampOne alive speciesGrid popRef boundsRef rngRef p)
-
-stampOne ::
-  Grid s
-  -> Grid s
-  -> STRef s Int
-  -> STRef s (Int, Int, Int, Int)
-  -> STRef s Int
-  -> PatternSpec
-  -> ST s ()
-stampOne alive speciesGrid popRef boundsRef rngRef p = do
-  rng <- readSTRef rngRef
-  let
-    (rng1, ox) = lcgRange rng seedW
-    (rng2, oy) = lcgRange rng1 seedH
-    sid = fromIntegral (patId p) :: Word8
-  writeSTRef rngRef rng2
-  mapM_
-    ( \(dx, dy) ->
-        do
-          let
-            x = seedOx + ox + dx
-            y = seedOy + oy + dy
-            i = y * gridW + x
-          when (inGrid x y) $
-            stampCell alive speciesGrid popRef boundsRef i sid x y
-    )
-    (patCells p)
 
 inGrid :: Int -> Int -> Bool
 inGrid x y = x >= 0 && y >= 0 && x < gridW && y < gridH
-
-stampCell ::
-  Grid s
-  -> Grid s
-  -> STRef s Int
-  -> STRef s (Int, Int, Int, Int)
-  -> Int
-  -> Word8
-  -> Int
-  -> Int
-  -> ST s ()
-stampCell alive speciesGrid popRef boundsRef i sid x y = do
-  wasAlive <- readArray alive i
-  writeArray alive i 1
-  writeArray speciesGrid i sid
-  when (wasAlive == 0) (modifySTRef popRef (+ 1))
-  touchBounds boundsRef x y
 
 touchBounds :: STRef s (Int, Int, Int, Int) -> Int -> Int -> ST s ()
 touchBounds ref x y = modifySTRef ref $ \(x0, y0, x1, y1) ->
@@ -803,21 +630,6 @@ lcgRange s n =
     (s', v) = lcg01 s
    in
     (s', floor (v * fromIntegral n))
-
-packUint8 :: [Word8] -> ByteArray
-packUint8 xs = runST go
- where
-  !(I# n#) = length xs
-  go :: ST s ByteArray
-  go = ST $ \s0 ->
-    case newByteArray# n# s0 of
-      (# s1, mba #) ->
-        case write 0# xs mba s1 of
-          s2 -> case unsafeFreezeByteArray# mba s2 of
-            (# s3, ba #) -> (# s3, ByteArray ba #)
-  write _ [] _ s = s
-  write i# (W8# w : rest) mba s =
-    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
 
 paletteBytes :: ByteArray
 paletteBytes =

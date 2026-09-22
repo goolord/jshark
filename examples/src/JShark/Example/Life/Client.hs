@@ -49,61 +49,6 @@ import JShark.Example.Life.Patterns (gliderOrientationCells, gliderSpeciesSid)
 import qualified JShark.Example.Life.Pixi as Pixi
 import qualified JShark.Example.Life.Profile as Profile
 import JShark.Example.Life.Types
-  ( LifeState
-  , boardId
-  , canvasBgPixi
-  , canvasH
-  , canvasW
-  , cellPx
-  , eraserDefaultRadius
-  , eraserMaxRadius
-  , eraserMinRadius
-  , eraserToolSid
-  , gliderToolSid
-  , gridH
-  , gridW
-  , hoverRadius
-  , hudRefreshMs
-  , indexRefreshMs
-  , lifeBoard2dId
-  , lifeDebugCollapseId
-  , lifeDebugId
-  , lifeEraserGhostId
-  , lifeEraserRadiusId
-  , lifeEraserRadiusValId
-  , lifeEraserSizeId
-  , lifePauseOverlayId
-  , lifeSettingsCollapseId
-  , lifeSettingsGridId
-  , lifeSettingsId
-  , lifeSettingsPurgeId
-  , lifeSettingsResetId
-  , lifeSettingsTickId
-  , lifeSettingsTickValId
-  , lifeSettingsZoomId
-  , lifeSettingsZoomInId
-  , lifeSettingsZoomOutId
-  , lifeStatCellsId
-  , lifeStatFpsId
-  , lifeStatGenId
-  , lifeStatRenderId
-  , lifeStatZoomId
-  , lifeToolsCollapseId
-  , lifeToolsId
-  , lifeTooltipId
-  , lifeTooltipNameId
-  , lifeTooltipSwatchId
-  , mouseToolSid
-  , seedH
-  , seedOx
-  , seedOy
-  , seedW
-  , tickMaxMs
-  , tickMinMs
-  , wheelZoomRate
-  , zoomLevelLabels
-  , zoomLevels
-  )
 import qualified JShark.Map as Map
 import qualified JShark.Math as Math
 import JShark.Promise (promiseThen)

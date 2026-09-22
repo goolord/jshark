@@ -3,62 +3,12 @@
 module JShark.Example.Life.Page (page, framePage, frameSrcFor, assetBaseFor, sourceSrcFor) where
 
 import qualified Data.Text as T
-import JShark.Example.Life.Names (patternLabel)
 import JShark.Example.Life.Patterns
   ( PatternSpec (..)
   , disturbPatterns
   , glider
   )
 import JShark.Example.Life.Types
-  ( boardId
-  , canvasH
-  , canvasW
-  , eraserDefaultRadius
-  , eraserMaxRadius
-  , eraserMinRadius
-  , eraserToolSid
-  , gliderToolSid
-  , gridH
-  , gridSizePresets
-  , gridW
-  , lifeBoard2dId
-  , lifeDebugCollapseId
-  , lifeDebugId
-  , lifeEraserGhostId
-  , lifeEraserRadiusId
-  , lifeEraserRadiusValId
-  , lifeEraserSizeId
-  , lifeIndexHostId
-  , lifeIndexTotalId
-  , lifePauseLabelId
-  , lifePauseOverlayId
-  , lifeSettingsCollapseId
-  , lifeSettingsGridId
-  , lifeSettingsId
-  , lifeSettingsPurgeId
-  , lifeSettingsResetId
-  , lifeSettingsTickId
-  , lifeSettingsTickValId
-  , lifeSettingsZoomId
-  , lifeSettingsZoomInId
-  , lifeSettingsZoomOutId
-  , lifeStatCellsId
-  , lifeStatFpsId
-  , lifeStatGenId
-  , lifeStatRenderId
-  , lifeStatZoomId
-  , lifeToolsCollapseId
-  , lifeToolsId
-  , lifeTooltipId
-  , lifeTooltipNameId
-  , lifeTooltipSwatchId
-  , lifeTypesListId
-  , mouseToolSid
-  , tickDefaultMs
-  , tickMaxMs
-  , tickMinMs
-  , tickStepMs
-  )
 import JShark.Example.Theme (githubCorner, sourceLinks, themeLinks)
 import Lucid
 import Lucid.Base (makeAttribute)
@@ -457,7 +407,7 @@ toolsHud =
 
 disturbButton :: PatternSpec -> Html ()
 disturbButton p =
-  toolButton (patId p) (patternLabel (patId p)) (patCells p) Nothing False
+  toolButton (patId p) (patName p) (patCells p) Nothing False
 
 toolButton ::
   Int -> T.Text -> [(Int, Int)] -> Maybe (Int, Int) -> Bool -> Html ()

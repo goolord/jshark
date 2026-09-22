@@ -69,25 +69,6 @@ import JShark.Example.Life.Patterns
   )
 import qualified JShark.Example.Life.Pixi as Pixi
 import JShark.Example.Life.Types
-  ( LifeState
-  , canvasH
-  , canvasW
-  , cellPx
-  , discoverEvery
-  , discoverMin
-  , gridH
-  , gridN
-  , gridW
-  , seedH
-  , seedOx
-  , seedOy
-  , seedW
-  , soupRngSeed
-  , speciesCount
-  , texH
-  , texW
-  , tickDefaultMs
-  )
 import qualified JShark.Math as Math
 import JShark.Worker (performanceNow)
 

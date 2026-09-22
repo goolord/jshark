@@ -35,14 +35,6 @@ import JShark.Api.Generic (MutableObjectOf)
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Dom (DomElement)
 import JShark.Example.Life.Types
-  ( LifeState
-  , canvasBgPixi
-  , canvasH
-  , canvasW
-  , cellPx
-  , texH
-  , texW
-  )
 import JShark.Promise (Promise)
 
 -- | Fragment shader served beside @js/@ in the Life frame.

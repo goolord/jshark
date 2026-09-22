@@ -1,88 +1,9 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
-module JShark.Example.Life.Types
-  ( boardId
-  , lifeBoard2dId
-  , gridW
-  , gridH
-  , cellPx
-  , gridN
-  , canvasW
-  , canvasH
-  , texW
-  , texH
-  , canvasBgPixi
-  , seedOx
-  , seedOy
-  , seedW
-  , seedH
-  , ink
-  , soupSpecies
-  , methuselahMin
-  , methuselahMax
-  , manualSpecies
-  , discoverMin
-  , discoverMax
-  , speciesCount
-  , discoverEvery
-  , indexRefreshMs
-  , hudRefreshMs
-  , lifeIndexHostId
-  , lifeIndexTotalId
-  , lifeTypesListId
-  , lifeTooltipId
-  , lifeTooltipSwatchId
-  , lifeTooltipNameId
-  , lifeToolsId
-  , lifeToolsCollapseId
-  , lifePauseOverlayId
-  , lifePauseLabelId
-  , lifeDebugId
-  , lifeDebugCollapseId
-  , lifeSettingsId
-  , lifeSettingsCollapseId
-  , lifeSettingsZoomId
-  , lifeSettingsZoomInId
-  , lifeSettingsZoomOutId
-  , lifeSettingsResetId
-  , lifeSettingsPurgeId
-  , lifeSettingsGridId
-  , lifeSettingsTickId
-  , lifeSettingsTickValId
-  , gridSizePresets
-  , tickMinMs
-  , tickMaxMs
-  , tickStepMs
-  , tickDefaultMs
-  , lifeEraserSizeId
-  , lifeEraserRadiusId
-  , lifeEraserRadiusValId
-  , lifeEraserGhostId
-  , eraserDefaultRadius
-  , eraserMinRadius
-  , eraserMaxRadius
-  , lifeStatGenId
-  , lifeStatCellsId
-  , lifeStatFpsId
-  , lifeStatZoomId
-  , lifeStatRenderId
-  , eraserToolSid
-  , mouseToolSid
-  , gliderToolSid
-  , hoverRadius
-  , zoomSteps
-  , zoomLevels
-  , zoomLevelLabels
-  , wheelZoomRate
-  , soupRngSeed
-  , lcgMult
-  , lcgInc
-  , lcgModulus
-  , soupDensity
-  , LifeState (..)
-  )
-where
+module JShark.Example.Life.Types where
 
 import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
@@ -163,67 +84,37 @@ indexRefreshMs = 2000
 hudRefreshMs :: Int
 hudRefreshMs = 100
 
-lifeIndexHostId :: Text
+lifeIndexHostId, lifeIndexTotalId, lifeTypesListId, lifeTooltipId :: Text
 lifeIndexHostId = "life-index-host"
-
-lifeIndexTotalId :: Text
 lifeIndexTotalId = "life-index-total"
-
-lifeTypesListId :: Text
 lifeTypesListId = "life-types"
-
-lifeTooltipId :: Text
 lifeTooltipId = "life-tooltip"
 
-lifeTooltipSwatchId :: Text
+lifeTooltipSwatchId, lifeTooltipNameId, lifeToolsId, lifeToolsCollapseId :: Text
 lifeTooltipSwatchId = "life-tooltip-swatch"
-
-lifeTooltipNameId :: Text
 lifeTooltipNameId = "life-tooltip-name"
-
-lifeToolsId :: Text
 lifeToolsId = "life-tools"
-
-lifeToolsCollapseId :: Text
 lifeToolsCollapseId = "life-tools-collapse"
 
-lifePauseOverlayId :: Text
+lifePauseOverlayId, lifePauseLabelId, lifeDebugId, lifeDebugCollapseId :: Text
 lifePauseOverlayId = "life-pause-overlay"
-
-lifePauseLabelId :: Text
 lifePauseLabelId = "life-pause-label"
-
-lifeDebugId :: Text
 lifeDebugId = "life-debug"
-
-lifeDebugCollapseId :: Text
 lifeDebugCollapseId = "life-debug-collapse"
 
-lifeSettingsId :: Text
+lifeSettingsId, lifeSettingsCollapseId, lifeSettingsZoomId :: Text
 lifeSettingsId = "life-settings"
-
-lifeSettingsCollapseId :: Text
 lifeSettingsCollapseId = "life-settings-collapse"
-
-lifeSettingsZoomId :: Text
 lifeSettingsZoomId = "life-settings-zoom"
 
-lifeSettingsZoomInId :: Text
+lifeSettingsZoomInId, lifeSettingsZoomOutId, lifeSettingsResetId :: Text
 lifeSettingsZoomInId = "life-settings-zoom-in"
-
-lifeSettingsZoomOutId :: Text
 lifeSettingsZoomOutId = "life-settings-zoom-out"
-
-lifeSettingsResetId :: Text
 lifeSettingsResetId = "life-settings-reset"
 
-lifeSettingsPurgeId :: Text
+lifeSettingsPurgeId, lifeSettingsGridId, lifeSettingsTickId :: Text
 lifeSettingsPurgeId = "life-settings-purge"
-
-lifeSettingsGridId :: Text
 lifeSettingsGridId = "life-settings-grid"
-
-lifeSettingsTickId :: Text
 lifeSettingsTickId = "life-settings-tick"
 
 lifeSettingsTickValId :: Text
@@ -243,13 +134,9 @@ tickMaxMs = 200
 tickStepMs = 5
 tickDefaultMs = 0
 
-lifeEraserSizeId :: Text
+lifeEraserSizeId, lifeEraserRadiusId, lifeEraserRadiusValId :: Text
 lifeEraserSizeId = "life-eraser-size"
-
-lifeEraserRadiusId :: Text
 lifeEraserRadiusId = "life-eraser-radius"
-
-lifeEraserRadiusValId :: Text
 lifeEraserRadiusValId = "life-eraser-radius-val"
 
 lifeEraserGhostId :: Text
@@ -260,16 +147,10 @@ eraserDefaultRadius = 3
 eraserMinRadius = 1
 eraserMaxRadius = 12
 
-lifeStatGenId :: Text
+lifeStatGenId, lifeStatCellsId, lifeStatFpsId, lifeStatZoomId :: Text
 lifeStatGenId = "life-stat-gen"
-
-lifeStatCellsId :: Text
 lifeStatCellsId = "life-stat-cells"
-
-lifeStatFpsId :: Text
 lifeStatFpsId = "life-stat-fps"
-
-lifeStatZoomId :: Text
 lifeStatZoomId = "life-stat-zoom"
 
 lifeStatRenderId :: Text

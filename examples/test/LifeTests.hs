@@ -53,12 +53,6 @@ import qualified JShark.Example.Life.LifeTestSupport as LifeAssert
 import qualified JShark.Example.Life.Lut as Lut
 import JShark.Example.Life.LutCore (computeNextByte, lifeLutEntry)
 import JShark.Example.Life.Types
-  ( canvasH
-  , canvasW
-  , cellPx
-  , zoomLevelLabels
-  , zoomLevels
-  )
 import JShark.Internal
   ( effectfulAST
   , effectfulASTWith

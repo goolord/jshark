@@ -60,16 +60,6 @@ import JShark.Example.Life.GridApi (forRange2_)
 import JShark.Example.Life.Names (lookupDisplayName, refreshTakenNames)
 import JShark.Example.Life.Patterns (paletteBytes)
 import JShark.Example.Life.Types
-  ( LifeState
-  , discoverMax
-  , discoverMin
-  , indexRefreshMs
-  , lifeIndexTotalId
-  , lifeTypesListId
-  , manualSpecies
-  , soupSpecies
-  , speciesCount
-  )
 import JShark.Lucid
   ( JsHtml
   , renderFragment
