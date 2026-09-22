@@ -95,33 +95,12 @@ gameDocument staticRoot scriptSrc assetBase = doctypehtml_ $
             toHtml (T.pack (show gridH))
             " · Conway's Game of Life sandbox"
         div_ [class_ "life-stage"] $ do
-          canvas_
-            [ id_ boardId
-            , width_ (T.pack (show (round canvasW :: Int)))
-            , height_ (T.pack (show (round canvasH :: Int)))
-            , tabindex_ "0"
-            , autofocus_
-            ]
-            mempty
-          canvas_
-            [ id_ lifeBoard2dId
-            , class_ "life-board-2d"
-            , width_ (T.pack (show (round canvasW :: Int)))
-            , height_ (T.pack (show (round canvasH :: Int)))
-            , makeAttribute "aria-hidden" "true"
-            ]
-            mempty
+          layer boardId [] [tabindex_ "0", autofocus_]
+          layer lifeBoard2dId [class_ "life-board-2d"] [ariaHidden]
           -- Hidden unless the 2D fallback needs it: a visible canvas stacked
           -- over the WebGL board occlusion-culls the board's quad in
           -- software-composited browsers, blanking the whole game.
-          canvas_
-            [ id_ lifeEraserGhostId
-            , class_ "life-eraser-ghost"
-            , width_ (T.pack (show (round canvasW :: Int)))
-            , height_ (T.pack (show (round canvasH :: Int)))
-            , makeAttribute "aria-hidden" "true"
-            ]
-            mempty
+          layer lifeEraserGhostId [class_ "life-eraser-ghost"] [ariaHidden]
           div_
             [ id_ lifePauseOverlayId
             , class_ "life-pause-overlay"
@@ -221,6 +200,52 @@ jsString t =
     '\x2029' -> "\\u2029"
     _ -> T.singleton c
 
+-- | A viewport-sized canvas layer; @pre@ attributes go before its size.
+layer :: T.Text -> [Attribute] -> [Attribute] -> Html ()
+layer elId pre post =
+  canvas_
+    ([id_ elId] <> pre <> [width_ (px canvasW), height_ (px canvasH)] <> post)
+    mempty
+ where
+  px v = T.pack (show (round v :: Int))
+
+ariaHidden :: Attribute
+ariaHidden = makeAttribute "aria-hidden" "true"
+
+-- | A panel's collapse toggle.
+toggleButton ::
+  T.Text -> T.Text -> Bool -> T.Text -> T.Text -> Html () -> Html ()
+toggleButton elId cls expanded label title body =
+  button_
+    [ id_ elId
+    , type_ "button"
+    , class_ cls
+    , makeAttribute "aria-expanded" (if expanded then "true" else "false")
+    , makeAttribute "aria-label" label
+    , title_ title
+    ]
+    body
+
+-- | A range slider with matching ARIA bounds.
+rangeInput ::
+  T.Text -> T.Text -> Int -> Int -> Int -> Int -> T.Text -> Html ()
+rangeInput elId cls lo hi step value label =
+  input_
+    [ id_ elId
+    , type_ "range"
+    , class_ cls
+    , makeAttribute "min" (tshow lo)
+    , makeAttribute "max" (tshow hi)
+    , makeAttribute "step" (tshow step)
+    , makeAttribute "value" (tshow value)
+    , makeAttribute "aria-valuemin" (tshow lo)
+    , makeAttribute "aria-valuemax" (tshow hi)
+    , makeAttribute "aria-valuenow" (tshow value)
+    , makeAttribute "aria-label" label
+    ]
+ where
+  tshow = T.pack . show
+
 debugRow :: T.Text -> T.Text -> Bool -> Html ()
 debugRow valId label wide =
   div_
@@ -240,14 +265,12 @@ debugMenu =
     , makeAttribute "aria-label" "Stats"
     ]
     $ do
-      button_
-        [ id_ lifeDebugCollapseId
-        , type_ "button"
-        , class_ "life-panel-toggle"
-        , makeAttribute "aria-expanded" "false"
-        , makeAttribute "aria-label" "Expand stats"
-        , title_ "Stats"
-        ]
+      toggleButton
+        lifeDebugCollapseId
+        "life-panel-toggle"
+        False
+        "Expand stats"
+        "Stats"
         "Stats"
       div_
         [ class_ "life-panel-body"
@@ -270,14 +293,12 @@ settingsMenu =
     , makeAttribute "aria-label" "Settings"
     ]
     $ do
-      button_
-        [ id_ lifeSettingsCollapseId
-        , type_ "button"
-        , class_ "life-panel-toggle"
-        , makeAttribute "aria-expanded" "true"
-        , makeAttribute "aria-label" "Collapse settings"
-        , title_ "Settings"
-        ]
+      toggleButton
+        lifeSettingsCollapseId
+        "life-panel-toggle"
+        True
+        "Collapse settings"
+        "Settings"
         "Settings"
       div_ [class_ "life-panel-body"] $ do
         div_ [class_ "life-settings-row"] $ do
@@ -322,19 +343,14 @@ settingsMenu =
         label_ [class_ "life-settings-row", for_ lifeSettingsTickId] $ do
           span_ [class_ "life-settings-label"] "Tick"
           span_ [id_ lifeSettingsTickValId, class_ "life-settings-value"] "max"
-        input_
-          [ id_ lifeSettingsTickId
-          , type_ "range"
-          , class_ "life-settings-range"
-          , makeAttribute "min" (T.pack (show tickMinMs))
-          , makeAttribute "max" (T.pack (show tickMaxMs))
-          , makeAttribute "step" (T.pack (show tickStepMs))
-          , makeAttribute "value" (T.pack (show tickDefaultMs))
-          , makeAttribute "aria-valuemin" (T.pack (show tickMinMs))
-          , makeAttribute "aria-valuemax" (T.pack (show tickMaxMs))
-          , makeAttribute "aria-valuenow" (T.pack (show tickDefaultMs))
-          , makeAttribute "aria-label" "Tick interval"
-          ]
+        rangeInput
+          lifeSettingsTickId
+          "life-settings-range"
+          tickMinMs
+          tickMaxMs
+          tickStepMs
+          tickDefaultMs
+          "Tick interval"
 
 gridSizeOption :: (Int, Int) -> Html ()
 gridSizeOption (w, h) =
@@ -358,14 +374,12 @@ toolsHud =
     , makeAttribute "aria-label" "Placement tools"
     ]
     $ do
-      button_
-        [ id_ lifeToolsCollapseId
-        , type_ "button"
-        , class_ "life-tools-collapse"
-        , makeAttribute "aria-expanded" "true"
-        , makeAttribute "aria-label" "Collapse tools"
-        , title_ "Collapse tools"
-        ]
+      toggleButton
+        lifeToolsCollapseId
+        "life-tools-collapse"
+        True
+        "Collapse tools"
+        "Collapse tools"
         "−"
       div_ [class_ "life-tools-body"] $ do
         toolButton mouseToolSid "Mouse" [(1, 1)] (Just (3, 3)) True
@@ -385,19 +399,14 @@ toolsHud =
             ]
             $ do
               "Brush "
-              input_
-                [ id_ lifeEraserRadiusId
-                , type_ "range"
-                , class_ "life-eraser-radius"
-                , makeAttribute "min" (T.pack (show eraserMinRadius))
-                , makeAttribute "max" (T.pack (show eraserMaxRadius))
-                , makeAttribute "step" "1"
-                , makeAttribute "value" (T.pack (show eraserDefaultRadius))
-                , makeAttribute "aria-valuemin" (T.pack (show eraserMinRadius))
-                , makeAttribute "aria-valuemax" (T.pack (show eraserMaxRadius))
-                , makeAttribute "aria-valuenow" (T.pack (show eraserDefaultRadius))
-                , makeAttribute "aria-label" "Eraser brush size"
-                ]
+              rangeInput
+                lifeEraserRadiusId
+                "life-eraser-radius"
+                eraserMinRadius
+                eraserMaxRadius
+                1
+                eraserDefaultRadius
+                "Eraser brush size"
           span_
             [ id_ lifeEraserRadiusValId
             , class_ "life-eraser-radius-val"
