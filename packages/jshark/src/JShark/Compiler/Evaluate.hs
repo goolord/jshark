@@ -28,6 +28,8 @@ module JShark.Compiler.Evaluate
   , parseBigIntString
   , uint8Elems
   , packUint8
+  , isFiniteDouble
+  , math1Fn
   )
 where
 
@@ -54,17 +56,7 @@ import GHC.Exts
 import GHC.ST (ST (..), runST)
 import GHC.TypeLits (KnownSymbol, sameSymbol)
 import GHC.Word (Word8 (..))
-import JShark.Api.Prim
-  ( MathBinary (..)
-  , MathUnary (..)
-  , isFiniteDouble
-  , matchMathBinary
-  , matchMathUnary
-  , mathBinaryFn
-  , mathUnaryFn
-  )
 import JShark.Api.Types
-import JShark.Compiler.Emit (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import Numeric (readInt)
 
 -- | Why the host interpreter could not produce a value.
@@ -195,18 +187,8 @@ lookupField = go . reverse
 
 evalKernel :: Kernel Value u -> Value u
 evalKernel = \case
-  KPlus x y -> num2 (+) x y
-  KTimes x y -> num2 (*) x y
-  KMinus x y -> num2 (-) x y
+  KNum op x y -> ValueNumber (numOpFn op (num x) (num y))
   KNegate x -> ValueNumber (negate (num x))
-  KFracDiv x y -> num2 (/) x y
-  KRem x y -> num2 jsRem x y
-  KBitAnd x y -> num2 (jsBit2 (.&.)) x y
-  KBitOr x y -> num2 (jsBit2 (.|.)) x y
-  KBitXor x y -> num2 (jsBit2 xor) x y
-  KShl x y -> num2 jsShl x y
-  KShr x y -> num2 jsShr x y
-  KUShr x y -> num2 jsUShr x y
   KBig op x y -> ValueBigInt (evalBigBin op (big x) (big y))
   KBigNeg x -> ValueBigInt (negate (big x))
   KConcat x y -> ValueString (str x <> str y)
@@ -216,13 +198,7 @@ evalKernel = \case
   KOr x y -> case eval x of ValueBool True -> ValueBool True; _ -> eval y
   KEq _ x y -> ValueBool (valueEq (eval x) (eval y))
   KNEq _ x y -> ValueBool (not (valueEq (eval x) (eval y)))
-  KGTh x y -> cmp (== GT) x y
-  KLTh x y -> cmp (== LT) x y
-  KGTEq x y -> cmp (/= LT) x y
-  KLTEq x y -> cmp (/= GT) x y
- where
-  num2 f x y = ValueNumber (f (num x) (num y))
-  cmp p x y = ValueBool (p (valueCompare (eval x) (eval y)))
+  KCmp c x y -> ValueBool (cmpOpFn c (valueCompare (eval x) (eval y)))
 
 evalMethod :: Method Value u -> Value u
 evalMethod = \case
@@ -254,12 +230,8 @@ mergeSort cmp = go
 evalFixed :: FixedOp a b c u -> FixedArgs Value a b c -> Value u
 evalFixed op args = case (op, args) of
   (FixSome, ArgsU x) -> ValueOption (Just (eval x))
-  (_, ArgsU x)
-    | Just (MathUnary op') <- matchMathUnary op ->
-        ValueNumber (mathUnaryFn op' (num x))
-  (_, ArgsB x y)
-    | Just (MathBinary op') <- matchMathBinary op ->
-        ValueNumber (mathBinaryFn op' (num x) (num y))
+  (FixMath1 m, ArgsU x) -> ValueNumber (math1Fn m (num x))
+  (FixMath2 m, ArgsB x y) -> ValueNumber (math2Fn m (num x) (num y))
   (FixArrLen, ArgsU xs) -> ValueNumber (fromIntegral (length (arr xs)))
   (FixU8Len, ArgsU b) -> ValueNumber (fromIntegral (length (uint8Elems (bytes b))))
   (FixParseInt, ArgsB s r) -> ValueNumber (jsParseInt (str s) (truncate (num r)))
@@ -306,6 +278,49 @@ evalFixed op args = case (op, args) of
         ]
   -- String and regex ops are codegen-only.
   _ -> cannotEval "a fixed stdlib op"
+
+math1Fn :: Math1 -> Double -> Double
+math1Fn = \case
+  Abs -> abs
+  Sign -> signum
+  Sin -> sin
+  Cos -> cos
+  Tan -> tan
+  Asin -> asin
+  Acos -> acos
+  Atan -> atan
+  Sinh -> sinh
+  Cosh -> cosh
+  Tanh -> tanh
+  Asinh -> asinh
+  Acosh -> acosh
+  Atanh -> atanh
+  Sqrt -> sqrt
+  Cbrt -> \x -> signum x * (abs x ** (1 / 3))
+  Exp -> exp
+  Log -> log
+  Log2 -> logBase 2
+  Log10 -> logBase 10
+  Floor -> integral floor
+  Ceil -> integral ceiling
+  -- JS rounds halves toward +Infinity (@Math.round(-2.5) === -2@), unlike
+  -- Haskell's banker's 'round'.
+  Round -> integral (floor . (+ 0.5))
+  Trunc -> integral truncate
+ where
+  integral :: (Double -> Integer) -> Double -> Double
+  integral f d = if isFiniteDouble d then fromIntegral (f d) else d
+
+math2Fn :: Math2 -> Double -> Double -> Double
+math2Fn = \case
+  Pow -> (**)
+  Atan2 -> atan2
+  Max -> max
+  Min -> min
+  Hypot -> \x y -> sqrt (x * x + y * y)
+
+isFiniteDouble :: Double -> Bool
+isFiniteDouble d = not (isNaN d) && not (isInfinite d)
 
 -- Values ----------------------------------------------------------------------
 

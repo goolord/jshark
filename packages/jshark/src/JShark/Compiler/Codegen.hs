@@ -46,13 +46,6 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import JShark.Api.Prim
-  ( fixedBinaryJS
-  , fixedTernaryJS
-  , fixedUnaryJS
-  , math1Name
-  , math2Name
-  )
 import JShark.Api.Types
 import JShark.Compiler.Emit
 import JShark.Compiler.Evaluate (uint8Elems)
@@ -182,14 +175,14 @@ number root = fst (runState (at PE root) 0)
 -- create them after the tree optimizer visited the node.
 foldArith :: P -> P
 foldArith (P i a n) = P i a $ case fmap foldArith n of
-  NK2 op (pN -> LitV (ValueNumber x)) (pN -> LitV (ValueNumber y))
+  NK2 (ONum op) (pN -> LitV (ValueNumber x)) (pN -> LitV (ValueNumber y))
     | Just f <- arith op -> NLit (SomeValue (ValueNumber (f x y)))
   n' -> n'
  where
   arith = \case
-    OPlus -> Just (+)
-    OMinus -> Just (-)
-    OTimes -> Just (*)
+    NPlus -> Just (+)
+    NMinus -> Just (-)
+    NTimes -> Just (*)
     _ -> Nothing
 
 -- | Leaves first: by height, then by number.
@@ -751,16 +744,19 @@ emit st table s0 (P _ ann n) = case n of
 
   fixed :: FixedOp a b cc u -> [P] -> (ES, Code)
   fixed op xs = case (op, xs, map c xs) of
-    (_, _, [Code d r]) | Just nm <- math1Name op -> same (Code d ("Math." <> jsText nm <> parens r))
-    (_, _, [Code d r, Code d' r'])
-      | Just nm <- math2Name op ->
-          same (Code (d $$ d') ("Math." <> jsText nm <> parens (r <> ", " <> r')))
-    (_, [x], [Code d r]) -> same (Code d (fixedUnaryJS op (operand x r)))
+    (FixMath1 m, _, [Code d r]) -> same (Code d ("Math." <> lower m <> parens r))
+    (FixMath2 m, _, [Code d r, Code d' r']) ->
+      same (Code (d $$ d') ("Math." <> lower m <> parens (r <> ", " <> r')))
     (FixGroupBy, [x, _], [Code d r, Code d' r']) ->
       let (s1, call) = shim GroupBy [operand x r, r'] s0 in (s1, Code (d $$ d') call)
-    (_, [x, _], [Code d r, Code d' r']) -> same (Code (d $$ d') (fixedBinaryJS op (operand x r) r'))
-    (_, [x, _, _], [Code d r, Code d' r', Code d'' r'']) -> same (Code (d $$ d' $$ d'') (fixedTernaryJS op (operand x r) r' r''))
+    (_, x : _, cs@(Code _ r : _)) ->
+      same
+        ( Code
+            (foldr1 ($$) [d | Code d _ <- cs])
+            (fixedJS op (operand x r) [a | Code _ a <- drop 1 cs])
+        )
     _ -> error "JShark.Compiler.Codegen: unexpected fixed arity"
+  lower m = jsString (map Char.toLower (show m))
 
   objectLit fs =
     let
@@ -839,20 +835,54 @@ isSimple p = case pN p of
     NArray es -> all simpleEffect es
     _ -> False
 
+-- | A fixed-arity stdlib call on its (parenthesized) receiver and the
+-- remaining arguments.
+fixedJS :: FixedOp a b c u -> JS -> [JS] -> JS
+fixedJS op r args = case op of
+  FixToUpper -> method "toUpperCase"
+  FixToLower -> method "toLowerCase"
+  FixTrim -> method "trim"
+  FixArrLen -> r <> ".length"
+  FixU8Len -> r <> ".length"
+  FixStrLen -> r <> ".length"
+  FixStringify -> call "JSON.stringify"
+  FixToBigInt -> call "BigInt"
+  FixFromBigInt -> call "Number"
+  FixParseBigInt -> call "BigInt"
+  FixSome -> "{some: true, value: " <> r <> "}"
+  FixOptionToNative -> call "((o) => o.some ? o.value : null)"
+  FixIndexOf -> method "indexOf"
+  FixSplit -> method "split"
+  FixIncludes -> method "includes"
+  FixConcat -> method "concat"
+  FixJoin -> method "join"
+  FixTest -> method "test"
+  FixParseInt -> call "parseInt"
+  FixCall2 -> parens r <> parens (commas args)
+  FixSlice -> method "slice"
+  FixArrSlice -> method "slice"
+  FixReplace -> method "replace"
+  _ -> error "JShark.Compiler.Codegen: not a plain fixed op"
+ where
+  method name = r <> "." <> name <> parens (commas args)
+  call f = f <> parens (commas (r : args))
+  commas = hcat . intersperse ", "
+
 op2JS :: Op2 -> Text
 op2JS = \case
   OConcat -> "+"
-  OPlus -> "+"
-  OMinus -> "-"
-  OTimes -> "*"
-  ODiv -> "/"
-  ORem -> "%"
-  OBitAnd -> "&"
-  OBitOr -> "|"
-  OBitXor -> "^"
-  OShl -> "<<"
-  OShr -> ">>"
-  OUShr -> ">>>"
+  ONum op -> case op of
+    NPlus -> "+"
+    NMinus -> "-"
+    NTimes -> "*"
+    NDiv -> "/"
+    NRem -> "%"
+    NBitAnd -> "&"
+    NBitOr -> "|"
+    NBitXor -> "^"
+    NShl -> "<<"
+    NShr -> ">>"
+    NUShr -> ">>>"
   OBig op -> case op of
     BPlus -> "+"
     BMinus -> "-"
@@ -866,10 +896,11 @@ op2JS = \case
     BShr -> ">>"
   OEq _ -> "==="
   ONEq _ -> "!=="
-  OGTh -> ">"
-  OLTh -> "<"
-  OGTEq -> ">="
-  OLTEq -> "<="
+  OCmp c -> case c of
+    CGT -> ">"
+    CLT -> "<"
+    CGE -> ">="
+    CLE -> "<="
   OAnd -> "&&"
   OOr -> "||"
 

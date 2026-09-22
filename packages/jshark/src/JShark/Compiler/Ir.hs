@@ -38,7 +38,6 @@ module JShark.Compiler.Ir
   )
 where
 
-import Data.Bits (xor, (.&.), (.|.))
 import Data.Foldable (toList)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
@@ -47,21 +46,27 @@ import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.TypeLits (symbolVal)
-import JShark.Api.Prim
 import JShark.Api.Types
   ( BigBinOp
+  , CmpOp
   , Expr (Literal)
   , FFIForm
   , FieldLit (..)
   , FixedOp (..)
   , LamInfo (..)
+  , Math1 (..)
+  , Math2 (..)
+  , NumOp
   , Value (..)
+  , cmpOpFn
+  , numOpFn
   )
-import JShark.Compiler.Emit (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Compiler.Evaluate
   ( isCheapValue
+  , isFiniteDouble
   , jsShow
   , keepLastByKey
+  , math1Fn
   , parseBigIntString
   , tryEvalBigBin
   , typeOfValue
@@ -86,26 +91,13 @@ data IrField r = IrField !FieldKind !Text r
 -- structural @$valueEq@ shim over @===@.
 data Op2
   = OConcat
-  | OPlus
-  | OTimes
-  | OMinus
-  | ODiv
-  | ORem
-  | OBitAnd
-  | OBitOr
-  | OBitXor
-  | OShl
-  | OShr
-  | OUShr
+  | ONum NumOp
   | OBig BigBinOp
   | OAnd
   | OOr
   | OEq Bool
   | ONEq Bool
-  | OGTh
-  | OLTh
-  | OGTEq
-  | OLTEq
+  | OCmp CmpOp
 
 data Op1 = ONeg | OBigNeg | OShow | OTypeOf
 
@@ -617,44 +609,29 @@ litOf = \case
   Ir (NLit v) -> Just v
   _ -> Nothing
 
-num2 :: (Double -> Double -> Double) -> Ir -> Ir -> Maybe SomeValue
-num2 f (Ir (LitV (ValueNumber a))) (Ir (LitV (ValueNumber b))) = Just (SomeValue (ValueNumber (f a b)))
-num2 _ _ _ = Nothing
-
 fold2 :: Op2 -> Ir -> Ir -> Maybe SomeValue
 fold2 op x y = case op of
   OConcat
     | Ir (LitV (ValueString a)) <- x
     , Ir (LitV (ValueString b)) <- y ->
         Just (SomeValue (ValueString (a <> b)))
-  OPlus -> num2 (+) x y
-  OTimes -> num2 (*) x y
-  OMinus -> num2 (-) x y
-  ODiv -> num2 (/) x y
-  ORem -> num2 jsRem x y
-  OBitAnd -> num2 (jsBit2 (.&.)) x y
-  OBitOr -> num2 (jsBit2 (.|.)) x y
-  OBitXor -> num2 (jsBit2 xor) x y
-  OShl -> num2 jsShl x y
-  OShr -> num2 jsShr x y
-  OUShr -> num2 jsUShr x y
+  ONum n
+    | Ir (LitV (ValueNumber a)) <- x
+    , Ir (LitV (ValueNumber b)) <- y ->
+        Just (SomeValue (ValueNumber (numOpFn n a b)))
   OBig b
     | Ir (LitV (ValueBigInt a)) <- x
     , Ir (LitV (ValueBigInt c)) <- y ->
         SomeValue . ValueBigInt <$> tryEvalBigBin b a c
   OEq _ -> bool <$> eqFold x y
   ONEq _ -> bool . not <$> eqFold x y
-  OGTh -> ordFold (== GT)
-  OLTh -> ordFold (== LT)
-  OGTEq -> ordFold (/= LT)
-  OLTEq -> ordFold (/= GT)
+  OCmp c -> do
+    SomeValue a <- litOf x
+    SomeValue b <- litOf y
+    bool . cmpOpFn c <$> sameFamilyOrd a b
   _ -> Nothing
  where
   bool = SomeValue . ValueBool
-  ordFold cmp = do
-    SomeValue a <- litOf x
-    SomeValue b <- litOf y
-    bool . cmp <$> sameFamilyOrd a b
 
 fold1 :: Op1 -> Ir -> Maybe SomeValue
 fold1 op (Ir x) = case (op, x) of
@@ -667,10 +644,13 @@ fold1 op (Ir x) = case (op, x) of
 
 foldFixed :: FixedOp a b c u -> [Ir] -> Maybe SomeValue
 foldFixed op args = case (op, map litOf args) of
-  (_, [Just (SomeValue (ValueNumber a))])
-    | Just (MathUnary op') <- matchMathUnary op -> num <$> exactMathUnary op' a
-  (_, [Just (SomeValue (ValueNumber a)), Just (SomeValue (ValueNumber b))])
-    | Just (MathBinary op') <- matchMathBinary op -> num <$> exactMathBinary op' a b
+  (FixMath1 m, [Just (SomeValue (ValueNumber a))]) -> num <$> exactMath1 m a
+  ( FixMath2 m
+    , [Just (SomeValue (ValueNumber a)), Just (SomeValue (ValueNumber b))]
+    )
+    | m == Max || m == Min
+    , isFiniteDouble a && isFiniteDouble b ->
+        Just (num ((if m == Max then max else min) a b))
   (FixArrLen, [Just (SomeValue (ValueArray vs))]) -> Just (num (fromIntegral (length vs)))
   (FixToBigInt, [Just (SomeValue (ValueNumber d))])
     | isFiniteDouble d
@@ -682,6 +662,48 @@ foldFixed op args = case (op, map litOf args) of
   _ -> Nothing
  where
   num = SomeValue . ValueNumber
+
+-- | Math results that are exact in every JS engine.
+exactMath1 :: Math1 -> Double -> Maybe Double
+exactMath1 m a = case m of
+  Abs -> Just (abs a)
+  Sign | isFiniteDouble a -> Just (signum a)
+  Sin | a == 0 -> Just 0
+  Cos | a == 0 -> Just 1
+  Tan | a == 0 -> Just 0
+  Sinh | a == 0 -> Just 0
+  Cosh | a == 0 -> Just 1
+  Tanh | a == 0 -> Just 0
+  Asinh | a == 0 -> Just 0
+  Acosh | a == 1 -> Just 0
+  Atanh | a == 0 -> Just 0
+  Sqrt | a >= 0, let
+                   r = sqrt a, r * r == a -> Just r
+  Floor | isFiniteDouble a -> Just (math1Fn Floor a)
+  Ceil | isFiniteDouble a -> Just (math1Fn Ceil a)
+  Round | isFiniteDouble a -> Just (math1Fn Round a)
+  Trunc | isFiniteDouble a -> Just (math1Fn Trunc a)
+  _ -> Nothing
+
+-- | Array reads, stringify, and calls see mutable state: they may not move.
+isMoveFixed :: FixedOp a b c u -> Bool
+isMoveFixed = \case
+  FixArrLen -> False
+  FixIncludes -> False
+  FixConcat -> False
+  FixJoin -> False
+  FixArrSlice -> False
+  FixGroupBy -> False
+  FixStringify -> False
+  FixCall2 -> False
+  _ -> True
+
+-- | Stringify may run @toJSON@ and a call may do anything: never dropped.
+isDropFixed :: FixedOp a b c u -> Bool
+isDropFixed = \case
+  FixStringify -> False
+  FixCall2 -> False
+  _ -> True
 
 -- | Fold @==@ on same-family literals and on literal frozen records.
 eqFold :: Ir -> Ir -> Maybe Bool

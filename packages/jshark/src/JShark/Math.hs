@@ -80,20 +80,20 @@ cbrt
   , round
   , trunc ::
     Expr f 'Number -> Expr f 'Number
-cbrt = expr1 FixCbrt
-log2 = expr1 FixLog2
-log10 = expr1 FixLog10
-floor = expr1 FixFloor
-ceil = expr1 FixCeil
-round = expr1 FixRound
-trunc = expr1 FixTrunc
+cbrt = expr1 (FixMath1 Cbrt)
+log2 = expr1 (FixMath1 Log2)
+log10 = expr1 (FixMath1 Log10)
+floor = expr1 (FixMath1 Floor)
+ceil = expr1 (FixMath1 Ceil)
+round = expr1 (FixMath1 Round)
+trunc = expr1 (FixMath1 Trunc)
 
 -- | Binary @Math@ functions: @Math.atan2@, @Math.max@, @Math.min@, @Math.hypot@.
 atan2, max, min, hypot :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-atan2 x y = expr2 FixAtan2 x y
-max x y = expr2 FixMax x y
-min x y = expr2 FixMin x y
-hypot x y = expr2 FixHypot x y
+atan2 x y = expr2 (FixMath2 Atan2) x y
+max x y = expr2 (FixMath2 Max) x y
+min x y = expr2 (FixMath2 Min) x y
+hypot x y = expr2 (FixMath2 Hypot) x y
 
 -- | @Math.random()@. Not pure (yields a different value each call), so
 -- it's an 'Effect'.

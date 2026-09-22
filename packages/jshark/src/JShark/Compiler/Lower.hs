@@ -105,28 +105,15 @@ lowerE = \case
 lowerK :: Kernel Tag u -> L Ir
 lowerK = \case
   KConcat x y -> k2 OConcat x y
-  KPlus x y -> k2 OPlus x y
-  KTimes x y -> k2 OTimes x y
-  KMinus x y -> k2 OMinus x y
+  KNum op x y -> k2 (ONum op) x y
   KNegate x -> k1 ONeg x
-  KFracDiv x y -> k2 ODiv x y
-  KRem x y -> k2 ORem x y
-  KBitAnd x y -> k2 OBitAnd x y
-  KBitOr x y -> k2 OBitOr x y
-  KBitXor x y -> k2 OBitXor x y
-  KShl x y -> k2 OShl x y
-  KShr x y -> k2 OShr x y
-  KUShr x y -> k2 OUShr x y
   KBig op x y -> k2 (OBig op) x y
   KBigNeg x -> k1 OBigNeg x
   KAnd x y -> k2 OAnd x y
   KOr x y -> k2 OOr x y
   KEq s x y -> k2 (OEq s) x y
   KNEq s x y -> k2 (ONEq s) x y
-  KGTh x y -> k2 OGTh x y
-  KLTh x y -> k2 OLTh x y
-  KGTEq x y -> k2 OGTEq x y
-  KLTEq x y -> k2 OLTEq x y
+  KCmp c x y -> k2 (OCmp c) x y
   KShow x -> k1 OShow x
   KTypeOf x -> k1 OTypeOf x
  where

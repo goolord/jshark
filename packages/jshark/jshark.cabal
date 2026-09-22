@@ -101,7 +101,6 @@ library
   other-modules:
     -- Compiler internals; tests and tooling reach them through
     -- 'JShark.Internal'.
-    JShark.Api.Prim
     JShark.Compiler.Codegen
     JShark.Compiler.Emit
     JShark.Compiler.Evaluate
