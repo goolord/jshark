@@ -2,7 +2,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 -- | Conway step and render in JShark. Grid buffers use typed byte
@@ -22,6 +24,7 @@ where
 
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, newRecord)
+import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import JShark.Example.Life.Catalog (catalogInitialCells, stampCatalogCells)
@@ -38,8 +41,6 @@ import JShark.Example.Life.Grid
   , RenderDirty (..)
   , StepCtx (..)
   , StepRegion (..)
-  , drawGridFallback
-  , drawGridViewport
   , eraseCircleCells
   , hideFallback2d
   , initPaletteRgba
@@ -52,7 +53,7 @@ import JShark.Example.Life.Grid
   , stepGrid
   , syncPaletteRgbaSid
   )
-import JShark.Example.Life.GridApi (seedSoupRegion)
+import JShark.Example.Life.GridApi (paintGridCells, seedSoupRegion)
 import JShark.Example.Life.Names
   ( recordDiscoveredName
   , refreshTakenNames
@@ -434,57 +435,131 @@ renderLife viewport renderDirty state fallback = do
   zoom <- getProp viewport "zoom"
   renderValid <- getProp viewport "renderPanValid"
   viewportDirty <- pure (not_ renderValid)
+  let
+    fr = Frame {..}
   whenS (glLost .== 0) $ do
     hideFallback2d fallback
-    drawGridViewport
-      app
-      sprite
-      img
-      pixels
-      paletteRgba
-      alive
-      species
-      liveList
-      changedList
-      sceneDirty
-      viewportDirty
-      w
-      h
-      px
-      cw
-      ch
-      panX
-      panY
-      zoom
-      renderDirty
-      viewport
-      now
-  whenS (glLost .!= 0) $
-    drawGridFallback
-      fallback
-      pixels
-      paletteRgba
-      alive
-      species
-      liveList
-      changedList
-      sceneDirty
-      viewportDirty
-      w
-      h
-      px
-      cw
-      ch
-      panX
-      panY
-      zoom
-      renderDirty
+    drawGridViewport app sprite img fr viewport now
+  whenS (glLost .!= 0) $ drawGridFallback fallback fr
   Array.clear_ changedList
   set @"sceneDirty" state false_
   _ <- setProp viewport "renderPanX" panX
   _ <- setProp viewport "renderPanY" panY
   _ <- setProp viewport "renderZoom" zoom
   setProp viewport "renderPanValid" true_
+
+-- | What one frame's render reads: buffers, world size, and pan/zoom.
+data Frame f = Frame
+  { pixels, paletteRgba, alive, species :: Expr f 'Uint8Array
+  , liveList, changedList :: Expr f ('Array 'Number)
+  , sceneDirty, viewportDirty :: Expr f 'Bool
+  , w, h, px, cw, ch, panX, panY, zoom :: Expr f 'Number
+  , renderDirty :: Effect f (MutableObjectOf RenderDirty)
+  }
+
+-- | The atlas only stores the visible rect, so pan/zoom must refill it.
+visRefresh, needsPaint :: Frame f -> Expr f 'Bool
+visRefresh Frame {..} = sceneDirty .|| viewportDirty
+needsPaint fr@Frame {..} = visRefresh fr .|| Array.length changedList .> 0
+
+-- | Repaint the visible atlas rect when the scene, viewport, or a cell
+-- changed. Dead cells get A=0 so the SDF can read liveness from alpha.
+paintVisible :: Frame f -> EffectSyntax f (f 'Unit)
+paintVisible fr@Frame {..} =
+  whenS (needsPaint fr) $ do
+    toSyntax_ $
+      paintGridCells
+        pixels
+        w
+        h
+        paletteRgba
+        alive
+        species
+        w
+        (number 1)
+        (number 0)
+        (number 0)
+        (number 15 + shl (number 23) (number 8) + shl (number 42) (number 16))
+        liveList
+        changedList
+        (visRefresh fr)
+        (Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1))
+        (Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1))
+        (Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1))
+        (Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1))
+        renderDirty
+    done
+ where
+  cellScale = px * zoom
+
+drawGridViewport ::
+  Expr f ('MutableObject Pixi.Application)
+  -> Expr f ('MutableObject Pixi.Sprite)
+  -> Expr f ('MutableObject Pixi.Texture)
+  -> Frame f
+  -> Effect f ('MutableObject ())
+  -> Expr f 'Number
+  -> EffectSyntax f (f 'Unit)
+drawGridViewport app sprite texture fr@Frame {..} viewport now = do
+  paintVisible fr
+  sprH <- hold (expr sprite)
+  gridTex <- hold (expr texture)
+  whenS needsDraw $ Pixi.setSpriteViewport sprH panX panY zoom px
+  Pixi.presentGrid app viewport gridTex now (needsPaint fr) needsDraw
+  done
+ where
+  needsDraw = needsPaint fr .|| viewportDirty
+
+-- | CPU fallback when WebGL is lost or unavailable: paint the atlas, then
+--   blit it onto the 2D overlay canvas with the same pan/zoom transform the
+--   GPU sprite would use. The overlay sits above the dead WebGL canvas and
+--   is pointer-events:none so input still lands on the board.
+drawGridFallback ::
+  Effect f ('MutableObject DomElement) -> Frame f -> EffectSyntax f (f 'Unit)
+drawGridFallback cv fr@Frame {..} = do
+  paintVisible fr
+  toSyntax_
+    $ discard
+    $ ffi
+      ( "(cv, pixels, texW, texH, scale, panX, panY, cw, ch) => {"
+          <> " if (cv.style.display === 'none') {"
+          <> "   cv.style.display = 'block';"
+          <> "   console.warn('[Life] rendering via 2D canvas fallback');"
+          <> " }"
+          <> " let st = cv.__lifeBlit;"
+          <> " if (!st || st.img.data.buffer !== pixels.buffer) {"
+          <> "   const off = document.createElement('canvas');"
+          <> "   off.width = texW; off.height = texH;"
+          <> "   st = cv.__lifeBlit = {"
+          <> "     off,"
+          <> "     offCtx: off.getContext('2d'),"
+          <> "     ctx: cv.getContext('2d'),"
+          <> "     img: new ImageData(new Uint8ClampedArray(pixels.buffer), texW, texH)"
+          <> "   };"
+          <> " }"
+          <> " st.offCtx.putImageData(st.img, 0, 0);"
+          <> " const c = st.ctx;"
+          <> " c.setTransform(1, 0, 0, 1, 0, 0);"
+          <> " c.fillStyle = '#0f172a';"
+          <> " c.fillRect(0, 0, cw, ch);"
+          <> " c.imageSmoothingEnabled = false;"
+          <> " c.setTransform(scale, 0, 0, scale, panX, panY);"
+          <> " c.drawImage(st.off, 0, 0);"
+          <> " c.setTransform(1, 0, 0, 1, 0, 0);"
+          <> " }"
+      )
+      ( ArgEffect cv
+          <: arg pixels
+          <: arg w
+          <: arg h
+          <: arg (px * zoom)
+          <: arg panX
+          <: arg panY
+          <: arg cw
+          <: arg ch
+          <: RecNil
+      )
+  done
 
 resizeWorld ::
   Effect f (MutableObjectOf LifeState)

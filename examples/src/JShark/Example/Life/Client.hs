@@ -3,8 +3,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 module JShark.Example.Life.Client (mainJS) where
@@ -114,6 +116,49 @@ data Fps = Fps
   }
   deriving Generic
 
+-- | Handles the frame's event handlers and frame loop share.
+data Ui f = Ui
+  { canvas :: Effect f ('MutableObject Dom.DomElement)
+  , viewport :: Effect f ('MutableObject ())
+  , state :: Effect f (MutableObjectOf LifeState)
+  , stepCtx :: Effect f (MutableObjectOf StepCtx)
+  , editScratch :: Effect f (MutableObjectOf BoundScratch)
+  , registry :: Effect f ('MutableObject Registry)
+  , indexTracker :: Effect f ('MutableObject IndexTracker)
+  , seenSpecies :: Effect f ('Set 'Number)
+  , meter :: Effect f (MutableObjectOf Fps)
+  , tipRef :: Effect f ('MutableObject ())
+  , hits :: Effect f ('Set 'Number)
+  , sidsScratch :: Expr f ('Array 'Number)
+  , toolRef :: Effect f ('MutableObject ())
+  , toolsMap :: Effect f ('Map 'Number ('Array ('Array 'Number)))
+  , toolBtnsE :: Expr f ('Array ('MutableObject Dom.DomElement))
+  , typesList
+    , indexTotal
+    , tooltip
+    , swatchEl
+    , nameEl
+    , statGen
+    , statCells
+    , statFps
+    , statZoom
+    , statRender
+    , settingsZoom
+    , settingsZoomIn
+    , settingsZoomOut
+    , settingsReset
+    , settingsPurge
+    , settingsGrid
+    , settingsTick
+    , settingsTickVal
+    , pauseOverlay
+    , eraserGhost
+    , eraserSize
+    , eraserRadius
+    , eraserRadiusVal ::
+      Effect f ('MutableObject Dom.DomElement)
+  }
+
 mainJS :: forall f. EffectSyntax f (f 'Unit)
 mainJS = do
   canvas <- Dom.lookupId (string boardId)
@@ -215,10 +260,12 @@ bootLoaded canvas app appH viewport renderDirty = do
   eraserSize <- Dom.lookupId (string lifeEraserSizeId)
   eraserRadius <- Dom.lookupId (string lifeEraserRadiusId)
   eraserRadiusVal <- Dom.lookupId (string lifeEraserRadiusValId)
-  wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch
-  wireTools toolRef toolBtnsE canvas eraserSize viewport
-  wireEraserSize toolRef eraserRadius eraserRadiusVal
-  syncEraserUi toolRef canvas eraserSize viewport
+  let
+    ui = Ui {..}
+  wire ui
+  wireTools ui
+  wireEraserSize ui
+  syncEraserUi ui
   wireCollapse
     toolsTray
     toolsCollapse
@@ -240,26 +287,18 @@ bootLoaded canvas app appH viewport renderDirty = do
     "Expand settings"
     "−"
     "Settings"
-  wireSettings viewport settingsZoomIn settingsZoomOut settingsReset
-  wirePurgeDiscoveries
-    state
-    viewport
-    registry
-    indexTracker
-    seenSpecies
-    typesList
-    indexTotal
-    settingsPurge
-  wireSimSettings state viewport settingsGrid settingsTick settingsTickVal
+  wireSettings ui
+  wirePurgeDiscoveries ui
+  wireSimSettings ui
   renderLife viewport renderDirty state fallback2d
   Timers.foreverFrame $ \now -> do
     tickFps meter now
     paused <- state.paused
     stepT0 <- performanceNow
     whenS (not_ paused) $
-      stepLifeFrame state viewport registry stepCtx now
+      stepLifeFrame ui now
     stepT1 <- performanceNow
-    tickIndex state registry indexTracker seenSpecies typesList indexTotal now
+    tickIndex ui now
     Pixi.tickGlRecovery canvas viewport state
     otherEnd <- performanceNow
     renderStart <- performanceNow
@@ -279,25 +318,15 @@ bootLoaded canvas app appH viewport renderDirty = do
       (renderEnd - renderStart)
       (otherEnd - stepT1)
       glLost
-    syncPauseOverlay state pauseOverlay
+    syncPauseOverlay ui
     lastHud <- getProp viewport "lastHudMs"
     whenS (now - lastHud .>= number (fromIntegral hudRefreshMs)) $ do
-      updateHud
-        state
-        meter
-        viewport
-        statGen
-        statCells
-        statFps
-        statZoom
-        statRender
-        (renderEnd - renderStart)
-        settingsZoom
+      updateHud ui (renderEnd - renderStart)
       _ <- setProp viewport "lastHudMs" now
       done
-    tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
-    tickEraserGhost toolRef tipRef state viewport eraserGhost
-    tickGliderGhost toolRef viewport
+    tickHover ui
+    tickEraserGhost ui
+    tickGliderGhost ui
     tickPanInertia viewport now
 
 mouseToolN :: forall f. Expr f 'Number
@@ -322,13 +351,8 @@ isNonPaintToolSid :: Expr f 'Number -> Expr f 'Bool
 isNonPaintToolSid sid =
   isEraserToolSid sid .|| isMouseToolSid sid .|| isGliderToolSid sid
 
-finishGliderAim ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-finishGliderAim state editScratch toolRef viewport = do
+finishGliderAim :: Ui f -> EffectSyntax f (f 'Unit)
+finishGliderAim Ui {..} = do
   sid <- getProp toolRef "sid"
   aiming <- getProp viewport "gliderAiming"
   whenS (isGliderToolSid sid .&& aiming .== 1) $ do
@@ -349,52 +373,34 @@ finishGliderAim state editScratch toolRef viewport = do
   setProp viewport "gliderAiming" (number 0)
 
 handlePointerUp ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> Expr f ('MutableObject Event)
-  -> EffectSyntax f (f 'Unit)
-handlePointerUp canvas toolRef viewport state editScratch e = do
+  Ui f -> Expr f ('MutableObject Event) -> EffectSyntax f (f 'Unit)
+handlePointerUp ui@Ui {..} e = do
   btn <- eventButton e
   whenS (btn .== 0) $ do
     aiming <- getProp viewport "gliderAiming"
-    whenS (aiming .== 1) $ finishGliderAim state editScratch toolRef viewport
+    whenS (aiming .== 1) $ finishGliderAim ui
     _ <- setProp viewport "dragging" (number 0)
     setProp viewport "erasing" (number 0)
   whenS (btn .== 2) $ setProp viewport "rightPanning" (number 0)
-  syncToolCursor canvas toolRef viewport
+  syncToolCursor ui
 
 syncPointerAtEvent ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> Effect f ('MutableObject ())
+  Ui f
   -> Expr f 'Bool
   -> Expr f ('MutableObject Event)
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-syncPointerAtEvent canvas viewport tipRef state editScratch toolRef doErase e cx cy = do
+syncPointerAtEvent ui doErase e cx cy = do
   ox <- eventOffsetX e
   oy <- eventOffsetY e
-  (gx, gy) <- gridFromPointer canvas viewport ox oy
-  syncPointerTip viewport tipRef cx cy gx gy
-  whenS doErase $ applyErase state editScratch toolRef gx gy
+  (gx, gy) <- gridFromPointer ui ox oy
+  syncPointerTip ui cx cy gx gy
+  whenS doErase $ applyErase ui gx gy
 
 handleCanvasMouseMove ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> Effect f ('MutableObject ())
-  -> Expr f ('MutableObject Event)
-  -> EffectSyntax f (f 'Unit)
-handleCanvasMouseMove canvas viewport tipRef state editScratch toolRef e = do
+  Ui f -> Expr f ('MutableObject Event) -> EffectSyntax f (f 'Unit)
+handleCanvasMouseMove ui@Ui {..} e = do
   cx <- eventClientX e
   cy <- eventClientY e
   dragging <- getProp viewport "dragging"
@@ -475,32 +481,12 @@ handleCanvasMouseMove canvas viewport tipRef state editScratch toolRef e = do
                 whenS (dx * dx + dy * dy .> 9) $
                   setProp viewport "moved" (number 1)
             )
-            ( syncPointerAtEvent
-                canvas
-                viewport
-                tipRef
-                state
-                editScratch
-                toolRef
-                (erasing .== 1)
-                e
-                cx
-                cy
-            )
+            (syncPointerAtEvent ui (erasing .== 1) e cx cy)
         )
     )
 
-wire ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> Effect f ('Map 'Number ('Array ('Array 'Number)))
-  -> Effect f ('MutableObject ())
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> EffectSyntax f (f 'Unit)
-wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
+wire :: Ui f -> EffectSyntax f (f 'Unit)
+wire ui@Ui {..} = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
   _ <- Dom.setStyleProperty tooltip "pointerEvents" (string "none")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
@@ -519,8 +505,8 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
       _ <- setProp viewport "dragging" (number 0)
       _ <- setProp viewport "erasing" (number 0)
       _ <- setProp viewport "rightPanning" (number 0)
-      finishGliderAim state editScratch toolRef viewport
-      syncToolCursor canvas toolRef viewport
+      finishGliderAim ui
+      syncToolCursor ui
   toSyntax_ $
     ffi
       ( "(function(canvas, toolRef, mouseSid) {"
@@ -533,49 +519,22 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
   addEventListener "keydown" win $ \e ->
     stmts $ do
       code <- eventCode e
+      let
+        key k act =
+          ( k
+          , discard $ stmts $ do
+              toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
+              act
+              done
+          )
       toSyntax $
         stringCaseE
           code
-          [
-            ( "Escape"
-            , discard $
-                stmts $ do
-                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  togglePause state
-                  done
-            )
-          ,
-            ( "Equal"
-            , discard $
-                stmts $ do
-                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomIn viewport
-                  done
-            )
-          ,
-            ( "Minus"
-            , discard $
-                stmts $ do
-                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomOut viewport
-                  done
-            )
-          ,
-            ( "NumpadAdd"
-            , discard $
-                stmts $ do
-                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomIn viewport
-                  done
-            )
-          ,
-            ( "NumpadSubtract"
-            , discard $
-                stmts $ do
-                  toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
-                  zoomOut viewport
-                  done
-            )
+          [ key "Escape" (togglePause state)
+          , key "Equal" (zoomIn viewport)
+          , key "Minus" (zoomOut viewport)
+          , key "NumpadAdd" (zoomIn viewport)
+          , key "NumpadSubtract" (zoomOut viewport)
           ]
           noOp
   addEventListener "mousedown" canvas $ \e ->
@@ -596,7 +555,7 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
         _ <- setProp viewport "moved" (number 0)
         _ <- setProp viewport "panVelX" (number 0)
         _ <- setProp viewport "panVelY" (number 0)
-        syncToolCursor canvas toolRef viewport
+        syncToolCursor ui
       whenS (btn .== 2 .&& isMouseToolSid sid) $ do
         toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
         cx <- eventClientX e
@@ -608,20 +567,20 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
         _ <- setProp viewport "panLastMs" moveNow
         _ <- setProp viewport "dragX" cx
         _ <- setProp viewport "dragY" cy
-        syncToolCursor canvas toolRef viewport
+        syncToolCursor ui
       whenS (not_ shift .&& btn .== 0 .&& sid .== eraserToolN) $ do
         _ <- setProp viewport "erasing" (number 1)
         cx <- eventClientX e
         cy <- eventClientY e
         ox <- eventOffsetX e
         oy <- eventOffsetY e
-        (gx, gy) <- gridFromPointer canvas viewport ox oy
-        syncPointerTip viewport tipRef cx cy gx gy
-        applyErase state editScratch toolRef gx gy
+        (gx, gy) <- gridFromPointer ui ox oy
+        syncPointerTip ui cx cy gx gy
+        applyErase ui gx gy
       whenS (not_ shift .&& btn .== 0 .&& isGliderToolSid sid) $ do
         ox <- eventOffsetX e
         oy <- eventOffsetY e
-        (gx, gy) <- gridFromPointer canvas viewport ox oy
+        (gx, gy) <- gridFromPointer ui ox oy
         clientW <- getProp canvas "clientWidth"
         let
           bufScale = number canvasW / clientW
@@ -641,22 +600,22 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
         _ <- setProp viewport "gliderCy" ay
         setProp viewport "moved" (number 0)
   addEventListener "mouseup" canvas $ \e ->
-    stmts $ handlePointerUp canvas toolRef viewport state editScratch e
+    stmts $ handlePointerUp ui e
   addEventListener "mouseup" win $ \e ->
-    stmts $ handlePointerUp canvas toolRef viewport state editScratch e
+    stmts $ handlePointerUp ui e
   addEventListener "click" canvas $ \e ->
     stmts $ do
       moved <- getProp viewport "moved"
       whenS (moved .== 0) $ do
         ox <- eventOffsetX e
         oy <- eventOffsetY e
-        (gx, gy) <- gridFromPointer canvas viewport ox oy
-        applyClick state editScratch toolRef toolsMap gx gy
+        (gx, gy) <- gridFromPointer ui ox oy
+        applyClick ui gx gy
       _ <- setProp viewport "moved" (number 0)
       done
   addEventListener "mousemove" canvas $ \e ->
     stmts $
-      handleCanvasMouseMove canvas viewport tipRef state editScratch toolRef e
+      handleCanvasMouseMove ui e
   addEventListener "mouseleave" canvas $ \_ ->
     stmts $ do
       _ <- setProp tipRef "over" (number 0)
@@ -687,11 +646,8 @@ wire canvas state tooltip tipRef toolRef toolsMap viewport editScratch = do
   toSyntax_ $ callMethod canvas "focus" RecNil
   done
 
-hideTooltip ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-hideTooltip tipRef tooltip = do
+hideTooltip :: Ui f -> EffectSyntax f (f 'Unit)
+hideTooltip Ui {..} = do
   _ <- setProp tipRef "fp" (string "")
   _ <- setProp tipRef "shownGx" (number (-2))
   _ <- setProp tipRef "shownGy" (number (-2))
@@ -699,14 +655,13 @@ hideTooltip tipRef tooltip = do
   Dom.setStyleProperty tooltip "visibility" (string "hidden")
 
 syncPointerTip ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
+  Ui f
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-syncPointerTip viewport tipRef cx cy gx gy = do
+syncPointerTip Ui {..} cx cy gx gy = do
   w <- getProp viewport "worldW"
   h <- getProp viewport "worldH"
   _ <- setProp tipRef "cx" cx
@@ -718,29 +673,19 @@ syncPointerTip viewport tipRef cx cy gx gy = do
     "over"
     (if_ (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) (number 1) (number 0))
 
-tickHover ::
-  Effect f ('MutableObject ())
-  -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef = do
+tickHover :: Ui f -> EffectSyntax f (f 'Unit)
+tickHover ui@Ui {..} = do
   sid <- getProp toolRef "sid"
   ifS
     (isEraserToolSid sid)
-    (hideTooltip tipRef tooltip)
+    (hideTooltip ui)
     ( do
         over <- getProp tipRef "over"
         ifS
           (over .== 0)
           ( do
               fp <- getProp tipRef "fp"
-              whenS (fp .!= string "") (hideTooltip tipRef tooltip)
+              whenS (fp .!= string "") (hideTooltip ui)
           )
           ( do
               gx <- getProp tipRef "gx"
@@ -754,21 +699,7 @@ tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
                 cy <- getProp tipRef "cy"
                 w <- state.worldW
                 h <- state.worldH
-                applyHover
-                  tipRef
-                  sidsScratch
-                  state
-                  registry
-                  tooltip
-                  swatchEl
-                  nameEl
-                  hits
-                  w
-                  h
-                  gx
-                  gy
-                  cx
-                  cy
+                applyHover ui w h gx gy cx cy
           )
     )
 
@@ -777,14 +708,7 @@ tickHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits toolRef
 --   'hoverRadius' (25 cells at r=2). DOM writes only when the species
 --   set changes: the tooltip does not follow the cursor inside a cell.
 applyHover ::
-  Effect f ('MutableObject ())
-  -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('Set Number)
+  Ui f
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
@@ -792,7 +716,7 @@ applyHover ::
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx gy cx cy = do
+applyHover ui@Ui {..} w h gx gy cx cy = do
   alive <- state.alive
   species <- state.species
   pal <- state.palette
@@ -810,7 +734,7 @@ applyHover tipRef sidsScratch state registry tooltip swatchEl nameEl hits w h gx
   hitN <- Set.size hits
   ifS
     (hitN .== 0)
-    (hideTooltip tipRef tooltip)
+    (hideTooltip ui)
     ( do
         Array.clear_ sidsScratch
         _ <- Set.mapM_ (\sid -> Array.push_ sidsScratch sid) hits
@@ -913,12 +837,11 @@ collectNearby alive species w h gx gy hits tipRef = do
         whenS (dist .== best) $ Set.insert hits sid
 
 gridFromPointer ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
+  Ui f
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (Expr f 'Number, Expr f 'Number)
-gridFromPointer canvas viewport localX localY = do
+gridFromPointer Ui {..} localX localY = do
   clientW <- getProp canvas "clientWidth"
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
@@ -1177,14 +1100,8 @@ initDisturbCatalog ::
 initDisturbCatalog = buildDisturbMap
 
 applyClick ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('Map 'Number ('Array ('Array 'Number)))
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-applyClick state editScratch toolRef toolsMap gx gy = do
+  Ui f -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+applyClick Ui {..} gx gy = do
   sid <- getProp toolRef "sid"
   whenS (not_ (isNonPaintToolSid sid)) $ do
     hit <- Map.lookup toolsMap sid
@@ -1195,52 +1112,28 @@ applyClick state editScratch toolRef toolsMap gx gy = do
         (\cells -> fromSyntax $ placePattern state editScratch cells gx gy sid)
 
 applyErase ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf BoundScratch)
-  -> Effect f ('MutableObject ())
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-applyErase state editScratch toolRef gx gy = do
+  Ui f -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+applyErase Ui {..} gx gy = do
   radius0 <- getProp toolRef "eraserRadius"
   let
     radius = Math.floor radius0
   eraseCircle state editScratch gx gy radius
 
-wireTools ::
-  Effect f ('MutableObject ())
-  -> Expr f ('Array ('MutableObject Dom.DomElement))
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-wireTools toolRef btns canvas eraserSize viewport = do
-  forRange_ (number 0) (Array.length btns) $ \i -> do
-    btn <- hold (expr (Array.index btns i))
+wireTools :: Ui f -> EffectSyntax f (f 'Unit)
+wireTools ui@Ui {..} = do
+  forRange_ (number 0) (Array.length toolBtnsE) $ \i -> do
+    btn <- hold (expr (Array.index toolBtnsE i))
     addEventListener "click" btn $ \_ ->
       stmts $ do
         raw <- Dom.getAttribute btn "data-tool"
-        selectTool
-          toolRef
-          btns
-          (parseInt_ (orElse raw (string "0")) (number 10))
-          canvas
-          eraserSize
-          viewport
+        selectTool ui (parseInt_ (orElse raw (string "0")) (number 10))
     done
 
-selectTool ::
-  Effect f ('MutableObject ())
-  -> Expr f ('Array ('MutableObject Dom.DomElement))
-  -> Expr f 'Number
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-selectTool toolRef btns sid canvas eraserSize viewport = do
+selectTool :: Ui f -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+selectTool ui@Ui {..} sid = do
   _ <- setProp toolRef "sid" sid
-  forRange_ (number 0) (Array.length btns) $ \i -> do
-    btn <- hold (expr (Array.index btns i))
+  forRange_ (number 0) (Array.length toolBtnsE) $ \i -> do
+    btn <- hold (expr (Array.index toolBtnsE i))
     raw <- Dom.getAttribute btn "data-tool"
     let
       on = parseInt_ (orElse raw (string "0")) (number 10) .== sid
@@ -1255,15 +1148,10 @@ selectTool toolRef btns sid canvas eraserSize viewport = do
         "aria-pressed"
         (if_ on (string "true") (string "false"))
     done
-  syncEraserUi toolRef canvas eraserSize viewport
+  syncEraserUi ui
 
-syncEraserUi ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-syncEraserUi toolRef canvas eraserSize viewport = do
+syncEraserUi :: Ui f -> EffectSyntax f (f 'Unit)
+syncEraserUi ui@Ui {..} = do
   sid <- getProp toolRef "sid"
   let
     eraserOn = sid .== number (fromIntegral eraserToolSid)
@@ -1282,14 +1170,10 @@ syncEraserUi toolRef canvas eraserSize viewport = do
           _ <- Dom.setAttribute eraserSize "hidden" (string "")
           Dom.setAttribute eraserSize "aria-hidden" (string "true")
       )
-  syncToolCursor canvas toolRef viewport
+  syncToolCursor ui
 
-syncToolCursor ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-syncToolCursor canvas toolRef viewport = do
+syncToolCursor :: Ui f -> EffectSyntax f (f 'Unit)
+syncToolCursor Ui {..} = do
   sid <- getProp toolRef "sid"
   dragging <- getProp viewport "dragging"
   rightPanning <- getProp viewport "rightPanning"
@@ -1343,15 +1227,11 @@ tickPanInertia viewport now = do
         setProp viewport "panInertiaLastMs" now
     )
 
-wireEraserSize ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-wireEraserSize toolRef slider valEl = do
-  addEventListener "input" slider $ \_ ->
+wireEraserSize :: Ui f -> EffectSyntax f (f 'Unit)
+wireEraserSize Ui {..} = do
+  addEventListener "input" eraserRadius $ \_ ->
     stmts $ do
-      raw <- Dom.getValue slider
+      raw <- Dom.getValue eraserRadius
       let
         radius =
           Math.max
@@ -1362,9 +1242,9 @@ wireEraserSize toolRef slider valEl = do
             )
       _ <- setProp toolRef "eraserRadius" radius
       label <- pure (toString (Math.round radius))
-      _ <- Dom.setValue slider label
-      _ <- Dom.setAttribute slider "aria-valuenow" label
-      Dom.setTextContent valEl label
+      _ <- Dom.setValue eraserRadius label
+      _ <- Dom.setAttribute eraserRadius "aria-valuenow" label
+      Dom.setTextContent eraserRadiusVal label
       done
   done
 
@@ -1442,11 +1322,8 @@ drawEraserGhostStm ghost alive w h gx gy radius panX panY zoom px = do
       )
   done
 
-tickGliderGhost ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
-tickGliderGhost toolRef viewport = do
+tickGliderGhost :: Ui f -> EffectSyntax f (f 'Unit)
+tickGliderGhost Ui {..} = do
   sid <- getProp toolRef "sid"
   aiming <- getProp viewport "gliderAiming"
   app <- getProp viewport "app"
@@ -1474,14 +1351,8 @@ tickGliderGhost toolRef viewport = do
         Pixi.clearEraserGhost app viewport
     )
 
-tickEraserGhost ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject ())
-  -> Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-tickEraserGhost toolRef tipRef state viewport ghost = do
+tickEraserGhost :: Ui f -> EffectSyntax f (f 'Unit)
+tickEraserGhost Ui {..} = do
   sid <- getProp toolRef "sid"
   glLost <- getProp viewport "glLost"
   app <- getProp viewport "app"
@@ -1506,16 +1377,16 @@ tickEraserGhost toolRef tipRef state viewport ghost = do
               ifS
                 (glLost .== 0)
                 ( do
-                    clearEraserGhostStm ghost
+                    clearEraserGhostStm eraserGhost
                     Pixi.drawEraserGhost app viewport alive w h gx gy radius panX panY zoom px
                 )
                 ( do
                     Pixi.clearEraserGhost app viewport
-                    drawEraserGhostStm ghost alive w h gx gy radius panX panY zoom px
+                    drawEraserGhostStm eraserGhost alive w h gx gy radius panX panY zoom px
                 )
           )
           ( do
-              clearEraserGhostStm ghost
+              clearEraserGhostStm eraserGhost
               Pixi.clearEraserGhost app viewport
           )
     )
@@ -1525,7 +1396,7 @@ tickEraserGhost toolRef tipRef state viewport ghost = do
           (aiming .== 1)
           done
           ( do
-              clearEraserGhostStm ghost
+              clearEraserGhostStm eraserGhost
               Pixi.clearEraserGhost app viewport
           )
     )
@@ -1579,72 +1450,44 @@ wireCollapse tray collapseBtn collapseLabel expandLabel openMark closedMark = do
       done
   done
 
-wireSettings ::
-  Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-wireSettings viewport zoomInBtn zoomOutBtn resetBtn = do
-  addEventListener "click" zoomInBtn $ \_ ->
+wireSettings :: Ui f -> EffectSyntax f (f 'Unit)
+wireSettings Ui {..} = do
+  addEventListener "click" settingsZoomIn $ \_ ->
     stmts $ do
       zoomIn viewport
       done
-  addEventListener "click" zoomOutBtn $ \_ ->
+  addEventListener "click" settingsZoomOut $ \_ ->
     stmts $ do
       zoomOut viewport
       done
-  addEventListener "click" resetBtn $ \_ ->
+  addEventListener "click" settingsReset $ \_ ->
     stmts $ do
       resetViewport viewport
       done
   done
 
-wirePurgeDiscoveries ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('MutableObject IndexTracker)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-wirePurgeDiscoveries
-  state
-  viewport
-  registry
-  tracker
-  seen
-  listEl
-  totalEl
-  purgeBtn = do
-    addEventListener "click" purgeBtn $ \_ ->
-      stmts $ do
-        now <- performanceNow
-        purgeEmergentDiscoveries
-          state
-          viewport
-          registry
-          tracker
-          seen
-          listEl
-          totalEl
-          now
-        done
-    done
-
-wireSimSettings ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-wireSimSettings state viewport gridSel tickSlider tickVal = do
-  addEventListener "change" gridSel $ \_ ->
+wirePurgeDiscoveries :: Ui f -> EffectSyntax f (f 'Unit)
+wirePurgeDiscoveries Ui {..} = do
+  addEventListener "click" settingsPurge $ \_ ->
     stmts $ do
-      raw <- Dom.getValue gridSel
+      now <- performanceNow
+      purgeEmergentDiscoveries
+        state
+        viewport
+        registry
+        indexTracker
+        seenSpecies
+        typesList
+        indexTotal
+        now
+      done
+  done
+
+wireSimSettings :: Ui f -> EffectSyntax f (f 'Unit)
+wireSimSettings Ui {..} = do
+  addEventListener "change" settingsGrid $ \_ ->
+    stmts $ do
+      raw <- Dom.getValue settingsGrid
       let
         parts = String.split raw (string "x")
         wParsed =
@@ -1663,9 +1506,9 @@ wireSimSettings state viewport gridSel tickSlider tickVal = do
           if_ (hParsed .> 0) hParsed (number (fromIntegral gridH))
       whenS (w .> 0 .&& h .> 0) $ resizeWorld state viewport w h
       done
-  addEventListener "input" tickSlider $ \_ ->
+  addEventListener "input" settingsTick $ \_ ->
     stmts $ do
-      raw <- Dom.getValue tickSlider
+      raw <- Dom.getValue settingsTick
       let
         ms =
           Math.max
@@ -1677,15 +1520,15 @@ wireSimSettings state viewport gridSel tickSlider tickVal = do
       set @"tickMs" state ms
       ifS
         (ms .<= 0)
-        (Dom.setTextContent tickVal (string "max"))
+        (Dom.setTextContent settingsTickVal (string "max"))
         ( do
             _ <-
               Dom.setTextContent
-                tickVal
+                settingsTickVal
                 (toString (Math.round ms) <> string " ms")
             done
         )
-      _ <- Dom.setAttribute tickSlider "aria-valuenow" (toString ms)
+      _ <- Dom.setAttribute settingsTick "aria-valuenow" (toString ms)
       done
   done
 
@@ -1704,68 +1547,44 @@ resetViewport viewport = do
   clampPan viewport
   invalidateViewportRender viewport
 
-syncPauseOverlay ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-syncPauseOverlay state overlay = do
+syncPauseOverlay :: Ui f -> EffectSyntax f (f 'Unit)
+syncPauseOverlay Ui {..} = do
   paused <- state.paused
   toSyntax_ $
     callMethod
-      overlay
+      pauseOverlay
       "classList.toggle"
       (arg (string "is-visible") <: arg paused <: RecNil)
   Dom.setAttribute
-    overlay
+    pauseOverlay
     "aria-hidden"
     (if_ paused (string "false") (string "true"))
 
-updateHud ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f (MutableObjectOf Fps)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Expr f 'Number
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
-updateHud
-  state
-  meter
-  viewport
-  statGen
-  statCells
-  statFps
-  statZoom
-  statRender
-  renderMs
-  settingsZoom = do
-    gen <- state.gen
-    pop <- state.pop
-    fpsN <- meter.fps
-    levels <- getProp viewport "zoomLevels"
-    labels <- getProp viewport "zoomLabels"
-    indices <- getProp viewport "zoomIndices"
-    zoom <- getProp viewport "zoom"
-    let
-      zoomIdx = nearestZoomIndex levels indices zoom
-      zoomLabel = Array.index labels zoomIdx
-    _ <- Dom.setTextContent statGen (toString gen)
-    _ <- Dom.setTextContent statCells (toString pop)
-    _ <-
-      Dom.setTextContent
-        statFps
-        (toString (Math.round fpsN))
-    _ <- Dom.setTextContent statZoom (zoomLabel <> string "%")
-    _ <-
-      Dom.setTextContent
-        statRender
-        (toString (Math.round renderMs) <> string "ms")
-    _ <- Dom.setTextContent settingsZoom (zoomLabel <> string "%")
-    done
+updateHud :: Ui f -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+updateHud Ui {..} renderMs = do
+  gen <- state.gen
+  pop <- state.pop
+  fpsN <- meter.fps
+  levels <- getProp viewport "zoomLevels"
+  labels <- getProp viewport "zoomLabels"
+  indices <- getProp viewport "zoomIndices"
+  zoom <- getProp viewport "zoom"
+  let
+    zoomIdx = nearestZoomIndex levels indices zoom
+    zoomLabel = Array.index labels zoomIdx
+  _ <- Dom.setTextContent statGen (toString gen)
+  _ <- Dom.setTextContent statCells (toString pop)
+  _ <-
+    Dom.setTextContent
+      statFps
+      (toString (Math.round fpsN))
+  _ <- Dom.setTextContent statZoom (zoomLabel <> string "%")
+  _ <-
+    Dom.setTextContent
+      statRender
+      (toString (Math.round renderMs) <> string "ms")
+  _ <- Dom.setTextContent settingsZoom (zoomLabel <> string "%")
+  done
 
 tickFps ::
   Effect f (MutableObjectOf Fps) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
@@ -1777,14 +1596,8 @@ tickFps meter now = do
     set @"fps" meter (Math.round (number 1000 / Math.max 1 dt))
   set @"lastMs" meter now
 
-stepLifeFrame ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject ())
-  -> Effect f ('MutableObject Registry)
-  -> Effect f (MutableObjectOf StepCtx)
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-stepLifeFrame state viewport registry stepCtx frameStart = do
+stepLifeFrame :: Ui f -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+stepLifeFrame Ui {..} frameStart = do
   interval <- state.tickMs
   lastStep <- getProp viewport "lastStepMs"
   let
@@ -1793,18 +1606,10 @@ stepLifeFrame state viewport registry stepCtx frameStart = do
     _ <- setProp viewport "lastStepMs" frameStart
     stepLife state registry stepCtx
 
-tickIndex ::
-  Effect f (MutableObjectOf LifeState)
-  -> Effect f ('MutableObject Registry)
-  -> Effect f ('MutableObject IndexTracker)
-  -> Effect f ('Set Number)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-tickIndex state registry tracker seen listEl totalEl now = do
-  pending <- getProp tracker "pending"
-  indexLastMs <- getProp tracker "lastMs"
+tickIndex :: Ui f -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+tickIndex Ui {..} now = do
+  pending <- getProp indexTracker "pending"
+  indexLastMs <- getProp indexTracker "lastMs"
   let
     refresh = number (fromIntegral indexRefreshMs)
   whenS (not_ pending .&& (indexLastMs .== 0 .|| now - indexLastMs .>= refresh)) $ do
@@ -1822,10 +1627,10 @@ tickIndex state registry tracker seen listEl totalEl now = do
       species
       pal
       registry
-      tracker
-      seen
-      listEl
-      totalEl
+      indexTracker
+      seenSpecies
+      typesList
+      indexTotal
       now
       liveX0
       liveY0
