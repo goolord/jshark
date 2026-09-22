@@ -53,7 +53,7 @@ import JShark.Example.Life.Grid
   , stepGrid
   , syncPaletteRgbaSid
   )
-import JShark.Example.Life.GridApi (paintGridCells, seedSoupRegion)
+import JShark.Example.Life.GridApi (paintGridCells, seedSoupRegion, setProps)
 import JShark.Example.Life.Names
   ( recordDiscoveredName
   , refreshTakenNames
@@ -117,9 +117,7 @@ initLife app viewport = do
   _ <- setProp viewport "texture" texture
   _ <- setProp viewport "sprite" sprite
   _ <- Pixi.installLifeShader app viewport sprite texture w h
-  _ <- setProp viewport "worldW" w
-  _ <- setProp viewport "worldH" h
-  _ <- setProp viewport "lastStepMs" (number (-1))
+  setProps viewport [("worldW", w), ("worldH", h), ("lastStepMs", -1)]
   set @"rgbaPixels" state pixels
   pal <- state.palette
   paletteRgba <- initPaletteRgba pal
@@ -170,9 +168,9 @@ initLife app viewport = do
   panX <- getProp viewport "panX"
   panY <- getProp viewport "panY"
   zoom <- getProp viewport "zoom"
-  _ <- setProp viewport "renderPanX" panX
-  _ <- setProp viewport "renderPanY" panY
-  _ <- setProp viewport "renderZoom" zoom
+  setProps
+    viewport
+    [("renderPanX", panX), ("renderPanY", panY), ("renderZoom", zoom)]
   setProp viewport "renderPanValid" true_
   pure state
 
@@ -404,9 +402,9 @@ renderLife viewport renderDirty state fallback = do
   whenS (glLost .!= 0) $ drawGridFallback fallback fr
   Array.clear_ changedList
   set @"sceneDirty" state false_
-  _ <- setProp viewport "renderPanX" panX
-  _ <- setProp viewport "renderPanY" panY
-  _ <- setProp viewport "renderZoom" zoom
+  setProps
+    viewport
+    [("renderPanX", panX), ("renderPanY", panY), ("renderZoom", zoom)]
   setProp viewport "renderPanValid" true_
 
 -- | What one frame's render reads: buffers, world size, and pan/zoom.

@@ -12,6 +12,7 @@ module JShark.Example.Life.GridApi
   , u8FillRegion
   , forRange2
   , forRange2_
+  , setProps
   )
 where
 
@@ -22,6 +23,7 @@ import JShark.Api
   ( EffectSyntax
   , arg
   , forRange
+  , setProp
   , stmts
   , toSyntax
   , u8Set
@@ -275,3 +277,8 @@ forRange2_ ::
   -> (Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit))
   -> EffectSyntax f (f 'Unit)
 forRange2_ y0 y1 x0 x1 f = toSyntax $ forRange2 y0 y1 x0 x1 (\y x -> stmts (f y x))
+
+-- | Set several same-typed properties, in order.
+setProps ::
+  Effect f ('MutableObject a) -> [(String, Expr f u)] -> EffectSyntax f ()
+setProps o = mapM_ (uncurry (setProp o))

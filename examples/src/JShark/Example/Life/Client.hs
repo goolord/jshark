@@ -11,6 +11,7 @@
 
 module JShark.Example.Life.Client (mainJS) where
 
+import Control.Monad (forM_)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
@@ -44,6 +45,7 @@ import JShark.Example.Life.Grid
   , packedIsAlive
   , u8Get
   )
+import JShark.Example.Life.GridApi (setProps)
 import JShark.Example.Life.Names (lookupDisplayName)
 import JShark.Example.Life.Patterns (gliderOrientationCells, gliderSpeciesSid)
 import qualified JShark.Example.Life.Pixi as Pixi
@@ -213,20 +215,8 @@ bootLoaded canvas app appH viewport renderDirty = do
   wireTools ui
   wireEraserSize ui
   syncEraserUi ui
-  wireCollapse
-    toolsTray
-    toolsCollapse
-    "Collapse tools"
-    "Expand tools"
-    "−"
-    "+"
-  wireCollapse
-    debugTray
-    debugCollapse
-    "Collapse stats"
-    "Expand stats"
-    "−"
-    "Stats"
+  wireCollapse toolsTray toolsCollapse "Collapse tools" "Expand tools" "−" "+"
+  wireCollapse debugTray debugCollapse "Collapse stats" "Expand stats" "−" "Stats"
   wireCollapse
     settingsTray
     settingsCollapse
@@ -437,21 +427,14 @@ wire ui@Ui {..} = do
   _ <- Dom.setStyleProperty tooltip "visibility" (string "hidden")
   _ <- Dom.setStyleProperty tooltip "pointerEvents" (string "none")
   _ <- Dom.setAttribute tooltip "aria-hidden" (string "true")
-  _ <- setProp tipRef "over" (number 0)
-  _ <- setProp tipRef "gx" (number (-1))
-  _ <- setProp tipRef "gy" (number (-1))
-  _ <- setProp tipRef "cx" (number 0)
-  _ <- setProp tipRef "cy" (number 0)
-  _ <- setProp tipRef "shownGx" (number (-2))
-  _ <- setProp tipRef "shownGy" (number (-2))
+  setProps tipRef [("over", 0), ("gx", -1), ("gy", -1), ("cx", 0), ("cy", 0)]
+  setProps tipRef [("shownGx", -2), ("shownGy", -2)]
   _ <- setProp tipRef "fp" (string "")
   _ <- setProp tipRef "swatchSid" (number (-1))
   win <- hold window
   let
     endPointer = do
-      _ <- setProp viewport "dragging" (number 0)
-      _ <- setProp viewport "erasing" (number 0)
-      _ <- setProp viewport "rightPanning" (number 0)
+      setProps viewport [("dragging", 0), ("erasing", 0), ("rightPanning", 0)]
       finishGliderAim ui
       syncToolCursor ui
   toSyntax_ $
@@ -494,26 +477,17 @@ wire ui@Ui {..} = do
         toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
         cx <- eventClientX e
         cy <- eventClientY e
-        _ <- setProp viewport "dragging" (number 1)
-        _ <- setProp viewport "dragX" cx
-        _ <- setProp viewport "dragY" cy
-        _ <- setProp viewport "dragStartX" cx
-        _ <- setProp viewport "dragStartY" cy
-        _ <- setProp viewport "moved" (number 0)
-        _ <- setProp viewport "panVelX" (number 0)
-        _ <- setProp viewport "panVelY" (number 0)
+        setProps viewport [("dragging", 1), ("dragX", cx), ("dragY", cy)]
+        setProps viewport [("dragStartX", cx), ("dragStartY", cy), ("moved", 0)]
+        setProps viewport [("panVelX", 0), ("panVelY", 0)]
         syncToolCursor ui
       whenS (btn .== 2 .&& isMouseToolSid sid) $ do
         toSyntax_ $ callMethod (expr e) "preventDefault" RecNil
         cx <- eventClientX e
         cy <- eventClientY e
         moveNow <- performanceNow
-        _ <- setProp viewport "rightPanning" (number 1)
-        _ <- setProp viewport "panVelX" (number 0)
-        _ <- setProp viewport "panVelY" (number 0)
-        _ <- setProp viewport "panLastMs" moveNow
-        _ <- setProp viewport "dragX" cx
-        _ <- setProp viewport "dragY" cy
+        setProps viewport [("rightPanning", 1), ("panVelX", 0), ("panVelY", 0)]
+        setProps viewport [("panLastMs", moveNow), ("dragX", cx), ("dragY", cy)]
         syncToolCursor ui
       whenS (not_ shift .&& btn .== 0 .&& sid .== eraserToolN) $ do
         _ <- setProp viewport "erasing" (number 1)
@@ -535,16 +509,11 @@ wire ui@Ui {..} = do
           ay = oy * bufScale
         cx <- eventClientX e
         cy <- eventClientY e
-        _ <- setProp viewport "gliderAiming" (number 1)
-        _ <- setProp viewport "gliderGx" gx
-        _ <- setProp viewport "gliderGy" gy
-        _ <- setProp viewport "gliderDir" (number 0)
-        _ <- setProp viewport "dragStartX" cx
-        _ <- setProp viewport "dragStartY" cy
-        _ <- setProp viewport "gliderAx" ax
-        _ <- setProp viewport "gliderAy" ay
-        _ <- setProp viewport "gliderCx" ax
-        _ <- setProp viewport "gliderCy" ay
+        setProps viewport [("gliderAiming", 1), ("gliderGx", gx), ("gliderGy", gy)]
+        setProps viewport [("gliderDir", 0), ("dragStartX", cx), ("dragStartY", cy)]
+        setProps
+          viewport
+          [("gliderAx", ax), ("gliderAy", ay), ("gliderCx", ax), ("gliderCy", ay)]
         setProp viewport "moved" (number 0)
   addEventListener "mouseup" canvas $ \e ->
     stmts $ handlePointerUp ui e
@@ -611,10 +580,7 @@ syncPointerTip ::
 syncPointerTip Ui {..} cx cy gx gy = do
   w <- getProp viewport "worldW"
   h <- getProp viewport "worldH"
-  _ <- setProp tipRef "cx" cx
-  _ <- setProp tipRef "cy" cy
-  _ <- setProp tipRef "gx" gx
-  _ <- setProp tipRef "gy" gy
+  setProps tipRef [("cx", cx), ("cy", cy), ("gx", gx), ("gy", gy)]
   setProp
     tipRef
     "over"
@@ -818,26 +784,12 @@ initViewport = do
   _ <- setProp viewport "renderPanY" (number (canvasH / 2) - cy * px)
   _ <- setProp viewport "renderZoom" (number 1)
   _ <- setProp viewport "renderPanValid" true_
-  _ <- setProp viewport "dragging" (number 0)
-  _ <- setProp viewport "dragX" (number 0)
-  _ <- setProp viewport "dragY" (number 0)
-  _ <- setProp viewport "dragStartX" (number 0)
-  _ <- setProp viewport "dragStartY" (number 0)
-  _ <- setProp viewport "moved" (number 0)
-  _ <- setProp viewport "erasing" (number 0)
-  _ <- setProp viewport "rightPanning" (number 0)
-  _ <- setProp viewport "panVelX" (number 0)
-  _ <- setProp viewport "panVelY" (number 0)
-  _ <- setProp viewport "panLastMs" (number 0)
-  _ <- setProp viewport "panInertiaLastMs" (number 0)
-  _ <- setProp viewport "gliderAiming" (number 0)
-  _ <- setProp viewport "gliderGx" (number 0)
-  _ <- setProp viewport "gliderGy" (number 0)
-  _ <- setProp viewport "gliderDir" (number 0)
-  _ <- setProp viewport "gliderAx" (number 0)
-  _ <- setProp viewport "gliderAy" (number 0)
-  _ <- setProp viewport "gliderCx" (number 0)
-  _ <- setProp viewport "gliderCy" (number 0)
+  forM_
+    [ "dragging dragX dragY dragStartX dragStartY moved erasing rightPanning"
+    , "panVelX panVelY panLastMs panInertiaLastMs"
+    , "gliderAiming gliderGx gliderGy gliderDir gliderAx gliderAy gliderCx gliderCy"
+    ]
+    $ \ks -> setProps viewport [(k, 0) | k <- words ks]
   _ <- setProp viewport "zoomLevels" zoomLevelsLit
   _ <- setProp viewport "zoomLabels" zoomLabelsLit
   _ <- setProp viewport "zoomIndices" zoomIndicesLit
@@ -1303,6 +1255,10 @@ tickEraserGhost Ui {..} = do
   sid <- getProp toolRef "sid"
   glLost <- getProp viewport "glLost"
   app <- getProp viewport "app"
+  let
+    clearGhosts = do
+      clearEraserGhostStm eraserGhost
+      Pixi.clearEraserGhost app viewport
   ifS
     (sid .== number (fromIntegral eraserToolSid))
     ( do
@@ -1332,20 +1288,11 @@ tickEraserGhost Ui {..} = do
                     drawEraserGhostStm eraserGhost alive w h gx gy radius panX panY zoom px
                 )
           )
-          ( do
-              clearEraserGhostStm eraserGhost
-              Pixi.clearEraserGhost app viewport
-          )
+          clearGhosts
     )
     ( do
         aiming <- getProp viewport "gliderAiming"
-        ifS
-          (aiming .== 1)
-          done
-          ( do
-              clearEraserGhostStm eraserGhost
-              Pixi.clearEraserGhost app viewport
-          )
+        ifS (aiming .== 1) done clearGhosts
     )
 
 eraserCursor :: Expr f 'String
@@ -1399,18 +1346,9 @@ wireCollapse tray collapseBtn collapseLabel expandLabel openMark closedMark = do
 
 wireSettings :: Ui f -> EffectSyntax f (f 'Unit)
 wireSettings Ui {..} = do
-  addEventListener "click" settingsZoomIn $ \_ ->
-    stmts $ do
-      zoomIn viewport
-      done
-  addEventListener "click" settingsZoomOut $ \_ ->
-    stmts $ do
-      zoomOut viewport
-      done
-  addEventListener "click" settingsReset $ \_ ->
-    stmts $ do
-      resetViewport viewport
-      done
+  addEventListener "click" settingsZoomIn $ \_ -> stmts (zoomIn viewport *> done)
+  addEventListener "click" settingsZoomOut $ \_ -> stmts (zoomOut viewport *> done)
+  addEventListener "click" settingsReset $ \_ -> stmts (resetViewport viewport *> done)
   done
 
 wirePurgeDiscoveries :: Ui f -> EffectSyntax f (f 'Unit)

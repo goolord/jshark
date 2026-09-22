@@ -12,7 +12,7 @@ import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types (Effect (Lift))
 import qualified JShark.Array as Array
 import JShark.Example.Life.Grid (setU8)
-import JShark.Example.Life.GridApi (forRange2_)
+import JShark.Example.Life.GridApi (forRange2_, setProps)
 import JShark.Example.Life.Patterns (paletteBytes)
 import JShark.Example.Life.Types (methuselahMax, methuselahMin)
 import qualified JShark.Map as Map
@@ -233,10 +233,7 @@ boundsCoords ::
   -> EffectSyntax f (Expr f 'Number, Expr f 'Number, Expr f 'Number, Expr f 'Number)
 boundsCoords coords = do
   st <- hold newObject
-  _ <- setProp st "minX" (number 1e9)
-  _ <- setProp st "minY" (number 1e9)
-  _ <- setProp st "maxX" (number (-1e9))
-  _ <- setProp st "maxY" (number (-1e9))
+  setProps st [("minX", 1e9), ("minY", 1e9), ("maxX", -1e9), ("maxY", -1e9)]
   forRange_ (number 0) (Array.length coords) $ \i -> do
     let
       pt = Array.index coords i
@@ -575,11 +572,7 @@ fillPending res seen pending key hashes nextId0 maxSid0 = do
             _ <- Map.insert seen key nextId0
             _ <- registerAliases seen hashes nextId0
             _ <- Map.delete pending key
-            _ <- setProp res "action" (number 2)
-            _ <- setProp res "sid" nextId0
-            _ <- setProp res "r" r
-            _ <- setProp res "g" g
-            _ <- setProp res "b" b
+            setProps res [("action", 2), ("sid", nextId0), ("r", r), ("g", g), ("b", b)]
             _ <- setProp res "key" key
             done
         )
