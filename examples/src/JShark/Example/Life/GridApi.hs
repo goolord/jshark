@@ -6,7 +6,6 @@
 module JShark.Example.Life.GridApi
   ( seedLiveCells
   , seedSoupRegion
-  , paintGridCells
   , paintGridCellsJs
   , u8CopyRegion
   , u8FillRegion
@@ -30,8 +29,7 @@ import JShark.Api
   )
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
-  ( Arg (..)
-  , Effect (..)
+  ( Effect (..)
   , Expr (..)
   , FFIForm (FFILambda)
   , Universe (..)
@@ -138,7 +136,8 @@ u8CopyRegion dst src gridW x0 y0 x1 y1 =
         <: RecNil
     )
 
--- | Embedded JS for 'paintGridCells' (exported for regression tests).
+-- | Paint live/changed grid cells into an RGBA canvas buffer in one JS pass,
+-- writing the dirty rect onto @out@ (@dirtyCx0@ … @dirtyPainted@).
 paintGridCellsJs :: Text
 paintGridCellsJs =
   "(p,cw,ch,pal,alive,species,w,scale,panX,panY,bg,live,changed,full,vx0,vx1,vy0,vy1,out)=>{"
@@ -172,73 +171,6 @@ paintGridCellsJs =
     <> "if(!painted){out.dirtyCx0=0;out.dirtyCy0=0;out.dirtyCx1=0;out.dirtyCy1=0;out.dirtyPainted=false;out.dirtyFull=false;return;}"
     <> "out.dirtyCx0=cx0;out.dirtyCy0=cy0;out.dirtyCx1=cx1;out.dirtyCy1=cy1;out.dirtyFull=false;out.dirtyPainted=painted;"
     <> "}"
-
--- | Paint live/changed grid cells into an RGBA canvas buffer in one JS pass.
--- Writes dirty-rect fields onto @out@ (@dirtyCx0@ … @dirtyPainted@) for blitting.
-paintGridCells ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f ('Array 'Number)
-  -> Expr f ('Array 'Number)
-  -> Expr f 'Bool
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Effect f u
-  -> Effect f 'Unit
-paintGridCells
-  pixels
-  cw
-  ch
-  paletteRgba
-  alive
-  species
-  w
-  scale
-  panX
-  panY
-  bg
-  liveList
-  changedList
-  fullRedraw
-  visX0
-  visX1
-  visY0
-  visY1
-  out =
-    FFI
-      (FFILambda paintGridCellsJs)
-      ( arg pixels
-          <: arg cw
-          <: arg ch
-          <: arg paletteRgba
-          <: arg alive
-          <: arg species
-          <: arg w
-          <: arg scale
-          <: arg panX
-          <: arg panY
-          <: arg bg
-          <: arg liveList
-          <: arg changedList
-          <: arg fullRedraw
-          <: arg visX0
-          <: arg visX1
-          <: arg visY0
-          <: arg visY1
-          <: ArgEffect out
-          <: RecNil
-      )
 
 -- | Zero a rectangular region of a row-major @Uint8Array@ (@y * gridW + x@).
 -- Half-open intervals: @x0 <= x < x1@, @y0 <= y < y1@.

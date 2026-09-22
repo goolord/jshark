@@ -25,6 +25,7 @@ where
 import JShark.Api
 import JShark.Api.Generic (MutableObjectOf, newRecord)
 import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Types (Effect (FFI), FFIForm (FFILambda))
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import JShark.Example.Life.Catalog (catalogInitialCells, stampCatalogCells)
@@ -53,7 +54,7 @@ import JShark.Example.Life.Grid
   , stepGrid
   , syncPaletteRgbaSid
   )
-import JShark.Example.Life.GridApi (paintGridCells, seedSoupRegion, setProps)
+import JShark.Example.Life.GridApi (paintGridCellsJs, seedSoupRegion, setProps)
 import JShark.Example.Life.Names
   ( recordDiscoveredName
   , refreshTakenNames
@@ -426,26 +427,31 @@ paintVisible :: Frame f -> EffectSyntax f (f 'Unit)
 paintVisible fr@Frame {..} =
   whenS (needsPaint fr) $ do
     toSyntax_ $
-      paintGridCells
-        pixels
-        w
-        h
-        paletteRgba
-        alive
-        species
-        w
-        (number 1)
-        (number 0)
-        (number 0)
-        (number 15 + shl (number 23) (number 8) + shl (number 42) (number 16))
-        liveList
-        changedList
-        (visRefresh fr)
-        (Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1))
-        (Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1))
-        (Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1))
-        (Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1))
-        renderDirty
+      FFI
+        (FFILambda paintGridCellsJs)
+        ( arg pixels
+            <: arg w
+            <: arg h
+            <: arg paletteRgba
+            <: arg alive
+            <: arg species
+            <: arg w
+            <: arg (number 1)
+            <: arg (number 0)
+            <: arg (number 0)
+            <: arg (number 15 + shl (number 23) (number 8) + shl (number 42) (number 16))
+            <: arg liveList
+            <: arg changedList
+            <: arg (visRefresh fr)
+            <: arg
+              (Math.max (number 0) (Math.floor ((number 0 - panX) / cellScale) - number 1))
+            <: arg (Math.min w (Math.ceil ((cw - panX) / cellScale) + number 1))
+            <: arg
+              (Math.max (number 0) (Math.floor ((number 0 - panY) / cellScale) - number 1))
+            <: arg (Math.min h (Math.ceil ((ch - panY) / cellScale) + number 1))
+            <: ArgEffect renderDirty
+            <: RecNil
+        )
     done
  where
   cellScale = px * zoom
