@@ -11,7 +11,6 @@ module JShark.Example.Life.LifeTestSupport
   , assertAlive
   , aliveBit
   , setAlive
-  , clearBinaryGrid
   , gridPop
   , runProcessCellAt
   , newCellGrids
@@ -19,7 +18,6 @@ module JShark.Example.Life.LifeTestSupport
   , seedBlock
   , seedBeehive
   , seedBlinkerHorizontal
-  , seedBlinkerVertical
   , blockCoords
   , beehiveCoords
   , coordsMatch
@@ -91,11 +89,6 @@ setAlive grid w x y = do
   setPackedAlive grid i (number 1)
   done
 
-clearBinaryGrid :: Expr f 'Uint8Array -> EffectSyntax f (f 'Unit)
-clearBinaryGrid grid = do
-  toSyntax_ (u8Fill grid (number 0))
-  done
-
 gridPop ::
   Expr f 'Uint8Array
   -> Expr f 'Number
@@ -152,19 +145,6 @@ seedBlinkerHorizontal grid w h = do
   setAlive grid w (number 1) (number 2)
   setAlive grid w (number 2) (number 2)
   setAlive grid w (number 3) (number 2)
-  rebuildPackedCounts grid w h
-  done
-
-seedBlinkerVertical ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-seedBlinkerVertical grid w h = do
-  toSyntax_ (u8Fill grid (number 0))
-  setAlive grid w (number 2) (number 1)
-  setAlive grid w (number 2) (number 2)
-  setAlive grid w (number 2) (number 3)
   rebuildPackedCounts grid w h
   done
 

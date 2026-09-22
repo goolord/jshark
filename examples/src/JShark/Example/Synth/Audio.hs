@@ -51,19 +51,13 @@ module JShark.Example.Synth.Audio
 
     -- * Params
   , param
-  , paramValue
   , setValue
   , setValueAt
-  , rampTo
-  , expRampTo
-  , cancelFrom
-  , cancelHold
   , scheduleAdsr
   , releaseVoice
 
     -- * Sources
   , startAt
-  , stopAt
 
     -- * Analysis
   , analysisBuffer
@@ -213,10 +207,6 @@ setFftSize n v = setProp (node n) "fftSize" v
 param :: IsNode f a => a -> String -> Effect f ('MutableObject Param)
 param n = unsafeObjectGet (node n)
 
--- | @p.value@, the param's value right now.
-paramValue :: Effect f ('MutableObject Param) -> EffectSyntax f (Expr f 'Number)
-paramValue p = getProp p "value"
-
 -- | @p.value = v@. Immediate and unscheduled — right for a control the
 -- user is dragging, wrong for anything an envelope owns.
 setValue ::
@@ -231,42 +221,6 @@ setValueAt ::
   -> EffectSyntax f ()
 setValueAt p v t =
   toSyntax_ (callMethod p "setValueAtTime" (arg v <: arg t <: RecNil))
-
--- | @p.linearRampToValueAtTime(v, t)@.
---
--- Where the timing guarantee comes from: the ramp runs on the audio thread,
--- so a busy main thread cannot make it stutter.
-rampTo ::
-  Effect f ('MutableObject Param)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f ()
-rampTo p v t =
-  toSyntax_ (callMethod p "linearRampToValueAtTime" (arg v <: arg t <: RecNil))
-
--- | @p.exponentialRampToValueAtTime(v, t)@ — perceptual (log) volume; @v@
--- must stay above zero.
-expRampTo ::
-  Effect f ('MutableObject Param)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f ()
-expRampTo p v t =
-  toSyntax_
-    (callMethod p "exponentialRampToValueAtTime" (arg v <: arg t <: RecNil))
-
--- | @p.cancelScheduledValues(t)@ — drop automation queued after @t@.
-cancelFrom ::
-  Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f ()
-cancelFrom p t =
-  toSyntax_ (callMethod p "cancelScheduledValues" (arg t <: RecNil))
-
--- | @p.cancelAndHoldAtTime(t)@ — drop later events and freeze the computed
--- value at @t@, so a release can start from the real level, not a jump.
-cancelHold ::
-  Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f ()
-cancelHold p t =
-  toSyntax_ (callMethod p "cancelAndHoldAtTime" (arg t <: RecNil))
 
 -- | One-shot ADSR on a gain param. Attack is a linear rise to peak; decay
 -- and the hold use @setTargetAtTime@ so Chromium cannot drop a second
@@ -367,10 +321,6 @@ releaseVoiceJs =
 -- | @src.start(t)@
 startAt :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f ()
 startAt n t = toSyntax_ (callMethod (node n) "start" (arg t <: RecNil))
-
--- | @src.stop(t)@
-stopAt :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f ()
-stopAt n t = toSyntax_ (callMethod (node n) "stop" (arg t <: RecNil))
 
 -- | A zeroed analysis buffer of @n@ bytes.
 --

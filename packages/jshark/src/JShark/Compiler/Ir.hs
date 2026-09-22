@@ -57,6 +57,7 @@ import JShark.Api.Types
   , LamInfo (..)
   , Value (..)
   )
+import JShark.Compiler.Emit (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import JShark.Compiler.Evaluate
   ( isCheapValue
   , jsShow
@@ -65,7 +66,6 @@ import JShark.Compiler.Evaluate
   , tryEvalBigBin
   , typeOfValue
   )
-import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 
 -- | A 'Value' with its universe hidden.
 data SomeValue where
@@ -77,7 +77,7 @@ data SomeFixedOp where
 
 -- | Declared or out-of-row ('FExtra') object field, pure or effectful.
 data FieldKind = FPlain | FEff | FExtra | FExtraEff
-  deriving (Eq)
+  deriving Eq
 
 data IrField r = IrField !FieldKind !Text r
   deriving (Functor, Foldable, Traversable)
@@ -110,7 +110,7 @@ data Op2
 data Op1 = ONeg | OBigNeg | OShow | OTypeOf
 
 data Meth = MMap | MFilter | MReduce | MReduceRight | MToSorted | MFrom
-  deriving (Eq)
+  deriving Eq
 
 -- | One IR node over children @r@. Children are listed in evaluation order;
 -- the derived 'Traversable' visits them in that order.
@@ -384,7 +384,9 @@ isVarOf t = \case
 -- | Only a closed lambda may hoist to a shared @$name@ binding.
 closeHoist :: Int -> LamInfo -> Meta -> LamInfo
 closeHoist tag info md
-  | isJust (lamTag info), not (IM.null (mFree (bindMeta tag md))) = info {lamTag = Nothing}
+  | isJust (lamTag info)
+  , not (IM.null (mFree (bindMeta tag md))) =
+      info {lamTag = Nothing}
   | otherwise = info
 
 -- | Shared let\/bind eliminator: drop, inline, or keep the binding.
@@ -434,7 +436,10 @@ optIr ir@(Ir n) = case n of
         Just _ -> (Ir (NApp (Ir (NLam tag (closeHoist tag info mg) g')) x'), nodeMeta mx mg)
         Nothing -> elimBinder False mx Nothing tag x' g' mg
   NLam tag info g ->
-    let (g', m) = optIr g in (Ir (NLam tag (closeHoist tag info m) g'), bindMeta tag m)
+    let
+      (g', m) = optIr g
+     in
+      (Ir (NLam tag (closeHoist tag info m) g'), bindMeta tag m)
   NIf c t e -> ifLike False NIf c t e
   NIfE c t e -> ifLike True NIfE c t e
   NOptCase o nb tag s -> optCase False o nb tag s (\o' n' s' -> NOptCase o' n' tag s')
@@ -444,29 +449,38 @@ optIr ir@(Ir n) = case n of
   NK2 OAnd x y -> andOr True x y
   NK2 OOr x y -> andOr False x y
   NWhile c b ->
-    let (c', mc) = optIr c
-     in case c' of
-          Ir (NLift (Ir (LitV (ValueBool False)))) ->
-            (Ir (NLift (Ir (NLit (SomeValue ValueUnit)))), litMeta ValueUnit <> mc)
-          _ -> let (b', mb) = optIr b in (Ir (NWhile c' b'), effectMd (nodeMeta mc mb))
+    let
+      (c', mc) = optIr c
+     in
+      case c' of
+        Ir (NLift (Ir (LitV (ValueBool False)))) ->
+          (Ir (NLift (Ir (NLit (SomeValue ValueUnit)))), litMeta ValueUnit <> mc)
+        _ -> let (b', mb) = optIr b in (Ir (NWhile c' b'), effectMd (nodeMeta mc mb))
   NAppE f x ->
-    let (f', mf) = optIr f
-     in case f' of
-          Ir (NLamE tag g) ->
-            let (x', mx) = optIr x; (g', mg) = optIr g in elimBinder True mx Nothing tag x' g' mg
-          _ -> let (x', mx) = optIr x in (Ir (NAppE f' x'), effectMd (nodeMeta mf mx))
+    let
+      (f', mf) = optIr f
+     in
+      case f' of
+        Ir (NLamE tag g) ->
+          let
+            (x', mx) = optIr x; (g', mg) = optIr g
+           in
+            elimBinder True mx Nothing tag x' g' mg
+        _ -> let (x', mx) = optIr x in (Ir (NAppE f' x'), effectMd (nodeMeta mf mx))
   NStrCase s arms d ->
-    let (s', ms) = optIr s
-     in case s' of
-          Ir (LitV (ValueString k)) -> optIr (fromMaybe d (lookup k arms))
-          _ ->
-            let
-              arms' = [(k, optIr e) | (k, e) <- arms]
-              (d', md) = optIr d
-             in
-              ( Ir (NStrCase s' [(k, e) | (k, (e, _)) <- arms'] d')
-              , nodeMeta ms (nodeMeta (foldMap (snd . snd) arms') md)
-              )
+    let
+      (s', ms) = optIr s
+     in
+      case s' of
+        Ir (LitV (ValueString k)) -> optIr (fromMaybe d (lookup k arms))
+        _ ->
+          let
+            arms' = [(k, optIr e) | (k, e) <- arms]
+            (d', md) = optIr d
+           in
+            ( Ir (NStrCase s' [(k, e) | (k, (e, _)) <- arms'] d')
+            , nodeMeta ms (nodeMeta (foldMap (snd . snd) arms') md)
+            )
   _ ->
     let
       nm = fmap optIr n
@@ -480,7 +494,8 @@ finish :: (?keepLets :: Bool) => N Ir -> [Meta] -> (Ir, Meta)
 finish n ms = case n of
   NIndex (Ir (LitV (ValueArray vs))) (Ir (LitV (ValueNumber d)))
     | isFiniteDouble d
-    , let i = truncate d :: Int
+    , let
+        i = truncate d :: Int
     , i >= 0 && i < length vs ->
         let v = vs !! i in (Ir (NLit (SomeValue v)), litMeta v <> mconcat ms)
   NK2 op x y -> folded (fold2 op x y) (leaf True True False)
@@ -503,54 +518,71 @@ finish n ms = case n of
     Just v@(SomeValue lv) -> (Ir (NLit v), litMeta lv <> chain ms)
     Nothing -> (Ir n, keepMd <> chain ms)
 
-letLike :: (?keepLets :: Bool) => Bool -> Int -> Maybe Text -> Ir -> Ir -> (Ir, Meta)
+letLike ::
+  (?keepLets :: Bool) => Bool -> Int -> Maybe Text -> Ir -> Ir -> (Ir, Meta)
 letLike eff tag h x b =
   let (x', mx) = optIr x; (b', mb) = optIr b in elimBinder eff mx h tag x' b' mb
 
-ifLike :: (?keepLets :: Bool) => Bool -> (Ir -> Ir -> Ir -> N Ir) -> Ir -> Ir -> Ir -> (Ir, Meta)
+ifLike ::
+  (?keepLets :: Bool) =>
+  Bool -> (Ir -> Ir -> Ir -> N Ir) -> Ir -> Ir -> Ir -> (Ir, Meta)
 ifLike eff mk c t e =
-  let (c', mc) = optIr c
-   in case (eff, c') of
-        (False, Ir (LitV (ValueBool b))) -> optIr (if b then t else e)
-        (True, Ir (NLift (Ir (LitV (ValueBool b))))) -> optIr (if b then t else e)
-        _ ->
-          let (t', mt) = optIr t; (e', me) = optIr e
-           in (Ir (mk c' t' e'), nodeMeta mc (nodeMeta mt me))
+  let
+    (c', mc) = optIr c
+   in
+    case (eff, c') of
+      (False, Ir (LitV (ValueBool b))) -> optIr (if b then t else e)
+      (True, Ir (NLift (Ir (LitV (ValueBool b))))) -> optIr (if b then t else e)
+      _ ->
+        let
+          (t', mt) = optIr t; (e', me) = optIr e
+         in
+          (Ir (mk c' t' e'), nodeMeta mc (nodeMeta mt me))
 
 -- | Bind a known case payload in the arm: pure arms by let, effect arms by
 -- bind of the lifted payload.
 bindPayload :: (?keepLets :: Bool) => Bool -> Int -> Ir -> Ir -> (Ir, Meta)
 bindPayload eff tag v arm =
-  let (arm', ma) = optIr arm
-   in elimBinder eff (metaIr v) Nothing tag (if eff then Ir (NLift v) else v) arm' ma
+  let
+    (arm', ma) = optIr arm
+   in
+    elimBinder eff (metaIr v) Nothing tag (if eff then Ir (NLift v) else v) arm' ma
 
 optCase ::
   (?keepLets :: Bool) =>
   Bool -> Ir -> Ir -> Int -> Ir -> (Ir -> Ir -> Ir -> N Ir) -> (Ir, Meta)
 optCase eff o nb tag s mk =
-  let (o', mo) = optIr o
-   in case o' of
-        Ir (LitV (ValueOption Nothing)) -> optIr nb
-        Ir (LitV (ValueOption (Just v))) -> bindPayload eff tag (Ir (NLit (SomeValue v))) s
-        -- Host literals are never JS null; vars and FFI results stay checked.
-        Ir (NNullable l@(Ir (NLit _))) -> bindPayload eff tag l s
-        _ ->
-          let (n', mn) = optIr nb; (s', ms) = optIr s
-           in (Ir (mk o' n' s'), nodeMeta mo (nodeMeta mn (bindMeta tag ms)))
+  let
+    (o', mo) = optIr o
+   in
+    case o' of
+      Ir (LitV (ValueOption Nothing)) -> optIr nb
+      Ir (LitV (ValueOption (Just v))) -> bindPayload eff tag (Ir (NLit (SomeValue v))) s
+      -- Host literals are never JS null; vars and FFI results stay checked.
+      Ir (NNullable l@(Ir (NLit _))) -> bindPayload eff tag l s
+      _ ->
+        let
+          (n', mn) = optIr nb; (s', ms) = optIr s
+         in
+          (Ir (mk o' n' s'), nodeMeta mo (nodeMeta mn (bindMeta tag ms)))
 
 resCase ::
   (?keepLets :: Bool) =>
   Bool -> Ir -> Int -> Ir -> Int -> Ir -> (Ir -> Ir -> Ir -> N Ir) -> (Ir, Meta)
 resCase eff o te e to k mk =
-  let (o', mo) = optIr o
-   in case o' of
-        Ir (LitV (ValueResult (Left v))) -> bindPayload eff te (Ir (NLit (SomeValue v))) e
-        Ir (LitV (ValueResult (Right v))) -> bindPayload eff to (Ir (NLit (SomeValue v))) k
-        Ir (NResErr x) -> bindPayload eff te x e
-        Ir (NResOk x) -> bindPayload eff to x k
-        _ ->
-          let (e', me) = optIr e; (k', mk') = optIr k
-           in (Ir (mk o' e' k'), nodeMeta mo (nodeMeta (bindMeta te me) (bindMeta to mk')))
+  let
+    (o', mo) = optIr o
+   in
+    case o' of
+      Ir (LitV (ValueResult (Left v))) -> bindPayload eff te (Ir (NLit (SomeValue v))) e
+      Ir (LitV (ValueResult (Right v))) -> bindPayload eff to (Ir (NLit (SomeValue v))) k
+      Ir (NResErr x) -> bindPayload eff te x e
+      Ir (NResOk x) -> bindPayload eff to x k
+      _ ->
+        let
+          (e', me) = optIr e; (k', mk') = optIr k
+         in
+          (Ir (mk o' e' k'), nodeMeta mo (nodeMeta (bindMeta te me) (bindMeta to mk')))
 
 -- | @&&@ \/ @||@: fold a literal left operand; a literal right operand folds
 -- only when dropping the left one is unobservable.
@@ -566,15 +598,17 @@ andOr isAnd x y =
         | b == isAnd -> optIr y
         | otherwise -> (zero, zeroMd)
       _ ->
-        let (y', my) = optIr y
-         in case y' of
-              Ir (LitV (ValueBool b))
-                | b == isAnd -> (x', mx)
-                | mDrop mx -> (zero, zeroMd)
-              _ ->
-                ( Ir (NK2 (if isAnd then OAnd else OOr) x' y')
-                , leaf True True False <> nodeMeta mx my
-                )
+        let
+          (y', my) = optIr y
+         in
+          case y' of
+            Ir (LitV (ValueBool b))
+              | b == isAnd -> (x', mx)
+              | mDrop mx -> (zero, zeroMd)
+            _ ->
+              ( Ir (NK2 (if isAnd then OAnd else OOr) x' y')
+              , leaf True True False <> nodeMeta mx my
+              )
 
 -- Constant folding ------------------------------------------------------------
 
@@ -639,7 +673,9 @@ foldFixed op args = case (op, map litOf args) of
     | Just (MathBinary op') <- matchMathBinary op -> num <$> exactMathBinary op' a b
   (FixArrLen, [Just (SomeValue (ValueArray vs))]) -> Just (num (fromIntegral (length vs)))
   (FixToBigInt, [Just (SomeValue (ValueNumber d))])
-    | isFiniteDouble d, d == fromInteger (truncate d) -> Just (SomeValue (ValueBigInt (truncate d)))
+    | isFiniteDouble d
+    , d == fromInteger (truncate d) ->
+        Just (SomeValue (ValueBigInt (truncate d)))
   (FixFromBigInt, [Just (SomeValue (ValueBigInt i))]) -> Just (num (fromInteger i))
   (FixParseBigInt, [Just (SomeValue (ValueString s))]) ->
     SomeValue . ValueBigInt <$> parseBigIntString (T.unpack s)

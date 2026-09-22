@@ -4,7 +4,7 @@
 
 module Main (main) where
 
-import Bench.Stages (codepathStages, codepathStagesPure)
+import Bench.Stages (stageBenches, stageBenchesPure)
 import JShark
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
@@ -50,8 +50,8 @@ main =
         ]
     , bgroup
         "bindChain"
-        [codepathStages (show n) (bindChain n) | n <- scaleNs]
+        [stageBenches (show n) (bindChain n) | n <- scaleNs]
     , bgroup
         "letChain"
-        [codepathStagesPure (show n) (letChain n) | n <- scaleNs]
+        [stageBenchesPure (show n) (letChain n) | n <- scaleNs]
     ]

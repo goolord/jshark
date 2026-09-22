@@ -196,90 +196,24 @@ executable gen-life-worker
     , text
   default-language: Haskell2010
 
--- Life compiler profiling tools (manual runs, not CI-gated).
-common bench
+benchmark jshark-examples-bench
   import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-examples
+    , jshark:testing
+    , tasty-bench >= 0.3.5
+    , text
   default-language: Haskell2010
   ghc-options:
     -threaded
     -rtsopts
     -with-rtsopts=-N
     -with-rtsopts=-M10G
-    -Wno-unused-do-bind
-
-executable jshark-life-phases
-  import: bench
-  main-is: LifePhases.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , bytestring
-    , jshark
-    , jshark-examples
-    , text
-
-executable jshark-life-full-emit
-  import: bench
-  main-is: LifeFullEmit.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , deepseq >= 1.4
-    , jshark
-    , jshark-examples
-    , jshark:testing
-    , tasty-bench >= 0.3.5
-    , text
-
-executable jshark-life-emit
-  import: bench
-  main-is: LifeEmit.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , deepseq >= 1.4
-    , jshark
-    , jshark-examples
-    , jshark:testing
-    , tasty-bench >= 0.3.5
-    , text
-
-executable jshark-probe
-  import: bench
-  main-is: Probe.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , bytestring
-    , jshark
-    , jshark-examples
-    , text
-
-
-benchmark jshark-examples-bench
-  import: bench
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , deepseq >= 1.4
-    , jshark
-    , jshark-examples
-    , jshark:testing
-    , tasty-bench >= 0.3.5
-    , text
-
-benchmark jshark-forced
-  import: bench
-  type: exitcode-stdio-1.0
-  main-is: Forced.hs
-  hs-source-dirs: bench
-  build-depends:
-    , base
-    , jshark
-    , jshark-examples
-    , tasty-bench >= 0.3.5
 
 test-suite jshark-examples-test
   import: warnings

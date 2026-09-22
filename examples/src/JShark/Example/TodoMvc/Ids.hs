@@ -10,7 +10,6 @@ module JShark.Example.TodoMvc.Ids
   , routeCompleted
   , valueAll
   , valueActive
-  , valueCompleted
   , classSelected
   , idForm
   , idNewTodo
@@ -41,10 +40,9 @@ routeCompleted = Route "filter-completed" "#/completed" "completed" "Completed"
 routes :: [Route]
 routes = [routeAll, routeActive, routeCompleted]
 
-valueAll, valueActive, valueCompleted :: Text
+valueAll, valueActive :: Text
 valueAll = routeValue routeAll
 valueActive = routeValue routeActive
-valueCompleted = routeValue routeCompleted
 
 classSelected :: Text
 classSelected = "selected"

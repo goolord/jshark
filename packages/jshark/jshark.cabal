@@ -106,8 +106,6 @@ library
     JShark.Compiler.Emit
     JShark.Compiler.Evaluate
     JShark.Compiler.Ir
-    JShark.Compiler.JsNum
-    JShark.Compiler.JsShim
     JShark.Compiler.Lower
   build-depends:
     , async >= 2.2 && < 2.4
@@ -138,7 +136,6 @@ library testing
   build-depends:
     , base >= 4.17 && < 5
     , bytestring >= 0.10.8 && < 0.13
-    , deepseq >= 1.4 && < 1.6
     , jshark
     , tasty >= 1.4 && < 1.6
     , tasty-bench >= 0.3.5 && < 0.4
@@ -179,7 +176,6 @@ benchmark jshark-compiler
   hs-source-dirs: bench
   build-depends:
     , base
-    , deepseq >= 1.4 && < 1.6
     , jshark
     , jshark:testing
     , tasty-bench >= 0.3.5 && < 0.4

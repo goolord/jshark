@@ -120,10 +120,9 @@ where
 
 import JShark.Api.Types
 import JShark.Compiler.Codegen (effectfulProgram, pureProgram)
-import JShark.Compiler.Emit (JS, renderJS)
+import JShark.Compiler.Emit (JS, escapeJsString, renderJS)
 import JShark.Compiler.Evaluate
   ( EvalFailure (..)
-  , escapeJsString
   , evaluate
   , evaluateBigInt
   , evaluateNumber

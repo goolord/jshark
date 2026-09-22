@@ -1,7 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MagicHash #-}
@@ -13,44 +12,31 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UnboxedTuples #-}
 
--- | Pure reference interpreter for closed 'Expr' terms.
+-- | Pure reference interpreter for closed 'Expr' terms, plus the JS value
+-- semantics the optimizer folds with.
 module JShark.Compiler.Evaluate
   ( evaluate
   , tryEvaluate
   , EvalFailure (..)
   , evaluateNumber
   , evaluateBigInt
-  , valueEq
   , isCheapValue
-  , isFiniteDouble
-  , escapeJsString
-  , jsQuote
-  , jsBigIntLit
-  , jsUint8ArrayLit
-  , jsUint8ClampedArrayLit
-  , bigOpJS
+  , jsShow
+  , typeOfValue
+  , keepLastByKey
+  , tryEvalBigBin
+  , parseBigIntString
   , uint8Elems
   , packUint8
-  , tryEvalBigBin
-  , isOrderableValue
-  , eqFoldableValue
-  , jsShow
-  , keepLastByKey
-  , typeOfValue
-  , valueCompare
-  , parseBigIntString
   )
 where
 
 import Control.Exception (Exception, throw, try)
 import qualified Control.Exception as E (evaluate)
-import Control.Monad (foldM)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
-import Data.Functor.Identity (Identity (..), runIdentity)
-import Data.List (intersperse)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
@@ -74,210 +60,12 @@ import JShark.Api.Prim
   , isFiniteDouble
   , matchMathBinary
   , matchMathUnary
+  , mathBinaryFn
+  , mathUnaryFn
   )
-import qualified JShark.Api.Prim as Prim
 import JShark.Api.Types
-import JShark.Compiler.Emit
-  ( JS
-  , brackets
-  , dquotes
-  , hcat
-  , jsDecimal
-  , jsString
-  , jsText
-  , parens
-  )
-import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
-import Numeric (readInt, showHex)
-
-unNumber :: Value 'Number -> Double
-unNumber (ValueNumber d) = d
-
-unBigInt :: Value 'BigInt -> Integer
-unBigInt (ValueBigInt n) = n
-
-unBool :: Value 'Bool -> Bool
-unBool (ValueBool b) = b
-
-unString :: Value 'String -> Text
-unString (ValueString s) = s
-
-unFunction :: Value ('Function u v) -> Value u -> Value v
-unFunction (ValueFunction f) = f
-
-valueEq :: Value u -> Value u -> Bool
-valueEq (ValueNumber a) (ValueNumber b) = a == b
-valueEq (ValueBigInt a) (ValueBigInt b) = a == b
-valueEq (ValueString a) (ValueString b) = a == b
-valueEq (ValueBool a) (ValueBool b) = a == b
-valueEq ValueUnit ValueUnit = True
-valueEq (ValueArray as) (ValueArray bs) =
-  length as == length bs && and (zipWith valueEq as bs)
-valueEq (ValueOption a) (ValueOption b) = case (a, b) of
-  (Nothing, Nothing) -> True
-  (Just x, Just y) -> valueEq x y
-  _ -> False
-valueEq (ValueResult a) (ValueResult b) = case (a, b) of
-  (Left x, Left y) -> valueEq x y
-  (Right x, Right y) -> valueEq x y
-  _ -> False
-valueEq (ValueRegex a) (ValueRegex b) = a == b
-valueEq (ValueUint8Array a) (ValueUint8Array b) = a == b
-valueEq (ValueUint8ClampedArray a) (ValueUint8ClampedArray b) = a == b
-valueEq (ValueFrozen as) (ValueFrozen bs) = frozenEq as bs
-valueEq (ValueFunction _) (ValueFunction _) =
-  cannotEval "function equality"
-
-isCheapValue :: Value u -> Bool
-isCheapValue = \case
-  ValueNumber {} -> True
-  ValueBigInt {} -> True
-  ValueString {} -> True
-  ValueBool {} -> True
-  ValueUnit -> True
-  -- A tagged option is an object; never duplicate it.
-  ValueOption _ -> False
-  ValueResult (Left v) -> isCheapValue v
-  ValueResult (Right v) -> isCheapValue v
-  ValueRegex {} -> False
-  ValueUint8Array {} -> False
-  ValueUint8ClampedArray {} -> False
-  ValueArray {} -> False
-  ValueFunction {} -> False
-  ValueFrozen {} -> False
-
--- | Last-wins records. JS @===@ is identity; we keep value equality
--- because a frozen object is a Good Parts record, not a mutable handle.
-frozenEq :: [FieldLit Value r] -> [FieldLit Value r] -> Bool
-frozenEq as bs =
-  let
-    as' = lastWinsFields as
-    bs' = lastWinsFields bs
-   in
-    length as' == length bs' && all (\fa -> any (fieldLitEq fa) bs') as'
-
--- | Keep the last occurrence of each key (first-wins after the reverse
--- pair, so later fields shadow earlier ones).
-keepLastByKey :: Eq k => (a -> k) -> [a] -> [a]
-keepLastByKey key = reverse . keep [] . reverse
- where
-  keep acc [] = acc
-  keep acc (x : xs)
-    | key x `elem` map key acc = keep acc xs
-    | otherwise = keep (x : acc) xs
-
-lastWinsFields :: [FieldLit Value r] -> [FieldLit Value r]
-lastWinsFields = keepLastByKey fieldKey
-
-evalFieldLit ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> FieldLit Value r
-  -> m (FieldLit Value r)
-evalFieldLit rec (FieldLit @k e) = FieldLit @k . Literal <$> rec e
-evalFieldLit rec (FieldLitEffect @k (Lift e)) = FieldLit @k . Literal <$> rec e
-evalFieldLit rec (FieldLitExtra @k e) = FieldLitExtra @k . Literal <$> rec e
-evalFieldLit rec (FieldLitExtraEffect @k (Lift e)) =
-  FieldLitExtra @k . Literal <$> rec e
-evalFieldLit _ (FieldLitEffect _) =
-  cannotEval "effectful object field (FieldLitEffect); not a pure Lift"
-evalFieldLit _ (FieldLitExtraEffect _) =
-  cannotEval "effectful object field (FieldLitExtraEffect); not a pure Lift"
-
-fieldLitEq :: forall r. FieldLit Value r -> FieldLit Value r -> Bool
-fieldLitEq (FieldLit @k a) (FieldLit @k' b) = forcedFieldEq @k @k' @r a b
-fieldLitEq (FieldLitEffect @k (Lift a)) (FieldLitEffect @k' (Lift b)) =
-  forcedFieldEq @k @k' @r a b
-fieldLitEq (FieldLitExtra @k a) (FieldLitExtra @k' b) = extraFieldEq @k @k' a b
-fieldLitEq (FieldLitExtraEffect @k (Lift a)) (FieldLitExtraEffect @k' (Lift b)) =
-  extraFieldEq @k @k' a b
-fieldLitEq _ _ = False
-
-forcedFieldEq ::
-  forall k k' r.
-  (KnownSymbol k, KnownSymbol k') =>
-  Expr Value (Field r k) -> Expr Value (Field r k') -> Bool
-forcedFieldEq a b =
-  case sameSymbol (Proxy @k) (Proxy @k') of
-    Nothing -> False
-    Just Refl -> case (a, b) of
-      (Literal x, Literal y) -> valueEq x y
-      _ -> error "evaluate: frozen field was not forced"
-
-extraFieldEq ::
-  forall k k' u v.
-  (KnownSymbol k, KnownSymbol k', Typeable u, Typeable v) =>
-  Expr Value u -> Expr Value v -> Bool
-extraFieldEq a b =
-  case sameSymbol (Proxy @k) (Proxy @k') of
-    Nothing -> False
-    Just Refl -> case eqT @u @v of
-      Nothing -> False
-      Just Refl -> case (a, b) of
-        (Literal x, Literal y) -> valueEq x y
-        _ -> error "evaluate: frozen extra field was not forced"
-
--- | Only numbers, bigints, strings, and booleans support ordering comparisons.
-valueCompare :: Value u -> Value u -> Ordering
-valueCompare (ValueNumber a) (ValueNumber b) = compare a b
-valueCompare (ValueBigInt a) (ValueBigInt b) = compare a b
-valueCompare (ValueString a) (ValueString b) = compare a b
-valueCompare (ValueBool a) (ValueBool b) = compare a b
-valueCompare _ _ =
-  error
-    "evaluate: only numbers, bigints, strings, and booleans support ordering comparisons"
-
--- | Mimics JS's @String(x)@ coercion closely enough for the reference interpreter.
-jsShow :: Value u -> Text
-jsShow (ValueNumber d) = T.pack (jsShowNumber d)
-jsShow (ValueBigInt n) = T.pack (show n)
-jsShow (ValueString s) = s
-jsShow (ValueBool True) = "true"
-jsShow (ValueBool False) = "false"
-jsShow ValueUnit = "undefined"
-jsShow (ValueArray xs) = T.intercalate "," (map jsJoinElem xs)
--- A tagged option is a plain object: `String({some:…})` is `[object Object]`.
-jsShow (ValueOption _) = "[object Object]"
-jsShow ValueResult {} = "[object Object]"
-jsShow (ValueRegex s) = s
-jsShow (ValueUint8Array ba) = jsShowUint8Array ba
-jsShow (ValueUint8ClampedArray ba) = jsShowUint8Array ba
-jsShow ValueFrozen {} = "[object Object]"
-jsShow (ValueFunction _) = cannotEval "show of a function"
-
--- | One element of @Array.prototype.join@ (and of a nested array's
--- @toString@). JS renders @null@ and @undefined@ as the empty string
--- there, not as @\"null\"@ / @\"undefined\"@.
-jsJoinElem :: Value u -> Text
-jsJoinElem = \case
-  -- Objects (including tagged options) join as their `String` form.
-  ValueOption _ -> "[object Object]"
-  ValueUnit -> ""
-  v -> jsShow v
-
--- | JS @typeof@. @null@ is @\"object\"@.
-typeOfValue :: Value u -> Text
-typeOfValue = \case
-  ValueNumber {} -> "number"
-  ValueBigInt {} -> "bigint"
-  ValueString {} -> "string"
-  ValueBool {} -> "boolean"
-  ValueUnit -> "undefined"
-  ValueFunction {} -> "function"
-  ValueArray {} -> "object"
-  ValueOption _ -> "object"
-  ValueResult {} -> "object"
-  ValueRegex {} -> "object"
-  ValueUint8Array {} -> "object"
-  ValueUint8ClampedArray {} -> "object"
-  ValueFrozen {} -> "object"
-
-jsShowNumber :: Double -> String
-jsShowNumber d
-  | isInt = show (truncate d :: Integer)
-  | otherwise = show d
- where
-  isInt = not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d)
+import JShark.Compiler.Emit (jsBit2, jsRem, jsShl, jsShr, jsUShr)
+import Numeric (readInt)
 
 -- | Why the host interpreter could not produce a value.
 data EvalFailure
@@ -292,180 +80,429 @@ data EvalFailure
 instance Exception EvalFailure
 
 cannotEval :: String -> a
-cannotEval what = throw (EvalUnsupported (T.pack what))
+cannotEval = throw . EvalUnsupported . T.pack
 
--- | A JS-like failure. Kept distinct from 'cannotEval' so callers can tell
--- "the program would throw" from "the interpreter cannot model this".
 jsFailure :: String -> a
-jsFailure what = throw (EvalJsFailure (T.pack what))
+jsFailure = throw . EvalJsFailure . T.pack
 
-arrayValues :: Value ('Array u) -> [Value u]
-arrayValues (ValueArray vs) = vs
+evaluateNumber :: ClosedExpr 'Number -> Double
+evaluateNumber e = case evaluate e of ValueNumber d -> d
 
-isOrderableValue :: Value u -> Bool
-isOrderableValue = \case
+evaluateBigInt :: ClosedExpr 'BigInt -> Integer
+evaluateBigInt e = case evaluate e of ValueBigInt n -> n
+
+-- | Pure reference interpreter. Shared Haskell heap nodes are walked once
+-- per occurrence (no memo table). Throws 'EvalFailure' on failure.
+evaluate :: ClosedExpr u -> Value u
+evaluate = eval
+
+-- | 'evaluate' with failures reified as data. Forcing to WHNF catches the
+-- failure; a value whose lazy interior needs a partial operation is only
+-- forced as far as the caller demands.
+tryEvaluate :: ClosedExpr u -> IO (Either EvalFailure (Value u))
+tryEvaluate e = try (E.evaluate (evaluate e))
+
+num :: Expr Value 'Number -> Double
+num e = case eval e of ValueNumber d -> d
+
+big :: Expr Value 'BigInt -> Integer
+big e = case eval e of ValueBigInt n -> n
+
+str :: Expr Value 'String -> Text
+str e = case eval e of ValueString s -> s
+
+arr :: Expr Value ('Array u) -> [Value u]
+arr e = case eval e of ValueArray vs -> vs
+
+bytes :: Expr Value u -> ByteArray
+bytes e = case eval e of
+  ValueUint8Array ba -> ba
+  ValueUint8ClampedArray ba -> ba
+  _ -> error "evaluate: expected a byte buffer"
+
+call :: Value ('Function u v) -> Value u -> Value v
+call (ValueFunction f) = f
+
+eval :: Expr Value v -> Value v
+eval = \case
+  Literal v -> v
+  Var x -> x
+  Apply g x -> call (eval g) (eval x)
+  Lambda _ g -> ValueFunction (eval . g)
+  Let _ x g -> eval (g (eval x))
+  LetRec r b -> let v = eval (r v) in eval (b v)
+  If c t e -> case eval c of ValueBool b -> eval (if b then t else e)
+  OptionCase o n s -> case eval o of
+    ValueOption Nothing -> eval n
+    ValueOption (Just x) -> eval (s x)
+  ResultOk x -> ValueResult (Right (eval x))
+  ResultErr x -> ValueResult (Left (eval x))
+  ResultCase r e k -> case eval r of
+    ValueResult (Left x) -> eval (e x)
+    ValueResult (Right x) -> eval (k x)
+  FnLit {} -> cannotEval "Fn (fn)"
+  Index xs i ->
+    let
+      vs = arr xs
+     in
+      maybe (jsFailure "array index out of bounds") id (at vs (num i))
+  U8Index b i ->
+    maybe
+      (jsFailure "uint8 index out of bounds")
+      (ValueNumber . fromIntegral)
+      (at (uint8Elems (bytes b)) (num i))
+  Error m -> jsFailure (T.unpack (str m))
+  Std (Fixed op args) -> evalFixed op args
+  Std (Method m) -> evalMethod m
+  Std (Kernel k) -> evalKernel k
+  -- The runtime conversion is @v == null ? none : some v@; only 'ValueUnit'
+  -- is absent on the host, so nested options round-trip.
+  UnsafeNullable x -> case eval x of
+    ValueUnit -> ValueOption Nothing
+    v -> ValueOption (Just v)
+  FrozenLit fs -> ValueFrozen (map evalField fs)
+  GetField @k o -> case eval o of
+    ValueFrozen fs ->
+      maybe
+        (cannotEval "GetField of a frozen object with effectful fields")
+        eval
+        (lookupField @k fs)
+ where
+  at vs d
+    | isFiniteDouble d, i >= 0, i < length vs = Just (vs !! i)
+    | otherwise = Nothing
+   where
+    i = truncate d :: Int
+
+evalField :: FieldLit Value r -> FieldLit Value r
+evalField = \case
+  FieldLit @k e -> FieldLit @k (Literal (eval e))
+  FieldLitEffect @k (Lift e) -> FieldLit @k (Literal (eval e))
+  FieldLitExtra @k e -> FieldLitExtra @k (Literal (eval e))
+  FieldLitExtraEffect @k (Lift e) -> FieldLitExtra @k (Literal (eval e))
+  FieldLitEffect _ -> cannotEval "effectful object field (FieldLitEffect); not a pure Lift"
+  FieldLitExtraEffect _ -> cannotEval "effectful object field (FieldLitExtraEffect); not a pure Lift"
+
+lookupField ::
+  forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
+lookupField = go . reverse
+ where
+  go [] = Nothing
+  go (FieldLit @k' e : rest) = case sameSymbol (Proxy @k) (Proxy @k') of
+    Just Refl -> Just e
+    Nothing -> go rest
+  go (_ : rest) = go rest
+
+evalKernel :: Kernel Value u -> Value u
+evalKernel = \case
+  KPlus x y -> num2 (+) x y
+  KTimes x y -> num2 (*) x y
+  KMinus x y -> num2 (-) x y
+  KNegate x -> ValueNumber (negate (num x))
+  KFracDiv x y -> num2 (/) x y
+  KRem x y -> num2 jsRem x y
+  KBitAnd x y -> num2 (jsBit2 (.&.)) x y
+  KBitOr x y -> num2 (jsBit2 (.|.)) x y
+  KBitXor x y -> num2 (jsBit2 xor) x y
+  KShl x y -> num2 jsShl x y
+  KShr x y -> num2 jsShr x y
+  KUShr x y -> num2 jsUShr x y
+  KBig op x y -> ValueBigInt (evalBigBin op (big x) (big y))
+  KBigNeg x -> ValueBigInt (negate (big x))
+  KConcat x y -> ValueString (str x <> str y)
+  KShow x -> ValueString (jsShow (eval x))
+  KTypeOf x -> ValueString (typeOfValue (eval x))
+  KAnd x y -> case eval x of ValueBool True -> eval y; _ -> ValueBool False
+  KOr x y -> case eval x of ValueBool True -> ValueBool True; _ -> eval y
+  KEq _ x y -> ValueBool (valueEq (eval x) (eval y))
+  KNEq _ x y -> ValueBool (not (valueEq (eval x) (eval y)))
+  KGTh x y -> cmp (== GT) x y
+  KLTh x y -> cmp (== LT) x y
+  KGTEq x y -> cmp (/= LT) x y
+  KLTEq x y -> cmp (/= GT) x y
+ where
+  num2 f x y = ValueNumber (f (num x) (num y))
+  cmp p x y = ValueBool (p (valueCompare (eval x) (eval y)))
+
+evalMethod :: Method Value u -> Value u
+evalMethod = \case
+  MethMap xs f -> ValueArray (map (eval . f) (arr xs))
+  MethFilter xs f -> ValueArray [v | v <- arr xs, ValueBool True <- [eval (f v)]]
+  MethReduce xs z f -> foldl (\acc v -> eval (f acc v)) (eval z) (arr xs)
+  MethReduceRight xs z f -> foldr (\v acc -> eval (f acc v)) (eval z) (arr xs)
+  MethToSorted xs f -> ValueArray (mergeSort (\a b -> compare (num (f a b)) 0) (arr xs))
+  MethFrom n f ->
+    let
+      d = num n
+      len = if isFiniteDouble d && d > 0 then truncate d else 0 :: Int
+     in
+      ValueArray [eval (f (ValueNumber (fromIntegral i))) | i <- [0 .. len - 1]]
+
+-- | Stable merge sort; a comparator reporting 'GT' takes the right element.
+mergeSort :: (a -> a -> Ordering) -> [a] -> [a]
+mergeSort cmp = go
+ where
+  go [] = []
+  go [x] = [x]
+  go xs = let (l, r) = splitAt (length xs `div` 2) xs in merge (go l) (go r)
+  merge [] ys = ys
+  merge xs [] = xs
+  merge (x : xs) (y : ys) = case cmp x y of
+    GT -> y : merge (x : xs) ys
+    _ -> x : merge xs (y : ys)
+
+evalFixed :: FixedOp a b c u -> FixedArgs Value a b c -> Value u
+evalFixed op args = case (op, args) of
+  (FixSome, ArgsU x) -> ValueOption (Just (eval x))
+  (_, ArgsU x)
+    | Just (MathUnary op') <- matchMathUnary op ->
+        ValueNumber (mathUnaryFn op' (num x))
+  (_, ArgsB x y)
+    | Just (MathBinary op') <- matchMathBinary op ->
+        ValueNumber (mathBinaryFn op' (num x) (num y))
+  (FixArrLen, ArgsU xs) -> ValueNumber (fromIntegral (length (arr xs)))
+  (FixU8Len, ArgsU b) -> ValueNumber (fromIntegral (length (uint8Elems (bytes b))))
+  (FixParseInt, ArgsB s r) -> ValueNumber (jsParseInt (str s) (truncate (num r)))
+  (FixToBigInt, ArgsU x) ->
+    let
+      d = num x
+      n = truncate d
+     in
+      if isFiniteDouble d && d == fromInteger n
+        then ValueBigInt n
+        else
+          jsFailure "Number cannot be converted to BigInt because it is not an integer"
+  (FixFromBigInt, ArgsU x) -> ValueNumber (fromInteger (big x))
+  (FixParseBigInt, ArgsU x) ->
+    ValueBigInt
+      ( maybe
+          (jsFailure "invalid BigInt string")
+          id
+          (parseBigIntString (T.unpack (str x)))
+      )
+  (FixConcat, ArgsB x y) -> ValueArray (arr x ++ arr y)
+  (FixCall2, ArgsT f x y) -> call (call (eval f) (eval x)) (eval y)
+  (FixIncludes, ArgsB xs y) -> let v = eval y in ValueBool (any (valueEq v) (arr xs))
+  (FixJoin, ArgsB xs sep) -> ValueString (T.intercalate (str sep) (map joinElem (arr xs)))
+  (FixArrSlice, ArgsT xs a b) -> ValueArray (slice (arr xs) (num a) (num b))
+  (FixGroupBy, ArgsB xs keyFn) ->
+    let
+      f = eval keyFn
+      step (order, gs) x =
+        let
+          k = case call f x of ValueString s -> s
+         in
+          if Map.member k gs
+            then (order, Map.adjust (++ [x]) k gs)
+            else (order ++ [k], Map.insert k [x] gs)
+      (keys, groups) = foldl' step ([], Map.empty) (arr xs)
+     in
+      ValueArray
+        [ ValueFrozen
+            [ FieldLit @"key" (Literal (ValueString k))
+            , FieldLit @"items" (Literal (ValueArray (groups Map.! k)))
+            ]
+        | k <- keys
+        ]
+  -- String and regex ops are codegen-only.
+  _ -> cannotEval "a fixed stdlib op"
+
+-- Values ----------------------------------------------------------------------
+
+valueEq :: Value u -> Value u -> Bool
+valueEq a b = case (a, b) of
+  (ValueNumber x, ValueNumber y) -> x == y
+  (ValueBigInt x, ValueBigInt y) -> x == y
+  (ValueString x, ValueString y) -> x == y
+  (ValueBool x, ValueBool y) -> x == y
+  (ValueUnit, ValueUnit) -> True
+  (ValueArray xs, ValueArray ys) -> length xs == length ys && and (zipWith valueEq xs ys)
+  (ValueOption (Just x), ValueOption (Just y)) -> valueEq x y
+  (ValueOption x, ValueOption y) -> null x && null y
+  (ValueResult (Left x), ValueResult (Left y)) -> valueEq x y
+  (ValueResult (Right x), ValueResult (Right y)) -> valueEq x y
+  (ValueResult _, ValueResult _) -> False
+  (ValueRegex x, ValueRegex y) -> x == y
+  (ValueUint8Array x, ValueUint8Array y) -> x == y
+  (ValueUint8ClampedArray x, ValueUint8ClampedArray y) -> x == y
+  -- A frozen object is a record, not a handle: compare by value, last
+  -- field of each name winning.
+  (ValueFrozen xs, ValueFrozen ys) ->
+    let
+      xs' = keepLastByKey fieldKey xs
+      ys' = keepLastByKey fieldKey ys
+     in
+      length xs' == length ys' && all (\x -> any (fieldEq x) ys') xs'
+  (ValueFunction _, ValueFunction _) -> cannotEval "function equality"
+
+fieldEq :: forall r. FieldLit Value r -> FieldLit Value r -> Bool
+fieldEq x y = case (x, y) of
+  (FieldLit @k a, FieldLit @k' b) -> declared @k @k' a b
+  (FieldLitEffect @k (Lift a), FieldLitEffect @k' (Lift b)) -> declared @k @k' a b
+  (FieldLitExtra @k a, FieldLitExtra @k' b) -> extra @k @k' a b
+  (FieldLitExtraEffect @k (Lift a), FieldLitExtraEffect @k' (Lift b)) -> extra @k @k' a b
+  _ -> False
+ where
+  declared ::
+    forall k k'.
+    (KnownSymbol k, KnownSymbol k') =>
+    Expr Value (Field r k) -> Expr Value (Field r k') -> Bool
+  declared a b = case sameSymbol (Proxy @k) (Proxy @k') of
+    Just Refl -> forced a b
+    Nothing -> False
+  extra ::
+    forall k k' u v.
+    (KnownSymbol k, KnownSymbol k', Typeable u, Typeable v) =>
+    Expr Value u -> Expr Value v -> Bool
+  extra a b = case (sameSymbol (Proxy @k) (Proxy @k'), eqT @u @v) of
+    (Just Refl, Just Refl) -> forced a b
+    _ -> False
+  forced :: Expr Value w -> Expr Value w -> Bool
+  forced (Literal a) (Literal b) = valueEq a b
+  forced _ _ = error "evaluate: frozen field was not forced"
+
+-- | Only numbers, bigints, strings, and booleans support ordering comparisons.
+valueCompare :: Value u -> Value u -> Ordering
+valueCompare a b = case (a, b) of
+  (ValueNumber x, ValueNumber y) -> compare x y
+  (ValueBigInt x, ValueBigInt y) -> compare x y
+  (ValueString x, ValueString y) -> compare x y
+  (ValueBool x, ValueBool y) -> compare x y
+  _ ->
+    error
+      "evaluate: only numbers, bigints, strings, and booleans support ordering comparisons"
+
+-- | Duplicable without cost: scalars, and results carrying one.
+isCheapValue :: Value u -> Bool
+isCheapValue = \case
   ValueNumber {} -> True
   ValueBigInt {} -> True
   ValueString {} -> True
   ValueBool {} -> True
+  ValueUnit -> True
+  ValueResult r -> either isCheapValue isCheapValue r
   _ -> False
 
-eqFoldableValue :: Value u -> Bool
-eqFoldableValue ValueFunction {} = False
-eqFoldableValue _ = True
+-- | Keep the last occurrence of each key, in first-occurrence order.
+keepLastByKey :: Eq k => (a -> k) -> [a] -> [a]
+keepLastByKey key = reverse . keep [] . reverse
+ where
+  keep acc [] = acc
+  keep acc (x : xs)
+    | key x `elem` map key acc = keep acc xs
+    | otherwise = keep (x : acc) xs
+
+-- | JS @String(x)@.
+jsShow :: Value u -> Text
+jsShow = \case
+  ValueNumber d
+    | not (isNaN d) && not (isInfinite d) && d == fromInteger (truncate d) ->
+        T.pack (show (truncate d :: Integer))
+    | otherwise -> T.pack (show d)
+  ValueBigInt n -> T.pack (show n)
+  ValueString s -> s
+  ValueBool b -> if b then "true" else "false"
+  ValueUnit -> "undefined"
+  -- @Array.prototype.join@ prints @null@ and @undefined@ as empty strings.
+  ValueArray xs -> T.intercalate "," (map joinElem xs)
+  ValueRegex s -> s
+  ValueUint8Array ba -> showBytes ba
+  ValueUint8ClampedArray ba -> showBytes ba
+  ValueFunction _ -> cannotEval "show of a function"
+  _ -> "[object Object]"
+ where
+  showBytes = T.intercalate "," . map (T.pack . show) . uint8Elems
+
+joinElem :: Value u -> Text
+joinElem = \case
+  ValueOption _ -> "[object Object]"
+  ValueUnit -> ""
+  v -> jsShow v
+
+-- | JS @typeof@. @null@ is @\"object\"@.
+typeOfValue :: Value u -> Text
+typeOfValue = \case
+  ValueNumber {} -> "number"
+  ValueBigInt {} -> "bigint"
+  ValueString {} -> "string"
+  ValueBool {} -> "boolean"
+  ValueUnit -> "undefined"
+  ValueFunction {} -> "function"
+  _ -> "object"
+
+-- | JS @Array.prototype.slice@: truncate, count negatives from the end, clamp.
+slice :: [a] -> Double -> Double -> [a]
+slice vs start end = take (max 0 (clamp end - k)) (drop k vs)
+ where
+  len = length vs
+  k = clamp start
+  clamp x
+    | isNaN x = 0
+    | isInfinite x = if x < 0 then 0 else len
+    | otherwise = let n = truncate x in if n < 0 then max 0 (len + n) else min n len
 
 jsParseInt :: Text -> Int -> Double
 jsParseInt s r
   | r < 2 || r > 36 = 0 / 0
   | otherwise =
       let
-        t0 = dropWhile isSpace (T.unpack s)
-        (neg, t1) = case t0 of
-          '-' : xs -> (True, xs)
-          '+' : xs -> (False, xs)
-          xs -> (False, xs)
+        (neg, t) = sign (dropWhile isSpace (T.unpack s))
        in
-        case readInt (fromIntegral r :: Integer) (digitBelowBase r) digitToInt t1 of
+        case readInt (fromIntegral r :: Integer) (digitBelow r) digitToInt t of
           (n, _) : _ -> fromInteger (if neg then negate n else n)
           [] -> 0 / 0
 
-numberToBigInt :: Double -> Integer
-numberToBigInt d
-  | isFiniteDouble d && d == fromInteger n = n
-  | otherwise =
-      jsFailure
-        "Number cannot be converted to BigInt because it is not an integer"
- where
-  n = truncate d
+sign :: String -> (Bool, String)
+sign = \case
+  '-' : xs -> (True, xs)
+  '+' : xs -> (False, xs)
+  xs -> (False, xs)
 
-parseBigIntText :: Text -> Integer
-parseBigIntText s =
-  case parseBigIntString (T.unpack s) of
-    Just n -> n
-    Nothing -> jsFailure "invalid BigInt string"
-
+-- | JS @BigInt(s)@: optional sign and @0x@ \/ @0b@ \/ @0o@ prefix.
 parseBigIntString :: String -> Maybe Integer
 parseBigIntString raw =
   let
-    stripped = reverse (dropWhile isSpace (reverse (dropWhile isSpace raw)))
-    (neg, rest0) = case stripped of
-      '-' : xs -> (True, xs)
-      '+' : xs -> (False, xs)
-      xs -> (False, xs)
-    (base, digits) = case rest0 of
-      '0' : 'x' : xs -> (16, xs)
-      '0' : 'X' : xs -> (16, xs)
-      '0' : 'b' : xs -> (2, xs)
-      '0' : 'B' : xs -> (2, xs)
-      '0' : 'o' : xs -> (8, xs)
-      '0' : 'O' : xs -> (8, xs)
-      xs -> (10, xs)
+    (neg, rest) = sign (dropWhile isSpace (reverse (dropWhile isSpace (reverse raw))))
+    (base, digits) = case map Char.toLower (take 2 rest) of
+      "0x" -> (16, drop 2 rest)
+      "0b" -> (2, drop 2 rest)
+      "0o" -> (8, drop 2 rest)
+      _ -> (10, rest)
    in
-    case digits of
-      [] -> Nothing
-      _ ->
-        case readInt (fromIntegral base :: Integer) (digitBelowBase base) digitToInt digits of
-          (n, []) : _ -> Just (if neg then negate n else n)
-          _ -> Nothing
+    case readInt (fromIntegral base :: Integer) (digitBelow base) digitToInt digits of
+      (n, []) : _ | not (null digits) -> Just (if neg then negate n else n)
+      _ -> Nothing
 
--- | Digit value under @base@ (letters carry 10+; anything else fails).
-digitBelowBase :: Int -> Char -> Bool
-digitBelowBase base c =
-  let
-    v
-      | c >= '0' && c <= '9' = Char.ord c - Char.ord '0'
-      | c >= 'a' && c <= 'z' = Char.ord c - Char.ord 'a' + 10
-      | c >= 'A' && c <= 'Z' = Char.ord c - Char.ord 'A' + 10
-      | otherwise = 99
-   in
-    v < base
+digitBelow :: Int -> Char -> Bool
+digitBelow base c
+  | Char.isDigit c = Char.ord c - Char.ord '0' < base
+  | Char.isAsciiLower c = Char.ord c - Char.ord 'a' + 10 < base
+  | Char.isAsciiUpper c = Char.ord c - Char.ord 'A' + 10 < base
+  | otherwise = False
 
 evalBigBin :: BigBinOp -> Integer -> Integer -> Integer
-evalBigBin BPlus = (+)
-evalBigBin BMinus = (-)
-evalBigBin BTimes = (*)
-evalBigBin BQuot = quot
-evalBigBin BRem = rem
-evalBigBin BBitAnd = (.&.)
-evalBigBin BBitOr = (.|.)
-evalBigBin BBitXor = xor
-evalBigBin BShl = bigShl
-evalBigBin BShr = bigShr
-
-tryEvalBigBin :: BigBinOp -> Integer -> Integer -> Maybe Integer
-tryEvalBigBin BQuot _ 0 = Nothing
-tryEvalBigBin BRem _ 0 = Nothing
-tryEvalBigBin BShl _ b | b < 0 = Nothing
-tryEvalBigBin BShr _ b | b < 0 = Nothing
-tryEvalBigBin op a b = Just (evalBigBin op a b)
-
-bigShl :: Integer -> Integer -> Integer
-bigShl a b
-  | b < 0 = jsFailure "BigInt shift count is negative"
-  | otherwise = shiftL a (fromInteger b)
-
-bigShr :: Integer -> Integer -> Integer
-bigShr a b
-  | b < 0 = jsFailure "BigInt shift count is negative"
-  | otherwise = shiftR a (fromInteger b)
-
-jsBigIntLit :: Integer -> JS
-jsBigIntLit n
-  | n >= 0 = jsString (shows n "n")
-  | otherwise = parens (jsString (shows n "n"))
-
-bigOpJS :: BigBinOp -> Text
-bigOpJS = \case
-  BPlus -> "+"
-  BMinus -> "-"
-  BTimes -> "*"
-  BQuot -> "/"
-  BRem -> "%"
-  BBitAnd -> "&"
-  BBitOr -> "|"
-  BBitXor -> "^"
-  BShl -> "<<"
-  BShr -> ">>"
-
--- | JS @Array.prototype.slice@: ToInteger, negatives from the end, clamp.
-jsArraySlice :: [a] -> Double -> Double -> [a]
-jsArraySlice vs start end =
-  let
-    len = length vs
-    k = jsSliceClamp len start
-    final = jsSliceClamp len end
-   in
-    take (max 0 (final - k)) (drop k vs)
-
-jsSliceClamp :: Int -> Double -> Int
-jsSliceClamp len x
-  | isNaN x = 0
-  | isInfinite x && x < 0 = 0
-  | isInfinite x = len
-  | otherwise =
-      let
-        n = truncate x :: Int
-       in
-        if n < 0 then max 0 (len + n) else min n len
-
-jsQuote :: Text -> JS
-jsQuote s = dquotes (jsString (escapeJsString (T.unpack s)))
-
-escapeJsString :: String -> String
-escapeJsString = concatMap esc
+evalBigBin op a b = case op of
+  BPlus -> a + b
+  BMinus -> a - b
+  BTimes -> a * b
+  BQuot -> quot a b
+  BRem -> rem a b
+  BBitAnd -> a .&. b
+  BBitOr -> a .|. b
+  BBitXor -> xor a b
+  BShl -> if b < 0 then negShift else shiftL a (fromInteger b)
+  BShr -> if b < 0 then negShift else shiftR a (fromInteger b)
  where
-  esc '\\' = "\\\\"
-  esc '"' = "\\\""
-  esc '\n' = "\\n"
-  esc '\r' = "\\r"
-  esc '\t' = "\\t"
-  esc c
-    | Char.ord c < 32 =
-        let
-          h = showHex (Char.ord c) ""
-         in
-          "\\u" ++ replicate (4 - length h) '0' ++ h
-    | otherwise = [c]
+  negShift = jsFailure "BigInt shift count is negative"
+
+-- | 'evalBigBin' where it cannot throw.
+tryEvalBigBin :: BigBinOp -> Integer -> Integer -> Maybe Integer
+tryEvalBigBin op a b = case op of
+  BQuot | b == 0 -> Nothing
+  BRem | b == 0 -> Nothing
+  BShl | b < 0 -> Nothing
+  BShr | b < 0 -> Nothing
+  _ -> Just (evalBigBin op a b)
 
 uint8Elems :: ByteArray -> [Word8]
 uint8Elems (ByteArray ba#) =
@@ -476,371 +513,9 @@ packUint8 xs = runST go
  where
   !(I# n#) = length xs
   go :: ST s ByteArray
-  go = ST $ \s0 ->
-    case newByteArray# n# s0 of
-      (# s1, mba #) ->
-        case write 0# xs mba s1 of
-          s2 -> case unsafeFreezeByteArray# mba s2 of
-            (# s3, ba #) -> (# s3, ByteArray ba #)
+  go = ST $ \s0 -> case newByteArray# n# s0 of
+    (# s1, mba #) -> case write 0# xs mba s1 of
+      s2 -> case unsafeFreezeByteArray# mba s2 of
+        (# s3, ba #) -> (# s3, ByteArray ba #)
   write _ [] _ s = s
-  write i# (W8# w : rest) mba s =
-    write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)
-
--- | JS @String(uint8arr)@ is @Array.prototype.toString@: comma-joined bytes.
-jsShowUint8Array :: ByteArray -> Text
-jsShowUint8Array = T.intercalate "," . map (T.pack . show) . uint8Elems
-
-jsUint8ArrayLit :: ByteArray -> JS
-jsUint8ArrayLit = jsUint8ArrayLitAs "Uint8Array"
-
-jsUint8ClampedArrayLit :: ByteArray -> JS
-jsUint8ClampedArrayLit = jsUint8ArrayLitAs "Uint8ClampedArray"
-
-jsUint8ArrayLitAs :: Text -> ByteArray -> JS
-jsUint8ArrayLitAs ctor ba =
-  let
-    elems = uint8Elems ba
-    n = length elems
-   in
-    if all (== 0) elems
-      then "new " <> jsText ctor <> parens (jsDecimal n)
-      else
-        "new "
-          <> jsText ctor
-          <> parens
-            ( brackets
-                ( hcat
-                    (intersperse ", " (map (jsDecimal . (fromIntegral :: Word8 -> Int)) elems))
-                )
-            )
-
-evaluateNumber :: ClosedExpr 'Number -> Double
-evaluateNumber e = unNumber (evaluate e)
-
-evaluateBigInt :: ClosedExpr 'BigInt -> Integer
-evaluateBigInt e = unBigInt (evaluate e)
-
--- | Pure reference interpreter. Shared Haskell heap nodes are walked once
--- per occurrence (no memo table). Throws 'EvalFailure' on failure.
-evaluate :: ClosedExpr u -> Value u
-evaluate = evalValue
-
--- | 'evaluate' with failures reified as data. Forcing to WHNF catches the
--- failure; a value whose lazy interior needs a partial operation is only
--- forced as far as the caller demands.
-tryEvaluate :: ClosedExpr u -> IO (Either EvalFailure (Value u))
-tryEvaluate e = try (E.evaluate (evaluate e))
-
-evalValue :: Expr Value v -> Value v
-evalValue = runIdentity . evalAlg (Identity . evalValue) (\g v -> evalValue (g v))
-
-evalAlg ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> (forall a b. (Value a -> Expr Value b) -> Value a -> Value b)
-  -> Expr Value v
-  -> m (Value v)
-evalAlg rec apply = \case
-  Literal v -> pure v
-  Var x -> pure x
-  Apply g x -> unFunction <$> rec g <*> rec x
-  Lambda _ g -> pure (ValueFunction (apply g))
-  Let _ x g -> rec x >>= rec . g
-  LetRec r b ->
-    let
-      recV = apply r recV
-     in
-      rec (b recV)
-  If c t e -> do
-    cv <- rec c
-    if unBool cv then rec t else rec e
-  OptionCase opt none' someF -> do
-    ov <- rec opt
-    case ov of
-      ValueOption Nothing -> rec none'
-      ValueOption (Just x) -> rec (someF x)
-  ResultOk x -> ValueResult . Right <$> rec x
-  ResultErr x -> ValueResult . Left <$> rec x
-  ResultCase res errF okF -> do
-    rv <- rec res
-    case rv of
-      ValueResult (Left e) -> rec (errF e)
-      ValueResult (Right a) -> rec (okF a)
-  FnLit {} -> cannotEval "Fn (fn)"
-  Index xs i -> do
-    iv <- rec i
-    evalAsArray rec xs $ \vs ->
-      let
-        d = unNumber iv
-        idx = truncate d :: Int
-       in
-        if isFiniteDouble d && idx >= 0 && idx < length vs
-          then pure (vs !! idx)
-          else jsFailure "array index out of bounds"
-  U8Index buf i -> do
-    iv <- rec i
-    evalAsUint8Array rec buf $ \ba ->
-      let
-        d = unNumber iv
-        idx = truncate d :: Int
-        elems = uint8Elems ba
-       in
-        if isFiniteDouble d && idx >= 0 && idx < length elems
-          then pure (ValueNumber (fromIntegral (elems !! idx)))
-          else jsFailure "uint8 index out of bounds"
-  Error msg -> do
-    m <- rec msg
-    jsFailure (T.unpack (unString m))
-  Std s -> evalStd rec s
-  UnsafeNullable x -> do
-    v <- rec x
-    -- Match the runtime conversion @v == null ? none : some v@. In the
-    -- host denotation only 'ValueUnit' (JS @undefined@) is absent; a
-    -- tagged 'ValueOption Nothing' is an object and stays a present
-    -- value, so nested options round-trip.
-    pure $ case v of
-      ValueUnit -> ValueOption Nothing
-      _ -> ValueOption (Just v)
-  FrozenLit fs -> ValueFrozen <$> traverse (evalFieldLit rec) fs
-  GetField @k o -> do
-    ov <- rec o
-    withFrozenField @k ov rec
-
--- | Force an array 'Value' and continue. Every array node is a
--- 'ValueArray' constructor; the case is here so call sites stay linear.
-evalAsArray ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> Expr Value ('Array u)
-  -> ([Value u] -> m a)
-  -> m a
-evalAsArray rec xs k = do
-  arr <- rec xs
-  case arr of
-    ValueArray vs -> k vs
-
-evalAsUint8Array ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> Expr Value u
-  -> (ByteArray -> m a)
-  -> m a
-evalAsUint8Array rec buf k = do
-  arr <- rec buf
-  case arr of
-    ValueUint8Array ba -> k ba
-    ValueUint8ClampedArray ba -> k ba
-    _ -> error "evaluate: expected a byte buffer"
-
-mergeSort :: Monad m => (a -> a -> m Ordering) -> [a] -> m [a]
-mergeSort _ [] = pure []
-mergeSort _ [x] = pure [x]
-mergeSort cmp xs = do
-  let
-    (l, r) = splitAt (Prelude.length xs `div` 2) xs
-  ls <- mergeSort cmp l
-  rs <- mergeSort cmp r
-  mergeByM cmp ls rs
-
-mergeByM :: Monad m => (a -> a -> m Ordering) -> [a] -> [a] -> m [a]
-mergeByM _ [] ys = pure ys
-mergeByM _ xs [] = pure xs
-mergeByM cmp (x : xs) (y : ys) = do
-  o <- cmp x y
-  case o of
-    GT -> (y :) <$> mergeByM cmp (x : xs) ys
-    _ -> (x :) <$> mergeByM cmp xs (y : ys)
-
-evalStd ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> Std Value u
-  -> m (Value u)
-evalStd rec = \case
-  Fixed op args -> evalFixed rec op args
-  Method m -> evalMethod rec m
-  Kernel k -> evalKernel rec k
-
-evalKernel ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> Kernel Value u
-  -> m (Value u)
-evalKernel rec = \case
-  KPlus x y -> num2 (+) x y
-  KTimes x y -> num2 (*) x y
-  KMinus x y -> num2 (-) x y
-  KNegate x -> num1 negate x
-  KFracDiv x y -> num2 (/) x y
-  KRem x y -> num2 jsRem x y
-  KBitAnd x y -> num2 (jsBit2 (.&.)) x y
-  KBitOr x y -> num2 (jsBit2 (.|.)) x y
-  KBitXor x y -> num2 (jsBit2 xor) x y
-  KShl x y -> num2 jsShl x y
-  KShr x y -> num2 jsShr x y
-  KUShr x y -> num2 jsUShr x y
-  KBig op x y -> do
-    a <- rec x
-    b <- rec y
-    pure (ValueBigInt (evalBigBin op (unBigInt a) (unBigInt b)))
-  KBigNeg x -> ValueBigInt . negate . unBigInt <$> rec x
-  KConcat x y -> do
-    a <- rec x
-    b <- rec y
-    pure (ValueString (unString a <> unString b))
-  KShow x -> ValueString . jsShow <$> rec x
-  KTypeOf x -> ValueString . typeOfValue <$> rec x
-  KAnd x y -> do
-    a <- rec x
-    if unBool a then rec y else pure (ValueBool False)
-  KOr x y -> do
-    a <- rec x
-    if unBool a then pure (ValueBool True) else rec y
-  KEq _ x y -> ValueBool <$> (valueEq <$> rec x <*> rec y)
-  KNEq _ x y -> ValueBool . not <$> (valueEq <$> rec x <*> rec y)
-  KGTh x y -> ValueBool . (== GT) <$> (valueCompare <$> rec x <*> rec y)
-  KLTh x y -> ValueBool . (== LT) <$> (valueCompare <$> rec x <*> rec y)
-  KGTEq x y -> ValueBool . (/= LT) <$> (valueCompare <$> rec x <*> rec y)
-  KLTEq x y -> ValueBool . (/= GT) <$> (valueCompare <$> rec x <*> rec y)
- where
-  num1 f x = ValueNumber . f . unNumber <$> rec x
-  num2 f x y = ValueNumber <$> (f <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
-
-evalMethod ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> Method Value u
-  -> m (Value u)
-evalMethod rec = \case
-  MethMap xs f ->
-    evalAsArray rec xs $ \vs -> ValueArray <$> traverse (rec . f) vs
-  MethFilter xs f ->
-    evalAsArray rec xs $ \vs -> do
-      keep <-
-        traverse
-          ( \v -> do
-              b <- rec (f v)
-              pure (unBool b, v)
-          )
-          vs
-      pure (ValueArray [v | (True, v) <- keep])
-  MethReduce xs z f -> do
-    z0 <- rec z
-    evalAsArray rec xs $ foldM (\acc v -> rec (f acc v)) z0
-  MethReduceRight xs z f -> do
-    z0 <- rec z
-    evalAsArray rec xs $ foldr (\v next -> next >>= \acc -> rec (f acc v)) (pure z0)
-  MethToSorted xs f ->
-    evalAsArray rec xs $ \vs ->
-      ValueArray
-        <$> mergeSort (\a b -> do n <- unNumber <$> rec (f a b); pure (compare n 0)) vs
-  MethFrom n f -> do
-    nv <- rec n
-    let
-      d = unNumber nv
-      len
-        | isFiniteDouble d && d > 0 = truncate d :: Int
-        | otherwise = 0
-    ValueArray
-      <$> traverse
-        (\i -> rec (f (ValueNumber (fromIntegral i))))
-        [0 .. len - 1]
-
-evalFixed ::
-  Monad m =>
-  (forall w. Expr Value w -> m (Value w))
-  -> FixedOp a b c u
-  -> FixedArgs Value a b c
-  -> m (Value u)
-evalFixed rec op args = case (op, args) of
-  (FixSome, ArgsU x) -> ValueOption . Just <$> rec x
-  (n, ArgsU x)
-    | Just (MathUnary n') <- matchMathUnary n ->
-        ValueNumber . Prim.mathUnaryFn n' . unNumber <$> rec x
-  (n, ArgsB x y)
-    | Just (MathBinary n') <- matchMathBinary n ->
-        ValueNumber
-          <$> (Prim.mathBinaryFn n' <$> (unNumber <$> rec x) <*> (unNumber <$> rec y))
-  (FixArrLen, ArgsU xs) ->
-    evalAsArray rec xs $ \vs ->
-      pure (ValueNumber (fromIntegral (Prelude.length vs)))
-  (FixU8Len, ArgsU buf) ->
-    evalAsUint8Array rec buf $ \ba ->
-      pure (ValueNumber (fromIntegral (Prelude.length (uint8Elems ba))))
-  (FixParseInt, ArgsB s r) -> do
-    sv <- rec s
-    rv <- rec r
-    pure (ValueNumber (jsParseInt (unString sv) (truncate (unNumber rv))))
-  (FixToBigInt, ArgsU x) ->
-    ValueBigInt . numberToBigInt . unNumber <$> rec x
-  (FixFromBigInt, ArgsU x) ->
-    ValueNumber . fromInteger . unBigInt <$> rec x
-  (FixParseBigInt, ArgsU x) ->
-    ValueBigInt . parseBigIntText . unString <$> rec x
-  (FixConcat, ArgsB x y) -> do
-    as <- arrayValues <$> rec x
-    bs <- arrayValues <$> rec y
-    pure (ValueArray (as ++ bs))
-  (FixCall2, ArgsT f x y) -> do
-    -- Same semantics as nested 'Apply' (curried 'ValueFunction').
-    fv <- rec f
-    xv <- rec x
-    yv <- rec y
-    pure (unFunction (unFunction fv xv) yv)
-  (FixIncludes, ArgsB xs y) -> do
-    yv <- rec y
-    evalAsArray rec xs $ \vs ->
-      pure (ValueBool (any (valueEq yv) vs))
-  (FixJoin, ArgsB xs sep) ->
-    evalAsArray rec xs $ \vs -> do
-      sv <- rec sep
-      pure (ValueString (T.intercalate (unString sv) (map jsJoinElem vs)))
-  (FixArrSlice, ArgsT xs a b) -> do
-    av <- rec a
-    bv <- rec b
-    evalAsArray rec xs $ \vs ->
-      pure (ValueArray (jsArraySlice vs (unNumber av) (unNumber bv)))
-  (FixGroupBy, ArgsB arr keyFn) -> do
-    as <- arrayValues <$> rec arr
-    fv <- rec keyFn
-    let
-      step (ord, mp) x =
-        let
-          k = unString (unFunction fv x)
-         in
-          case Map.lookup k mp of
-            Just _ -> (ord, Map.adjust (Prelude.++ [x]) k mp)
-            Nothing -> (ord Prelude.++ [k], Map.insert k [x] mp)
-      (order, acc) = foldl' step ([], Map.empty) as
-      groups =
-        [ ValueFrozen
-            [ FieldLit @"key" (Literal (ValueString k))
-            , FieldLit @"items" (Literal (ValueArray (acc Map.! k)))
-            ]
-        | k <- order
-        ]
-    pure (ValueArray groups)
-  -- String/regex fixed ops are codegen-only (same as old Un/Bin/Tern gaps).
-  _ -> cannotEval "a fixed stdlib op"
-
-lookupFrozenField ::
-  forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
-lookupFrozenField = findLit . reverse
- where
-  findLit [] = Nothing
-  findLit (FieldLit @k' e : rest) =
-    case sameSymbol (Proxy @k) (Proxy @k') of
-      Just Refl -> Just e
-      Nothing -> findLit rest
-  findLit (_ : rest) = findLit rest
-
-withFrozenField ::
-  forall k r a.
-  KnownSymbol k =>
-  Value ('Object r)
-  -> (Expr Value (Field r k) -> a)
-  -> a
-withFrozenField (ValueFrozen fs) k =
-  case lookupFrozenField @k fs of
-    Just e -> k e
-    Nothing -> cannotEval "GetField of a frozen object with effectful fields"
+  write i# (W8# w : rest) mba s = write (i# +# 1#) rest mba (writeWord8Array# mba i# w s)

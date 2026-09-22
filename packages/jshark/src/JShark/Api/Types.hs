@@ -137,7 +137,7 @@ import GHC.TypeLits
   , symbolVal
   )
 import JShark.Api.Rec
-import JShark.Compiler.JsNum (jsBit2, jsRem, jsShl, jsShr, jsUShr)
+import JShark.Compiler.Emit (jsBit2, jsRem, jsShl, jsShr, jsUShr)
 import Prelude hiding ((>>))
 import qualified Prelude as P
 

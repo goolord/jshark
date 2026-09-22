@@ -12,9 +12,7 @@ module JShark.Example.Life.Types
   , canvasH
   , texW
   , texH
-  , canvasBg
   , canvasBgPixi
-  , canvasBgRgba
   , seedOx
   , seedOy
   , seedW
@@ -67,7 +65,6 @@ module JShark.Example.Life.Types
   , lifeStatGenId
   , lifeStatCellsId
   , lifeStatFpsId
-  , lifeStatStatusId
   , lifeStatZoomId
   , lifeStatRenderId
   , eraserToolSid
@@ -89,9 +86,7 @@ where
 
 import Data.Array.Byte (ByteArray)
 import Data.Text (Text)
-import qualified Data.Text as T
 import GHC.Generics (Generic)
-import Text.Printf (printf)
 
 boardId :: Text
 boardId = "life-board"
@@ -120,16 +115,9 @@ texW, texH :: Double
 texW = fromIntegral gridW
 texH = fromIntegral gridH
 
--- | Canvas background @#RRGGBB@ (also drives 'canvasBg' / 'canvasBgPixi').
+-- | Canvas background @#RRGGBB@ (drives 'canvasBgPixi').
 canvasBgHex :: Int
 canvasBgHex = 0x111111
-
-hexColorText :: Int -> Text
-hexColorText n = T.pack (printf "#%06x" n)
-
--- | CSS color for shell chrome ('canvasBgHex').
-canvasBg :: Text
-canvasBg = hexColorText canvasBgHex
 
 -- | @PIXI.Application({ backgroundColor })@ ('canvasBgHex').
 canvasBgPixi :: Double
@@ -139,10 +127,6 @@ canvasBgPixi = fromIntegral canvasBgHex
 seedW, seedH :: Int
 seedW = 512
 seedH = 384
-
--- | Canvas background (#111) as @0xAABBGGRR@ for RGBA buffers.
-canvasBgRgba :: Int
-canvasBgRgba = 0xFF111111
 
 seedOx, seedOy :: Int
 seedOx = (gridW - seedW) `div` 2
@@ -284,9 +268,6 @@ lifeStatCellsId = "life-stat-cells"
 
 lifeStatFpsId :: Text
 lifeStatFpsId = "life-stat-fps"
-
-lifeStatStatusId :: Text
-lifeStatStatusId = "life-stat-status"
 
 lifeStatZoomId :: Text
 lifeStatZoomId = "life-stat-zoom"

@@ -5,8 +5,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Lower closed PHOAS 'Expr' \/ 'Effect' terms to the first-order IR.
@@ -56,8 +56,10 @@ lowerE :: Expr Tag u -> L Ir
 lowerE = \case
   Literal v -> ir (NLit (SomeValue v))
   Var (Const i) -> ir (NVar i)
-  Let h x g -> fresh >>= \t -> Ir <$> (NLet t h <$> local (lowerE x) <*> lowerE (g (Const t)))
-  LetRec r b -> fresh >>= \t -> Ir <$> (NLetRec t <$> lowerE (r (Const t)) <*> lowerE (b (Const t)))
+  Let h x g ->
+    fresh >>= \t -> Ir <$> (NLet t h <$> local (lowerE x) <*> lowerE (g (Const t)))
+  LetRec r b ->
+    fresh >>= \t -> Ir <$> (NLetRec t <$> lowerE (r (Const t)) <*> lowerE (b (Const t)))
   Lambda info g -> fresh >>= \t -> Ir . NLam t info <$> lowerE (g (Const t))
   Apply f x -> Ir <$> (NApp <$> lowerE f <*> lowerE x)
   If c t e -> Ir <$> (NIf <$> lowerE c <*> lowerE t <*> lowerE e)
@@ -75,10 +77,11 @@ lowerE = \case
   Index a i -> Ir <$> (NIndex <$> lowerE a <*> lowerE i)
   U8Index a i -> Ir <$> (NU8Index <$> lowerE a <*> lowerE i)
   Error m -> Ir . NError <$> lowerE m
-  Std (Fixed op args) -> Ir . NFixed (SomeFixedOp op) <$> case args of
-    ArgsU x -> sequence [lowerE x]
-    ArgsB x y -> sequence [lowerE x, lowerE y]
-    ArgsT x y z -> sequence [lowerE x, lowerE y, lowerE z]
+  Std (Fixed op args) ->
+    Ir . NFixed (SomeFixedOp op) <$> case args of
+      ArgsU x -> sequence [lowerE x]
+      ArgsB x y -> sequence [lowerE x, lowerE y]
+      ArgsT x y z -> sequence [lowerE x, lowerE y, lowerE z]
   Std (Kernel k) -> lowerK k
   Std (Method m) -> lowerM m
   FnLit body -> do
@@ -143,7 +146,12 @@ lowerM = \case
     t <- fresh
     a' <- lowerE a
     Ir . NMeth m a' Nothing [t] <$> lowerE (body t)
-  two :: Meth -> Expr Tag x -> Maybe (Expr Tag z) -> (Tag p -> Tag q -> Expr Tag w) -> L Ir
+  two ::
+    Meth
+    -> Expr Tag x
+    -> Maybe (Expr Tag z)
+    -> (Tag p -> Tag q -> Expr Tag w)
+    -> L Ir
   two m a z body = do
     ta <- fresh
     tb <- fresh
@@ -175,9 +183,11 @@ lowerX = \case
   UnsafeObjectGet x s -> Ir . (`NUGet` s) <$> lowerX x
   UnsafeObjectAssign x y -> Ir <$> (NUSet <$> lowerX x <*> lowerX y)
   CallMethod x n args -> Ir <$> (NCall <$> lowerX x <*> pure n <*> lowerArgs args)
-  Bind h x f -> fresh >>= \t -> Ir <$> (NBind t h <$> local (lowerX x) <*> lowerX (f (Const t)))
+  Bind h x f ->
+    fresh >>= \t -> Ir <$> (NBind t h <$> local (lowerX x) <*> lowerX (f (Const t)))
   ThenE x y -> Ir <$> (NThen <$> lowerX x <*> lowerX y)
-  BindRec r b -> fresh >>= \t -> Ir <$> (NBindRec t <$> lowerX (r (Const t)) <*> lowerX (b (Const t)))
+  BindRec r b ->
+    fresh >>= \t -> Ir <$> (NBindRec t <$> lowerX (r (Const t)) <*> lowerX (b (Const t)))
   LambdaE f -> fresh >>= \t -> Ir . NLamE t <$> lowerX (f (Const t))
   ApplyE f x -> Ir <$> (NAppE <$> lowerX f <*> lowerX x)
   IfE c t e -> Ir <$> (NIfE <$> lowerX c <*> lowerX t <*> lowerX e)
@@ -199,7 +209,8 @@ lowerX = \case
   StringCaseE s arms d ->
     Ir <$> (NStrCase <$> lowerE s <*> mapM (traverse lowerX) arms <*> lowerX d)
   Throw x -> Ir . NThrow <$> lowerE x
-  Try a k -> fresh >>= \t -> Ir <$> (NTry <$> lowerX a <*> pure t <*> lowerX (k (Const t)))
+  Try a k ->
+    fresh >>= \t -> Ir <$> (NTry <$> lowerX a <*> pure t <*> lowerX (k (Const t)))
   ObjectLit fs -> Ir . NObjLit <$> mapM lowerF fs
   DeleteProp o k -> Ir <$> (NDelete <$> lowerX o <*> lowerE k)
   ArrayLit es -> Ir . NArray <$> mapM lowerX es

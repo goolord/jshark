@@ -10,7 +10,6 @@ module JShark.Example.Life.LutCore
   ( computeNextByte
   , stepChunk
   , lifeLutEntry
-  , lifeLutTable
   )
 where
 
@@ -106,6 +105,3 @@ lifeLutEntry key =
  where
   top = fromIntegral ((key `shiftR` 8) .&. 0xFF) :: Word8
   cur = fromIntegral (key .&. 0xFF) :: Word8
-
-lifeLutTable :: [Word8]
-lifeLutTable = [lifeLutEntry k | k <- [0 .. 65535]]

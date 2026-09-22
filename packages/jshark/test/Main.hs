@@ -34,11 +34,11 @@ import JShark.Internal
   , Meta (..)
   , N (..)
   , SomeValue (..)
-  , optIr
   , builtinSrc
   , effectfulAST
   , effectfulASTWith
   , minifiedStyle
+  , optIr
   , pureAST
   , validateOptimizedEffect
   , validateOptimizedExpr

@@ -45,7 +45,12 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api.Syntax (EffectSyntax, fromSyntax)
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
-import JShark.Compiler.Codegen (effectfulAST, effectfulProgram, pureAST, pureProgram)
+import JShark.Compiler.Codegen
+  ( effectfulAST
+  , effectfulProgram
+  , pureAST
+  , pureProgram
+  )
 import JShark.Compiler.Emit (JS, renderJS)
 import Numeric (showFFloat)
 import System.CPUTime (getCPUTime)
@@ -122,7 +127,8 @@ timed io = do
 compileEffect :: CompilerConfig -> ClosedEffect u -> IO ByteString
 compileEffect cfg eff = do
   (out, secs) <- timed (render cfg doc)
-  when (configProgress cfg) $ report ("JShark.Compiler: compiled in " ++ duration secs ++ "\n")
+  when (configProgress cfg) $
+    report ("JShark.Compiler: compiled in " ++ duration secs ++ "\n")
   pure out
  where
   doc = case configStyle cfg of
@@ -174,16 +180,26 @@ compileJobsLabeled cfg jobs
       (outs, secs) <-
         timed . flip mapConcurrently jobs $ \job@(l, _, _) -> do
           out <- run job
-          modifyMVar_ pending (\left -> let left' = filter (/= l) left in left' <$ draw left')
+          modifyMVar_
+            pending
+            (\left -> let left' = filter (/= l) left in left' <$ draw left')
           pure out
-      report ("\nJShark.Compiler: compiled " ++ show total ++ " programs in " ++ duration secs ++ "\n")
+      report
+        ( "\nJShark.Compiler: compiled "
+            ++ show total
+            ++ " programs in "
+            ++ duration secs
+            ++ "\n"
+        )
       pure outs
  where
   run :: (Text, CompilerConfig, ClosedEffect v) -> IO ByteString
   run (_, jobCfg, eff) = compileEffectPure jobCfg eff
   bar done total =
-    let w = 28; k = if total == 0 then w else done * w `div` total
-     in "[" ++ replicate k '=' ++ replicate (w - k) '-' ++ "]"
+    let
+      w = 28; k = if total == 0 then w else done * w `div` total
+     in
+      "[" ++ replicate k '=' ++ replicate (w - k) '-' ++ "]"
 
 duration :: Double -> String
 duration s
@@ -227,7 +243,8 @@ biome args = do
 -- | Run a process with @input@ on stdin; stdout, or stderr on failure.
 runTool :: (FilePath, [String]) -> ByteString -> IO (Either String ByteString)
 runTool (exe, args) input =
-  try (readProcess (setStdin (byteStringInput (BL.fromStrict input)) (proc exe args))) >>= \case
+  try
+    (readProcess (setStdin (byteStringInput (BL.fromStrict input)) (proc exe args))) >>= \case
     Left e -> pure (Left (show (e :: SomeException)))
     Right (ExitSuccess, out, _) -> pure (Right (BL.toStrict out))
     Right (ExitFailure c, _, err)
@@ -236,7 +253,12 @@ runTool (exe, args) input =
 
 tryPrettyJS :: ByteString -> IO (Either String ByteString)
 tryPrettyJS src =
-  biome ["format", "--stdin-file-path=jshark.js", "--indent-style=space", "--indent-width=2"]
+  biome
+    [ "format"
+    , "--stdin-file-path=jshark.js"
+    , "--indent-style=space"
+    , "--indent-width=2"
+    ]
     >>= either (pure . Left) (\tool -> fmap BC.strip <$> runTool tool (BC.strip src))
 
 -- | Pretty-print compact JS with Biome when available; otherwise return the
@@ -247,4 +269,7 @@ prettyJS src = either (const (BC.strip src)) id <$> tryPrettyJS src
 -- | Whether Biome can be run.
 biomeAvailable :: IO Bool
 biomeAvailable =
-  biome ["--version"] >>= either (const (pure False)) (fmap (either (const False) (const True)) . (`runTool` BS.empty))
+  biome ["--version"]
+    >>= either
+      (const (pure False))
+      (fmap (either (const False) (const True)) . (`runTool` BS.empty))

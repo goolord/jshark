@@ -32,7 +32,6 @@ module JShark.Example.Life.Grid
   , setPackedAlive
   , newUint16Array
   , newSpeciesArray
-  , writeCellState
   , stampPatternCells
   , eraseCircleCells
   , refreshPackedRegion
@@ -175,27 +174,6 @@ setPackedAlive ::
 setPackedAlive grid i alive = do
   cur <- u8Get grid i
   setU8 grid i (bitAnd cur (number 0xFE) + alive)
-
-writeCellState ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Bool
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-writeCellState alive species i live sid =
-  ifS
-    live
-    ( do
-        cur <- u8Get alive i
-        setU8 alive i (bitAnd cur (number 0xFE) + number 1)
-        setU8 species i sid
-    )
-    ( do
-        cur <- u8Get alive i
-        setU8 alive i (bitAnd cur (number 0xFE))
-        setU8 species i (number 0)
-    )
 
 -- | Stamp pattern cells; writes counts and bbox onto @scratch@.
 stampPatternCells ::

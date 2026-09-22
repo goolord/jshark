@@ -13,7 +13,6 @@ module JShark.Example.Life.Engine
   , maybeDiscover
   , renderLife
   , togglePause
-  , flipCell
   , eraseCircle
   , placePattern
   , markSceneDirty
@@ -39,7 +38,6 @@ import JShark.Example.Life.Grid
   , RenderDirty (..)
   , StepCtx (..)
   , StepRegion (..)
-  , cellIdx
   , drawGridFallback
   , drawGridViewport
   , eraseCircleCells
@@ -53,8 +51,6 @@ import JShark.Example.Life.Grid
   , stampPatternCells
   , stepGrid
   , syncPaletteRgbaSid
-  , u8Get
-  , writeCellState
   )
 import JShark.Example.Life.GridApi (seedSoupRegion)
 import JShark.Example.Life.Names
@@ -81,7 +77,6 @@ import JShark.Example.Life.Types
   , gridH
   , gridN
   , gridW
-  , manualSpecies
   , seedH
   , seedOx
   , seedOy
@@ -581,40 +576,6 @@ togglePause state = do
   cur <- state.paused
   set @"paused" state (not_ cur)
 
-flipCell ::
-  Effect f (MutableObjectOf LifeState)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-flipCell state gx gy = do
-  w <- state.worldW
-  h <- state.worldH
-  whenS (gx .>= 0 .&& gy .>= 0 .&& gx .< w .&& gy .< h) $ do
-    alive <- state.alive
-    species <- state.species
-    let
-      i = cellIdx w gx gy
-    a <- u8Get alive i
-    pop0 <- state.pop
-    ifS
-      (bitAnd a (number 1) .== 1)
-      ( do
-          writeCellState alive species i false_ (number 0)
-          set @"pop" state (pop0 - 1)
-          refreshPackedRegion alive w h gx gy gx gy
-          done
-      )
-      ( do
-          writeCellState alive species i true_ (number (fromIntegral manualSpecies))
-          set @"pop" state (pop0 + 1)
-          includeBounds state gx gy
-          refreshPackedRegion alive w h gx gy gx gy
-          done
-      )
-    syncLiveList state
-    done
-  markSceneDirty state
-
 eraseCircle ::
   Effect f (MutableObjectOf LifeState)
   -> Effect f (MutableObjectOf BoundScratch)
@@ -689,28 +650,3 @@ placePattern state editScratch cells gx gy sid = do
     syncLiveList state
     done
   markSceneDirty state
-
-includeBounds ::
-  Effect f (MutableObjectOf LifeState)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-includeBounds state x y = do
-  x0 <- state.boundX0
-  y0 <- state.boundY0
-  x1 <- state.boundX1
-  y1 <- state.boundY1
-  ifS
-    (x1 .< x0)
-    ( do
-        set @"boundX0" state (Math.floor x)
-        set @"boundY0" state (Math.floor y)
-        set @"boundX1" state (Math.floor x)
-        set @"boundY1" state (Math.floor y)
-    )
-    ( do
-        _ <- set @"boundX0" state (Math.floor (Math.min x0 x))
-        _ <- set @"boundY0" state (Math.floor (Math.min y0 y))
-        _ <- set @"boundX1" state (Math.floor (Math.max x1 x))
-        set @"boundY1" state (Math.floor (Math.max y1 y))
-    )

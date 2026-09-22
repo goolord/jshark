@@ -10,7 +10,6 @@ module JShark.Example.Life.Catalog
   ( shapeHash
   , canonicalShapeHash
   , catalogJs
-  , nameWords
   , buildKnownMap
   , buildNamesMap
   , buildDisturbMap
@@ -93,10 +92,6 @@ knownCatalog =
     )
     []
     allPatterns
-
--- | Word pools for procedural discovery names (also in 'catalogJs').
-nameWords :: ([Text], [Text], [Text], [Text], [Text])
-nameWords = (prefixes, suffixes, nouns, adjectives, verbsIng)
 
 catalogJs :: Text
 catalogJs =

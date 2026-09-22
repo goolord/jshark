@@ -5,8 +5,6 @@
 -- | Shared species labels and procedural naming for catalog + discovery.
 module JShark.Example.Life.Names
   ( patternLabel
-  , nameOfSid
-  , cachedNameOfSid
   , lookupDisplayName
   , uniqueNameSid
   , refreshTakenNames
@@ -19,7 +17,6 @@ import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Types (Effect (Lift), Expr (Var))
 import qualified JShark.Array as Array
-import JShark.Example.Life.Types (discoverMin, manualSpecies, soupSpecies)
 import qualified JShark.Map as Map
 import qualified JShark.Set as Set
 
@@ -158,13 +155,6 @@ makeName registry n = do
         )
     )
 
-makeNameEffect ::
-  Effect f ('MutableObject a) -> Expr f 'Number -> Effect f 'String
-makeNameEffect registry sid =
-  fromSyntax $ do
-    nm <- makeName registry sid
-    toSyntax (expr nm)
-
 collectTaken ::
   Effect f ('MutableObject a)
   -> Effect f ('Set 'String)
@@ -233,49 +223,6 @@ uniqueNameSid sid registry = bindExpr $ fromSyntax $ do
   candidate <- getProp st "candidate"
   toSyntax $ expr candidate
 
-nameOfDiscovered ::
-  Expr f 'Number -> Effect f ('MutableObject a) -> EffectSyntax f (f 'String)
-nameOfDiscovered sid registry = do
-  names <- getProp registry "names"
-  discHit <- Map.lookup (Lift names) sid
-  fallback <-
-    bindExpr $
-      ifE
-        (expr (sid .>= number (fromIntegral discoverMin)))
-        (makeNameEffect registry sid)
-        (expr (string "Type " <> toString sid))
-  toSyntax $
-    optionCaseE
-      discHit
-      (expr fallback)
-      (\nm -> expr nm)
-
-nameOfCatalog ::
-  Expr f 'Number -> Effect f ('MutableObject a) -> EffectSyntax f (f 'String)
-nameOfCatalog sid registry = do
-  catalogNames <- getProp registry "catalogNames"
-  catHit <- Map.lookup (Lift catalogNames) sid
-  toSyntax $
-    optionCaseE
-      catHit
-      (fromSyntax (nameOfDiscovered sid registry))
-      (\nm -> expr nm)
-
-nameOfSid ::
-  Expr f 'Number
-  -> Effect f ('MutableObject a)
-  -> EffectSyntax f (Expr f 'String)
-nameOfSid sid registry =
-  bindExpr $
-    ifE
-      (expr (sid .== number (fromIntegral soupSpecies)))
-      (expr (string "Soup"))
-      ( ifE
-          (expr (sid .== number (fromIntegral manualSpecies)))
-          (expr (string "Manual"))
-          (fromSyntax (nameOfCatalog sid registry))
-      )
-
 lookupDisplayName ::
   Expr f 'Number
   -> Effect f ('MutableObject a)
@@ -284,22 +231,3 @@ lookupDisplayName sid registry = do
   cache <- getProp registry "displayCache"
   hit <- Map.lookup (Lift cache) sid
   pure (orElse hit (string "Type " <> toString sid))
-
-cachedNameOfSid ::
-  Expr f 'Number
-  -> Effect f ('MutableObject a)
-  -> EffectSyntax f (Expr f 'String)
-cachedNameOfSid sid registry =
-  bindExpr $
-    fromSyntax $ do
-      cache <- getProp registry "displayCache"
-      hit <- Map.lookup (Lift cache) sid
-      toSyntax $
-        optionCaseE
-          hit
-          ( fromSyntax $ do
-              nm <- nameOfSid sid registry
-              _ <- Map.insert (Lift cache) sid nm
-              toSyntax $ expr nm
-          )
-          (\nm -> expr nm)

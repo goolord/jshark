@@ -31,8 +31,8 @@ where
 import Data.Text (Text)
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
 import JShark.Compiler.Codegen
+import JShark.Compiler.Emit (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Ir
-import JShark.Compiler.JsShim (Builtin (ValueEq), builtinSrc)
 import JShark.Compiler.Lower
 
 -- | Scope\/binder problems in the optimized IR of a closed effect (@[]@ is

@@ -2,17 +2,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
--- | Full-example compiler benches — the only target that exercises each
--- example's whole AST (Life is the slow path).
+-- | Compiler benches over each example's whole program (Life is the slow
+-- path). Manual profiling only:
 --
--- Manual profiling only (not CI-gated):
---
---   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p life
---   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p 'life/optimize'
---   cabal bench jshark-compiler-examples -- jshark-compiler-examples -p 'life/compileEffect'
+--   cabal bench jshark-examples-bench -- -p life
 module Main (main) where
 
-import Bench.Stages (emitLen, nfClosed, stageBenches)
+import Bench.Stages (stageBenches)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import JShark.Example.Registry (exampleMainJS)
 import Test.Tasty.Bench
@@ -20,14 +16,7 @@ import Test.Tasty.Bench
 main :: IO ()
 main =
   defaultMain
-    [ bgroup
-        "emit"
-        [ bench "breakout" $ nfClosed emitLen breakout
-        , bench "todo-mvc" $ nfClosed emitLen todoMvc
-        , bench "synth" $ nfClosed emitLen synth
-        , bench "life" $ nfClosed emitLen life
-        ]
-    , stageBenches "breakout" breakout
+    [ stageBenches "breakout" breakout
     , stageBenches "todo-mvc" todoMvc
     , stageBenches "synth" synth
     , stageBenches "life" life

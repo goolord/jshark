@@ -145,7 +145,8 @@ lifeTests =
               let
                 life = stmts mainJS
                 irNodes = optimizedEffectSize life
-              js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTWith minifiedStyle life))
+              js <-
+                Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTWith minifiedStyle life))
               -- Mutable array reads (u8Index, FixArrLen, …) are no longer
               -- moved/inlined across writes, so a handful stay as bindings.
               irNodes @?= 70675

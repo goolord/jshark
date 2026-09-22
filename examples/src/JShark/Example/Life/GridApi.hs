@@ -6,9 +6,6 @@
 module JShark.Example.Life.GridApi
   ( seedLiveCells
   , seedSoupRegion
-  , fillRgbaImageData
-  , rgbaPixelSet
-  , rgbaFillRect
   , paintGridCells
   , paintGridCellsJs
   , u8CopyRegion
@@ -82,21 +79,6 @@ seedLiveCells alive species cells =
         <: RecNil
     )
 
--- | Fill every RGBA pixel in an @ImageData.data@ buffer.
-fillRgbaImageData ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Effect f 'Unit
-fillRgbaImageData pixels r g b a =
-  FFI
-    ( FFILambda
-        "(p,r,g,b,a)=>{for(let i=0;i<p.length;i+=4){p[i]=r;p[i+1]=g;p[i+2]=b;p[i+3]=a;}}"
-    )
-    (arg pixels <: arg r <: arg g <: arg b <: arg a <: RecNil)
-
 -- | Random soup in a rectangular region. Matches 'Patterns.seedCell' LCG (@20%@
 -- live, species untouched — caller should stamp catalog ids afterward).
 seedSoupRegion ::
@@ -151,43 +133,6 @@ u8CopyRegion dst src gridW x0 y0 x1 y1 =
         <: arg y0
         <: arg x1
         <: arg y1
-        <: RecNil
-    )
-
--- | Write one premultiplied-ready RGBA pixel (@0xAABBGGRR@) into @ImageData.data@.
-rgbaPixelSet ::
-  Expr f 'Uint8Array -> Expr f 'Number -> Expr f 'Number -> Effect f 'Unit
-rgbaPixelSet pixels idx color =
-  FFI
-    ( FFILambda
-        "(p,i,c)=>{const o=(i<<2)|0;p[o]=c&255;p[o+1]=(c>>8)&255;p[o+2]=(c>>16)&255;p[o+3]=(c>>>24)&255;}"
-    )
-    (arg pixels <: arg idx <: arg color <: RecNil)
-
--- | Fill a solid @sw×sh@ block clipped to the canvas buffer.
-rgbaFillRect ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Effect f 'Unit
-rgbaFillRect pixels canvasW canvasH x y sw sh color =
-  FFI
-    ( FFILambda
-        "(p,w,h,x,y,s,t,c)=>{const x0=Math.max(0,0|x),y0=Math.max(0,0|y);const x1=Math.min(w,(0|x)+(0|s)),y1=Math.min(h,(0|y)+(0|t));for(let yy=y0;yy<y1;yy++){const row=yy*w|0;for(let xx=x0;xx<x1;xx++){const o=(row+xx)<<2;p[o]=c&255;p[o+1]=(c>>8)&255;p[o+2]=(c>>16)&255;p[o+3]=(c>>>24)&255;}}}"
-    )
-    ( arg pixels
-        <: arg canvasW
-        <: arg canvasH
-        <: arg x
-        <: arg y
-        <: arg sw
-        <: arg sh
-        <: arg color
         <: RecNil
     )
 
