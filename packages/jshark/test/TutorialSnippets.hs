@@ -52,15 +52,10 @@ logMax = fromSyntax $ do
   toSyntax_ $ ffi "console.log" (arg "max" <: arg 2 <: arg 9 <: RecNil)
   done
 
-data Person = Person
-  { fullName :: Text
-  , years :: Double
-  }
+data Person = Person {fullName :: Text, years :: Double}
   deriving Generic
 
--- | @G.toObject (Person "Ada" 36)@ is already an 'Effect'; compile it
--- directly (the tutorial previously wrapped it in @fromSyntax@, which does
--- not typecheck).
+-- | @G.toObject (Person "Ada" 36)@ is already an 'Effect'; compile it directly.
 personObject :: Effect f ('MutableObject (G.As Person))
 personObject = G.toObject (Person "Ada" 36)
 

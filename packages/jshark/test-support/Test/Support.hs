@@ -7,7 +7,10 @@
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- | Shared fixtures and golden-case helpers for the core test suite and the
---   compiler benchmarks. Not a user-facing API.
+--   example suites. Not a user-facing API.
+--
+--   Case helpers take the test name, then the expectation, then the
+--   program last so a multi-line program can follow a trailing @$@.
 module Test.Support
   ( LitRow
   , Person (..)
@@ -30,13 +33,22 @@ module Test.Support
   , prettyIfLambda
   , numArray
   , mulDiv
-  , effectCodeCase
-  , effectCodeCaseWith
-  , pureCodeCase
-  , effectContains
-  , effectContainsWith
-  , pureContains
-  , evalBoolCase
+  , jsText
+  , effectText
+  , pureText
+  , jsIs
+  , effectJS
+  , pureJS
+  , syntaxJS
+  , jsHas
+  , effectHas
+  , pureHas
+  , syntaxHas
+  , Needle
+  , lacks
+  , evalCase
+  , assertEval
+  , assertJS
   , assertJSContains
   , assertJSOmits
   , assertThrows
@@ -49,7 +61,7 @@ import CaptureStderr (captureStderr)
 import qualified Control.Exception as E
 import Control.Monad (unless)
 import Data.Array.Byte (ByteArray)
-import qualified Data.ByteString as BS
+import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -58,12 +70,13 @@ import GHC.Stack (HasCallStack)
 import JShark (JS, evaluate, renderJS)
 import JShark.Api
 import JShark.Api.Caller (callerBinderHint)
+import qualified JShark.Api.Generic as G
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Compiler (biomeAvailable)
-import JShark.Internal (EmitStyle, effectfulAST, effectfulASTWith, pureAST)
+import JShark.Internal (effectfulAST, pureAST)
 import Test.Tasty (TestTree)
-import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 
 data LitRow
 
@@ -73,46 +86,22 @@ type instance Field LitRow "y" = 'Number
 
 type instance Field LitRow "s" = 'String
 
-data Person = Person
-  { fullName :: Text
-  , years :: Double
-  }
+data Person = Person {fullName :: Text, years :: Double} deriving Generic
+
+data Packet = Packet {octets :: ByteArray} deriving Generic
+
+data Tagged = Tagged {label :: Text, tags :: [Text], nickname :: Maybe Text}
   deriving Generic
 
-data Packet = Packet
-  { octets :: ByteArray
-  }
-  deriving Generic
+data Group = Group {members :: [Person]} deriving Generic
 
-data Tagged = Tagged
-  { label :: Text
-  , tags :: [Text]
-  , nickname :: Maybe Text
-  }
-  deriving Generic
+data Team = Team {lead :: Maybe Person} deriving Generic
 
-data Group = Group
-  { members :: [Person]
-  }
-  deriving Generic
+data Color = Red | Green | Blue deriving Generic
 
-data Team = Team
-  { lead :: Maybe Person
-  }
-  deriving Generic
+data Shape = Circle Double | Rect Double Double deriving Generic
 
-data Color = Red | Green | Blue
-  deriving Generic
-
-data Shape
-  = Circle Double
-  | Rect Double Double
-  deriving Generic
-
-data Badge = Badge
-  { hue :: Color
-  }
-  deriving Generic
+data Badge = Badge {hue :: Color} deriving Generic
 
 fooE, barE :: Effect f u
 fooE = ffi "foo" RecNil
@@ -175,59 +164,77 @@ numArray = Literal (ValueArray [ValueNumber 1, ValueNumber 2])
 mulDiv :: forall f. Expr f 'Number
 mulDiv = number 6 * number 7 / number 2
 
--- | Golden case: rendered JS must equal @golden@ exactly.
-codeCase :: String -> JS -> Text -> TestTree
-codeCase name js golden =
-  testCase name (renderJS js @?= TE.encodeUtf8 golden)
+-- | Emitted JS as 'Text'.
+jsText :: JS -> Text
+jsText = TE.decodeUtf8 . renderJS
 
--- | Smoke case: rendered JS must contain every needle.
-containsCase :: String -> JS -> [Text] -> TestTree
-containsCase name js needles =
-  testCase name $ mapM_ (assertJSContains' (renderJS js)) needles
- where
-  assertJSContains' hay n =
-    assertBool (T.unpack n <> " missing") (TE.encodeUtf8 n `BS.isInfixOf` hay)
+effectText :: ClosedEffect u -> Text
+effectText e = jsText (effectfulAST e)
 
--- | Golden case for a closed effectful program.
-effectCodeCase :: String -> ClosedEffect u -> Text -> TestTree
-effectCodeCase name eff = codeCase name (effectfulAST eff)
+pureText :: ClosedExpr u -> Text
+pureText e = jsText (pureAST e)
 
--- | Golden case for a closed effectful program under an explicit emit style.
-effectCodeCaseWith :: EmitStyle -> String -> ClosedEffect u -> Text -> TestTree
-effectCodeCaseWith style name eff = codeCase name (effectfulASTWith style eff)
+-- | Golden case: the rendered JS is exactly @golden@.
+jsIs :: String -> Text -> JS -> TestTree
+jsIs name golden js = testCase name (renderJS js @?= TE.encodeUtf8 golden)
 
--- | Golden case for a closed pure expression.
-pureCodeCase :: String -> ClosedExpr u -> Text -> TestTree
-pureCodeCase name e = codeCase name (pureAST e)
+effectJS :: String -> Text -> ClosedEffect u -> TestTree
+effectJS name golden e = jsIs name golden (effectfulAST e)
 
--- | Smoke case: rendered effect must contain every needle.
-effectContains :: String -> ClosedEffect u -> [Text] -> TestTree
-effectContains name eff = containsCase name (effectfulAST eff)
+pureJS :: String -> Text -> ClosedExpr u -> TestTree
+pureJS name golden e = jsIs name golden (pureAST e)
 
--- | 'effectContains' under an explicit emit style.
-effectContainsWith ::
-  EmitStyle -> String -> ClosedEffect u -> [Text] -> TestTree
-effectContainsWith style name eff = containsCase name (effectfulASTWith style eff)
+-- | 'effectJS' of @'fromSyntax' body@.
+syntaxJS :: String -> Text -> (forall f. EffectSyntax f (f u)) -> TestTree
+syntaxJS name golden body = effectJS name golden (fromSyntax body)
 
--- | Smoke case: rendered pure expression must contain every needle.
-pureContains :: String -> ClosedExpr u -> [Text] -> TestTree
-pureContains name e = containsCase name (pureAST e)
+-- | Smoke-check needle: a string literal must occur in the JS; 'lacks'
+-- must not.
+data Needle = Needle Bool Text
 
--- | Evaluate a closed pure Bool expression.
-evalBoolCase :: String -> ClosedExpr 'Bool -> Bool -> TestTree
-evalBoolCase name e expected =
-  testCase name $ case evaluate e of
-    ValueBool b -> b @?= expected
+instance IsString Needle where
+  fromString = Needle True . T.pack
 
--- | Assert emitted JS contains @needle@ (layout-independent smoke check).
-assertJSContains :: Text -> Text -> IO ()
+lacks :: Text -> Needle
+lacks = Needle False
+
+-- | Smoke case: the rendered JS satisfies every needle.
+jsHas :: String -> [Needle] -> JS -> TestTree
+jsHas name needles js = testCase name (assertJS needles (jsText js))
+
+effectHas :: String -> [Needle] -> ClosedEffect u -> TestTree
+effectHas name needles e = jsHas name needles (effectfulAST e)
+
+pureHas :: String -> [Needle] -> ClosedExpr u -> TestTree
+pureHas name needles e = jsHas name needles (pureAST e)
+
+syntaxHas :: String -> [Needle] -> (forall f. EffectSyntax f (f u)) -> TestTree
+syntaxHas name needles body = effectHas name needles (fromSyntax body)
+
+-- | Host evaluation of @e@ yields @expected@ (use @\@Double@ etc. when the
+-- literal's type is ambiguous).
+evalCase ::
+  (G.ToValue a, Eq a, Show a) =>
+  String -> a -> ClosedExpr (G.UniverseOf a) -> TestTree
+evalCase name expected e = testCase name (assertEval expected e)
+
+assertEval ::
+  (G.ToValue a, Eq a, Show a) => a -> ClosedExpr (G.UniverseOf a) -> Assertion
+assertEval expected e = G.fromValue (evaluate e) @?= expected
+
+-- | Layout-independent smoke check of @js@ against every needle.
+assertJS :: [Needle] -> Text -> Assertion
+assertJS needles js = mapM_ (\(Needle want n) -> assertInfix want n js) needles
+
+-- | Assert emitted JS contains @needle@.
+assertJSContains :: Text -> Text -> Assertion
 assertJSContains = assertInfix True
 
 -- | Assert emitted JS does /not/ contain @needle@.
-assertJSOmits :: Text -> Text -> IO ()
+assertJSOmits :: Text -> Text -> Assertion
 assertJSOmits = assertInfix False
 
-assertInfix :: Bool -> Text -> Text -> IO ()
+assertInfix :: Bool -> Text -> Text -> Assertion
 assertInfix want needle haystack =
   unless (T.isInfixOf needle haystack == want)
     $ assertFailure
