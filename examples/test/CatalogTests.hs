@@ -2,7 +2,7 @@
 
 module CatalogTests (catalogTests) where
 
-import BunGate (bunGated, bunPathTestName)
+import BunGate (bunGroup)
 import Data.List (find)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -37,12 +37,9 @@ catalogTests =
         onDisk <- T.readFile =<< getDataFileName "src/JShark/Example/Life/js/catalog.js"
         onDisk @?= catalogJs
     , testCase "glider orientations share canonical hash" $
-        canonicalShapeHash glider
-          @?= canonicalShapeHash (patCells gliderUpPat)
-    , testCase "toad phases share empirical phase key" $ do
-        let
-          toadCells = patCells toadPat
-        phaseKey toadCells @?= phaseKey (stepPattern toadCells)
+        canonicalShapeHash glider @?= canonicalShapeHash (patternCells 57)
+    , testCase "toad phases share empirical phase key" $
+        phaseKey (patternCells 26) @?= phaseKey (stepPattern (patternCells 26))
     , testCase "block stays single-phase" $
         length (phaseHashes block) @?= 1
     , testCase "glider classifies via drift stop" $
@@ -53,207 +50,101 @@ catalogTests =
         shapeHash block @?= "0,0;0,1;1,0;1,1"
     , testCase "classifyAndResolve waits for second sighting" $ do
         let
-          w = 10
-          cells = [0, 1, w, w + 1]
-          key = fst (collectPhaseKey (extractCoords w cells))
-          first =
-            classifyAndResolve Map.empty Map.empty Map.empty 100 255 w cells
-          second =
-            classifyAndResolve
-              Map.empty
-              Map.empty
-              (Map.singleton key 1)
-              100
-              255
-              w
-              cells
+          first = resolve Map.empty Map.empty 100 blockCells
+          second = resolve Map.empty (Map.singleton blockKey 1) 100 blockCells
         rrAction first @?= 0
-        rrKey first @?= key
+        rrKey first @?= blockKey
         rrAction second @?= 2
         rrSid second @?= 100
         speciesColor 100 @?= (rrR second, rrG second, rrB second)
     , testCase "classifyAndResolve at cap asks to steal a slot" $ do
         let
-          w = 10
-          cells = [0, 1, w, w + 1]
-          key = fst (collectPhaseKey (extractCoords w cells))
-          res =
-            classifyAndResolve
-              Map.empty
-              Map.empty
-              (Map.singleton key 1)
-              256
-              255
-              w
-              cells
+          res = resolve Map.empty (Map.singleton blockKey 1) 256 blockCells
         rrAction res @?= 3
-        rrKey res @?= key
+        rrKey res @?= blockKey
     , testCase "glider is one 8-connected component" $
         eightComponentSize glider @?= 5
     , testCase "diehard is classic 8x3 methuselah" $
-        shapeHash diehardCells @?= "0,1;1,1;2,1;2,2;6,0;6,2;7,2"
+        shapeHash (patternCells 62) @?= "0,1;1,1;2,1;2,2;6,0;6,2;7,2"
     , testCase "classifyAndResolve blinker hits catalog on first sight" $ do
         let
-          w = 10
-          cells = [0, 1, 2]
           key = canonicalShapeHash [(0, 0), (1, 0), (2, 0)]
-          res =
-            classifyAndResolve
-              (Map.singleton key 25)
-              Map.empty
-              Map.empty
-              100
-              255
-              w
-              cells
+          res = resolve (Map.singleton key 25) Map.empty 100 [0, 1, 2]
         rrAction res @?= 1
         rrSid res @?= 25
     , testCase "classifyAndResolve known catalog hits on first sight" $ do
         let
-          w = 10
-          cells = [0, 1, w, w + 1]
-          key = canonicalShapeHash block
-          sid = 42
-          res =
-            classifyAndResolve
-              (Map.singleton key sid)
-              Map.empty
-              Map.empty
-              100
-              255
-              w
-              cells
+          known = Map.singleton (canonicalShapeHash block) 42
+          res = resolve known Map.empty 100 blockCells
         rrAction res @?= 1
-        rrSid res @?= sid
-    , bunGated $ \getBun ->
-        testGroup
-          "runtime classifier parity"
-          [ testCase bunPathTestName $ do
-              m <- getBun
-              case m of
-                Nothing -> assertFailure "bun not found on PATH"
-                Just _ -> pure ()
-          , testCase "runtime collectPhaseKey key matches DiscoverCore for block" $ do
-              m <- getBun
-              case m of
-                Nothing -> pure ()
-                Just _ -> do
-                  let
-                    expected = phaseKey block
-                  got <- evaluateEffectJSON runtimeBlockPhaseKey
-                  jsonString got @?= expected
-          , testCase "runtime collectPhaseKey hash count matches DiscoverCore" $ do
-              m <- getBun
-              case m of
-                Nothing -> pure ()
-                Just _ -> do
-                  let
-                    expected = length (phaseHashes block)
-                  got <- evaluateEffectJSON runtimeBlockPhaseHashLen
-                  got @?= T.pack (show expected)
-          ]
+        rrSid res @?= 42
+    , bunGroup
+        "runtime classifier parity"
+        [ testCase "runtime collectPhaseKey key matches DiscoverCore for block" $ do
+            got <- evaluateEffectJSON runtimeBlockPhaseKey
+            -- The JSON string's contents, unquoted.
+            maybe got (T.takeWhile (/= '"')) (T.stripPrefix "\"" got)
+              @?= phaseKey block
+        , testCase "runtime collectPhaseKey hash count matches DiscoverCore" $ do
+            got <- evaluateEffectJSON runtimeBlockPhaseHashLen
+            got @?= T.pack (show (length (phaseHashes block)))
+        ]
     ]
  where
   block = [(0, 0), (0, 1), (1, 0), (1, 1)]
   cross = [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
-  gliderUpPat =
-    case find ((== 57) . patId) allPatterns of
-      Just p -> p
-      Nothing -> error "gliderUp missing from catalog"
-  toadPat =
-    case find ((== 26) . patId) allPatterns of
-      Just p -> p
-      Nothing -> error "toad missing from catalog"
-  diehardCells =
-    case find ((== 62) . patId) allPatterns of
-      Just p -> patCells p
-      Nothing -> error "diehard missing from catalog"
+  -- The block on a width-10 grid, and its phase key.
+  blockCells = [0, 1, 10, 11]
+  blockKey = phaseKey (extractCoords 10 blockCells)
+  resolve known pending nextSid =
+    classifyAndResolve known Map.empty pending nextSid 255 10
+  patternCells n =
+    maybe
+      (error ("pattern " ++ show n ++ " missing"))
+      patCells
+      (find ((== n) . patId) allPatterns)
+  phaseKey = fst . collectPhaseKey
+  phaseHashes = snd . collectPhaseKey
 
-  phaseKey coords = fst (collectPhaseKey coords)
-
-  phaseHashes coords = snd (collectPhaseKey coords)
-
-  eightComponentSize [] = 0
-  eightComponentSize (s : rest) = length (flood [s] [s])
-   where
-    live = s : rest
-    nbrs (x, y) =
-      [ (x + dx, y + dy)
-      | dx <- [-1 .. 1]
-      , dy <- [-1 .. 1]
-      , not (dx == 0 && dy == 0)
-      , (x + dx, y + dy) `elem` live
-      ]
-    flood [] seen = seen
-    flood (p : ps) seen =
-      let
-        new = [q | q <- nbrs p, q `notElem` seen]
-       in
-        flood (new ++ ps) (new ++ seen)
-
-  jsonString :: T.Text -> T.Text
-  jsonString t =
-    case T.uncons t of
-      Just ('"', rest) ->
-        case T.break (== '"') rest of
-          (s, _) -> s
-      _ -> t
-
-  stepPattern coords =
+-- | Size of the 8-connected component holding the first live cell.
+eightComponentSize :: [(Int, Int)] -> Int
+eightComponentSize [] = 0
+eightComponentSize live@(s : _) = length (flood [s] [s])
+ where
+  flood [] seen = seen
+  flood ((x, y) : ps) seen =
     let
-      (minX, minY, maxX, maxY) = bounds coords
-      pad = 2
-      ox = minX - pad
-      oy = minY - pad
-      gw = maxX - minX + 1 + 2 * pad
-      gh = maxY - minY + 1 + 2 * pad
-      grid1 = stepGrid (stamp coords ox oy gw gh) gw gh
+      new =
+        [ q
+        | dx <- [-1 .. 1]
+        , dy <- [-1 .. 1]
+        , (dx, dy) /= (0, 0)
+        , let
+            q = (x + dx, y + dy)
+        , q `elem` live
+        , q `notElem` seen
+        ]
      in
-      [ (x + ox, y + oy)
-      | y <- [0 .. gh - 1]
-      , x <- [0 .. gw - 1]
-      , grid1 !! (y * gw + x)
-      ]
+      flood (new ++ ps) (new ++ seen)
 
-  bounds coords =
-    ( minimum (map fst coords)
-    , minimum (map snd coords)
-    , maximum (map fst coords)
-    , maximum (map snd coords)
-    )
-
-  stamp coords ox oy gw gh =
-    foldr
-      (\(x, y) g -> setCell g gw (x - ox) (y - oy))
-      (replicate (gw * gh) False)
-      coords
-
-  setCell g gw x y =
-    let
-      i = y * gw + x
-     in
-      take i g ++ [True] ++ drop (i + 1) g
-
-  stepGrid grid gw gh =
-    [alive x y | y <- [0 .. gh - 1], x <- [0 .. gw - 1]]
-   where
-    alive x y =
-      let
-        n =
-          sum
-            [ if dx == 0 && dy == 0 then 0 else count nx ny
-            | dy <- [-1 .. 1]
-            , dx <- [-1 .. 1]
-            , let
-                nx = x + dx
-                ny = y + dy
-            , nx >= 0
-            , ny >= 0
-            , nx < gw
-            , ny < gh
-            ]
-        i = y * gw + x
-       in
-        n == (3 :: Int) || (grid !! i && n == (2 :: Int))
-    count nx ny =
-      if grid !! (ny * gw + nx) then 1 else 0
+-- | One Life generation, row-major. Births need three live neighbours, so
+-- only the bounding box grown by one can come alive.
+stepPattern :: [(Int, Int)] -> [(Int, Int)]
+stepPattern cells =
+  [ (x, y)
+  | y <- [minimum ys - 1 .. maximum ys + 1]
+  , x <- [minimum xs - 1 .. maximum xs + 1]
+  , let
+      n =
+        length
+          [ ()
+          | dy <- [-1 .. 1]
+          , dx <- [-1 .. 1]
+          , (dx, dy) /= (0, 0)
+          , (x + dx, y + dy) `elem` cells
+          ]
+  , n == 3 || (n == 2 && (x, y) `elem` cells)
+  ]
+ where
+  xs = map fst cells
+  ys = map snd cells

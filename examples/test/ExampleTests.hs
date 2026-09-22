@@ -1,34 +1,21 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 
--- | Every example must emit JavaScript that parses.
+-- | Every example must emit JavaScript that parses: a codegen bug can emit
+-- e.g. @.setAttribute(…)@ with no receiver, which only a JS engine notices.
 --
--- Compiling the Haskell says nothing about whether the emitted program is
--- syntactically valid — a codegen bug can produce a statement like
--- @.setAttribute(…)@ with no receiver, and only a browser would notice.
--- These cases hand each example's whole program to bun.
---
--- The program is parked inside a function that is never called, so bun
--- parses every line without running any of it: no DOM, no audio, no
--- listeners. A syntax error anywhere still fails the parse.
---
--- Each case compiles only its own example via 'compileEffect' +
--- 'readableConfig' (optimized 'effectfulAST', no minifier). Cases do not
--- share a setup hook, so a slow example like Life cannot block Breakout.
+-- Each case compiles its own example ('compileEffect' + 'readableConfig')
+-- and parks it in a never-called function, so bun parses every line
+-- without running any of it (no DOM, audio, or listeners). Cases share no
+-- setup, so a slow example like Life cannot block Breakout.
 module ExampleTests (exampleTests, watchMappingTests) where
 
 import BunGate (bunPathTestName)
 import qualified Data.ByteString.Char8 as BC
+import Data.Text (Text)
 import qualified Data.Text as T
-import JShark.Api (stmts)
-import JShark.Api.Types (ClosedEffect, Universe (Unit))
 import JShark.Bun.Internal (runJS)
 import JShark.Compiler (compileEffect, readableConfig)
-import qualified JShark.Example.Breakout as Breakout
-import qualified JShark.Example.Life as Life
-import qualified JShark.Example.Synth as Synth
-import qualified JShark.Example.TodoMvc as TodoMvc
+import JShark.Example.Registry (exampleLabels, exampleMainJS)
 import JShark.Example.Watch
   ( exampleAppForHs
   , exampleAppsForHs
@@ -39,64 +26,40 @@ import Test.Tasty.HUnit
 
 exampleTests :: TestTree
 exampleTests =
-  after AllSucceed bunPathTestName $
-    testGroup
-      "examples emit parseable JS"
-      [ parseExampleCase "breakout" (stmts Breakout.mainJS)
-      , parseExampleCase "todo-mvc" (stmts TodoMvc.mainJS)
-      , parseExampleCase "synth" (stmts Synth.mainJS)
-      , parseExampleCase "life" (stmts Life.mainJS)
-      , testCase "synth registers an audio dispose hook" $ do
-          js <- renderExample (stmts Synth.mainJS)
-          assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
-      , testCase "life registers a renderer dispose hook" $ do
-          js <- renderExample (stmts Life.mainJS)
-          assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
-      ]
+  after AllSucceed bunPathTestName . testGroup "examples emit parseable JS" $
+    map parseCase exampleLabels
+      ++ [ disposeCase "synth" "an audio"
+         , disposeCase "life" "a renderer"
+         ]
+ where
+  render :: Text -> IO String
+  render label = BC.unpack <$> compileEffect readableConfig (exampleMainJS label)
+  parseCase label = testCase (T.unpack label) $ do
+    js <- render label
+    got <- runJS ("(() => { function unused() {\n" ++ js ++ "\n} return 1; })()")
+    assertEqual (T.unpack label ++ " should parse") "1" got
+  disposeCase label what =
+    testCase (T.unpack label ++ " registers " ++ what ++ " dispose hook") $ do
+      js <- render label
+      assertBool "dispose" ("__JSHARK_DISPOSE__" `T.isInfixOf` T.pack js)
 
-parseExampleCase :: String -> ClosedEffect 'Unit -> TestTree
-parseExampleCase name eff = testCase name $ do
-  js <- renderExample eff
-  let
-    probe = "(() => { function unused() {\n" ++ js ++ "\n} return 1; })()"
-  got <- T.unpack <$> runJS probe
-  assertEqual (name ++ " should parse") "1" got
-
-renderExample :: ClosedEffect 'Unit -> IO String
-renderExample eff =
-  BC.unpack <$> compileEffect readableConfig eff
-
--- | The example-specific watch-path mapping moved out of
--- @jshark-hotreload@; it lives here now.
+-- | The example-specific watch-path mapping (moved out of
+-- @jshark-hotreload@).
 watchMappingTests :: TestTree
 watchMappingTests =
   testGroup
     "example watch mapping"
     [ testCase "exampleAppForHs maps Client.hs paths" $ do
-        assertEqual
-          "todo"
-          (Just "todo-mvc")
-          (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Client.hs")
-        assertEqual
-          "breakout"
-          (Just "breakout")
-          (exampleAppForHs "examples\\src\\JShark\\Example\\Breakout\\Types.hs")
-        assertEqual
-          "page maps"
-          (Just "todo-mvc")
-          (exampleAppForHs "examples/src/JShark/Example/TodoMvc/Page.hs")
-        assertEqual
-          "server skip"
-          Nothing
-          (exampleAppForHs "examples/app/server/DevServer.hs")
-        assertEqual
-          "theme all"
-          ["breakout", "todo-mvc", "synth", "life"]
-          (exampleAppsForHs "examples/src/JShark/Example/Theme.hs")
-        assertBool
-          "lucid shell"
-          (isLucidShellPath "examples/src/JShark/Example/Breakout/Page.hs")
-        assertBool
-          "not lucid"
-          (not (isLucidShellPath "examples/src/JShark/Example/Breakout/Client.hs"))
+        mapM_
+          (\(path, want) -> assertEqual path want (exampleAppForHs path))
+          [ ("examples/src/JShark/Example/TodoMvc/Client.hs", Just "todo-mvc")
+          , ("examples\\src\\JShark\\Example\\Breakout\\Types.hs", Just "breakout")
+          , ("examples/src/JShark/Example/TodoMvc/Page.hs", Just "todo-mvc")
+          , ("examples/app/server/DevServer.hs", Nothing)
+          ]
+        exampleAppsForHs "examples/src/JShark/Example/Theme.hs"
+          @?= ["breakout", "todo-mvc", "synth", "life"]
+        isLucidShellPath "examples/src/JShark/Example/Breakout/Page.hs" @?= True
+        isLucidShellPath "examples/src/JShark/Example/Breakout/Client.hs"
+          @?= False
     ]
