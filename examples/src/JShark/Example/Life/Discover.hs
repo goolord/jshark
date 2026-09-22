@@ -108,8 +108,7 @@ type instance Field SidCount "sid" = 'Number
 
 type instance Field SidCount "cnt" = 'Number
 
-initIndexTracker ::
-  EffectSyntax f (Effect f ('MutableObject IndexTracker))
+initIndexTracker :: EffectSyntax f (Effect f ('MutableObject IndexTracker))
 initIndexTracker = do
   t <- hold newObject
   _ <- setProp t "lastMs" (number 0)
@@ -139,8 +138,7 @@ requireById what elId = do
 initSeenSpecies :: EffectSyntax f (Effect f ('Set Number))
 initSeenSpecies = hold Set.new
 
-initRegistry ::
-  EffectSyntax f (Effect f ('MutableObject Registry))
+initRegistry :: EffectSyntax f (Effect f ('MutableObject Registry))
 initRegistry = do
   prefixes <- bindExpr catalogPrefixes
   suffixes <- bindExpr catalogSuffixes

@@ -69,8 +69,7 @@ collectTaken registry taken = do
   _ <- Map.mapM_ (\_ v -> Set.insert taken v) (Lift names)
   done
 
-refreshTakenNames ::
-  Effect f ('MutableObject a) -> EffectSyntax f (f 'Unit)
+refreshTakenNames :: Effect f ('MutableObject a) -> EffectSyntax f (f 'Unit)
 refreshTakenNames registry = do
   taken <- getProp registry "takenNames"
   let

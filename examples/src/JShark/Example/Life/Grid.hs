@@ -109,8 +109,7 @@ newUint16Array cellsN =
 newSpeciesArray :: Expr f 'Number -> Effect f 'Uint8Array
 newSpeciesArray = newUint16Array
 
-u8Get ::
-  Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+u8Get :: Expr f 'Uint8Array -> Expr f 'Number -> EffectSyntax f (Expr f 'Number)
 u8Get buf i = pure (u8Index buf i)
 
 setU8 ::
@@ -291,8 +290,7 @@ refreshPackedRegion grid w h x0 y0 x1 y1 = do
   done
 
 -- | Expand RGB palette to RGBA for WebGL texture uploads.
-initPaletteRgba ::
-  Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)
+initPaletteRgba :: Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Uint8Array)
 initPaletteRgba pal = do
   rgba <- bindExpr (newByteArray (number (fromIntegral (speciesCount * 4))))
   _ <-

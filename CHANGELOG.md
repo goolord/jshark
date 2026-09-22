@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+* **Breaking:** the compiler core is one first-order IR
+  (`JShark.Compiler.Ir`) with a single lowering pass, optimizer, and
+  emitter (`JShark.Compiler.Codegen`); the generated JavaScript is
+  byte-for-byte unchanged. `JShark.Internal` drops the Flat/SoA pipeline
+  (`flatPrepareCore`, `effectfulASTFromSoA`, `JShark.Compiler.Flat`) and
+  exposes the IR instead (`Ir`, `N`, `Meta`, `optIr`, `validateIr`). The
+  library no longer depends on `ansi-terminal`, `atomic-primops`,
+  `effectful`, `transformers`, `streaming-bytestring`, `vector`, or
+  `deepseq`.
+
+* **Breaking:** the per-operator constructors of `Kernel` and `FixedOp`
+  are folded into enums: `KNum NumOp` and `KCmp CmpOp` replace `KPlus`,
+  `KTimes`, `KGTh`, …, and `FixMath1 Math1` / `FixMath2 Math2` replace
+  `FixSin`, `FixPow`, …. The `Plus`, `Times`, `GTh`, … pattern synonyms and
+  the smart constructors are unchanged.
+
+* **Breaking:** `jshark-bindgen` folds `JShark.Bindgen.Json` into
+  `JShark.Bindgen.Ir` (`decodeModule`) and `JShark.Bindgen.Extract` into
+  `JShark.Bindgen` (`findExtractScript`, `tsExtractorAvailable`,
+  `extractWithTs`).
+
+* **Breaking:** `jshark-hotreload` reads hub state through one
+  `currentSnapshot` (replacing `currentJsHashes`, `currentRevision`,
+  `lastBuildError`, and `lastCompiling`); `setBuildError` / `setBuildStart`
+  are dropped in favour of `broadcastEvent` with `BuildError` /
+  `BuildStart`.
+
 * **Breaking:** `JShark.Compiler` drops `passthroughConfig`, which was an
   alias of `defaultCompilerConfig`. Use `defaultCompilerConfig`.
 

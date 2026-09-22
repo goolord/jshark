@@ -65,9 +65,11 @@ data Fps = Fps
   }
   deriving Generic
 
+type El f = Effect f ('MutableObject Dom.DomElement)
+
 -- | Handles the frame's event handlers and frame loop share.
 data Ui f = Ui
-  { canvas :: Effect f ('MutableObject Dom.DomElement)
+  { canvas :: El f
   , viewport :: Effect f ('MutableObject ())
   , state :: Effect f (MutableObjectOf LifeState)
   , stepCtx :: Effect f (MutableObjectOf StepCtx)
@@ -82,30 +84,11 @@ data Ui f = Ui
   , toolRef :: Effect f ('MutableObject ())
   , toolsMap :: Effect f ('Map 'Number ('Array ('Array 'Number)))
   , toolBtnsE :: Expr f ('Array ('MutableObject Dom.DomElement))
-  , typesList
-    , indexTotal
-    , tooltip
-    , swatchEl
-    , nameEl
-    , statGen
-    , statCells
-    , statFps
-    , statZoom
-    , statRender
-    , settingsZoom
-    , settingsZoomIn
-    , settingsZoomOut
-    , settingsReset
-    , settingsPurge
-    , settingsGrid
-    , settingsTick
-    , settingsTickVal
-    , pauseOverlay
-    , eraserGhost
-    , eraserSize
-    , eraserRadius
-    , eraserRadiusVal ::
-      Effect f ('MutableObject Dom.DomElement)
+  , typesList, indexTotal, tooltip, swatchEl, nameEl, statGen, statCells :: El f
+  , statFps, statZoom, statRender, settingsZoom, settingsZoomIn :: El f
+  , settingsZoomOut, settingsReset, settingsPurge, settingsGrid :: El f
+  , settingsTick, settingsTickVal, pauseOverlay, eraserGhost, eraserSize :: El f
+  , eraserRadius, eraserRadiusVal :: El f
   }
 
 mainJS :: forall f. EffectSyntax f (f 'Unit)
@@ -131,7 +114,7 @@ mainJS = do
       done
 
 boot ::
-  Effect f ('MutableObject Dom.DomElement)
+  El f
   -> Expr f ('MutableObject Pixi.Application)
   -> EffectSyntax f (f 'Unit)
 boot canvas app = do
@@ -152,7 +135,7 @@ boot canvas app = do
   done
 
 bootLoaded ::
-  Effect f ('MutableObject Dom.DomElement)
+  El f
   -> Expr f ('MutableObject Pixi.Application)
   -> Effect f ('MutableObject Pixi.Application)
   -> Effect f ('MutableObject ())
@@ -856,10 +839,7 @@ nearestZoomIndex levels indices zoom =
           if_ (curDist .< bestDist) i bestIdx
     )
 
-clampZoomIndex ::
-  Expr f ('Array 'Number)
-  -> Expr f 'Number
-  -> Expr f 'Number
+clampZoomIndex :: Expr f ('Array 'Number) -> Expr f 'Number -> Expr f 'Number
 clampZoomIndex indices idx =
   let
     len = Array.length indices
@@ -928,8 +908,7 @@ wheelZoomAt viewport deltaY fx fy = do
     z1 = Math.max minZ (Math.min maxZ z1raw)
   applyZoomAt viewport z0 z1 fx fy
 
-wheelZoomFactor ::
-  Expr f 'Number -> EffectSyntax f (Expr f 'Number)
+wheelZoomFactor :: Expr f 'Number -> EffectSyntax f (Expr f 'Number)
 wheelZoomFactor deltaY =
   fmap
     var
@@ -943,14 +922,10 @@ wheelZoomFactor deltaY =
         )
     )
 
-zoomIn ::
-  Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
+zoomIn :: Effect f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
 zoomIn viewport = stepZoom viewport (number 1)
 
-zoomOut ::
-  Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
+zoomOut :: Effect f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
 zoomOut viewport = stepZoom viewport (number (-1))
 
 invalidateViewportRender ::
@@ -959,9 +934,7 @@ invalidateViewportRender ::
 invalidateViewportRender viewport =
   setProp viewport "renderPanValid" false_
 
-clampPan ::
-  Effect f ('MutableObject ())
-  -> EffectSyntax f (f 'Unit)
+clampPan :: Effect f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
 clampPan viewport = do
   zoom <- getProp viewport "zoom"
   panX <- getProp viewport "panX"
@@ -1150,9 +1123,7 @@ wireEraserSize Ui {..} = do
 -- | Clear and hide the 2D ghost overlay. Hiding matters: a visible canvas
 --   stacked over the WebGL board occlusion-culls the board's WebGL quad in
 --   software-composited browsers, blanking the whole game.
-clearEraserGhostStm ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> EffectSyntax f (f 'Unit)
+clearEraserGhostStm :: El f -> EffectSyntax f (f 'Unit)
 clearEraserGhostStm ghost = do
   toSyntax_ $
     ffi
@@ -1165,7 +1136,7 @@ clearEraserGhostStm ghost = do
   done
 
 drawEraserGhostStm ::
-  Effect f ('MutableObject Dom.DomElement)
+  El f
   -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
@@ -1305,8 +1276,8 @@ eraserCursor =
     )
 
 wireCollapse ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Effect f ('MutableObject Dom.DomElement)
+  El f
+  -> El f
   -> Expr f 'String
   -> Expr f 'String
   -> Expr f 'String
@@ -1409,8 +1380,7 @@ wireSimSettings Ui {..} = do
       done
   done
 
-resetViewport ::
-  Effect f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
+resetViewport :: Effect f ('MutableObject ()) -> EffectSyntax f (f 'Unit)
 resetViewport viewport = do
   w <- getProp viewport "worldW"
   h <- getProp viewport "worldH"

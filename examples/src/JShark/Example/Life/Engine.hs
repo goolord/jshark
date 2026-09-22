@@ -323,8 +323,7 @@ markSceneDirty ::
   Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 markSceneDirty state = set @"sceneDirty" state true_
 
-syncLiveList ::
-  Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
+syncLiveList :: Effect f (MutableObjectOf LifeState) -> EffectSyntax f (f 'Unit)
 syncLiveList state = do
   alive <- state.alive
   liveList <- state.liveList

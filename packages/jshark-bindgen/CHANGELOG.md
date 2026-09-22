@@ -11,3 +11,6 @@
   `unsupported-nullable` diagnostics. TypeScript is pinned to 5.9.3 and
   resolved from `JSHARK_BINDGEN_TYPESCRIPT`, the extractor's directory, or
   the consumer's `node_modules`.
+* `JShark.Bindgen.Json` is folded into `JShark.Bindgen.Ir` (`decodeModule`)
+  and `JShark.Bindgen.Extract` into `JShark.Bindgen` (`findExtractScript`,
+  `tsExtractorAvailable`, `extractWithTs`).

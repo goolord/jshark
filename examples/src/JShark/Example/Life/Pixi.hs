@@ -604,8 +604,7 @@ setSpriteViewport sprite panX panY zoom px = do
   done
 
 -- | Present the stage; no-op if the GL context is already lost.
-render ::
-  Expr f ('MutableObject Application) -> EffectSyntax f (f 'Unit)
+render :: Expr f ('MutableObject Application) -> EffectSyntax f (f 'Unit)
 render app = do
   toSyntax_
     $ discard

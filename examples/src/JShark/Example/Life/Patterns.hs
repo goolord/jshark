@@ -168,28 +168,14 @@ disturbPatterns =
 
 -- Still lifes ---------------------------------------------------------------
 
-block :: [(Int, Int)]
+block, beehive, loaf, boat, tub, pond, ship, longBoat :: [(Int, Int)]
 block = [(0, 0), (1, 0), (0, 1), (1, 1)]
-
-beehive :: [(Int, Int)]
 beehive = [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2)]
-
-loaf :: [(Int, Int)]
 loaf = [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (3, 2), (2, 3)]
-
-boat :: [(Int, Int)]
 boat = [(0, 0), (1, 0), (0, 1), (2, 1), (1, 2)]
-
-tub :: [(Int, Int)]
 tub = [(1, 0), (0, 1), (2, 1), (1, 2)]
-
-pond :: [(Int, Int)]
 pond = [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (2, 3)]
-
-ship :: [(Int, Int)]
 ship = [(0, 0), (1, 0), (0, 1), (2, 1), (1, 2), (2, 2)]
-
-longBoat :: [(Int, Int)]
 longBoat = [(0, 0), (1, 0), (0, 1), (3, 1), (1, 2), (2, 2), (3, 2)]
 
 mango :: [(Int, Int)]
@@ -201,13 +187,9 @@ hat = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (3, 2)]
 
 -- Oscillators ---------------------------------------------------------------
 
-blinker :: [(Int, Int)]
+blinker, toad, beacon :: [(Int, Int)]
 blinker = [(0, 0), (1, 0), (2, 0)]
-
-toad :: [(Int, Int)]
 toad = [(1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1)]
-
-beacon :: [(Int, Int)]
 beacon = [(0, 0), (1, 0), (0, 1), (3, 2), (2, 3), (3, 3)]
 
 pulsar :: [(Int, Int)]
@@ -247,13 +229,9 @@ queenBee =
     , "OOOOOOO"
     ]
 
-figureEight :: [(Int, Int)]
+figureEight, sparkles, unix :: [(Int, Int)]
 figureEight = [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (1, 3), (2, 3)]
-
-sparkles :: [(Int, Int)]
 sparkles = [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2), (1, 3), (2, 3)]
-
-unix :: [(Int, Int)]
 unix = [(0, 0), (1, 0), (1, 1), (2, 1), (1, 2), (2, 2), (2, 3)]
 
 tumbler :: [(Int, Int)]
@@ -272,13 +250,9 @@ gliderOrientationCells = [glider, gliderUp, gliderLeft, gliderDown]
 gliderSpeciesSid :: Int
 gliderSpeciesSid = 45
 
-gliderAlt :: [(Int, Int)]
+gliderAlt, lwss, lwssAlt :: [(Int, Int)]
 gliderAlt = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 2)]
-
-lwss :: [(Int, Int)]
 lwss = [(1, 0), (4, 0), (0, 1), (0, 2), (4, 2), (0, 3), (1, 3), (2, 3), (3, 3)]
-
-lwssAlt :: [(Int, Int)]
 lwssAlt = [(0, 0), (3, 0), (4, 1), (0, 2), (4, 2), (0, 3), (1, 3), (2, 3), (3, 3)]
 
 mwss :: [(Int, Int)]
@@ -303,76 +277,42 @@ hwss =
 
 -- Extra still lifes ---------------------------------------------------------
 
-shillelagh :: [(Int, Int)]
+shillelagh, dock, barge, longSnake, cisHook, elevator, paperclip :: [(Int, Int)]
 shillelagh = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 2)]
-
-dock :: [(Int, Int)]
 dock = [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1)]
-
-barge :: [(Int, Int)]
 barge = [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (1, 2)]
-
-longSnake :: [(Int, Int)]
 longSnake = [(0, 0), (0, 1), (0, 2), (0, 3), (1, 3)]
-
-cisHook :: [(Int, Int)]
 cisHook = [(0, 0), (0, 1), (1, 1), (2, 1), (2, 0)]
-
-elevator :: [(Int, Int)]
 elevator = [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2)]
-
-paperclip :: [(Int, Int)]
 paperclip = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 2), (3, 2), (3, 1)]
 
-tableOnTable :: [(Int, Int)]
+tableOnTable, integralSign, hook, canoe, aircraftCarrier :: [(Int, Int)]
 tableOnTable = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
-
-integralSign :: [(Int, Int)]
 integralSign = [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
-
-hook :: [(Int, Int)]
 hook = [(0, 0), (0, 1), (1, 1), (2, 1), (2, 0)]
-
-canoe :: [(Int, Int)]
 canoe = [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (1, 2), (2, 2)]
-
-aircraftCarrier :: [(Int, Int)]
 aircraftCarrier = [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (1, 2)]
 
-transBarge :: [(Int, Int)]
+transBarge, cisFuse :: [(Int, Int)]
 transBarge = [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (2, 2)]
-
-cisFuse :: [(Int, Int)]
 cisFuse = [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1)]
 
 -- Extra oscillators ---------------------------------------------------------
 
-tripole :: [(Int, Int)]
+tripole, byFlops, mold :: [(Int, Int)]
 tripole = [(0, 0), (1, 0), (2, 0), (4, 0), (5, 0), (6, 0)]
-
-byFlops :: [(Int, Int)]
 byFlops = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
-
-mold :: [(Int, Int)]
 mold = [(1, 0), (2, 0), (0, 1), (3, 1), (0, 2), (3, 2), (1, 3), (2, 3)]
 
 clock :: [(Int, Int)]
 clock =
   [(2, 0), (5, 0), (1, 1), (0, 2), (1, 3), (2, 4), (3, 4), (4, 3), (5, 2), (4, 1)]
 
-quadpole :: [(Int, Int)]
+quadpole, butterfly, trafficCircle, pentant, crossroads :: [(Int, Int)]
 quadpole = [(0, 0), (1, 0), (2, 0), (3, 0), (5, 0), (6, 0), (7, 0), (8, 0)]
-
-butterfly :: [(Int, Int)]
 butterfly = [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2)]
-
-trafficCircle :: [(Int, Int)]
 trafficCircle = [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
-
-pentant :: [(Int, Int)]
 pentant = [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2), (0, 3), (2, 3)]
-
-crossroads :: [(Int, Int)]
 crossroads = [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2), (0, 3), (1, 3), (2, 3)]
 
 pinwheel :: [(Int, Int)]
@@ -380,10 +320,8 @@ pinwheel = [(1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2)]
 
 -- Extra spaceships ----------------------------------------------------------
 
-gliderPerp :: [(Int, Int)]
+gliderPerp, lwssPerp :: [(Int, Int)]
 gliderPerp = [(0, 1), (1, 2), (2, 0), (2, 1), (2, 2)]
-
-lwssPerp :: [(Int, Int)]
 lwssPerp = [(0, 1), (0, 4), (1, 0), (2, 0), (2, 4), (3, 0), (3, 1), (3, 2), (3, 3)]
 
 mwssAlt :: [(Int, Int)]
@@ -401,13 +339,9 @@ mwssAlt =
   , (3, 3)
   ]
 
-dart :: [(Int, Int)]
+dart, crabCanonical, loaferSmall :: [(Int, Int)]
 dart = [(0, 2), (1, 0), (1, 1), (1, 2), (2, 2), (2, 3), (3, 3)]
-
-crabCanonical :: [(Int, Int)]
 crabCanonical = [(0, 2), (1, 0), (1, 1), (1, 2), (2, 2), (2, 3), (3, 1), (3, 2)]
-
-loaferSmall :: [(Int, Int)]
 loaferSmall = [(0, 1), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2)]
 
 -- | North-east glider (canonical 'glider' rotated 90° CCW). The old
@@ -427,10 +361,8 @@ gliderLeft = [(0, 0), (1, 0), (0, 1), (0, 2), (2, 1)]
 
 -- Methuselah seeds ----------------------------------------------------------
 
-rPentomino :: [(Int, Int)]
+rPentomino, acorn :: [(Int, Int)]
 rPentomino = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 2)]
-
-acorn :: [(Int, Int)]
 acorn = [(1, 0), (3, 1), (0, 2), (1, 2), (4, 2), (5, 2), (6, 2)]
 
 -- | LifeWiki Diehard (7 cells, 8×3): 6bo$2o$bo3b2o!
@@ -439,22 +371,12 @@ diehard =
   [(6, 0), (0, 1), (1, 1), (2, 1), (2, 2), (6, 2), (7, 2)]
 
 -- | LifeWiki Bunnies (9 cells, 8×4): o5bo$2bo3bo$2bo2bobo$bobo!
-bunnies :: [(Int, Int)]
+bunnies, sDiehard, bHeptomino, piHeptomino, rAcorn, switchEngine :: [(Int, Int)]
 bunnies = [(0, 0), (6, 0), (2, 1), (6, 1), (2, 2), (5, 2), (7, 2), (1, 3), (3, 3)]
-
-sDiehard :: [(Int, Int)]
 sDiehard = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 2), (2, 2), (3, 2)]
-
-bHeptomino :: [(Int, Int)]
 bHeptomino = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2)]
-
-piHeptomino :: [(Int, Int)]
 piHeptomino = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
-
-rAcorn :: [(Int, Int)]
 rAcorn = [(2, 0), (0, 1), (1, 1), (2, 1), (3, 1), (4, 1), (5, 1)]
-
-switchEngine :: [(Int, Int)]
 switchEngine = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1), (3, 1)]
 
 blockOnTable :: [(Int, Int)]
@@ -462,31 +384,17 @@ blockOnTable = [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2), (2, 2)]
 
 -- Eaters --------------------------------------------------------------------
 
-eater :: [(Int, Int)]
+eater, eater2, eater3, blockOnSnake, tubWithTail :: [(Int, Int)]
 eater = [(0, 0), (1, 0), (0, 1), (0, 2), (1, 2), (2, 2), (2, 1)]
-
-eater2 :: [(Int, Int)]
 eater2 = [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (1, 2), (2, 1)]
-
-eater3 :: [(Int, Int)]
 eater3 = [(0, 0), (1, 0), (0, 1), (0, 2), (1, 2), (2, 2), (3, 2), (3, 1)]
-
-blockOnSnake :: [(Int, Int)]
 blockOnSnake = [(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (0, 3)]
-
-tubWithTail :: [(Int, Int)]
 tubWithTail = [(1, 0), (0, 1), (2, 1), (1, 2), (1, 3)]
 
-longHookWithTail :: [(Int, Int)]
+longHookWithTail, snakeBridge, mirroredEater, preBlock :: [(Int, Int)]
 longHookWithTail = [(0, 0), (0, 1), (1, 1), (2, 1), (2, 0), (2, 2)]
-
-snakeBridge :: [(Int, Int)]
 snakeBridge = [(0, 0), (1, 0), (0, 1), (1, 1), (2, 1), (3, 1)]
-
-mirroredEater :: [(Int, Int)]
 mirroredEater = [(2, 0), (1, 0), (2, 1), (2, 2), (1, 2), (0, 2), (0, 1)]
-
-preBlock :: [(Int, Int)]
 preBlock = [(0, 0), (1, 0), (0, 1)]
 
 preBeehive :: [(Int, Int)]
@@ -494,34 +402,18 @@ preBeehive = [(1, 0), (2, 0), (0, 1), (3, 1)]
 
 -- Misc ----------------------------------------------------------------------
 
-trafficLight :: [(Int, Int)]
+trafficLight, honeyFarm, farm, longBoatTie, cisLongHook :: [(Int, Int)]
 trafficLight = [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)]
-
-honeyFarm :: [(Int, Int)]
 honeyFarm = [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2)]
-
-farm :: [(Int, Int)]
 farm = [(1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2)]
-
-longBoatTie :: [(Int, Int)]
 longBoatTie = [(0, 0), (1, 0), (0, 1), (3, 1), (1, 2), (2, 2), (3, 2)]
-
-cisLongHook :: [(Int, Int)]
 cisLongHook = [(0, 0), (0, 1), (1, 1), (2, 1), (2, 0), (2, 2)]
 
-transLongHook :: [(Int, Int)]
+transLongHook, veryLongBoat, cisBoat, transBoat, cisBlock :: [(Int, Int)]
 transLongHook = [(0, 0), (0, 1), (1, 1), (2, 1), (2, 0), (0, 2)]
-
-veryLongBoat :: [(Int, Int)]
 veryLongBoat = [(0, 0), (1, 0), (0, 1), (4, 1), (1, 2), (2, 2), (3, 2), (4, 2)]
-
-cisBoat :: [(Int, Int)]
 cisBoat = [(0, 0), (1, 0), (0, 1), (2, 1), (1, 2)]
-
-transBoat :: [(Int, Int)]
 transBoat = [(0, 0), (1, 0), (0, 1), (2, 1), (2, 2)]
-
-cisBlock :: [(Int, Int)]
 cisBlock = [(0, 0), (1, 0), (0, 1), (2, 1)]
 
 -- Host-built initial grid and flat RGB palette -----------------------------

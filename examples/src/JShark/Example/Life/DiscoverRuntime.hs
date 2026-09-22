@@ -39,16 +39,14 @@ classifyAndResolveEffect scratch w cells nextId0 maxSid0 = do
   _ <- setProp res "hashes" hashes
   pure res
 
-registryField ::
-  Expr f u -> Text -> EffectSyntax f (Expr f v)
+registryField :: Expr f u -> Text -> EffectSyntax f (Expr f v)
 registryField reg name =
   bindExpr $
     ffi
       "(r,n)=>r[n]"
       (arg reg <: arg (string name) <: RecNil)
 
-fillDefault ::
-  Effect f ('MutableObject a) -> EffectSyntax f (f 'Unit)
+fillDefault :: Effect f ('MutableObject a) -> EffectSyntax f (f 'Unit)
 fillDefault res = do
   _ <- setProp res "action" (number 0)
   _ <- setProp res "sid" (number 0)
