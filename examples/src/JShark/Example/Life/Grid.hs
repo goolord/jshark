@@ -3,6 +3,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
@@ -12,6 +13,7 @@
 module JShark.Example.Life.Grid
   ( CellGrids (..)
   , StepRegion (..)
+  , CellStep (..)
   , BoundScratch (..)
   , RenderDirty (..)
   , StepScratch (..)
@@ -385,10 +387,7 @@ clampLiveBounds w h x0 y0 x1 y1 margin =
 -- @Uint8Array@, so passing them positionally made any two of them
 -- interchangeable to the type checker.
 data CellGrids f = CellGrids
-  { cgAlive :: Expr f 'Uint8Array
-  , cgSpecies :: Expr f 'Uint8Array
-  , cgNextAlive :: Expr f 'Uint8Array
-  , cgNextSpecies :: Expr f 'Uint8Array
+  { alive, species, nextAlive, nextSpecies :: Expr f 'Uint8Array
   }
 
 -- | World size, and the inclusive cell rectangle to step within it.
@@ -399,6 +398,17 @@ data StepRegion f = StepRegion
   , srY0 :: Expr f 'Number
   , srX1 :: Expr f 'Number
   , srY1 :: Expr f 'Number
+  }
+
+-- | What updating one cell reads and writes: the grids, the output lists,
+-- the step scratch, the per-species birth tallies and the species touched
+-- while tallying, and the world size.
+data CellStep f = CellStep
+  { grids :: CellGrids f
+  , nextLiveList, nextChangedList :: Expr f ('Array 'Number)
+  , stepCtx :: Effect f (MutableObjectOf StepCtx)
+  , counts, touchedBuf :: Expr f 'Uint8Array
+  , w, h :: Expr f 'Number
   }
 
 stepGrid ::
@@ -415,12 +425,7 @@ stepGrid ::
   -> Expr f 'Uint8Array
   -> EffectSyntax f (Expr f 'Number)
 stepGrid
-  CellGrids
-    { cgAlive = alive
-    , cgSpecies = species
-    , cgNextAlive = nextAlive
-    , cgNextSpecies = nextSpecies
-    }
+  grids@CellGrids {..}
   StepRegion {srW = w, srH = h, srX0 = x0, srY0 = y0, srX1 = x1, srY1 = y1}
   prevLiveList
   nextLiveList
@@ -429,8 +434,8 @@ stepGrid
   stepTag
   prevPop
   stepCtx
-  birthCounts
-  birthTouched = do
+  counts
+  touchedBuf = do
     let
       (xStart, yStart, xStop, yStop) =
         clampLiveBounds w h x0 y0 x1 y1 (number 1)
@@ -453,21 +458,7 @@ stepGrid
     set @"by1" stepCtx (number (-1))
     set @"pop" stepCtx 0
     let
-      runCell x y =
-        processCell
-          alive
-          species
-          nextAlive
-          nextSpecies
-          nextLiveList
-          nextChangedList
-          stepCtx
-          birthCounts
-          birthTouched
-          w
-          h
-          x
-          y
+      runCell = processCell CellStep {..}
       runIndex i = do
         -- Stamp dedup only on the sparse path; dense scans call 'runCell' directly.
         s <- u8Get stepStamp i
@@ -510,103 +501,47 @@ stepGrid
     stepCtx.pop
 
 processCell ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f ('Array 'Number)
-  -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf StepCtx)
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-processCell
-  alive
-  species
-  nextAlive
-  nextSpecies
-  nextLiveList
-  nextChangedList
-  stepCtx
-  counts
-  touchedBuf
-  w
-  h
-  x
-  y = do
-    let
-      i = cellIdx w x y
-    b <- u8Get alive i
-    let
-      alive0 = bitAnd b (number 1)
-      nCount = packedCount b
-    sp <- u8Get species i
-    set @"touchedLen" stepCtx 0
-    set @"best" stepCtx 0
-    set @"bestCount" stepCtx 0
-    whenS (alive0 .== 0 .&& nCount .== 3) $
-      forRange_ (number (-1)) (number 2) $ \dy ->
-        forRange_ (number (-1)) (number 2) $ \dx ->
-          whenS (not_ (dx .== 0 .&& dy .== 0)) $
-            countBirthSpecies alive species counts touchedBuf stepCtx w h x y dx dy
-    bestSp <- stepCtx.best
-    whenS
-      (alive0 .== 1 .&& (nCount .== 2 .|| nCount .== 3))
-      ( do
-          setU8 nextSpecies i sp
-          Array.push_ nextLiveList i
-          bumpPop stepCtx
-          bumpBounds stepCtx x y
-      )
-    whenS
-      (alive0 .== 1 .&& not_ (nCount .== 2 .|| nCount .== 3))
-      ( markDead
-          nextAlive
-          nextSpecies
-          nextLiveList
-          nextChangedList
-          w
-          h
-          x
-          y
-          i
-      )
-    whenS
-      (alive0 .== 0 .&& nCount .== 3)
-      ( markBorn
-          nextAlive
-          nextSpecies
-          nextLiveList
-          nextChangedList
-          stepCtx
-          w
-          h
-          x
-          y
-          i
-          bestSp
-      )
-    whenS (alive0 .== 0 .&& nCount .!= 3) (setU8 nextSpecies i (number 0))
-    resetBirthCounts counts touchedBuf stepCtx
+  CellStep f -> Expr f 'Number -> Expr f 'Number -> EffectSyntax f (f 'Unit)
+processCell cs@CellStep {grids = CellGrids {..}, ..} x y = do
+  let
+    i = cellIdx w x y
+  b <- u8Get alive i
+  let
+    alive0 = bitAnd b (number 1)
+    nCount = packedCount b
+  sp <- u8Get species i
+  set @"touchedLen" stepCtx 0
+  set @"best" stepCtx 0
+  set @"bestCount" stepCtx 0
+  whenS (alive0 .== 0 .&& nCount .== 3) $
+    forRange_ (number (-1)) (number 2) $ \dy ->
+      forRange_ (number (-1)) (number 2) $ \dx ->
+        whenS (not_ (dx .== 0 .&& dy .== 0)) $
+          countBirthSpecies cs x y dx dy
+  bestSp <- stepCtx.best
+  whenS
+    (alive0 .== 1 .&& (nCount .== 2 .|| nCount .== 3))
+    ( do
+        setU8 nextSpecies i sp
+        Array.push_ nextLiveList i
+        bumpPop stepCtx
+        bumpBounds stepCtx x y
+    )
+  whenS
+    (alive0 .== 1 .&& not_ (nCount .== 2 .|| nCount .== 3))
+    (markDead cs x y i)
+  whenS (alive0 .== 0 .&& nCount .== 3) (markBorn cs x y i bestSp)
+  whenS (alive0 .== 0 .&& nCount .!= 3) (setU8 nextSpecies i (number 0))
+  resetBirthCounts counts touchedBuf stepCtx
 
 markBorn ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f ('Array 'Number)
-  -> Expr f ('Array 'Number)
-  -> Effect f (MutableObjectOf StepCtx)
-  -> Expr f 'Number
-  -> Expr f 'Number
+  CellStep f
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-markBorn nextAlive nextSpecies nextLiveList nextChangedList stepCtx w h x y i sp = do
+markBorn CellStep {grids = CellGrids {..}, ..} x y i sp = do
   setPackedAlive nextAlive i (number 1)
   bumpPackedNeighbors nextAlive w h x y (number 2)
   setU8 nextSpecies i sp
@@ -616,17 +551,12 @@ markBorn nextAlive nextSpecies nextLiveList nextChangedList stepCtx w h x y i sp
   bumpBounds stepCtx x y
 
 markDead ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f ('Array 'Number)
-  -> Expr f ('Array 'Number)
-  -> Expr f 'Number
-  -> Expr f 'Number
+  CellStep f
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-markDead nextAlive nextSpecies _nextLiveList nextChangedList w h x y i = do
+markDead CellStep {grids = CellGrids {..}, ..} x y i = do
   setPackedAlive nextAlive i (number 0)
   bumpPackedNeighbors nextAlive w h x y (number (-2))
   setU8 nextSpecies i 0
@@ -648,19 +578,13 @@ bumpBounds scratch x y = do
   set @"by1" scratch (Math.max y1 y)
 
 countBirthSpecies ::
-  Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Expr f 'Uint8Array
-  -> Effect f (MutableObjectOf StepCtx)
-  -> Expr f 'Number
-  -> Expr f 'Number
+  CellStep f
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-countBirthSpecies alive species counts touchedBuf scratch w h x y dx dy = do
+countBirthSpecies CellStep {grids = CellGrids {..}, stepCtx = scratch, ..} x y dx dy = do
   let
     nx = x + dx
     ny = y + dy

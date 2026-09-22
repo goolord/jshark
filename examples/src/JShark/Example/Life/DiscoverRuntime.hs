@@ -5,6 +5,7 @@
 -- | JShark effectful classify; same rules as 'DiscoverCore'.
 module JShark.Example.Life.DiscoverRuntime (classifyAndResolveEffect, collectPhaseKey) where
 
+import Control.Monad (forM_)
 import Data.Text (Text)
 import JShark.Api
 import JShark.Api.Rec (Rec (..), (<:))
@@ -54,6 +55,19 @@ fillDefault res = do
   _ <- setProp res "key" (string "")
   emptyHashes <- bindExpr $ Array.fromEffects []
   _ <- setProp res "hashes" emptyHashes
+  done
+
+-- | Record a resolve outcome: action code, species id, and key.
+outcome ::
+  Effect f ('MutableObject a)
+  -> Double
+  -> Expr f 'Number
+  -> Expr f 'String
+  -> EffectSyntax f (f 'Unit)
+outcome res action sid key = do
+  _ <- setProp res "action" (number action)
+  _ <- setProp res "sid" sid
+  _ <- setProp res "key" key
   done
 
 coordPair :: Expr f 'Number -> Expr f 'Number -> Effect f ('Array 'Number)
@@ -151,42 +165,13 @@ transformCoord ::
   -> Expr f 'Number
   -> Expr f ('Array 'Number)
   -> Effect f ('Array 'Number)
-transformCoord ri flp pt =
-  coordPair
-    ( if_
-        (flp .== 0)
-        ( if_
-            (ri .== 0)
-            (Array.index pt 0)
-            ( if_
-                (ri .== 1)
-                (-Array.index pt 1)
-                (if_ (ri .== 2) (-Array.index pt 0) (Array.index pt 1))
-            )
-        )
-        ( let
-            x =
-              if_
-                (ri .== 0)
-                (Array.index pt 0)
-                ( if_
-                    (ri .== 1)
-                    (-Array.index pt 1)
-                    (if_ (ri .== 2) (-Array.index pt 0) (Array.index pt 1))
-                )
-           in
-            -x
-        )
-    )
-    ( if_
-        (ri .== 0)
-        (Array.index pt 1)
-        ( if_
-            (ri .== 1)
-            (Array.index pt 0)
-            (if_ (ri .== 2) (-Array.index pt 1) (-Array.index pt 0))
-        )
-    )
+transformCoord ri flp pt = coordPair (if_ (flp .== 0) x (-x)) (rot py px (-py) (-px))
+ where
+  px = Array.index pt 0
+  py = Array.index pt 1
+  x = rot px (-py) (-px) py
+  -- Rotation @ri@ quarter turns picks one of four components.
+  rot a b c d = if_ (ri .== 0) a (if_ (ri .== 1) b (if_ (ri .== 2) c d))
 
 canonicalHashFromCoords ::
   Expr f ('Array ('Array 'Number)) -> EffectSyntax f (Expr f 'String)
@@ -342,14 +327,13 @@ sandboxStepGrid grid gw gh = do
   forRange2_ (number 0) gh (number 0) gw $ \y x -> do
     let
       n =
-        sandboxNbr grid gw gh x y (-1) (-1)
-          + sandboxNbr grid gw gh x y 0 (-1)
-          + sandboxNbr grid gw gh x y 1 (-1)
-          + sandboxNbr grid gw gh x y (-1) 0
-          + sandboxNbr grid gw gh x y 1 0
-          + sandboxNbr grid gw gh x y (-1) 1
-          + sandboxNbr grid gw gh x y 0 1
-          + sandboxNbr grid gw gh x y 1 1
+        foldl1
+          (+)
+          [ sandboxNbr grid gw gh x y (fromInteger dx) (fromInteger dy)
+          | dy <- [-1, 0, 1]
+          , dx <- [-1, 0, 1]
+          , (dx, dy) /= (0, 0)
+          ]
       idx = y * gw + x
       alive = u8Index grid idx .== 1
       next =
@@ -563,10 +547,7 @@ markKnown ::
 markKnown res seen key hashes sid = do
   _ <- Map.insert seen key sid
   _ <- registerAliases seen hashes sid
-  _ <- setProp res "action" (number 1)
-  _ <- setProp res "sid" sid
-  _ <- setProp res "key" key
-  done
+  outcome res 1 sid key
 
 fillPending ::
   Effect f ('MutableObject a)
@@ -585,20 +566,10 @@ fillPending res seen pending key hashes nextId0 maxSid0 = do
   _ <- Map.insert pending key cnt
   ifS
     (cnt .< 2)
-    ( do
-        _ <- setProp res "action" (number 0)
-        _ <- setProp res "sid" (number 0)
-        _ <- setProp res "key" key
-        done
-    )
+    (outcome res 0 (number 0) key)
     ( ifS
         (nextId0 .> maxSid0)
-        ( do
-            _ <- setProp res "action" (number 3)
-            _ <- setProp res "sid" (number 0)
-            _ <- setProp res "key" key
-            done
-        )
+        (outcome res 3 (number 0) key)
         ( do
             (r, g, b) <- rgbForSid nextId0
             _ <- Map.insert seen key nextId0
@@ -656,33 +627,25 @@ fillResolve res registry key snap hashes nextId0 maxSid0 allowMint = do
   _ <- setProp st "resolved" false_
   knownHit <- Map.lookup knownM key
   whenSomeS knownHit $ \sid -> acceptSid res seenM st key hashes sid
-  stillOpen <- getProp st "resolved"
-  whenS (not_ stillOpen) $ do
-    snapHit <- Map.lookup knownM snap
-    whenSomeS snapHit $ \sid -> acceptSid res seenM st snap hashes sid
-  stillOpen1 <- getProp st "resolved"
-  whenS (not_ stillOpen1) $ do
-    knownHash <- findSidByHashes knownM hashes
-    whenSomeS knownHash $ \sid -> acceptSid res seenM st key hashes sid
-  stillOpen2 <- getProp st "resolved"
-  whenS (not_ stillOpen2) $ do
-    seenHit <- Map.lookup seenM key
-    whenSomeS seenHit $ \sid -> do
-      markKnown res seenM key hashes sid
+  let
+    resolve k sid = do
+      markKnown res seenM k hashes sid
       setProp st "resolved" true_
-  stillOpen3 <- getProp st "resolved"
-  whenS (not_ stillOpen3) $ do
-    snapSeen <- Map.lookup seenM snap
-    whenSomeS snapSeen $ \sid -> do
-      markKnown res seenM snap hashes sid
-      setProp st "resolved" true_
-  stillOpen4 <- getProp st "resolved"
-  whenS (not_ stillOpen4) $ do
-    hashHit <- findSidByHashes seenM hashes
-    whenSomeS hashHit $ \sid -> do
-      _ <- Map.insert seenM key sid
-      markKnown res seenM key hashes sid
-      setProp st "resolved" true_
+  forM_
+    [ Map.lookup knownM snap >>= (`whenSomeS` acceptSid res seenM st snap hashes)
+    , findSidByHashes knownM hashes
+        >>= (`whenSomeS` acceptSid res seenM st key hashes)
+    , Map.lookup seenM key >>= (`whenSomeS` resolve key)
+    , Map.lookup seenM snap >>= (`whenSomeS` resolve snap)
+    , do
+        hashHit <- findSidByHashes seenM hashes
+        whenSomeS hashHit $ \sid -> do
+          _ <- Map.insert seenM key sid
+          resolve key sid
+    ]
+    $ \attempt -> do
+      open <- getProp st "resolved"
+      whenS (not_ open) attempt
   stillOpen5 <- getProp st "resolved"
   ifS
     (not_ stillOpen5 .&& allowMint)

@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
@@ -290,13 +291,7 @@ newFinishFixture = do
     FinishFixture
       { ffGrids =
           EngineGrids
-            { egCells =
-                CellGrids
-                  { cgAlive = alive
-                  , cgSpecies = species
-                  , cgNextAlive = nextAlive
-                  , cgNextSpecies = nextSpecies
-                  }
+            { egCells = CellGrids {..}
             , egGridA = gridA
             , egGridB = gridB
             , egLut = lut
@@ -319,21 +314,18 @@ newFinishFixture = do
 -- the whole fixture grid.
 runFinishStep :: FinishFixture f -> EffectSyntax f (Expr f 'Bool)
 runFinishStep fx = do
-  rebuildPackedCounts
-    (cgAlive (ffCells fx))
-    (srW (ffRegion fx))
-    (srH (ffRegion fx))
+  rebuildPackedCounts (ffCells fx).alive (srW (ffRegion fx)) (srH (ffRegion fx))
   finishStep (ffGrids fx) (ffRegion fx) (ffLive fx) (ffChanged fx) (ffCtx fx)
 
 -- | Set the given cell indices live.
 setAliveAt :: FinishFixture f -> [Double] -> EffectSyntax f ()
 setAliveAt fx =
-  mapM_ (\i -> setU8 (cgAlive (ffCells fx)) (number i) (number 1))
+  mapM_ (\i -> setU8 (ffCells fx).alive (number i) (number 1))
 
 testFinishStepBlock :: forall f. Effect f 'Unit
 testFinishStepBlock = fromSyntax $ do
   fx <- newFinishFixture
-  seedBlock (cgAlive (ffCells fx)) (srW (ffRegion fx)) (srH (ffRegion fx))
+  seedBlock (ffCells fx).alive (srW (ffRegion fx)) (srH (ffRegion fx))
   _ <- runFinishStep fx
   popN <- (ffCtx fx).pop
   LifeAssert.assertEqual (number 4) popN
@@ -347,7 +339,7 @@ testFinishStepPacked :: forall f. Effect f 'Unit
 testFinishStepPacked = fromSyntax $ do
   fx <- newFinishFixture
   let
-    nextAlive = cgNextAlive (ffCells fx)
+    nextAlive = (ffCells fx).nextAlive
   setAliveAt fx [9, 10, 17, 18]
   _ <- runFinishStep fx
   popN <- (ffCtx fx).pop
@@ -368,13 +360,13 @@ testFinishStepBirthSpecies = fromSyntax $ do
   -- Three live neighbors above (4,4): species 1 twice, species 2 once.
   setAliveAt fx [27, 28, 29]
   mapM_
-    (\(i, sp) -> setU8 (cgSpecies cells) (number i) (number sp))
+    (\(i, sp) -> setU8 cells.species (number i) (number sp))
     [(27, 1), (28, 1), (29, 2)]
   engineOk <- runFinishStep fx
-  LifeAssert.assertEqual (number 1) (u8Index (cgNextSpecies cells) (number 36))
+  LifeAssert.assertEqual (number 1) (u8Index cells.nextSpecies (number 36))
   LifeAssert.assertEqual
     (number 1)
-    (bitAnd (u8Index (cgNextAlive cells) (number 36)) (number 1))
+    (bitAnd (u8Index cells.nextAlive (number 36)) (number 1))
   whenS (not_ engineOk) $
     do
       toSyntax_ $ throw_ (string "finishStep failed")
@@ -474,7 +466,7 @@ patternGrid ::
 patternGrid seed coords expectedPop = do
   (cells, region) <- newCellGrids (number 8) (number 8)
   let
-    alive = cgAlive cells
+    alive = cells.alive
     w = srW region
     h = srH region
   seed alive w h
@@ -492,8 +484,8 @@ patternGrid seed coords expectedPop = do
 advanceGeneration ::
   CellGrids f -> StepRegion f -> EffectSyntax f (f 'Unit)
 advanceGeneration cells region = do
-  toSyntax_ (u8Copy (cgAlive cells) (cgNextAlive cells))
-  rebuildPackedCounts (cgAlive cells) (srW region) (srH region)
+  toSyntax_ (u8Copy cells.alive cells.nextAlive)
+  rebuildPackedCounts cells.alive (srW region) (srH region)
   done
 
 testBlockStable :: forall f. Effect f 'Unit
@@ -507,8 +499,8 @@ testBlinkerPeriod2 = fromSyntax $ do
   (cells, region) <- newCellGrids (number 8) (number 8)
   let
     w = srW region
-    nextAlive = cgNextAlive cells
-  seedBlinkerHorizontal (cgAlive cells) w (srH region)
+    nextAlive = cells.nextAlive
+  seedBlinkerHorizontal cells.alive w (srH region)
   -- A horizontal blinker becomes vertical, then horizontal again.
   _ <- runStepGridOnce cells region
   coordsMatch nextAlive w =<< blinkerVerticalCoords

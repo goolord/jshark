@@ -265,13 +265,7 @@ stepGeneration state stepCtx = do
     -- Tags 1/2 alternate; stamps start at 0. Dense scans skip stamps;
     -- sparse dedup requires the active tag never be 0.
     stepTagVal = rem_ gen (number 2) + number 1
-    cells =
-      CellGrids
-        { cgAlive = alive
-        , cgSpecies = species
-        , cgNextAlive = nextAlive
-        , cgNextSpecies = nextSpecies
-        }
+    cells = CellGrids {..}
     region =
       StepRegion {srW = w, srH = h, srX0 = x0, srY0 = y0, srX1 = x1, srY1 = y1}
   Array.clear_ nextLiveList

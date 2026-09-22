@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 
 module JShark.Example.Life.EngineFinish
@@ -52,7 +53,7 @@ finishStep ::
   -> Expr f ('Array 'Number)
   -> Effect f (MutableObjectOf StepCtx)
   -> EffectSyntax f (Expr f 'Bool)
-finishStep grids region nextLiveList nextChangedList stepCtx = do
+finishStep EngineGrids {egCells = CellGrids {..}, ..} StepRegion {..} live changed stepCtx = do
   engineOk <-
     bindExpr $
       ffi
@@ -66,21 +67,21 @@ finishStep grids region nextLiveList nextChangedList stepCtx = do
             <> ")?1:0;"
             <> "})"
         )
-        ( arg (cgAlive (egCells grids))
-            <: arg (cgSpecies (egCells grids))
-            <: arg (cgNextAlive (egCells grids))
-            <: arg (cgNextSpecies (egCells grids))
-            <: arg (egGridA grids)
-            <: arg (egGridB grids)
-            <: arg (egLut grids)
-            <: arg (srW region)
-            <: arg (srH region)
-            <: arg (srX0 region)
-            <: arg (srY0 region)
-            <: arg (srX1 region)
-            <: arg (srY1 region)
-            <: arg nextLiveList
-            <: arg nextChangedList
+        ( arg alive
+            <: arg species
+            <: arg nextAlive
+            <: arg nextSpecies
+            <: arg egGridA
+            <: arg egGridB
+            <: arg egLut
+            <: arg srW
+            <: arg srH
+            <: arg srX0
+            <: arg srY0
+            <: arg srX1
+            <: arg srY1
+            <: arg live
+            <: arg changed
             <: ArgEffect stepCtx
             <: RecNil
         )

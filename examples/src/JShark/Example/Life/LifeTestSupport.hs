@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
@@ -36,6 +37,7 @@ import qualified JShark.Array as Array
 import JShark.Example.Life.DiscoverRuntime (collectPhaseKey)
 import JShark.Example.Life.Grid
   ( CellGrids (..)
+  , CellStep (..)
   , StepCtx (..)
   , StepRegion (..)
   , StepScratch (..)
@@ -216,24 +218,11 @@ runProcessCellAt alive species nextAlive nextSpecies w h x y = do
   stepCtx <- hold (toObject (StepCtx 0 0 (-1) (-1) 0 0 0 0 0))
   counts <- bindExpr (newByteArray (number 256))
   touchedBuf <- bindExpr (newByteArray (number 8))
-  liveList <- bindExpr $ Array.fromEffects []
-  changedList <- bindExpr $ Array.fromEffects []
+  nextLiveList <- bindExpr $ Array.fromEffects []
+  nextChangedList <- bindExpr $ Array.fromEffects []
   toSyntax_ (u8Copy nextAlive alive)
   toSyntax_ (u8Fill nextSpecies (number 0))
-  processCell
-    alive
-    species
-    nextAlive
-    nextSpecies
-    liveList
-    changedList
-    stepCtx
-    counts
-    touchedBuf
-    w
-    h
-    x
-    y
+  processCell CellStep {grids = CellGrids {..}, ..} x y
   let
     i = cellIdx w x y
   aliveBit nextAlive i
@@ -250,12 +239,7 @@ newCellGrids w h = do
   nextAlive <- bindExpr (newByteArray (w * h))
   nextSpecies <- bindExpr (newByteArray (w * h))
   pure
-    ( CellGrids
-        { cgAlive = alive
-        , cgSpecies = species
-        , cgNextAlive = nextAlive
-        , cgNextSpecies = nextSpecies
-        }
+    ( CellGrids {..}
     , StepRegion
         { srW = w
         , srH = h
