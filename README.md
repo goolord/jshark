@@ -14,7 +14,7 @@
 ---
 
 JShark embeds a typed subset of JavaScript in Haskell, inspired by
-Crockford's *JavaScript: The Good Parts*. A program is a Haskell
+Crockford's *JavaScript: The Good Parts*. A jshark program is a Haskell
 value built from two GADTs indexed by a `Universe` kind: `Expr f u` for pure
 expressions and `Effect f u` for effectful statements. GHC typechecks the program, and the
 jshark compiler lowers it to JavaScript with no runtime library. Standard library functions
@@ -170,7 +170,7 @@ cabal test all --test-show-details=direct
 
 ## Limitations
 
-Some JavaScript is outside the subset on purpose:
+Some of JavaScript is outside the subset on purpose:
 
 - Classes, `this`, and prototype mutation are not modelled. Use `ffi` for
   APIs that require them.
