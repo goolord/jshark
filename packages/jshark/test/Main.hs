@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -15,17 +16,6 @@ import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import FlatTest
-  ( flatDirectPackDeterministic
-  , flatDirectPackForRangeOk
-  , flatDirectPackOptimizeStable
-  , flatEmitOrderValidates
-  , flatOpcodeRoundTripOk
-  , flatSoaPureNodeCount
-  , optConstantFoldManyLits
-  , optConstantFoldPreservesInput
-  , optIrEffectForRangeImpure
-  )
 import JShark
 import qualified JShark.Ajax as Ajax
 import JShark.Api
@@ -40,6 +30,11 @@ import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.Internal
   ( Builtin (ValueEq)
+  , Ir (..)
+  , Meta (..)
+  , N (..)
+  , SomeValue (..)
+  , optIr
   , builtinSrc
   , effectfulAST
   , effectfulASTWith
@@ -85,7 +80,7 @@ tests =
     , goodPartsTests
     , genericTests
     , optimizeTests
-    , flatSoATests
+    , codegenFoldTests
     , compilerTests
     , ergonomicsTests
     , tutorialSnippets
@@ -1946,8 +1941,6 @@ optimizeTests =
               [1 .. 40 :: Int]
         out <- compileEffect readableConfig (fromSyntax chain)
         assertBool "emitted js" (BS.length out > 20)
-    , testCase "optIrEffect marks ForRange impure" $
-        optIrEffectForRangeImpure @?= True
     , pureCodeCase
         "lambda application of a literal folds"
         (apply (lambda (\x -> x * 2)) (number 21))
@@ -2160,42 +2153,24 @@ optimizeTests =
         assertJSOmits "(($checkedIndex)(n0)(n1)" js
     ]
 
-flatSoATests :: TestTree
-flatSoATests =
+codegenFoldTests :: TestTree
+codegenFoldTests =
   testGroup
-    "flat soa"
-    [ testCase "optimize attaches pure flags" $
-        flatSoaPureNodeCount (expr (number 1 + number 2)) > (0 :: Int) @?= True
-    , testCase "constant fold chains" $
+    "codegen folds"
+    [ testCase "constant fold chains" $
         renderJsText
           (effectfulASTWith minifiedStyle (expr ((number 1 + number 2) + number 3)))
           @?= renderJsText (effectfulASTWith minifiedStyle (expr (number 6)))
-    , testCase "direct pack is deterministic (kernel)" $
-        flatDirectPackDeterministic kernelAndLambdaUse @?= True
-    , testCase "direct pack is deterministic (forRange u8set)" $
-        flatDirectPackForRangeOk @?= True
-    , testCase "optimize is stable on second pass" $
-        flatDirectPackOptimizeStable kernelAndLambdaUse @?= True
-    , testCase "every opcode decodes and re-encodes" $
-        flatOpcodeRoundTripOk @?= True
-    , testCase "constant fold does not mutate its input" $
-        optConstantFoldPreservesInput @?= True
-    , testCase "constant fold grows literal storage geometrically" $
-        optConstantFoldManyLits 50 @?= True
-    , testCase "emit order is a validated child-before-parent traversal" $
-        flatEmitOrderValidates kernelAndLambdaUse @?= True
+    , testCase "optIr keeps a mutating loop effectful" $
+        let
+          ?keepLets = False
+         in
+          mDrop (snd (optIr loop)) @?= False
     ]
  where
-  kernelAndLambdaUse :: Effect f 'Number
-  kernelAndLambdaUse = bindSyntax (fooE :: Effect f 'Number) $ \x ->
-    expr (x + Apply (lambda (\_ -> x * number 2)) (number 1))
-
--- | Bind an effect and use its result in another effect ('with1' binds
--- in expression position; this binds in effect position).
-bindSyntax :: Effect f a -> (Expr f a -> Effect f b) -> Effect f b
-bindSyntax e k = fromSyntax $ do
-  x <- toSyntax e
-  toSyntax (k (Var x))
+  lit :: Double -> Ir
+  lit = Ir . NLit . SomeValue . ValueNumber
+  loop = Ir (NFor (lit 0) (lit 4) 0 (Ir (NU8Set (Ir (NVar 99)) (lit 0) (lit 1))))
 
 -- | Round-trips for the newer ergonomics surface ('toNumber',
 -- 'whenNoneS', 'Dom.byId', typed event accessors, 'addEventListenerS',

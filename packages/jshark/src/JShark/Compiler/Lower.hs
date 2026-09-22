@@ -1,635 +1,227 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeAbstractions #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-pattern-namespace-specifier -Wno-missing-signatures #-}
 
--- | Lower PHOAS 'Expr'/'Effect' to first-order IR. Both entry points now
--- share the single untyped 'Ir.IrNode'.
+-- | Lower closed PHOAS 'Expr' \/ 'Effect' terms to the first-order IR.
+--
+-- Binders get negative tags from a counter that steps by 'optStep'. A
+-- binder's right-hand side and body share the tags below it, so sibling
+-- scopes reuse tags.
 module JShark.Compiler.Lower
-  ( lowerExprAt
-  , lowerEffectAt
-  , lowerEffectClosed
-  , optEffectClosed
-  , lowerOptEffectIr
+  ( lowerOptExprIr
   , lowerOptEffectIrWith
-  , lowerOptExprIr
-  , irEffectFromClosed
-  , lowerOptEffectAt
   , optimizedEffectSize
   , optimizedExprSize
+  , irEffectFromClosed
   )
 where
 
+import Control.Monad.State.Strict (State, evalState, get, modify', put)
+import Data.Functor.Const (Const (..))
+import Data.Kind (Type)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import JShark.Api.Rec
 import JShark.Api.Types
-import JShark.Compiler.Binder
-  ( Stamp
-  , pattern Name
-  , pattern Stamp
-  )
-import JShark.Compiler.Ir (optStep)
-import qualified JShark.Compiler.Ir as Ir
+import JShark.Compiler.Ir
 
-fieldKeyText :: forall k. KnownSymbol k => Text
-fieldKeyText = T.pack (symbolVal (Proxy @k))
+type Tag :: Universe -> Type
+type Tag = Const Int
 
-lowerExprAt :: Int -> Expr Stamp u -> (Int, Ir.IrNode)
-lowerExprAt !t0 expr = case expr of
-  Literal v -> (t0, Ir.IrLiteral v)
-  Var (Stamp i) -> (t0, Ir.IrVar i)
-  Let hint x g ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (_, x') = lowerExprAt tUnder x
-      (t2, body') = lowerExprAt tUnder (g (Name tag))
-     in
-      (t2, Ir.IrLet tag hint x' body')
-  LetRec r b ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, r') = lowerExprAt tUnder (r (Name tag))
-      (t2, b') = lowerExprAt t1 (b (Name tag))
-     in
-      (t2, Ir.IrLetRec tag r' b')
-  Lambda hoist g ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, body') = lowerExprAt tUnder (g (Name tag))
-     in
-      (t1, Ir.IrLambda tag hoist body')
-  Apply f x ->
-    let
-      (t1, f') = lowerExprAt t0 f
-      (t2, x') = lowerExprAt t1 x
-     in
-      (t2, Ir.IrApply f' x')
-  If c t e ->
-    let
-      (t1, c') = lowerExprAt t0 c
-      (t2, t') = lowerExprAt t1 t
-      (t3, e') = lowerExprAt t2 e
-     in
-      (t3, Ir.IrIf c' t' e')
-  OptionCase o n s ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, o') = lowerExprAt tUnder o
-      (t2, n') = lowerExprAt t1 n
-      (t3, s') = lowerExprAt t2 (s (Name tag))
-     in
-      (t3, Ir.IrOptionCase o' n' tag s')
-  ResultOk x ->
-    let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, Ir.IrResultOk x')
-  ResultErr x ->
-    let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, Ir.IrResultErr x')
-  ResultCase o er ok ->
-    let
-      tagE = t0
-      t1 = t0 - optStep
-      tagO = t1
-      tUnder = t1 - optStep
-      (t2, o') = lowerExprAt tUnder o
-      (t3, er') = lowerExprAt t2 (er (Name tagE))
-      (t4, ok') = lowerExprAt t3 (ok (Name tagO))
-     in
-      (t4, Ir.IrResultCase o' tagE er' tagO ok')
-  Index arr idx ->
-    let
-      (t1, arr') = lowerExprAt t0 arr
-      (t2, idx') = lowerExprAt t1 idx
-     in
-      (t2, Ir.IrIndex arr' idx')
-  U8Index buf idx ->
-    let
-      (t1, buf') = lowerExprAt t0 buf
-      (t2, idx') = lowerExprAt t1 idx
-     in
-      (t2, Ir.IrU8Index buf' idx')
-  Error msg ->
-    let
-      (t1, msg') = lowerExprAt t0 msg
-     in
-      (t1, Ir.IrError msg')
-  Std (Fixed op args) ->
-    let
-      (t1, args') = lowerFixedArgsAt t0 args
-     in
-      (t1, Ir.IrFixed (Ir.SomeFixedOp op) args')
-  Std (Kernel k) ->
-    let
-      (t1, k') = lowerKernelAt t0 k
-     in
-      (t1, k')
-  Std (Method m) ->
-    let
-      (t1, m') = lowerMethodAt t0 m
-     in
-      (t1, m')
-  FnLit body ->
-    let
-      (t1, tags, names, body') = lowerFnBodyAt t0 body
-     in
-      (t1, Ir.IrFnLit tags names body')
-  UnsafeNullable x ->
-    let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, Ir.IrUnsafeNullable x')
-  FrozenLit fs ->
-    let
-      (t1, fs') = lowerFieldLitsAt t0 fs
-     in
-      (t1, Ir.IrFrozenLit fs')
-  GetField @k o ->
-    let
-      (t1, o') = lowerExprAt t0 o
-     in
-      (t1, Ir.IrGetField (fieldKeyText @k) o')
+type L = State Int
 
-lowerEffectAt :: Int -> Effect Stamp u -> (Int, Ir.IrNode)
-lowerEffectAt !t0 eff = case eff of
-  Lift x ->
+fresh :: L Int
+fresh = get <* modify' (subtract optStep)
+
+-- | Run without advancing the counter for what follows.
+local :: L a -> L a
+local m = get >>= \t -> m <* put t
+
+ir :: N Ir -> L Ir
+ir = pure . Ir
+
+key :: forall k. KnownSymbol k => Text
+key = T.pack (symbolVal (Proxy @k))
+
+lowerE :: Expr Tag u -> L Ir
+lowerE = \case
+  Literal v -> ir (NLit (SomeValue v))
+  Var (Const i) -> ir (NVar i)
+  Let h x g -> fresh >>= \t -> Ir <$> (NLet t h <$> local (lowerE x) <*> lowerE (g (Const t)))
+  LetRec r b -> fresh >>= \t -> Ir <$> (NLetRec t <$> lowerE (r (Const t)) <*> lowerE (b (Const t)))
+  Lambda info g -> fresh >>= \t -> Ir . NLam t info <$> lowerE (g (Const t))
+  Apply f x -> Ir <$> (NApp <$> lowerE f <*> lowerE x)
+  If c t e -> Ir <$> (NIf <$> lowerE c <*> lowerE t <*> lowerE e)
+  OptionCase o n s -> do
+    t <- fresh
+    Ir <$> (NOptCase <$> lowerE o <*> lowerE n <*> pure t <*> lowerE (s (Const t)))
+  ResultOk x -> Ir . NResOk <$> lowerE x
+  ResultErr x -> Ir . NResErr <$> lowerE x
+  ResultCase o e k -> do
+    te <- fresh
+    tk <- fresh
+    o' <- lowerE o
+    e' <- lowerE (e (Const te))
+    Ir . NResCase o' te e' tk <$> lowerE (k (Const tk))
+  Index a i -> Ir <$> (NIndex <$> lowerE a <*> lowerE i)
+  U8Index a i -> Ir <$> (NU8Index <$> lowerE a <*> lowerE i)
+  Error m -> Ir . NError <$> lowerE m
+  Std (Fixed op args) -> Ir . NFixed (SomeFixedOp op) <$> case args of
+    ArgsU x -> sequence [lowerE x]
+    ArgsB x y -> sequence [lowerE x, lowerE y]
+    ArgsT x y z -> sequence [lowerE x, lowerE y, lowerE z]
+  Std (Kernel k) -> lowerK k
+  Std (Method m) -> lowerM m
+  FnLit body -> do
+    ts <- mapM (const fresh) [1 .. depth body]
     let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, Ir.IrLift x')
-  FFI n args ->
-    let
-      (t1, args') = lowerArgListAt t0 args
-     in
-      (t1, Ir.IrFFI n args')
-  UnsafeObject o -> (t0, Ir.IrUnsafeObject o)
-  UnsafeObjectGet x s ->
-    let
-      (t1, x') = lowerEffectAt t0 x
-     in
-      (t1, Ir.IrUnsafeObjectGet x' s)
-  UnsafeObjectAssign x y ->
-    let
-      (t1, x') = lowerEffectAt t0 x
-      (t2, y') = lowerEffectAt t1 y
-     in
-      (t2, Ir.IrUnsafeObjectAssign x' y')
-  CallMethod x n args ->
-    let
-      (t1, x') = lowerEffectAt t0 x
-      (t2, args') = lowerArgListAt t1 args
-     in
-      (t2, Ir.IrCallMethod x' n args')
-  Bind hint x f ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (_, x') = lowerEffectAt tUnder x
-      (t2, body') = lowerEffectAt tUnder (f (Name tag))
-     in
-      (t2, Ir.IrBind tag hint x' body')
-  ThenE x y ->
-    let
-      (t1, x') = lowerEffectAt t0 x
-      (t2, y') = lowerEffectAt t1 y
-     in
-      (t2, Ir.IrThenE x' y')
-  BindRec rhs body ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, r') = lowerEffectAt tUnder (rhs (Name tag))
-      (t2, b') = lowerEffectAt t1 (body (Name tag))
-     in
-      (t2, Ir.IrBindRec tag r' b')
-  LambdaE f ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, body') = lowerEffectAt tUnder (f (Name tag))
-     in
-      (t1, Ir.IrLambdaE tag body')
-  ApplyE f x ->
-    let
-      (t1, f') = lowerEffectAt t0 f
-      (t2, x') = lowerEffectAt t1 x
-     in
-      (t2, Ir.IrApplyE f' x')
-  IfE c t e ->
-    let
-      (t1, c') = lowerEffectAt t0 c
-      (t2, t') = lowerEffectAt t1 t
-      (t3, e') = lowerEffectAt t2 e
-     in
-      (t3, Ir.IrIfE c' t' e')
-  While c b ->
-    let
-      (t1, c') = lowerEffectAt t0 c
-      (t2, b') = lowerEffectAt t1 b
-     in
-      (t2, Ir.IrWhile c' b')
-  ForRange s e f ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, s') = lowerExprAt tUnder s
-      (t2, e') = lowerExprAt t1 e
-      (t3, body') = lowerEffectAt t2 (f (Name tag))
-     in
-      (t3, Ir.IrForRange s' e' tag body')
-  U8Set b i v ->
-    let
-      (t1, b') = lowerExprAt t0 b
-      (t2, i') = lowerExprAt t1 i
-      (t3, v') = lowerExprAt t2 v
-     in
-      (t3, Ir.IrU8Set b' i' v')
-  U8Fill b v ->
-    let
-      (t1, b') = lowerExprAt t0 b
-      (t2, v') = lowerExprAt t1 v
-     in
-      (t2, Ir.IrU8Fill b' v')
-  OptionCaseE o n s ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, o') = lowerExprAt tUnder o
-      (t2, n') = lowerEffectAt t1 n
-      (t3, s') = lowerEffectAt t2 (s (Name tag))
-     in
-      (t3, Ir.IrOptionCaseE o' n' tag s')
-  ResultCaseE o er ok ->
-    let
-      tagE = t0
-      t1 = t0 - optStep
-      tagO = t1
-      tUnder = t1 - optStep
-      (t2, o') = lowerExprAt tUnder o
-      (t3, er') = lowerEffectAt t2 (er (Name tagE))
-      (t4, ok') = lowerEffectAt t3 (ok (Name tagO))
-     in
-      (t4, Ir.IrResultCaseE o' tagE er' tagO ok')
+      go :: [Int] -> FnBody Tag us r -> L ([Maybe Text], Ir)
+      go _ (JfNil e) = (,) [] <$> lowerE e
+      go (t : rest) (JfCons h k) = (\(hs, b) -> (h : hs, b)) <$> go rest (k (Const t))
+      go [] (JfCons {}) = error "JShark.Compiler.Lower: FnLit arity mismatch"
+    (hs, b) <- go ts body
+    ir (NFnLit ts hs b)
+  UnsafeNullable x -> Ir . NNullable <$> lowerE x
+  FrozenLit fs -> Ir . NFrozen <$> mapM lowerF fs
+  GetField @k o -> Ir . NGetField (key @k) <$> lowerE o
+ where
+  depth :: FnBody Tag us r -> Int
+  depth = \case
+    JfNil _ -> 0
+    JfCons _ k -> 1 + depth (k (Const minBound))
+
+lowerK :: Kernel Tag u -> L Ir
+lowerK = \case
+  KConcat x y -> k2 OConcat x y
+  KPlus x y -> k2 OPlus x y
+  KTimes x y -> k2 OTimes x y
+  KMinus x y -> k2 OMinus x y
+  KNegate x -> k1 ONeg x
+  KFracDiv x y -> k2 ODiv x y
+  KRem x y -> k2 ORem x y
+  KBitAnd x y -> k2 OBitAnd x y
+  KBitOr x y -> k2 OBitOr x y
+  KBitXor x y -> k2 OBitXor x y
+  KShl x y -> k2 OShl x y
+  KShr x y -> k2 OShr x y
+  KUShr x y -> k2 OUShr x y
+  KBig op x y -> k2 (OBig op) x y
+  KBigNeg x -> k1 OBigNeg x
+  KAnd x y -> k2 OAnd x y
+  KOr x y -> k2 OOr x y
+  KEq s x y -> k2 (OEq s) x y
+  KNEq s x y -> k2 (ONEq s) x y
+  KGTh x y -> k2 OGTh x y
+  KLTh x y -> k2 OLTh x y
+  KGTEq x y -> k2 OGTEq x y
+  KLTEq x y -> k2 OLTEq x y
+  KShow x -> k1 OShow x
+  KTypeOf x -> k1 OTypeOf x
+ where
+  k1 op x = Ir . NK1 op <$> lowerE x
+  k2 op x y = Ir <$> (NK2 op <$> lowerE x <*> lowerE y)
+
+lowerM :: Method Tag u -> L Ir
+lowerM = \case
+  MethMap a f -> one MMap a (\t -> f (Const t))
+  MethFilter a f -> one MFilter a (\t -> f (Const t))
+  MethReduce a z f -> two MReduce a (Just z) f
+  MethReduceRight a z f -> two MReduceRight a (Just z) f
+  MethToSorted a f -> two MToSorted a Nothing f
+  MethFrom n f -> one MFrom n (\t -> f (Const t))
+ where
+  one m a body = do
+    t <- fresh
+    a' <- lowerE a
+    Ir . NMeth m a' Nothing [t] <$> lowerE (body t)
+  two :: Meth -> Expr Tag x -> Maybe (Expr Tag z) -> (Tag p -> Tag q -> Expr Tag w) -> L Ir
+  two m a z body = do
+    ta <- fresh
+    tb <- fresh
+    a' <- lowerE a
+    z' <- traverse lowerE z
+    Ir . NMeth m a' z' [ta, tb] <$> lowerE (body (Const ta) (Const tb))
+
+lowerF :: FieldLit Tag r -> L (IrField Ir)
+lowerF = \case
+  FieldLit @k e -> IrField FPlain (key @k) <$> lowerE e
+  FieldLitEffect @k e -> IrField FEff (key @k) <$> lowerX e
+  FieldLitExtra @k e -> IrField FExtra (key @k) <$> lowerE e
+  FieldLitExtraEffect @k e -> IrField FExtraEff (key @k) <$> lowerX e
+
+lowerArgs :: Rec (Arg Tag) us -> L [Ir]
+lowerArgs = \case
+  RecNil -> pure []
+  RecCons a rest -> (:) <$> arg a <*> lowerArgs rest
+ where
+  arg = \case
+    ArgExpr e -> lowerE e
+    ArgEffect e -> lowerX e
+
+lowerX :: Effect Tag u -> L Ir
+lowerX = \case
+  Lift x -> Ir . NLift <$> lowerE x
+  FFI n args -> Ir . NFFI n <$> lowerArgs args
+  UnsafeObject o -> ir (NUObj o)
+  UnsafeObjectGet x s -> Ir . (`NUGet` s) <$> lowerX x
+  UnsafeObjectAssign x y -> Ir <$> (NUSet <$> lowerX x <*> lowerX y)
+  CallMethod x n args -> Ir <$> (NCall <$> lowerX x <*> pure n <*> lowerArgs args)
+  Bind h x f -> fresh >>= \t -> Ir <$> (NBind t h <$> local (lowerX x) <*> lowerX (f (Const t)))
+  ThenE x y -> Ir <$> (NThen <$> lowerX x <*> lowerX y)
+  BindRec r b -> fresh >>= \t -> Ir <$> (NBindRec t <$> lowerX (r (Const t)) <*> lowerX (b (Const t)))
+  LambdaE f -> fresh >>= \t -> Ir . NLamE t <$> lowerX (f (Const t))
+  ApplyE f x -> Ir <$> (NAppE <$> lowerX f <*> lowerX x)
+  IfE c t e -> Ir <$> (NIfE <$> lowerX c <*> lowerX t <*> lowerX e)
+  While c b -> Ir <$> (NWhile <$> lowerX c <*> lowerX b)
+  ForRange s e f -> do
+    t <- fresh
+    Ir <$> (NFor <$> lowerE s <*> lowerE e <*> pure t <*> lowerX (f (Const t)))
+  U8Set b i v -> Ir <$> (NU8Set <$> lowerE b <*> lowerE i <*> lowerE v)
+  U8Fill b v -> Ir <$> (NU8Fill <$> lowerE b <*> lowerE v)
+  OptionCaseE o n s -> do
+    t <- fresh
+    Ir <$> (NOptCaseE <$> lowerE o <*> lowerX n <*> pure t <*> lowerX (s (Const t)))
+  ResultCaseE o e k -> do
+    te <- fresh
+    tk <- fresh
+    o' <- lowerE o
+    e' <- lowerX (e (Const te))
+    Ir . NResCaseE o' te e' tk <$> lowerX (k (Const tk))
   StringCaseE s arms d ->
-    let
-      (t1, s') = lowerExprAt t0 s
-      (t2, arms') = lowerEffectArmsAt t1 arms
-      (t3, d') = lowerEffectAt t2 d
-     in
-      (t3, Ir.IrStringCaseE s' arms' d')
-  Throw x ->
-    let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, Ir.IrThrow x')
-  Try a k ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, a') = lowerEffectAt tUnder a
-      (t2, k') = lowerEffectAt t1 (k (Name tag))
-     in
-      (t2, Ir.IrTry a' tag k')
-  ObjectLit fs ->
-    let
-      (t1, fs') = lowerFieldLitsAt t0 fs
-     in
-      (t1, Ir.IrObjectLit fs')
-  DeleteProp o k ->
-    let
-      (t1, o') = lowerEffectAt t0 o
-      (t2, k') = lowerExprAt t1 k
-     in
-      (t2, Ir.IrDeleteProp o' k')
-  ArrayLit es ->
-    let
-      (t1, es') = lowerEffectsAt t0 es
-     in
-      (t1, Ir.IrArrayLit es')
+    Ir <$> (NStrCase <$> lowerE s <*> mapM (traverse lowerX) arms <*> lowerX d)
+  Throw x -> Ir . NThrow <$> lowerE x
+  Try a k -> fresh >>= \t -> Ir <$> (NTry <$> lowerX a <*> pure t <*> lowerX (k (Const t)))
+  ObjectLit fs -> Ir . NObjLit <$> mapM lowerF fs
+  DeleteProp o k -> Ir <$> (NDelete <$> lowerX o <*> lowerE k)
+  ArrayLit es -> Ir . NArray <$> mapM lowerX es
 
-lowerArgListAt :: Int -> Rec (Arg Stamp) us -> (Int, [Ir.IrNode])
-lowerArgListAt !t0 args = case args of
-  RecNil -> (t0, [])
-  RecCons (ArgExpr e) rest ->
-    let
-      (t1, x') = lowerExprAt t0 e
-      (t2, xs') = lowerArgListAt t1 rest
-     in
-      (t2, x' : xs')
-  RecCons (ArgEffect e) rest ->
-    let
-      (t1, x') = lowerEffectAt t0 e
-      (t2, xs') = lowerArgListAt t1 rest
-     in
-      (t2, x' : xs')
+run :: (?keepLets :: Bool) => L Ir -> (Ir, Int)
+run m = let (o, md) = optIr (evalState m (-2)) in (o, mSize md)
 
-lowerFixedArgsAt :: Int -> FixedArgs Stamp a b c -> (Int, [Ir.IrNode])
-lowerFixedArgsAt !t0 args = case args of
-  ArgsU x ->
-    let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, [x'])
-  ArgsB x y ->
-    let
-      (t1, x') = lowerExprAt t0 x
-      (t2, y') = lowerExprAt t1 y
-     in
-      (t2, [x', y'])
-  ArgsT x y z ->
-    let
-      (t1, x') = lowerExprAt t0 x
-      (t2, y') = lowerExprAt t1 y
-      (t3, z') = lowerExprAt t2 z
-     in
-      (t3, [x', y', z'])
+-- | Lower and optimize a closed expression; also returns the optimized size.
+lowerOptExprIr :: Bool -> ClosedExpr u -> (Ir, Int)
+lowerOptExprIr keepLets e = let ?keepLets = keepLets in run (lowerE e)
 
-lowerKernelAt :: Int -> Kernel Stamp u -> (Int, Ir.IrNode)
-lowerKernelAt !t0 k = case k of
-  KConcat x y -> lower2 Ir.KConcat x y
-  KPlus x y -> lower2 Ir.KPlus x y
-  KTimes x y -> lower2 Ir.KTimes x y
-  KMinus x y -> lower2 Ir.KMinus x y
-  KNegate x -> lower1 Ir.KNegate x
-  KFracDiv x y -> lower2 Ir.KFracDiv x y
-  KRem x y -> lower2 Ir.KRem x y
-  KBitAnd x y -> lower2 Ir.KBitAnd x y
-  KBitOr x y -> lower2 Ir.KBitOr x y
-  KBitXor x y -> lower2 Ir.KBitXor x y
-  KShl x y -> lower2 Ir.KShl x y
-  KShr x y -> lower2 Ir.KShr x y
-  KUShr x y -> lower2 Ir.KUShr x y
-  KBig op x y -> lower2 (Ir.KBig op) x y
-  KBigNeg x -> lower1 Ir.KBigNeg x
-  KAnd x y -> lower2 Ir.KAnd x y
-  KOr x y -> lower2 Ir.KOr x y
-  KEq s x y -> lower2 (Ir.KEq s) x y
-  KNEq s x y -> lower2 (Ir.KNEq s) x y
-  KGTh x y -> lower2 Ir.KGTh x y
-  KLTh x y -> lower2 Ir.KLTh x y
-  KGTEq x y -> lower2 Ir.KGTEq x y
-  KLTEq x y -> lower2 Ir.KLTEq x y
-  KShow x -> lower1 Ir.KShow x
-  KTypeOf x -> lower1 Ir.KTypeOf x
- where
-  lower1 ::
-    (Ir.IrNode -> Ir.IrNode) -> Expr Stamp a -> (Int, Ir.IrNode)
-  lower1 kon x =
-    let
-      (t1, x') = lowerExprAt t0 x
-     in
-      (t1, kon x')
-  lower2 ::
-    (Ir.IrNode -> Ir.IrNode -> Ir.IrNode)
-    -> Expr Stamp a
-    -> Expr Stamp b
-    -> (Int, Ir.IrNode)
-  lower2 kon x y =
-    let
-      (t1, x') = lowerExprAt t0 x
-      (t2, y') = lowerExprAt t1 y
-     in
-      (t2, kon x' y')
+-- | Lower and optimize a closed effect; also returns the optimized size.
+lowerOptEffectIrWith :: Bool -> ClosedEffect u -> (Ir, Int)
+lowerOptEffectIrWith keepLets e = let ?keepLets = keepLets in run (lowerX e)
 
-lowerMethodAt :: Int -> Method Stamp u -> (Int, Ir.IrNode)
-lowerMethodAt !t0 m = case m of
-  MethMap arr f ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, arr') = lowerExprAt tUnder arr
-      (t2, body') = lowerExprAt t1 (f (Name tag))
-     in
-      (t2, Ir.IrMethMap arr' tag body')
-  MethFilter arr f ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, arr') = lowerExprAt tUnder arr
-      (t2, body') = lowerExprAt t1 (f (Name tag))
-     in
-      (t2, Ir.IrMethFilter arr' tag body')
-  MethReduce arr z f ->
-    let
-      tagA = t0
-      tagB = t0 - optStep
-      tUnder = t0 - 2 * optStep
-      (t1, arr') = lowerExprAt tUnder arr
-      (t2, z') = lowerExprAt t1 z
-      (t3, body') =
-        lowerExprAt t2 (f (Name tagA) (Name tagB))
-     in
-      (t3, Ir.IrMethReduce arr' z' tagA tagB body')
-  MethReduceRight arr z f ->
-    let
-      tagA = t0
-      tagB = t0 - optStep
-      tUnder = t0 - 2 * optStep
-      (t1, arr') = lowerExprAt tUnder arr
-      (t2, z') = lowerExprAt t1 z
-      (t3, body') =
-        lowerExprAt t2 (f (Name tagA) (Name tagB))
-     in
-      (t3, Ir.IrMethReduceRight arr' z' tagA tagB body')
-  MethToSorted arr f ->
-    let
-      tagA = t0
-      tagB = t0 - optStep
-      tUnder = t0 - 2 * optStep
-      (t1, arr') = lowerExprAt tUnder arr
-      (t2, body') =
-        lowerExprAt t1 (f (Name tagA) (Name tagB))
-     in
-      (t2, Ir.IrMethToSorted arr' tagA tagB body')
-  MethFrom n f ->
-    let
-      tag = t0
-      tUnder = t0 - optStep
-      (t1, n') = lowerExprAt tUnder n
-      (t2, body') = lowerExprAt t1 (f (Name tag))
-     in
-      (t2, Ir.IrMethFrom n' tag body')
+irEffectFromClosed :: ClosedEffect u -> Ir
+irEffectFromClosed e = fst (lowerOptEffectIrWith False e)
 
-lowerFieldLitAt :: Int -> FieldLit Stamp r -> (Int, Ir.IrField)
-lowerFieldLitAt !t0 fl = case fl of
-  FieldLit @k e ->
-    let
-      (t1, e') = lowerExprAt t0 e
-     in
-      (t1, Ir.IrField (fieldKeyText @k) e')
-  FieldLitEffect @k e ->
-    let
-      (t1, e') = lowerEffectAt t0 e
-     in
-      (t1, Ir.IrFieldEff (fieldKeyText @k) e')
-  FieldLitExtra @k e ->
-    let
-      (t1, e') = lowerExprAt t0 e
-     in
-      (t1, Ir.IrFieldExtra (fieldKeyText @k) e')
-  FieldLitExtraEffect @k e ->
-    let
-      (t1, e') = lowerEffectAt t0 e
-     in
-      (t1, Ir.IrFieldExtraEff (fieldKeyText @k) e')
-
-lowerFieldLitsAt :: Int -> [FieldLit Stamp r] -> (Int, [Ir.IrField])
-lowerFieldLitsAt !t0 fs = goFieldLits t0 fs []
- where
-  goFieldLits !t [] acc = (t, reverse acc)
-  goFieldLits !t (fl : rest) acc =
-    let
-      (t1, fl') = lowerFieldLitAt t fl
-     in
-      goFieldLits t1 rest (fl' : acc)
-
-lowerEffectsAt :: Int -> [Effect Stamp u] -> (Int, [Ir.IrNode])
-lowerEffectsAt !t0 es = goEffects t0 es []
- where
-  goEffects !t [] acc = (t, reverse acc)
-  goEffects !t (e : rest) acc =
-    let
-      (t1, e') = lowerEffectAt t e
-     in
-      goEffects t1 rest (e' : acc)
-
-lowerEffectArmsAt ::
-  Int -> [(Text, Effect Stamp u)] -> (Int, [(Text, Ir.IrNode)])
-lowerEffectArmsAt !t0 arms = goArms t0 arms []
- where
-  goArms !t [] acc = (t, reverse acc)
-  goArms !t ((k, e) : rest) acc =
-    let
-      (t1, e') = lowerEffectAt t e
-     in
-      goArms t1 rest ((k, e') : acc)
-
-fnDepthStamp :: FnBody Stamp us r -> Int
-fnDepthStamp = \case
-  JfNil _ -> 0
-  JfCons _ k -> 1 + fnDepthStamp (k (Stamp minBound))
-
-allocFnTags :: Int -> FnBody Stamp us r -> ([Int], Int)
-allocFnTags t0 body =
-  let
-    n = fnDepthStamp body
-    tags = take n [t0, t0 - optStep ..]
-    tEnd = t0 - n * optStep
-   in
-    (tags, tEnd)
-
-lowerFnBodyAt ::
-  Int -> FnBody Stamp us r -> (Int, [Int], [Maybe Text], Ir.IrNode)
-lowerFnBodyAt !t0 body =
-  let
-    (tags, tEnd) = allocFnTags t0 body
-    (t1, names, body') = lowerFnBodyTags tEnd tags body
-   in
-    (t1, tags, names, body')
-
--- | Lower the body under the parameter tags. @tEnd@ is the first stamp
--- below every parameter tag; threading it (rather than restarting at
--- 'lowerExpr' / @-2@) keeps binder IDs fresh against the enclosing
--- expression and against the parameters themselves.
-lowerFnBodyTags ::
-  Int -> [Int] -> FnBody Stamp us r -> (Int, [(Maybe Text)], Ir.IrNode)
-lowerFnBodyTags tEnd _ (JfNil e) =
-  let
-    (t1, e') = lowerExprAt tEnd e
-   in
-    (t1, [], e')
-lowerFnBodyTags tEnd (t : ts) (JfCons pn k) =
-  let
-    (t1, restNames, body') = lowerFnBodyTags tEnd ts (k (Name t))
-   in
-    (t1, pn : restNames, body')
-lowerFnBodyTags _ [] (JfCons {}) =
-  error "JShark.lowerFnBodyTags: arity mismatch"
-
-lowerEffectClosed :: ClosedEffect u -> Ir.IrNode
-lowerEffectClosed (e :: ClosedEffect u) =
-  let
-    (!_, !ir) = lowerEffectAt (-2) e
-   in
-    ir
-{-# NOINLINE lowerEffectClosed #-}
-
-optEffectClosed :: Ir.IrNode -> Ir.IrNode
-optEffectClosed ir =
-  let
-    ?keepLets = False
-   in
-    let
-      (!_, !irOpt, !_) = Ir.optIr (-2) ir
-     in
-      irOpt
-{-# NOINLINE optEffectClosed #-}
-
-lowerOptEffectIr :: ClosedEffect u -> (Ir.IrNode, Int)
-lowerOptEffectIr = lowerOptEffectIrWith False
-
-lowerOptExprIr :: Bool -> ClosedExpr u -> (Ir.IrNode, Int)
-lowerOptExprIr keepLets (e :: ClosedExpr u) =
-  let
-    ?keepLets = keepLets
-   in
-    let
-      (!_, !ir) = lowerExprAt (-2) (e :: Expr Stamp u)
-      (!_, !irOpt, !mdOpt) = Ir.optIr (-2) ir
-      !nodes = Ir.irSize mdOpt
-     in
-      Ir.forceIr irOpt `seq` (irOpt, nodes)
-{-# NOINLINE lowerOptExprIr #-}
-
-lowerOptEffectAt ::
-  (?keepLets :: Bool) => Int -> Effect Stamp u -> (Int, Ir.IrNode, Ir.IrMeta)
-lowerOptEffectAt !t0 eff =
-  let
-    (t1, ir) = lowerEffectAt t0 eff
-    (t2, ir', md) = Ir.optIr t1 ir
-   in
-    (t2, ir', md)
-{-# NOINLINE lowerOptEffectAt #-}
-
-lowerOptEffectIrWith :: Bool -> ClosedEffect u -> (Ir.IrNode, Int)
-lowerOptEffectIrWith keepLets e =
-  let
-    ?keepLets = keepLets
-   in
-    let
-      (!_, !irOpt, !mdOpt) = lowerOptEffectAt (-2) e
-      !nodes = Ir.irSize mdOpt
-     in
-      Ir.forceIr irOpt `seq` (irOpt, nodes)
-{-# NOINLINE lowerOptEffectIrWith #-}
-
-irEffectFromClosed :: ClosedEffect u -> Ir.IrNode
-irEffectFromClosed e = fst (lowerOptEffectIr e)
-{-# NOINLINE irEffectFromClosed #-}
-
--- | Nodes after IR optimize of a closed effect.
+-- | Nodes after optimizing a closed effect.
 optimizedEffectSize :: ClosedEffect u -> Int
-optimizedEffectSize e = snd (lowerOptEffectIr e)
-{-# NOINLINE optimizedEffectSize #-}
+optimizedEffectSize e = snd (lowerOptEffectIrWith False e)
 
--- | Nodes after IR optimize of a closed expression.
+-- | Nodes after optimizing a closed expression.
 optimizedExprSize :: ClosedExpr u -> Int
 optimizedExprSize e = snd (lowerOptExprIr False e)
-{-# NOINLINE optimizedExprSize #-}

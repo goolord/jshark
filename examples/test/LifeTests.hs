@@ -60,8 +60,9 @@ import JShark.Example.Life.Types
   )
 import JShark.Internal
   ( effectfulAST
-  , effectfulASTFromSoA
-  , flatPrepareCore
+  , effectfulASTWith
+  , minifiedStyle
+  , optimizedEffectSize
   )
 import qualified JShark.Math as Math
 import Test.Support (assertJSContains, assertJSOmits)
@@ -140,11 +141,11 @@ lifeTests =
               assertJSContains "out.dirtyCx0=0;out.dirtyCy0=0" paintGridCellsJs
               assertJSContains "out.dirtyCx1=0;out.dirtyCy1=0" paintGridCellsJs
               assertJSOmits "out.dirtyCy1=0;out.dirtyCy1=0" paintGridCellsJs
-          , testCase "flat prepare size guards IR inline regression" $ do
+          , testCase "optimized size guards IR inline regression" $ do
               let
                 life = stmts mainJS
-              (soa, _, irNodes, _) <- flatPrepareCore life
-              js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTFromSoA soa))
+                irNodes = optimizedEffectSize life
+              js <- Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTWith minifiedStyle life))
               -- Mutable array reads (u8Index, FixArrLen, …) are no longer
               -- moved/inlined across writes, so a handful stay as bindings.
               irNodes @?= 70675

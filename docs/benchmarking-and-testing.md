@@ -66,7 +66,7 @@ cabal test all --test-options='-t 120s' --test-show-details=direct
 | Package | Suite / tree | Notes |
 |---------|--------------|-------|
 | `jshark` | `test/Main.hs` | interpreter, codegen goldens, optimizer, compiler |
-| `jshark` | `jshark-test` | `-p codegen`, `-p optimize`, `-p compiler`, `-p flat soa` |
+| `jshark` | `jshark-test` | `-p codegen`, `-p optimize`, `-p compiler`, `-p "codegen folds"` |
 | `jshark-lucid` | `jshark-lucid-test` | Lucid → DOM codegen (happy-dom via bun) |
 | `jshark-bindgen` | `jshark-bindgen-test` | `.d.ts`/JSDoc parse + emit, CLI, golden `BindgenToy` |
 | `jshark-hotreload` | `jshark-hotreload-test` | SSE hub, WAI middleware, watcher mapping |

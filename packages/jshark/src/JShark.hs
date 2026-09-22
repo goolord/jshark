@@ -7,28 +7,17 @@
 -- re-exports the compile pipeline and the two entry points
 -- ('pureProgram', 'effectfulProgram').
 --
--- == Pipeline (read top to bottom)
+-- == Pipeline
 --
 -- @
--- ClosedExpr / ClosedEffect           -- 'JShark.Api.Types'
---       |
---       +--> Evaluate                 -- 'JShark.Compiler.Evaluate' (tests, REPL)
---       |
---       v
--- Lower                               -- 'JShark.Compiler.Lower' (PHOAS -> first-order Ir)
---       |
---       v
--- Ir optimize                         -- 'JShark.Compiler.Ir' (one optimizer: folds + elim)
---       |
---       v
--- Flat (pack + SoA bulk opts)         -- 'JShark.Compiler.Flat'
---       |
---       v
--- Codegen.Flat -> JS                  -- 'JShark.Compiler.Codegen.Flat' (pure + effectful)
---
--- Codegen.Core ('JShark.Compiler.Codegen.Core') -- 'CG' state, prep, IIFE wrapper,
---           named @$tag@ hoisting (dedup by alpha-renamed source)
--- Codegen.Stmt ('JShark.Compiler.Codegen.Stmt') -- shared statement renderers
+-- ClosedExpr / ClosedEffect   -- "JShark.Api.Types"
+--   +--> Evaluate             -- "JShark.Compiler.Evaluate" (tests, REPL)
+--   v
+-- Lower                       -- "JShark.Compiler.Lower" (PHOAS -> first-order IR)
+--   v
+-- Optimize                    -- "JShark.Compiler.Ir" (folds, let elimination)
+--   v
+-- Codegen -> JS               -- "JShark.Compiler.Codegen" (number, plan, emit)
 -- @
 --
 -- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings
@@ -130,13 +119,7 @@ module JShark
 where
 
 import JShark.Api.Types
-import JShark.Compiler.Codegen.Core
-  ( renderIIFE
-  )
-import JShark.Compiler.Codegen.Flat
-  ( flatEffectfulCodegen
-  , flatPureCodegen
-  )
+import JShark.Compiler.Codegen (effectfulProgram, pureProgram)
 import JShark.Compiler.Emit (JS, renderJS)
 import JShark.Compiler.Evaluate
   ( EvalFailure (..)
@@ -148,11 +131,3 @@ import JShark.Compiler.Evaluate
   , tryEvaluate
   , uint8Elems
   )
-
--- | Compile a closed pure expression to a JavaScript IIFE.
-pureProgram :: ClosedExpr u -> JS
-pureProgram e = uncurry renderIIFE (flatPureCodegen e)
-
--- | Compile a closed effectful program to a JavaScript IIFE.
-effectfulProgram :: ClosedEffect u -> JS
-effectfulProgram e = uncurry renderIIFE (flatEffectfulCodegen e)
