@@ -80,9 +80,7 @@ library
     JShark.Bindgen
     JShark.Bindgen.Cli
     JShark.Bindgen.Ir
-    JShark.Bindgen.Json
     JShark.Bindgen.Emit
-    JShark.Bindgen.Extract
   autogen-modules:
     Paths_jshark_bindgen
   other-modules:
@@ -119,7 +117,6 @@ test-suite jshark-bindgen-test
     BindgenMs
     BindgenPlain
     BindgenToy
-    BindgenTests
     Paths_jshark_bindgen
   autogen-modules:
     Paths_jshark_bindgen

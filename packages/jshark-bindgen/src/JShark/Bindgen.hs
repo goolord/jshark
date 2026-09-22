@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | TypeScript / JavaScript → JShark FFI bindings.
@@ -18,22 +19,27 @@ module JShark.Bindgen
   , parseIrFromFile
   , generateFromIr
   , applyOpts
+  , findExtractScript
+  , tsExtractorAvailable
+  , extractWithTs
   )
 where
 
+import Control.Exception (SomeException, try)
+import Control.Monad (filterM)
 import Data.Char (isAlpha, toUpper)
 import Data.List (isSuffixOf)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust, listToMaybe, maybeToList)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Bindgen.Emit (emitModule)
-import JShark.Bindgen.Extract
-  ( extractWithTs
-  , findExtractScript
-  )
 import JShark.Bindgen.Ir
-import JShark.Bindgen.Json (decodeModule)
-import System.FilePath (takeBaseName)
+import Paths_jshark_bindgen (getDataFileName)
+import System.Directory (doesFileExist, findExecutable, getCurrentDirectory)
+import System.Environment (lookupEnv)
+import System.Exit (ExitCode (..))
+import System.FilePath (splitDirectories, takeBaseName, (</>))
+import System.Process (readProcessWithExitCode)
 
 -- | Options controlling the generated module name and FFI prefix.
 data BindgenOpts = BindgenOpts
@@ -43,124 +49,118 @@ data BindgenOpts = BindgenOpts
 
 -- | 'BindgenOpts' with no module-name or prefix override.
 defaultBindgenOpts :: BindgenOpts
-defaultBindgenOpts =
-  BindgenOpts
-    { optModuleName = Nothing
-    , optPrefix = Nothing
-    }
+defaultBindgenOpts = BindgenOpts Nothing Nothing
 
 -- | Extract the file at the given path and render a Haskell module.
 generateFromFile :: BindgenOpts -> FilePath -> IO (Either String Text)
-generateFromFile opts path =
-  fmap (fmap generateFromIr) (parseIrFromFile opts path)
+generateFromFile opts path = fmap generateFromIr <$> parseIrFromFile opts path
 
 -- | Extract and decode the input file to a 'ModuleIr', applying 'BindgenOpts'.
+--
+-- Declarations whose signature nests a nullable inside a container or
+-- callback are dropped: the emitter does not convert those at the foreign
+-- boundary, so they would pass tagged objects to native code. The matching
+-- 'Diagnostic' is still reported.
 parseIrFromFile :: BindgenOpts -> FilePath -> IO (Either String ModuleIr)
-parseIrFromFile opts path = do
-  script <- findExtractScript
-  case script of
-    Nothing ->
-      pure
-        ( Left
-            "bun and jshark-bindgen/extract.mjs are required (with typescript installed)"
-        )
+parseIrFromFile opts path =
+  findExtractScript >>= \case
+    Nothing -> pure (Left missing)
     Just s -> do
-      ts <- extractWithTs s (optModuleName opts) (optPrefix opts) path
-      case ts of
-        Left err -> pure (Left err)
-        Right json -> pure $ do
-          ir <- decodeModule json
-          let
-            applied = applyOpts opts path ir
-            diags = irDiagnostics applied <> validateModule applied
-          Right
-            (pruneUnsupported applied)
-              { irDiagnostics = diags
-              }
+      json <- extractWithTs s (optModuleName opts) (optPrefix opts) path
+      pure $ do
+        ir <- applyOpts opts path <$> (decodeModule =<< json)
+        pure (prune ir {irDiagnostics = irDiagnostics ir <> validateModule ir})
+ where
+  missing =
+    "bun and jshark-bindgen/extract.mjs are required (with typescript installed)"
+  prune ir =
+    ir
+      { irFuns = keep funTypes (irFuns ir)
+      , irClasses = map pruneClass (irClasses ir)
+      , irConsts = keep (pure . cnTy) (irConsts ir)
+      }
+  pruneClass c =
+    c
+      { clCtors = keep funTypes (clCtors c)
+      , clMethods = keep funTypes (clMethods c)
+      , clProps = keep (pure . prTy) (clProps c)
+      }
+  keep :: (a -> [Ty]) -> [a] -> [a]
+  keep tys = filter (not . any tyHasNestedOption . tys)
 
 -- | Render a 'ModuleIr' to Haskell source.
 generateFromIr :: ModuleIr -> Text
 generateFromIr = emitModule
 
--- | Override an IR's module name, prefix, and source from 'BindgenOpts'.
+-- | Override an IR's module name, prefix, and source from 'BindgenOpts', and
+-- qualify its foreign names with the prefix.
 applyOpts :: BindgenOpts -> FilePath -> ModuleIr -> ModuleIr
 applyOpts opts path ir =
-  let
-    m = fromMaybe (irModule ir) (optModuleName opts)
-    m' = if T.null m then moduleFromPath path else m
-    p = fromMaybe (irPrefix ir) (optPrefix opts)
-   in
-    qualifyPrefix $
-      ir
-        { irModule = m'
-        , irPrefix = p
-        , irSource =
-            if T.null (irSource ir) then T.pack path else irSource ir
-        }
-
--- | Drop declarations whose signature contains a nullable nested inside a
--- container or callback. The emitter does not convert those at the foreign
--- boundary, so leaving them in would pass tagged objects to native code;
--- the matching 'Diagnostic' is still reported.
-pruneUnsupported :: ModuleIr -> ModuleIr
-pruneUnsupported ir =
   ir
-    { irFuns = filter (not . funNested) (irFuns ir)
-    , irClasses = map pruneClass (irClasses ir)
-    , irConsts = filter (not . constNested) (irConsts ir)
+    { irModule = if T.null m then moduleFromPath path else m
+    , irPrefix = p
+    , irSource = if T.null (irSource ir) then T.pack path else irSource ir
+    , irFuns = map qualFun (irFuns ir)
+    , irConsts = [c {cnFfi = qualify (cnFfi c)} | c <- irConsts ir]
+    , irClasses =
+        [ c {clFfi = qualify (clFfi c), clCtors = map qualFun (clCtors c)}
+        | c <- irClasses ir
+        ]
     }
  where
-  funNested f =
-    any tyHasNestedOption (fnRet f : map pTy (fnParams f))
-  propNested p = tyHasNestedOption (prTy p)
-  constNested c = tyHasNestedOption (cnTy c)
-  pruneClass c =
-    c
-      { clCtors = filter (not . funNested) (clCtors c)
-      , clMethods = filter (not . funNested) (clMethods c)
-      , clProps = filter (not . propNested) (clProps c)
-      }
-
-qualifyPrefix :: ModuleIr -> ModuleIr
-qualifyPrefix ir
-  | T.null (irPrefix ir) = ir
-  | otherwise =
-      ir
-        { irFuns = fmap (qualFun (irPrefix ir)) (irFuns ir)
-        , irConsts = fmap (qualConst (irPrefix ir)) (irConsts ir)
-        , irClasses = fmap (qualClass (irPrefix ir)) (irClasses ir)
-        }
-
--- | Qualify a foreign name with the module prefix, unless it already is
--- the prefix or sits under it.
-qualify :: Text -> Text -> Text
-qualify p n
-  | n == p || (p <> ".") `T.isPrefixOf` n = n
-  | otherwise = p <> "." <> n
-
-qualFun :: Text -> Fun -> Fun
-qualFun p f = f {fnFfi = qualify p (fnFfi f)}
-
-qualConst :: Text -> ConstDecl -> ConstDecl
-qualConst p c = c {cnFfi = qualify p (cnFfi c)}
-
-qualClass :: Text -> ClassDecl -> ClassDecl
-qualClass p c =
-  c
-    { clFfi = qualify p (clFfi c)
-    , clCtors = fmap (qualFun p) (clCtors c)
-    }
+  m = fromMaybe (irModule ir) (optModuleName opts)
+  p = fromMaybe (irPrefix ir) (optPrefix opts)
+  qualFun f = f {fnFfi = qualify (fnFfi f)}
+  -- Leave names that already are, or sit under, the prefix.
+  qualify n
+    | T.null p || n == p || (p <> ".") `T.isPrefixOf` n = n
+    | otherwise = p <> "." <> n
 
 moduleFromPath :: FilePath -> Text
-moduleFromPath path =
+moduleFromPath path = "JShark." <> T.pack (titled base)
+ where
+  raw = takeBaseName path
+  base = if ".d" `isSuffixOf` raw then takeBaseName raw else raw
+  titled = \case
+    [] -> "Bindings"
+    c : cs | isAlpha c -> toUpper c : cs
+    cs -> 'B' : cs
+
+-- | Locate @extract.mjs@: @$JSHARK_BINDGEN_EXTRACT@, the cabal data file,
+-- then the working directory or (under @packages/jshark-bindgen@) a parent.
+findExtractScript :: IO (Maybe FilePath)
+findExtractScript = do
+  env <- lookupEnv "JSHARK_BINDGEN_EXTRACT"
+  installed <-
+    try (getDataFileName "extract.mjs") :: IO (Either SomeException FilePath)
+  cwd <- getCurrentDirectory
   let
-    raw = takeBaseName path
-    base
-      | ".d" `isSuffixOf` raw = takeBaseName raw
-      | otherwise = raw
-    titled = case base of
-      [] -> "Bindings"
-      c : cs | isAlpha c -> toUpper c : cs
-      _ -> 'B' : base
-   in
-    "JShark." <> T.pack titled
+    -- The working directory, then each of its ancestors up to the root.
+    dirs = reverse (scanl1 (</>) (splitDirectories cwd))
+  fmap listToMaybe . filterM doesFileExist $
+    maybeToList env
+      <> either (const []) pure installed
+      <> [cwd </> "extract.mjs"]
+      <> [d </> "packages/jshark-bindgen" </> "extract.mjs" | d <- dirs]
+
+-- | True when both @bun@ and @extract.mjs@ are available.
+tsExtractorAvailable :: IO Bool
+tsExtractorAvailable =
+  (&&) <$> (isJust <$> findExecutable "bun") <*> (isJust <$> findExtractScript)
+
+-- | @bun extract.mjs [--module M] [--prefix P] FILE@ → JSON IR on stdout.
+extractWithTs ::
+  FilePath -> Maybe Text -> Maybe Text -> FilePath -> IO (Either String Text)
+extractWithTs script moduleName prefix input =
+  findExecutable "bun" >>= \case
+    Nothing -> pure (Left "bun not on PATH (needed for the TypeScript extractor)")
+    Just bun -> do
+      r <- try (readProcessWithExitCode bun args "")
+      pure $ case r of
+        Left e -> Left (show (e :: SomeException))
+        Right (ExitSuccess, out, _) -> Right (T.pack out)
+        Right (ExitFailure c, out, err) ->
+          Left (unlines ["TypeScript extractor exited " <> show c, err, out])
+ where
+  args = [script] <> flag "--module" moduleName <> flag "--prefix" prefix <> [input]
+  flag name = maybe [] (\v -> [name, T.unpack v])

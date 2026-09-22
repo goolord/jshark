@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 
 -- | Command-line interface for @jshark-bindgen@.
 module JShark.Bindgen.Cli
@@ -11,35 +11,11 @@ module JShark.Bindgen.Cli
   )
 where
 
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import JShark.Bindgen
 import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics)
 import Options.Applicative
-  ( Parser
-  , ParserInfo
-  , ParserPrefs
-  , ParserResult (..)
-  , argument
-  , customExecParser
-  , execParserPure
-  , fullDesc
-  , header
-  , help
-  , helper
-  , info
-  , long
-  , metavar
-  , optional
-  , prefs
-  , progDesc
-  , short
-  , showHelpOnEmpty
-  , showHelpOnError
-  , str
-  , strOption
-  )
 import System.Exit (die)
 import System.IO (hPutStrLn, stderr)
 
@@ -52,91 +28,49 @@ data Cli = Cli
 
 -- | optparse-applicative preferences: show help on error and on empty input.
 parserPrefs :: ParserPrefs
-parserPrefs =
-  prefs (showHelpOnError <> showHelpOnEmpty)
+parserPrefs = prefs (showHelpOnError <> showHelpOnEmpty)
 
 -- | Full parser description for the @jshark-bindgen@ command.
 parserInfo :: ParserInfo Cli
 parserInfo =
-  info (helper <*> cliParser) $
+  info (helper <*> cli) $
     fullDesc
-      <> progDesc
-        "Generate JShark FFI bindings from TypeScript / JS declarations."
-      <> header
-        "jshark-bindgen — generate JShark FFI bindings from TypeScript / JS"
-
-cliParser :: Parser Cli
-cliParser =
-  Cli
-    <$> bindgenOptsParser
-    <*> optional
-      ( strOption
-          ( long "out"
-              <> short 'o'
-              <> metavar "FILE"
-              <> help "Write to FILE instead of stdout"
+      <> progDesc "Generate JShark FFI bindings from TypeScript / JS declarations."
+      <> header "jshark-bindgen — generate JShark FFI bindings from TypeScript / JS"
+ where
+  cli =
+    Cli
+      <$> ( BindgenOpts
+              <$> opt "module" 'm' "NAME" "Haskell module name (default JShark.FILE)"
+              <*> opt "prefix" 'p' "NAME" "JS global prefix (PIXI, toy, …)"
           )
-      )
-    <*> argument
-      str
-      ( metavar "FILE"
-          <> help
-            "Declaration file (.d.ts / .ts) or .js with JSDoc exports"
-      )
-
-bindgenOptsParser :: Parser BindgenOpts
-bindgenOptsParser =
-  BindgenOpts
-    <$> optional
-      ( T.pack
-          <$> strOption
-            ( long "module"
-                <> short 'm'
-                <> metavar "NAME"
-                <> help "Haskell module name (default JShark.FILE)"
-            )
-      )
-    <*> optional
-      ( T.pack
-          <$> strOption
-            ( long "prefix"
-                <> short 'p'
-                <> metavar "NAME"
-                <> help "JS global prefix (PIXI, toy, …)"
-            )
-      )
+      <*> opt "out" 'o' "FILE" "Write to FILE instead of stdout"
+      <*> argument
+        str
+        ( metavar "FILE"
+            <> help "Declaration file (.d.ts / .ts) or .js with JSDoc exports"
+        )
+  opt l s v h = optional (strOption (long l <> short s <> metavar v <> help h))
 
 -- | Parse an argument vector into 'Cli', reporting failures as 'Left'.
 parseCliArgs :: [String] -> Either String Cli
-parseCliArgs args =
-  case execParserPure parserPrefs parserInfo args of
-    Success cli -> Right cli
-    Failure err -> Left (show err)
-    CompletionInvoked _ -> Left "shell completion invoked"
+parseCliArgs args = case execParserPure parserPrefs parserInfo args of
+  Success cli -> Right cli
+  Failure err -> Left (show err)
+  CompletionInvoked _ -> Left "shell completion invoked"
 
 -- | Parse @argv@ and run the CLI; the executable entry point.
 runMain :: IO ()
-runMain =
-  customExecParser parserPrefs parserInfo >>= runCli
+runMain = customExecParser parserPrefs parserInfo >>= runCli
 
 -- | Run the generator for a parsed 'Cli', writing to file or stdout.
 runCli :: Cli -> IO ()
-runCli cli = do
-  ir <- parseIrFromFile (cliOpts cli) (cliFile cli)
-  case ir of
+runCli cli =
+  parseIrFromFile (cliOpts cli) (cliFile cli) >>= \case
     Left e -> die e
-    Right x -> do
-      mapM_ (hPutStrLn stderr . renderDiagnostic) (irDiagnostics x)
-      writeOut (cliOut cli) (generateFromIr x)
-
--- | One-line stderr rendering of an extractor or binding diagnostic.
-renderDiagnostic :: Diagnostic -> String
-renderDiagnostic d =
-  "jshark-bindgen: ["
-    <> T.unpack (dgCategory d)
-    <> "] "
-    <> T.unpack (dgMessage d)
-
-writeOut :: Maybe FilePath -> Text -> IO ()
-writeOut Nothing t = TIO.putStr t
-writeOut (Just p) t = TIO.writeFile p t
+    Right ir -> do
+      mapM_ (hPutStrLn stderr . diagnostic) (irDiagnostics ir)
+      maybe TIO.putStr TIO.writeFile (cliOut cli) (generateFromIr ir)
+ where
+  diagnostic d =
+    "jshark-bindgen: [" <> T.unpack (dgCategory d) <> "] " <> T.unpack (dgMessage d)
