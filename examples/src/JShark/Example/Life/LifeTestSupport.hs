@@ -30,6 +30,7 @@ module JShark.Example.Life.LifeTestSupport
   )
 where
 
+import Control.Monad (forM_)
 import JShark.Api
 import JShark.Api.Generic (toObject)
 import JShark.Api.Rec (Rec (..), (<:))
@@ -107,70 +108,53 @@ gridPop grid w h = do
       set @"pop" ref (p + 1)
   ref.pop
 
-seedBlock ::
-  Expr f 'Uint8Array
+-- | Clear @grid@, set the given cells live, and rebuild packed counts.
+seedCells ::
+  [(Double, Double)]
+  -> Expr f 'Uint8Array
   -> Expr f 'Number
   -> Expr f 'Number
   -> EffectSyntax f (f 'Unit)
-seedBlock grid w h = do
+seedCells cells grid w h = do
   toSyntax_ (u8Fill grid (number 0))
-  setAlive grid w (number 1) (number 1)
-  setAlive grid w (number 2) (number 1)
-  setAlive grid w (number 1) (number 2)
-  setAlive grid w (number 2) (number 2)
+  forM_ cells $ \(x, y) -> setAlive grid w (number x) (number y)
   rebuildPackedCounts grid w h
   done
 
-seedBeehive ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-seedBeehive grid w h = do
-  toSyntax_ (u8Fill grid (number 0))
-  setAlive grid w (number 1) (number 0)
-  setAlive grid w (number 2) (number 0)
-  setAlive grid w (number 0) (number 1)
-  setAlive grid w (number 3) (number 1)
-  setAlive grid w (number 1) (number 2)
-  setAlive grid w (number 2) (number 2)
-  rebuildPackedCounts grid w h
-  done
-
-seedBlinkerHorizontal ::
-  Expr f 'Uint8Array
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f (f 'Unit)
-seedBlinkerHorizontal grid w h = do
-  toSyntax_ (u8Fill grid (number 0))
-  setAlive grid w (number 1) (number 2)
-  setAlive grid w (number 2) (number 2)
-  setAlive grid w (number 3) (number 2)
-  rebuildPackedCounts grid w h
-  done
-
-blockCoords :: EffectSyntax f (Expr f ('Array ('Array 'Number)))
-blockCoords =
+-- | The cells as a bound @[[x, y], …]@ array.
+cellsArray ::
+  [(Double, Double)] -> EffectSyntax f (Expr f ('Array ('Array 'Number)))
+cellsArray cells =
   bindExpr $
     Array.fromEffects
-      [ Array.fromEffects [expr (number 1), expr (number 1)]
-      , Array.fromEffects [expr (number 2), expr (number 1)]
-      , Array.fromEffects [expr (number 1), expr (number 2)]
-      , Array.fromEffects [expr (number 2), expr (number 2)]
-      ]
+      [Array.fromEffects [expr (number x), expr (number y)] | (x, y) <- cells]
 
-beehiveCoords :: EffectSyntax f (Expr f ('Array ('Array 'Number)))
-beehiveCoords =
-  bindExpr $
-    Array.fromEffects
-      [ Array.fromEffects [expr (number 1), expr (number 0)]
-      , Array.fromEffects [expr (number 2), expr (number 0)]
-      , Array.fromEffects [expr (number 0), expr (number 1)]
-      , Array.fromEffects [expr (number 3), expr (number 1)]
-      , Array.fromEffects [expr (number 1), expr (number 2)]
-      , Array.fromEffects [expr (number 2), expr (number 2)]
-      ]
+block, beehive, blinkerH, blinkerV :: [(Double, Double)]
+block = [(1, 1), (2, 1), (1, 2), (2, 2)]
+beehive = [(1, 0), (2, 0), (0, 1), (3, 1), (1, 2), (2, 2)]
+blinkerH = [(1, 2), (2, 2), (3, 2)]
+blinkerV = [(2, 1), (2, 2), (2, 3)]
+
+seedBlock
+  , seedBeehive
+  , seedBlinkerHorizontal ::
+    Expr f 'Uint8Array
+    -> Expr f 'Number
+    -> Expr f 'Number
+    -> EffectSyntax f (f 'Unit)
+seedBlock = seedCells block
+seedBeehive = seedCells beehive
+seedBlinkerHorizontal = seedCells blinkerH
+
+blockCoords
+  , beehiveCoords
+  , blinkerHorizontalCoords
+  , blinkerVerticalCoords ::
+    EffectSyntax f (Expr f ('Array ('Array 'Number)))
+blockCoords = cellsArray block
+beehiveCoords = cellsArray beehive
+blinkerHorizontalCoords = cellsArray blinkerH
+blinkerVerticalCoords = cellsArray blinkerV
 
 coordsMatch ::
   Expr f 'Uint8Array
@@ -185,24 +169,6 @@ coordsMatch grid w coords = do
       y = Array.index cell 1
     assertAlive grid w x y
   done
-
-blinkerHorizontalCoords :: EffectSyntax f (Expr f ('Array ('Array 'Number)))
-blinkerHorizontalCoords =
-  bindExpr $
-    Array.fromEffects
-      [ Array.fromEffects [expr (number 1), expr (number 2)]
-      , Array.fromEffects [expr (number 2), expr (number 2)]
-      , Array.fromEffects [expr (number 3), expr (number 2)]
-      ]
-
-blinkerVerticalCoords :: EffectSyntax f (Expr f ('Array ('Array 'Number)))
-blinkerVerticalCoords =
-  bindExpr $
-    Array.fromEffects
-      [ Array.fromEffects [expr (number 2), expr (number 1)]
-      , Array.fromEffects [expr (number 2), expr (number 2)]
-      , Array.fromEffects [expr (number 2), expr (number 3)]
-      ]
 
 runProcessCellAt ::
   Expr f 'Uint8Array
