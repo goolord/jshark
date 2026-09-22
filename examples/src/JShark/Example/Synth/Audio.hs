@@ -21,57 +21,7 @@
 -- params are 'Effect' because they are read straight back out of a node
 -- (@osc.frequency@) and used on the spot. Arguments are accepted through
 -- 'ToEffect', so either form works at a call site.
-module JShark.Example.Synth.Audio
-  ( -- * Handles
-    AudioCtx
-  , Node
-  , Param
-  , Voice
-  , IsCtx
-  , IsNode
-
-    -- * Context
-  , newAudioContext
-  , resume
-  , contextState
-  , currentTime
-  , destination
-
-    -- * Nodes
-  , oscillator
-  , gain
-  , biquadFilter
-  , compressor
-  , analyser
-  , connect
-  , disconnect
-  , onEnded
-  , setType
-  , setFftSize
-
-    -- * Params
-  , param
-  , setValue
-  , setValueAt
-  , scheduleAdsr
-  , releaseVoice
-
-    -- * Sources
-  , startAt
-
-    -- * Analysis
-  , analysisBuffer
-  , fftSizeFor
-  , byteFrequencyData
-  , meanByte
-
-    -- * Escape hatches
-  , dictGet
-  , dictSet
-  , forEachKey
-  , listenOnce
-  )
-where
+module JShark.Example.Synth.Audio (module JShark.Example.Synth.Audio) where
 
 import Data.Text (Text)
 import JShark.Api
@@ -87,7 +37,7 @@ data Node
 -- | An @AudioParam@ — a value the audio thread automates.
 data Param
 
--- | One held note: the oscillator and its own amplifier.
+-- | One held note: the oscillator, its own amplifier, and its envelope.
 data Voice
 
 type instance Field Voice "osc" = 'MutableObject Node
@@ -108,6 +58,12 @@ type IsCtx f a = ToEffect f ('MutableObject AudioCtx) a
 -- | Anything that lifts to an @AudioNode@ handle.
 type IsNode f a = ToEffect f ('MutableObject Node) a
 
+type NodeE f = Expr f ('MutableObject Node)
+
+type ParamE f = Effect f ('MutableObject Param)
+
+type NumE f = Expr f 'Number
+
 -- Both lifts name their target universe: 'toEffect' alone would leave it
 -- ambiguous at a call site like 'callMethod', whose receiver is any object.
 node :: IsNode f a => a -> Effect f ('MutableObject Node)
@@ -116,10 +72,8 @@ node = toEffect
 ctxOf :: IsCtx f a => a -> Effect f ('MutableObject AudioCtx)
 ctxOf = toEffect
 
--- | @new AudioContext()@.
---
--- 'ffi' is free text, so a constructor is reachable even though the object
--- language has no @new@.
+-- | @new AudioContext()@. 'ffi' is free text, so a constructor is reachable
+-- even though the object language has no @new@.
 newAudioContext :: EffectSyntax f (Expr f ('MutableObject AudioCtx))
 newAudioContext = fmap var (toSyntax (ffi "new AudioContext" RecNil))
 
@@ -134,50 +88,38 @@ contextState ctx = getProp (ctxOf ctx) "state"
 
 -- | @ctx.currentTime@ — the audio clock, in seconds. Read it fresh at
 -- every use: it advances continuously, so a bound value goes stale.
-currentTime :: IsCtx f a => a -> EffectSyntax f (Expr f 'Number)
+currentTime :: IsCtx f a => a -> EffectSyntax f (NumE f)
 currentTime ctx = getProp (ctxOf ctx) "currentTime"
 
 -- | @ctx.destination@ — the speakers.
-destination :: IsCtx f a => a -> Effect f ('MutableObject Node)
+destination ::
+  Expr f ('MutableObject AudioCtx) -> Effect f ('MutableObject Node)
 destination ctx = unsafeObjectGet (ctxOf ctx) "destination"
 
--- | @ctx.createOscillator()@
-oscillator :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
+-- | @ctx.createOscillator()@ and the other node constructors. Voices sum,
+-- so the compressor ahead of the speakers keeps a full chord from clipping.
+oscillator
+  , gain
+  , biquadFilter
+  , analyser
+  , compressor ::
+    IsCtx f a => a -> EffectSyntax f (NodeE f)
 oscillator = create "createOscillator"
-
--- | @ctx.createGain()@
-gain :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 gain = create "createGain"
-
--- | @ctx.createBiquadFilter()@
-biquadFilter :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 biquadFilter = create "createBiquadFilter"
-
--- | @ctx.createAnalyser()@
-analyser :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 analyser = create "createAnalyser"
-
--- | @ctx.createDynamicsCompressor()@.
---
--- Voices sum, so a handful of held notes would otherwise exceed unity and
--- clip. One of these ahead of the speakers keeps a full chord in range.
-compressor :: IsCtx f a => a -> EffectSyntax f (Expr f ('MutableObject Node))
 compressor = create "createDynamicsCompressor"
 
-create ::
-  IsCtx f a => Text -> a -> EffectSyntax f (Expr f ('MutableObject Node))
-create method ctx =
-  fmap var (toSyntax (callMethod (ctxOf ctx) method RecNil))
+create :: IsCtx f a => Text -> a -> EffectSyntax f (NodeE f)
+create method ctx = fmap var (toSyntax (callMethod (ctxOf ctx) method RecNil))
 
 -- | @from.connect(to)@ — one edge of the audio graph.
 connect :: (IsNode f a, IsNode f b) => a -> b -> EffectSyntax f ()
 connect from to =
   toSyntax_ (callMethod (node from) "connect" (ArgEffect (node to) <: RecNil))
 
--- | @node.disconnect()@.
---
--- A stopped oscillator is collected, but the gain node it fed stays wired
--- to the graph. Without this each note played leaks one node.
+-- | @node.disconnect()@. A stopped oscillator is collected, but the gain
+-- node it fed stays wired to the graph; without this each note leaks one.
 disconnect :: IsNode f a => a -> EffectSyntax f ()
 disconnect n = toSyntax_ (callMethod (node n) "disconnect" RecNil)
 
@@ -185,40 +127,30 @@ disconnect n = toSyntax_ (callMethod (node n) "disconnect" RecNil)
 -- is when its part of the graph can be taken down.
 onEnded :: IsNode f a => a -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
 onEnded n body =
-  toSyntax_
-    ( unsafeObjectAssign
-        (unsafeObjectGet (node n) "onended")
-        (LambdaE (\_ -> stmts body))
-    )
+  toSyntax_ . unsafeObjectAssign (unsafeObjectGet (node n) "onended") $
+    LambdaE (\_ -> stmts body)
 
 -- | @node.type = t@ (@"sawtooth"@, @"lowpass"@, …).
 setType :: IsNode f a => a -> Expr f 'String -> EffectSyntax f (f 'Unit)
-setType n t = setProp (node n) "type" t
+setType n = setProp (node n) "type"
 
--- | @analyser.fftSize = n@.
---
--- The bin count is half of this, and the bins span the whole spectrum, so
--- reading a 32-byte buffer from the default 2048 would only cover the
--- bottom 750Hz or so. Size the transform to the buffer instead.
-setFftSize :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f (f 'Unit)
-setFftSize n v = setProp (node n) "fftSize" v
+-- | @analyser.fftSize = n@. The bin count is half of this, and the bins
+-- span the whole spectrum, so reading a 32-byte buffer from the default
+-- 2048 would only cover the bottom 750Hz or so; see 'fftSizeFor'.
+setFftSize :: IsNode f a => a -> NumE f -> EffectSyntax f (f 'Unit)
+setFftSize n = setProp (node n) "fftSize"
 
 -- | A named param of a node: @osc.frequency@, @vca.gain@, @filter.Q@.
-param :: IsNode f a => a -> String -> Effect f ('MutableObject Param)
+param :: IsNode f a => a -> String -> ParamE f
 param n = unsafeObjectGet (node n)
 
 -- | @p.value = v@. Immediate and unscheduled — right for a control the
 -- user is dragging, wrong for anything an envelope owns.
-setValue ::
-  Effect f ('MutableObject Param) -> Expr f 'Number -> EffectSyntax f (f 'Unit)
-setValue p v = setProp p "value" v
+setValue :: ParamE f -> NumE f -> EffectSyntax f (f 'Unit)
+setValue p = setProp p "value"
 
 -- | @p.setValueAtTime(v, t)@
-setValueAt ::
-  Effect f ('MutableObject Param)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> EffectSyntax f ()
+setValueAt :: ParamE f -> NumE f -> NumE f -> EffectSyntax f ()
 setValueAt p v t =
   toSyntax_ (callMethod p "setValueAtTime" (arg v <: arg t <: RecNil))
 
@@ -227,28 +159,24 @@ setValueAt p v t =
 -- exponential ramp. @amp.value@ starts at the floor so a new GainNode
 -- does not sit at unity until @t0@.
 scheduleAdsr ::
-  Effect f ('MutableObject Param)
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
+  ParamE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
   -> EffectSyntax f ()
 scheduleAdsr amp t0 atk dec sus peak minAmp =
-  toSyntax_
-    ( ffi
-        scheduleAdsrJs
-        ( ArgEffect amp
-            <: arg t0
-            <: arg atk
-            <: arg dec
-            <: arg sus
-            <: arg peak
-            <: arg minAmp
-            <: RecNil
-        )
-    )
+  toSyntax_ . ffi scheduleAdsrJs $
+    ArgEffect amp
+      <: arg t0
+      <: arg atk
+      <: arg dec
+      <: arg sus
+      <: arg peak
+      <: arg minAmp
+      <: RecNil
 
 scheduleAdsrJs :: Text
 scheduleAdsrJs =
@@ -269,34 +197,30 @@ scheduleAdsrJs =
 -- @stop@ and leave a voice hanging at unity.
 releaseVoice ::
   IsNode f osc =>
-  Effect f ('MutableObject Param)
+  ParamE f
   -> osc
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
-  -> Expr f 'Number
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
+  -> NumE f
   -> EffectSyntax f ()
 releaseVoice amp osc now rel minAmp t0 atk dec sus peak =
-  toSyntax_
-    ( ffi
-        releaseVoiceJs
-        ( ArgEffect amp
-            <: ArgEffect (node osc)
-            <: arg now
-            <: arg rel
-            <: arg minAmp
-            <: arg t0
-            <: arg atk
-            <: arg dec
-            <: arg sus
-            <: arg peak
-            <: RecNil
-        )
-    )
+  toSyntax_ . ffi releaseVoiceJs $
+    ArgEffect amp
+      <: ArgEffect (node osc)
+      <: arg now
+      <: arg rel
+      <: arg minAmp
+      <: arg t0
+      <: arg atk
+      <: arg dec
+      <: arg sus
+      <: arg peak
+      <: RecNil
 
 releaseVoiceJs :: Text
 releaseVoiceJs =
@@ -319,54 +243,33 @@ releaseVoiceJs =
     <> "}"
 
 -- | @src.start(t)@
-startAt :: IsNode f a => a -> Expr f 'Number -> EffectSyntax f ()
+startAt :: IsNode f a => a -> NumE f -> EffectSyntax f ()
 startAt n t = toSyntax_ (callMethod (node n) "start" (arg t <: RecNil))
 
--- | A zeroed analysis buffer of @n@ bytes.
---
--- 'JShark.Api.newByteArray' asks for the size and nothing else, which is
--- what an output buffer wants: the analyser supplies the contents.
--- 'JShark.Api.uint8Array' is the host 'ByteArray' literal.
---
--- Bound, so the analyser and the meter share one array. JS can write the
--- object.
-analysisBuffer ::
-  Int -> EffectSyntax f (Expr f 'Uint8Array)
-analysisBuffer n =
-  fmap var (toSyntax (newByteArray (number (fromIntegral n))))
+-- | A zeroed analysis buffer of @n@ bytes, bound so the analyser and the
+-- meter share one array. 'newByteArray' asks for the size and nothing
+-- else, which is what an output buffer wants: the analyser fills it.
+analysisBuffer :: Int -> EffectSyntax f (Expr f 'Uint8Array)
+analysisBuffer n = fmap var (toSyntax (newByteArray (number (fromIntegral n))))
 
--- | The @fftSize@ that yields @bins@ frequency bins.
---
--- The analyser reports half its transform size, and a buffer shorter than
--- that only ever sees the low end of the spectrum.
-fftSizeFor :: Int -> Expr f 'Number
+-- | The @fftSize@ that yields @bins@ frequency bins: the analyser reports
+-- half its transform size.
+fftSizeFor :: Int -> NumE f
 fftSizeFor bins = number (fromIntegral (bins * 2))
 
 -- | @analyser.getByteFrequencyData(buf)@. Fills @buf@ in place.
-byteFrequencyData ::
-  IsNode f a =>
-  a
-  -> Expr f 'Uint8Array
-  -> EffectSyntax f ()
+byteFrequencyData :: IsNode f a => a -> Expr f 'Uint8Array -> EffectSyntax f ()
 byteFrequencyData a buf =
   toSyntax_ (callMethod (node a) "getByteFrequencyData" (arg buf <: RecNil))
 
--- | Mean of the buffer, scaled to @0..1@.
---
--- Byte arrays carry no fold in the object language, so the reduction is an
--- 'ffi'. Doing it in one call also keeps the per-frame work to a single
--- crossing. Reads the handle directly.
-meanByte ::
-  Expr f 'Uint8Array -> EffectSyntax f (Expr f 'Number)
+-- | Mean of the buffer, scaled to @0..1@. Byte arrays carry no fold in the
+-- object language, so the reduction is one 'ffi' crossing per frame.
+meanByte :: Expr f 'Uint8Array -> EffectSyntax f (NumE f)
 meanByte buf =
-  fmap
-    var
-    ( toSyntax
-        ( ffi
-            "((b) => b.reduce((a, x) => a + x, 0) / (b.length * 255))"
-            (arg buf <: RecNil)
-        )
-    )
+  fmap var . toSyntax $
+    ffi
+      "((b) => b.reduce((a, x) => a + x, 0) / (b.length * 255))"
+      (arg buf <: RecNil)
 
 -- | @o[k]@ with a computed key, as an 'Option'.
 --
@@ -377,8 +280,7 @@ meanByte buf =
 -- The @?? null@ matters: 'Option' is @null@ to JShark, and a missing
 -- property is @undefined@, which would fail the @=== null@ test that
 -- 'unsafeNullable' compiles to.
-dictGet ::
-  Effect f ('MutableObject r) -> Expr f 'String -> Effect f ('Option u)
+dictGet :: Effect f ('MutableObject r) -> Expr f 'String -> Effect f ('Option u)
 dictGet o k =
   Bind
     Nothing
@@ -387,45 +289,31 @@ dictGet o k =
 
 -- | @o[k] = v@ with a computed key. See 'dictGet'.
 dictSet ::
-  Effect f ('MutableObject r)
-  -> Expr f 'String
-  -> Expr f u
-  -> EffectSyntax f ()
+  Effect f ('MutableObject r) -> Expr f 'String -> Expr f u -> EffectSyntax f ()
 dictSet o k v =
   toSyntax_
     (ffi "((o, k, v) => { o[k] = v; })" (ArgEffect o <: arg k <: arg v <: RecNil))
 
--- | Run the body for every key of @o@.
---
--- @Object.keys@ snapshots, so the body may delete as it goes. Used to drop
--- every held note at once.
+-- | Run the body for every key of @o@. @Object.keys@ snapshots, so the body
+-- may delete as it goes. Used to drop every held note at once.
 forEachKey ::
   Effect f ('MutableObject r)
   -> (Expr f 'String -> EffectSyntax f (f 'Unit))
   -> EffectSyntax f ()
 forEachKey o body =
-  toSyntax_
-    ( ffi
-        "((o, f) => { for (const k of Object.keys(o)) f(k); })"
-        (ArgEffect o <: ArgEffect (LambdaE (\k -> stmts (body (var k)))) <: RecNil)
-    )
+  toSyntax_ . ffi "((o, f) => { for (const k of Object.keys(o)) f(k); })" $
+    ArgEffect o <: ArgEffect (LambdaE (\k -> stmts (body (var k)))) <: RecNil
 
--- | @el.addEventListener(ev, fn, { once: true })@.
---
--- The browser drops the listener after the first call, which is cheaper and
--- simpler than a "have I started yet" flag in the program.
+-- | @el.addEventListener(ev, fn, { once: true })@. The browser drops the
+-- listener after the first call, which is cheaper and simpler than a
+-- "have I started yet" flag in the program.
 listenOnce ::
   Text
   -> Effect f ('MutableObject o)
   -> EffectSyntax f (f 'Unit)
   -> EffectSyntax f ()
 listenOnce ev el body =
-  toSyntax_
-    ( ffi
-        "((el, ev, fn) => el.addEventListener(ev, fn, { once: true }))"
-        ( ArgEffect el
-            <: arg (string ev)
-            <: ArgEffect (LambdaE (\_ -> stmts body))
-            <: RecNil
-        )
-    )
+  toSyntax_ (ffi js (ArgEffect el <: arg (string ev) <: handler <: RecNil))
+ where
+  js = "((el, ev, fn) => el.addEventListener(ev, fn, { once: true }))"
+  handler = ArgEffect (LambdaE (\_ -> stmts body))

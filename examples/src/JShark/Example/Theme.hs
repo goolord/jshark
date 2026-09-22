@@ -1,41 +1,76 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Shared stylesheet links for example pages.
+-- | Shared stylesheet links and page shell for example pages.
 module JShark.Example.Theme
   ( themeLinks
   , sourceLinks
   , sourceLinksLite
   , githubCorner
-  , hotReloadClient
+  , ExamplePage
+  , examplePage
+  , themedPage
   )
 where
 
 import qualified Data.Text as T
-import JShark.Lucid.HotReload (hotReloadClient)
 import Lucid
 import Lucid.Base (makeAttribute)
 
+stylesheets :: T.Text -> [T.Text] -> Html ()
+stylesheets staticRoot =
+  mapM_ (\path -> link_ [rel_ "stylesheet", href_ (staticRoot <> path)])
+
+themeSheets :: [T.Text]
+themeSheets = ["/pico/pico.min.css", "/css/tokens.css", "/css/base.css"]
+
 -- | Pico + theme tokens + base layout. Example shells link this in @head_@.
 themeLinks :: T.Text -> Html ()
-themeLinks staticRoot = do
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/pico/pico.min.css")]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/tokens.css")]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/base.css")]
+themeLinks staticRoot = stylesheets staticRoot themeSheets
 
 -- | Source pane + highlighter. Link after 'themeLinks' on themed pages.
 sourceLinks :: T.Text -> Html ()
-sourceLinks staticRoot = do
-  link_
-    [ rel_ "stylesheet"
-    , href_ (staticRoot <> "/speed-highlight/themes/github-dark.css")
-    ]
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/source.css")]
+sourceLinks staticRoot =
+  stylesheets
+    staticRoot
+    ["/speed-highlight/themes/github-dark.css", "/css/source.css"]
 
 -- | TodoMVC and other pages that skip 'themeLinks'.
 sourceLinksLite :: T.Text -> Html ()
-sourceLinksLite staticRoot = do
-  link_ [rel_ "stylesheet", href_ (staticRoot <> "/css/tokens.css")]
-  sourceLinks staticRoot
+sourceLinksLite staticRoot =
+  stylesheets staticRoot ["/css/tokens.css"] *> sourceLinks staticRoot
+
+-- | An example's @page@: static root, extra @head_@ content, the source
+-- pane, and the script URL.
+type ExamplePage = T.Text -> Html () -> Html () -> T.Text -> Html ()
+
+-- | Example shell: a @head_@ of charset, viewport, title, the given
+-- stylesheets (paths under the static root) and the extra head content,
+-- then a @body_@ of 'githubCorner', the page content, the source pane and
+-- the script. The first argument wraps both inside @doctypehtml_@.
+examplePage ::
+  (Html () -> Html ()) -> T.Text -> [T.Text] -> Html () -> ExamplePage
+examplePage wrap title sheets content staticRoot headExtra source scriptSrc =
+  doctypehtml_ . wrap $ do
+    head_ $ do
+      meta_ [charset_ "utf-8"]
+      meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1"]
+      title_ (toHtml title)
+      stylesheets staticRoot sheets
+      headExtra
+    body_ $ do
+      githubCorner
+      content
+      source
+      script_ [src_ scriptSrc] ("" :: Html ())
+
+-- | 'examplePage' on the dark theme, with 'themeLinks' ahead of the page's
+-- own stylesheets.
+themedPage :: T.Text -> [T.Text] -> Html () -> ExamplePage
+themedPage title sheets =
+  examplePage
+    (html_ [makeAttribute "data-theme" "dark"])
+    title
+    (themeSheets <> sheets)
 
 -- | Floating corner link back to the JShark repo. Put it at the top of
 --   @body_@ on every example shell. Self-contained (inline style + SVG
@@ -45,7 +80,7 @@ githubCorner :: Html ()
 githubCorner =
   a_
     [ class_ "github-corner"
-    , href_ githubRepo
+    , href_ "https://github.com/goolord/jshark"
     , title_ "JShark source on GitHub"
     , makeAttribute "target" "_blank"
     , makeAttribute "rel" "noopener noreferrer"
@@ -55,9 +90,6 @@ githubCorner =
     $ do
       toHtmlRaw githubMarkSvg
       span_ "GitHub"
-
-githubRepo :: T.Text
-githubRepo = "https://github.com/goolord/jshark"
 
 -- | Fixed dark pill that reads on both the dark themed shells and the light
 --   TodoMVC page.

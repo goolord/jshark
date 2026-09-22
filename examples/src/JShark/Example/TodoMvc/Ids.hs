@@ -2,34 +2,11 @@
 
 -- | DOM ids and the hash/filter strings they imply. Page and Client
 -- must use these; do not restate the literals in either file.
-module JShark.Example.TodoMvc.Ids
-  ( Route (..)
-  , routes
-  , routeAll
-  , routeActive
-  , routeCompleted
-  , valueAll
-  , valueActive
-  , classSelected
-  , idForm
-  , idNewTodo
-  , idTodoList
-  , idMain
-  , idFooter
-  , idTodoCount
-  , idTodoCountSuffix
-  , idClearCompleted
-  )
-where
+module JShark.Example.TodoMvc.Ids (module JShark.Example.TodoMvc.Ids) where
 
 import Data.Text (Text)
 
-data Route = Route
-  { routeId :: Text
-  , routeHash :: Text
-  , routeValue :: Text
-  , routeLabel :: Text
-  }
+data Route = Route {routeId, routeHash, routeValue, routeLabel :: Text}
   deriving Eq
 
 routeAll, routeActive, routeCompleted :: Route
@@ -44,10 +21,8 @@ valueAll, valueActive :: Text
 valueAll = routeValue routeAll
 valueActive = routeValue routeActive
 
-classSelected :: Text
+classSelected, idForm, idNewTodo, idTodoList, idMain, idFooter :: Text
 classSelected = "selected"
-
-idForm, idNewTodo, idTodoList, idMain, idFooter :: Text
 idForm = "todo-form"
 idNewTodo = "new-todo"
 idTodoList = "todo-list"
