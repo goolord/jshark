@@ -14,36 +14,19 @@ module JShark.HotReload.Core
   , broadcastEvent
   , subscribe
   , subscribeWithSnapshot
+  , currentSnapshot
   , encodeEvent
   , registerJs
   , lookupJs
   , registerHtml
   , lookupHtml
-  , currentJsHashes
-  , currentRevision
-  , setBuildError
-  , lastBuildError
-  , setBuildStart
-  , lastCompiling
   )
 where
 
 import Control.Concurrent.STM
-  ( TChan
-  , TVar
-  , atomically
-  , dupTChan
-  , modifyTVar'
-  , newBroadcastTChanIO
-  , newTVarIO
-  , readTChan
-  , readTVar
-  , readTVarIO
-  , writeTChan
-  , writeTVar
-  )
-import Data.Aeson (ToJSON (..), encode, object, (.=))
+import Data.Aeson (ToJSON (..), Value, encode, object, (.=))
 import qualified Data.Aeson.Key as Key
+import Data.Aeson.Types (Pair)
 import Data.Bits (xor)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int64)
@@ -84,13 +67,7 @@ data HotReloadConfig = HotReloadConfig
 -- | Default config: enabled, auto-inject, standard paths, 75 ms debounce.
 defaultHotReloadConfig :: HotReloadConfig
 defaultHotReloadConfig =
-  HotReloadConfig
-    { hrEnabled = True
-    , hrAutoInject = True
-    , hrEventsPath = "/__jshark/events"
-    , hrClientPath = "/__jshark/client.js"
-    , hrDebounceMs = 75
-    }
+  HotReloadConfig True True "/__jshark/events" "/__jshark/client.js" 75
 
 -- | Shared broadcast channel, artifact caches, and build-status refs.
 --
@@ -98,19 +75,19 @@ defaultHotReloadConfig =
 -- subscription can be taken in one atomic transaction (see
 -- 'subscribeWithSnapshot').
 data HotReloadHub = HotReloadHub
-  { hubConfig :: HotReloadConfig
+  { hotReloadConfig :: HotReloadConfig
+  -- ^ The 'HotReloadConfig' the hub was created with.
   , hubChan :: TChan HotReloadEvent
   , hubJs :: TVar ArtifactCache
   , hubHtml :: TVar ArtifactCache
   , hubError :: TVar (Maybe Text)
   , hubCompiling :: TVar (Maybe Text)
   , hubRevision :: TVar Int64
-  -- ^ Monotonic publication counter: increments on every broadcast, so
-  -- clients and tests can order snapshots against events.
+  -- ^ Monotonic publication counter: increments on every broadcast.
   }
 
--- | A coherent point-in-time view for a new SSE client: cached JS hashes,
--- the current build status, and the publication revision at that instant.
+-- | A coherent point-in-time view: cached JS hashes, the current build
+-- status, and the publication revision at that instant.
 data HotReloadSnapshot = HotReloadSnapshot
   { snapshotJsHashes :: [(Text, Text)]
   , snapshotBuildError :: Maybe Text
@@ -122,82 +99,63 @@ data HotReloadSnapshot = HotReloadSnapshot
 -- | Cached artifact source keyed by app name, paired with its 'jsHash'.
 type ArtifactCache = Map.Map Text (Text, Text)
 
--- | The 'HotReloadConfig' the hub was created with.
-hotReloadConfig :: HotReloadHub -> HotReloadConfig
-hotReloadConfig = hubConfig
-
 -- | Create a hub with an empty cache and no build status.
 newHotReloadHub :: HotReloadConfig -> IO HotReloadHub
-newHotReloadHub cfg = do
-  chan <- newBroadcastTChanIO
-  js <- newTVarIO Map.empty
-  html <- newTVarIO Map.empty
-  err <- newTVarIO Nothing
-  compiling <- newTVarIO Nothing
-  rev <- newTVarIO 0
-  pure
-    HotReloadHub
-      { hubConfig = cfg
-      , hubChan = chan
-      , hubJs = js
-      , hubHtml = html
-      , hubError = err
-      , hubCompiling = compiling
-      , hubRevision = rev
-      }
+newHotReloadHub cfg =
+  HotReloadHub cfg
+    <$> newBroadcastTChanIO
+    <*> newTVarIO Map.empty
+    <*> newTVarIO Map.empty
+    <*> newTVarIO Nothing
+    <*> newTVarIO Nothing
+    <*> newTVarIO 0
 
 -- | Broadcast an event to all subscribers and update build status in one
 -- transaction, so a concurrent 'subscribeWithSnapshot' observes a coherent
 -- publication (never a status change without its event or vice versa). The
 -- revision increments with each publication.
 broadcastEvent :: HotReloadHub -> HotReloadEvent -> IO ()
-broadcastEvent hub ev =
-  atomically $ do
-    case ev of
-      BuildError msg -> do
-        writeTVar (hubError hub) (Just msg)
-        writeTVar (hubCompiling hub) Nothing
-      BuildStart app -> do
-        writeTVar (hubError hub) Nothing
-        writeTVar (hubCompiling hub) (Just app)
-      JsUpdate {} -> do
-        writeTVar (hubError hub) Nothing
-        writeTVar (hubCompiling hub) Nothing
-      PageReload {} -> writeTVar (hubCompiling hub) Nothing
-      _ -> pure ()
-    modifyTVar' (hubRevision hub) (+ 1)
-    writeTChan (hubChan hub) ev
+broadcastEvent hub ev = atomically $ do
+  let
+    status err comp =
+      writeTVar (hubError hub) err >> writeTVar (hubCompiling hub) comp
+  case ev of
+    BuildError msg -> status (Just msg) Nothing
+    BuildStart app -> status Nothing (Just app)
+    JsUpdate {} -> status Nothing Nothing
+    PageReload {} -> writeTVar (hubCompiling hub) Nothing
+    _ -> pure ()
+  modifyTVar' (hubRevision hub) (+ 1)
+  writeTChan (hubChan hub) ev
 
 -- | Duplicate the broadcast channel for one SSE client.
 subscribe :: HotReloadHub -> IO (IO HotReloadEvent)
-subscribe hub = do
-  ch <- atomically $ dupTChan (hubChan hub)
-  pure (atomically (readTChan ch))
+subscribe hub = snd <$> subscribeWithSnapshot hub
 
 -- | Take the cached state and register a subscription in a single STM
 -- transaction. Any event published after this point is delivered on the
 -- returned stream; every event published before is reflected in the
--- snapshot. This closes the snapshot/subscribe race: the old split reads
--- could take a stale snapshot and then subscribe after the update event
--- had already been broadcast.
+-- snapshot, so no update can fall between the two.
 subscribeWithSnapshot ::
   HotReloadHub -> IO (HotReloadSnapshot, IO HotReloadEvent)
-subscribeWithSnapshot hub =
-  atomically $ do
-    js <- readTVar (hubJs hub)
-    err <- readTVar (hubError hub)
-    comp <- readTVar (hubCompiling hub)
-    rev <- readTVar (hubRevision hub)
-    ch <- dupTChan (hubChan hub)
-    let
-      snap =
-        HotReloadSnapshot
-          { snapshotJsHashes = cacheHashes js
-          , snapshotBuildError = err
-          , snapshotCompiling = comp
-          , snapshotRevision = rev
-          }
-    pure (snap, atomically (readTChan ch))
+subscribeWithSnapshot hub = atomically $ do
+  snap <- snapshotSTM hub
+  ch <- dupTChan (hubChan hub)
+  pure (snap, atomically (readTChan ch))
+
+-- | The hub's current cached hashes, build status, and revision.
+currentSnapshot :: HotReloadHub -> IO HotReloadSnapshot
+currentSnapshot = atomically . snapshotSTM
+
+snapshotSTM :: HotReloadHub -> STM HotReloadSnapshot
+snapshotSTM hub =
+  HotReloadSnapshot
+    <$> (hashes <$> readTVar (hubJs hub))
+    <*> readTVar (hubError hub)
+    <*> readTVar (hubCompiling hub)
+    <*> readTVar (hubRevision hub)
+ where
+  hashes m = [(k, h) | (k, (_, h)) <- Map.toList m]
 
 -- | SSE @data:@ JSON line (no trailing blank line).
 encodeEvent :: HotReloadEvent -> Text
@@ -206,67 +164,41 @@ encodeEvent = decodeUtf8 . LBS.toStrict . encode
 instance ToJSON HotReloadEvent where
   toJSON = \case
     JsUpdate name u h ->
-      object
-        [ "type" .= ("js-update" :: Text)
-        , "appName" .= name
-        , "url" .= u
-        , "hash" .= h
-        ]
-    CssUpdate u ts ->
-      object
-        [ "type" .= ("css-update" :: Text)
-        , "url" .= u
-        , "timestamp" .= ts
-        ]
-    PageReload why ->
-      object
-        [ "type" .= ("page-reload" :: Text)
-        , "reason" .= why
-        ]
-    BuildError msg ->
-      object
-        [ "type" .= ("build-error" :: Text)
-        , "message" .= msg
-        ]
-    BuildStart app ->
-      object
-        [ "type" .= ("build-start" :: Text)
-        , "appName" .= app
-        ]
+      typed "js-update" ["appName" .= name, "url" .= u, "hash" .= h]
+    CssUpdate u ts -> typed "css-update" ["url" .= u, "timestamp" .= ts]
+    PageReload why -> typed "page-reload" ["reason" .= why]
+    BuildError msg -> typed "build-error" ["message" .= msg]
+    BuildStart app -> typed "build-start" ["appName" .= app]
     Hello hashes ->
-      object
-        [ "type" .= ("hello" :: Text)
-        , "jsHashes" .= object [Key.fromText k .= v | (k, v) <- hashes]
-        ]
+      typed
+        "hello"
+        ["jsHashes" .= object [Key.fromText k .= v | (k, v) <- hashes]]
+
+typed :: Text -> [Pair] -> Value
+typed ty fields = object (("type" .= ty) : fields)
 
 -- | Cache compiled JS and return its content hash.
 registerJs :: HotReloadHub -> Text -> Text -> IO Text
-registerJs hub = register (hubJs hub)
+registerJs = register . hubJs
 
 -- | Look up cached JS source and hash by app name.
 lookupJs :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
-lookupJs hub = lookupCached (hubJs hub)
+lookupJs hub name = Map.lookup name <$> readTVarIO (hubJs hub)
 
 -- | Cache rendered Lucid HTML and return its content hash.
 registerHtml :: HotReloadHub -> Text -> Text -> IO Text
-registerHtml hub = register (hubHtml hub)
+registerHtml = register . hubHtml
 
 -- | Look up cached HTML source and hash by app name.
 lookupHtml :: HotReloadHub -> Text -> IO (Maybe (Text, Text))
-lookupHtml hub = lookupCached (hubHtml hub)
+lookupHtml hub name = Map.lookup name <$> readTVarIO (hubHtml hub)
 
 register :: TVar ArtifactCache -> Text -> Text -> IO Text
 register cache name source = do
-  let
-    h = jsHash source
   atomically $ modifyTVar' cache (Map.insert name (source, h))
   pure h
-
-lookupCached :: TVar ArtifactCache -> Text -> IO (Maybe (Text, Text))
-lookupCached cache name = Map.lookup name <$> readTVarIO cache
-
-cacheHashes :: ArtifactCache -> [(Text, Text)]
-cacheHashes m = [(k, h) | (k, (_, h)) <- Map.toList m]
+ where
+  h = jsHash source
 
 -- | Short content fingerprint: character length and FNV-1a, as
 -- @\<len\>-\<hex\>@. 'Word32' makes the multiply wrap at 32 bits, which is
@@ -276,29 +208,3 @@ jsHash t = T.pack (printf "%d-%08x" (T.length t) (T.foldl' step seed t))
  where
   seed = 2166136261 :: Word32
   step h c = (h `xor` fromIntegral (fromEnum c)) * 16777619
-
--- | Snapshot the app-name to JS hash map for a new SSE client. Prefer
--- 'subscribeWithSnapshot', which reads this together with the channel in
--- one transaction.
-currentJsHashes :: HotReloadHub -> IO [(Text, Text)]
-currentJsHashes hub = cacheHashes <$> readTVarIO (hubJs hub)
-
--- | The current monotonic publication revision.
-currentRevision :: HotReloadHub -> IO Int64
-currentRevision = readTVarIO . hubRevision
-
--- | Record and broadcast a build error.
-setBuildError :: HotReloadHub -> Text -> IO ()
-setBuildError hub msg = broadcastEvent hub (BuildError msg)
-
--- | The most recent build error, if any.
-lastBuildError :: HotReloadHub -> IO (Maybe Text)
-lastBuildError = readTVarIO . hubError
-
--- | Record and broadcast that an app started compiling.
-setBuildStart :: HotReloadHub -> Text -> IO ()
-setBuildStart hub app = broadcastEvent hub (BuildStart app)
-
--- | The app currently compiling, if any.
-lastCompiling :: HotReloadHub -> IO (Maybe Text)
-lastCompiling = readTVarIO . hubCompiling

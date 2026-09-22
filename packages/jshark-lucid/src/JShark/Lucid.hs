@@ -1,53 +1,39 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Describe a DOM tree with Lucid's combinators, emit JavaScript that
 -- builds it.
 --
--- Lucid's 'Lucid.Html' is a function to a @Builder@, not a tree, so a
--- finished 'Lucid.Html' value cannot be walked. What /is/ reusable is
--- Lucid's __syntax__: 'Term' and 'With' are open classes and 'Attribute' is
--- an ordinary pair of 'Text', so container elements ('Lucid.div_',
--- 'Lucid.li_', …) and every attribute ('Lucid.class_', 'Lucid.href_', …)
--- work unchanged at 'JsHtml'. Void elements ('Lucid.input_', 'Lucid.br_')
--- are fixed to Lucid's @HtmlT@ and cannot be reused; use 'void_'.
+-- Lucid's 'Lucid.Html' is a function to a @Builder@, not a tree, so it
+-- cannot be walked, but its __syntax__ is reusable: 'Term' and 'With' are
+-- open classes and 'Attribute' is a pair of 'Text', so container elements
+-- ('Lucid.div_', 'Lucid.li_', …) and every attribute ('Lucid.class_', …)
+-- work unchanged at 'JsHtml'. Lucid's void elements ('Lucid.input_',
+-- 'Lucid.br_') are fixed to @HtmlT@; use 'void_'.
 --
 -- Anything dynamic is a child: 'dynText', 'dynAttr', 'classWhen', 'prop',
--- and 'on' sit in the child block and apply to the enclosing element. That
--- keeps Lucid's @[Attribute]@ list untouched (it only holds 'Text') while
--- letting a JShark 'Expr' or handler appear anywhere in the tree.
---
--- A template that uses none of those holes is polymorphic in 'Term', so the
--- same value renders as Lucid's @Html ()@ on the server and as 'JsHtml' in
--- the client:
+-- and 'on' sit in the child block, and modifiers apply to the enclosing
+-- element wherever they appear (rendering hoists them ahead of its
+-- children). A template with no such holes is polymorphic in 'Term', so
+-- the same value renders as Lucid's @Html ()@ on the server and as
+-- 'JsHtml' in the client:
 --
 -- @
 -- shell :: (Term (h ()) (h ()), Term [Attribute] (h () -> h ()), IsString (h ())) => h ()
 -- shell = li_ (div_ [class_ "view"] "hi")
 -- @
 --
--- The moment a hole appears that sharing stops: 'dynText' and friends have
--- no Lucid counterpart, so such a template is JavaScript-only. Keeping the
--- type free of a slot index is what buys the sharing, and the price is that
--- two mistakes — a modifier with no enclosing element, and a child inside a
--- void element — are caught when the JavaScript is generated rather than by
--- the type checker. 'templateErrors' exposes those problems as structured
--- 'TemplateError's (with the element path); 'renderInto' and
--- 'renderFragment' check them and throw the first one, so a bad template
--- fails the build that emits the JS rather than reaching a browser.
---
--- Within an element block, modifiers ('dynAttr', 'classWhen', 'prop', 'on')
--- apply to that element wherever they appear; rendering hoists them ahead of
--- the children so a property or attribute is set before any child is
--- appended.
+-- The price of keeping the type free of a slot index is that a modifier
+-- with no enclosing element, or a child inside a void element, is caught
+-- when the JavaScript is generated rather than by the type checker:
+-- 'templateErrors' reports them with the element path, and 'renderInto' /
+-- 'renderFragment' throw the first one, so a bad template fails the build.
 --
 -- @
 -- row :: Expr f 'String -> Expr f 'Bool -> JsHtml f ()
@@ -57,9 +43,6 @@
 --     void_ "input" [class_ "toggle", type_ "checkbox"]
 --     label_ (dynText title)
 -- @
---
--- 'renderInto' turns that into @createElement@ / @setAttribute@ /
--- @appendChild@ calls.
 module JShark.Lucid
   ( JsHtml
 
@@ -100,6 +83,7 @@ import Lucid.Base (Attribute (..), Term (..), With (..))
 -- | A DOM fragment. The @a@ parameter exists so @do@ blocks sequence
 -- siblings, exactly as in Lucid; the payload is always discarded.
 newtype JsHtml f a = JsHtml ([Node f], a)
+  deriving (Functor, Applicative, Monad) via ((,) [Node f])
 
 -- | One node of the fragment.
 data Node f
@@ -108,31 +92,15 @@ data Node f
     Void Text [Attribute] (JsHtml f ())
   | TextNode (Expr f 'String)
   | -- | Applies to the enclosing element rather than adding a node.
-    Modifier (Modifier f)
+    Modifier (El f -> EffectSyntax f ())
 
-data Modifier f
-  = SetAttr Text (Expr f 'String)
-  | ClassWhen (Expr f 'Bool) Text
-  | SetProp Text (SomeExpr f)
-  | Listen Text (EffectSyntax f (f 'Unit))
-
--- | A property value at a forgotten universe. @el.checked = true@ is
--- 'Bool'; @el.value = "x"@ is 'String'.
-data SomeExpr f = forall u. SomeExpr (Expr f u)
+type El f = Effect f ('MutableObject Dom.DomElement)
 
 single :: Node f -> JsHtml f ()
 single n = JsHtml ([n], ())
 
-instance Functor (JsHtml f) where
-  fmap g (JsHtml (w, a)) = JsHtml (w, g a)
-
-instance Applicative (JsHtml f) where
-  pure a = JsHtml ([], a)
-  JsHtml (w, g) <*> JsHtml (w', a) = JsHtml (w <> w', g a)
-
-instance Monad (JsHtml f) where
-  JsHtml (w, a) >>= k = case k a of
-    JsHtml (w', b) -> JsHtml (w <> w', b)
+modifier :: (El f -> EffectSyntax f ()) -> JsHtml f ()
+modifier = single . Modifier
 
 instance a ~ () => Semigroup (JsHtml f a) where
   x <> y = x >> y
@@ -182,29 +150,30 @@ void_ name attrs = single (Void name attrs (pure ()))
 voidWith_ :: Text -> [Attribute] -> JsHtml f () -> JsHtml f ()
 voidWith_ name attrs mods = single (Void name attrs mods)
 
--- | @el.setAttribute(name, v)@ with a computed value.
---
--- Modifiers run after the element's Lucid attributes, so this wins over a
--- static @class_@ or @href_@ of the same name.
+-- | @el.setAttribute(name, v)@ with a computed value. Modifiers run after
+-- the element's Lucid attributes, so this wins over a static @class_@ or
+-- @href_@ of the same name.
 dynAttr :: Text -> Expr f 'String -> JsHtml f ()
-dynAttr n v = single (Modifier (SetAttr n v))
+dynAttr n v = modifier $ \el -> void (Dom.setAttribute el n v)
 
 -- | Add a class when the test holds, remove it when it does not.
 --
--- Compiles to @classList.toggle(c, test)@, so the element always carries a
--- @class@ attribute — an empty one when nothing matched, rather than no
--- attribute at all.
+-- Compiles to @classList.toggle(c, test)@ (one call rather than an @if@),
+-- so the element always carries a @class@ attribute — an empty one when
+-- nothing matched, rather than no attribute at all.
 classWhen :: Expr f 'Bool -> Text -> JsHtml f ()
-classWhen c cls = single (Modifier (ClassWhen c cls))
+classWhen c cls = modifier $ \el ->
+  void . toSyntax $
+    callMethod el "classList.toggle" (arg (string cls) <: arg c <: RecNil)
 
 -- | @el.name = v@. A property, not an attribute: a checkbox's state is
 -- @checked@ the property, which is not the same as the @checked@ attribute.
 prop :: Text -> Expr f u -> JsHtml f ()
-prop n v = single (Modifier (SetProp n (SomeExpr v)))
+prop n v = modifier $ \el -> void (setProp el (T.unpack n) v)
 
 -- | @el.addEventListener(event, () => body)@.
 on :: Text -> EffectSyntax f (f 'Unit) -> JsHtml f ()
-on ev body = single (Modifier (Listen ev body))
+on ev body = modifier $ \el -> addEventListener_ ev el body
 
 -- | A structural problem with a template. 'tePath' is the chain of element
 -- names from the root to the offending node (empty for a root modifier).
@@ -215,133 +184,80 @@ data TemplateError = TemplateError
   deriving (Show, Eq)
 
 instance Exception TemplateError where
-  displayException = formatTemplateError
+  displayException (TemplateError path msg) =
+    "JShark.Lucid: "
+      ++ (if null path then "(root)" else T.unpack (T.intercalate " > " path))
+      ++ ": "
+      ++ T.unpack msg
 
 -- | All structural problems in a fragment: a modifier with no enclosing
--- element, or a child inside a void element. Rendering checks these first
--- and throws the first one, so a bad template fails the build rather than
--- reaching a browser.
+-- element, or a child inside a void element. The renderers check these
+-- first and throw the first one, so a bad template fails the build rather
+-- than reaching a browser.
 templateErrors :: JsHtml f () -> [TemplateError]
 templateErrors (JsHtml (ns, _)) = go False [] ns
  where
-  go inElement path = concatMap (node inElement path)
-  node inElement path = \case
-    Modifier _
-      | inElement -> []
-      | otherwise -> [orphanModifierError path]
+  go inElement path = concatMap $ \case
+    Modifier _ ->
+      [ TemplateError path "a modifier needs an enclosing element"
+      | not inElement
+      ]
     TextNode _ -> []
     Element name _ (JsHtml (cs, _)) -> go True (path <> [name]) cs
     Void name _ (JsHtml (cs, _)) ->
-      [voidChildError (path <> [name]) name | any (not . isModifier) cs]
-
--- | The two structural problems, built in one place so the checker and the
--- renderers cannot describe the same fault differently.
-orphanModifierError :: [Text] -> TemplateError
-orphanModifierError path =
-  TemplateError path "a modifier needs an enclosing element"
-
-voidChildError :: [Text] -> Text -> TemplateError
-voidChildError path name =
-  TemplateError
-    path
-    ("<" <> name <> "> is a void element and cannot have children")
-
--- | Throw the first structural problem, if any. Called by the renderers
--- before they emit anything, so a bad template fails the build.
-checkTemplate :: Applicative m => JsHtml f () -> m ()
-checkTemplate h = case templateErrors h of
-  [] -> pure ()
-  (e : _) -> throw e
-
-formatTemplateError :: TemplateError -> String
-formatTemplateError (TemplateError path msg) =
-  "JShark.Lucid: "
-    ++ ( if null path
-           then "(root)"
-           else T.unpack (T.intercalate " > " path)
-       )
-    ++ ": "
-    ++ T.unpack msg
+      [ TemplateError
+          (path <> [name])
+          ("<" <> name <> "> is a void element and cannot have children")
+      | not (all isModifier cs)
+      ]
 
 -- | Emit the JavaScript that builds the fragment and appends its roots
--- to @parent@.
---
--- Fails while the JavaScript is being generated if the template puts a
--- modifier where there is no element to apply it to, or a child inside a
--- void element. 'templateErrors' exposes the same checks as data.
+-- to @parent@. Throws the first of 'templateErrors', if any, while the
+-- JavaScript is being generated.
 renderInto ::
   Effect f ('MutableObject Dom.DomElement)
   -> JsHtml f ()
   -> EffectSyntax f (f 'Unit)
-renderInto parent h@(JsHtml (ns, _)) = do
-  checkTemplate h
-  mapM_ (renderNode parent) ns
-  done
+renderInto parent h = renderChildren parent h >> done
 
 -- | Build the fragment offline, then append it once for a single live-DOM
 -- insertion (see @DocumentFragment@ in the DOM performance guides).
 renderFragment ::
   JsHtml f () -> EffectSyntax f (Effect f ('MutableObject Dom.DomElement))
-renderFragment h@(JsHtml (ns, _)) = do
-  checkTemplate h
+renderFragment h = do
   frag <- hold $ ffi "document.createDocumentFragment" RecNil
-  mapM_ (renderNode frag) ns
-  pure frag
+  frag <$ renderChildren frag h
 
--- | 'checkTemplate' has already rejected both faulty shapes by the time a
--- renderer walks the tree; the throws are here so the walk stays total.
-renderNode ::
-  Effect f ('MutableObject Dom.DomElement) -> Node f -> EffectSyntax f ()
+-- | Check the template, then render its nodes into @parent@.
+renderChildren :: El f -> JsHtml f () -> EffectSyntax f ()
+renderChildren parent h@(JsHtml (ns, _)) = do
+  mapM_ throw (take 1 (templateErrors h))
+  mapM_ (renderNode parent) ns
+
+-- | 'templateErrors' has already rejected orphan modifiers and void
+-- children, so both element kinds render alike and 'build' has applied
+-- any modifiers.
+renderNode :: El f -> Node f -> EffectSyntax f ()
 renderNode parent = \case
   Element name attrs (JsHtml (ns, _)) -> build parent name attrs ns
-  Void name attrs (JsHtml (ns, _))
-    | all isModifier ns -> build parent name attrs ns
-    | otherwise -> throw (voidChildError [name] name)
+  Void name attrs (JsHtml (ns, _)) -> build parent name attrs ns
   TextNode t -> do
     -- No JShark.Dom wrapper for text nodes; appendChild takes any Node.
     node <- hold (ffi "document.createTextNode" (arg t <: RecNil))
     void (Dom.appendChild parent node)
-  Modifier _ -> throw (orphanModifierError [])
+  Modifier _ -> pure ()
 
-build ::
-  Effect f ('MutableObject Dom.DomElement)
-  -> Text
-  -> [Attribute]
-  -> [Node f]
-  -> EffectSyntax f ()
+build :: El f -> Text -> [Attribute] -> [Node f] -> EffectSyntax f ()
 build parent name attrs ns = do
   el <- Dom.createElement (string name)
-  mapM_ (applyAttribute el) attrs
-  -- Attributes first, then modifiers: a dynAttr overrides a static one.
-  let
-    (mods, children) = partitionNodes ns
-  mapM_ (applyModifier el) mods
-  mapM_ (renderNode el) children
+  -- Attributes first, then modifiers (so a dynAttr overrides a static
+  -- attribute, and properties are set before any child is appended).
+  mapM_ (\(Attribute n v) -> void (Dom.setAttribute el n (string v))) attrs
+  mapM_ ($ el) [m | Modifier m <- ns]
+  mapM_ (renderNode el) ns
   void (Dom.appendChild parent el)
-
-partitionNodes :: [Node f] -> ([Modifier f], [Node f])
-partitionNodes = foldr step ([], [])
- where
-  step (Modifier m) (ms, cs) = (m : ms, cs)
-  step n (ms, cs) = (ms, n : cs)
 
 isModifier :: Node f -> Bool
 isModifier = \case
   Modifier _ -> True
   _ -> False
-
-applyAttribute ::
-  Effect f ('MutableObject Dom.DomElement) -> Attribute -> EffectSyntax f ()
-applyAttribute el (Attribute n v) = void (Dom.setAttribute el n (string v))
-
-applyModifier ::
-  Effect f ('MutableObject Dom.DomElement) -> Modifier f -> EffectSyntax f ()
-applyModifier el = \case
-  SetAttr n v -> void (Dom.setAttribute el n v)
-  -- @toggle(cls, force)@, not @if (c) add(cls)@: one call instead of a
-  -- statement, and it clears the class when the test stops holding.
-  ClassWhen c cls ->
-    void . toSyntax $
-      callMethod el "classList.toggle" (arg (string cls) <: arg c <: RecNil)
-  SetProp n (SomeExpr v) -> void (setProp el (T.unpack n) v)
-  Listen ev body -> addEventListener_ ev el body

@@ -3,7 +3,6 @@
 module Main (main) where
 
 import Data.List (partition)
-import qualified Data.List as List
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import DevServer (Example (..), ServeMode (..), exportExamples, serveExamples)
@@ -20,9 +19,10 @@ import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life
 import JShark.Example.Registry (exampleJobs, exampleLabels)
 import qualified JShark.Example.Synth as Synth
+import JShark.Example.Theme (sourceLinks, sourceLinksLite)
 import qualified JShark.Example.TodoMvc as TodoMvc
 import JShark.HotReload.Core (defaultHotReloadConfig)
-import SourcePane (sourceHead, sourceHeadLite, sourcePane)
+import SourcePane (sourcePane)
 import System.Environment (getArgs)
 import System.Exit (die)
 
@@ -31,94 +31,38 @@ main = do
   args <- getArgs
   let
     (flags, rest) = partition isCompilerFlag args
-    (hotFlags, cmd) =
-      partition (\a -> a == "--hot" || a == "--watch") rest
+    (hotFlags, cmd) = partition (`elem` ["--hot", "--watch"]) rest
     mode =
-      if null hotFlags
-        then StaticServe
-        else HotServe defaultHotReloadConfig
-    cfg =
-      applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
+      if null hotFlags then StaticServe else HotServe defaultHotReloadConfig
+    cfg = applyCompilerArgs ("--progress" : flags) defaultCompilerConfig
     paneCfg = readableConfig {configProgress = configProgress cfg}
-    labels = exampleLabels
   compiled <- compileJobsLabeled cfg (exampleJobs cfg)
+  -- The source panes always show readable JS.
   paneCompiled <-
     if configStyle cfg == Readable
       then pure compiled
-      else
-        compileJobsLabeled
-          paneCfg
-          (exampleJobs paneCfg)
+      else compileJobsLabeled paneCfg (exampleJobs paneCfg)
   let
-    lookupIn srcs label =
-      TE.decodeUtf8 $
-        case List.lookup label (zip labels srcs) of
-          Just js -> js
-          Nothing ->
-            error (T.unpack ("examples: missing compile output for " <> label))
-    lookupCompiled = lookupIn compiled
-    lookupPane = lookupIn paneCompiled
-    breakoutJs = lookupCompiled "breakout"
-    todoJs = lookupCompiled "todo-mvc"
-    synthJs = lookupCompiled "synth"
-    lifeJs = lookupCompiled "life"
-    breakoutSrc = lookupPane "breakout"
-    todoSrc = lookupPane "todo-mvc"
-    synthSrc = lookupPane "synth"
-    lifeSrc = lookupPane "life"
+    output outputs name =
+      maybe
+        (error (T.unpack ("examples: missing compile output for " <> name)))
+        TE.decodeUtf8
+        (lookup name (zip exampleLabels outputs))
+    example name title page =
+      Example name title (page src) (output compiled name) src
+     where
+      src = output paneCompiled name
+    withPane pageFn headLinks src script static =
+      pageFn static (headLinks static) (sourcePane static src) script
     examples =
-      [ Example
-          "breakout"
-          "Breakout"
-          ( \script static ->
-              Breakout.page
-                static
-                (sourceHead static)
-                (sourcePane static breakoutSrc)
-                script
-          )
-          breakoutJs
-          (Just breakoutSrc)
-          Nothing
-      , Example
-          "todo-mvc"
-          "TodoMVC"
-          ( \script static ->
-              TodoMvc.page
-                static
-                (sourceHeadLite static)
-                (sourcePane static todoSrc)
-                script
-          )
-          todoJs
-          (Just todoSrc)
-          Nothing
-      , Example
-          "synth"
-          "Synthesizer"
-          ( \script static ->
-              Synth.page
-                static
-                (sourceHead static)
-                (sourcePane static synthSrc)
-                script
-          )
-          synthJs
-          (Just synthSrc)
-          Nothing
-      , Example
-          "life"
-          "Game of Life"
-          ( \script static ->
-              Life.page static (Life.frameSrcFor script)
-          )
-          lifeJs
-          (Just lifeSrc)
-          Nothing
+      [ example "breakout" "Breakout" (withPane Breakout.page sourceLinks)
+      , example "todo-mvc" "TodoMVC" (withPane TodoMvc.page sourceLinksLite)
+      , example "synth" "Synthesizer" (withPane Synth.page sourceLinks)
+      , example "life" "Game of Life" $ \_ script static ->
+          Life.page static (Life.frameSrcFor script)
       ]
   case cmd of
-    [] ->
-      serveExamples mode 3000 examples
+    [] -> serveExamples mode 3000 examples
     ["export", dest] -> exportExamples dest examples
     _ ->
       die

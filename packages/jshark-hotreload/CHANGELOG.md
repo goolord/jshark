@@ -11,3 +11,7 @@
   on dispose so start/stop cycles do not leak threads.
 * The embedded browser runtime is decoded as UTF-8 explicitly, so the
   package builds under a non-UTF-8 locale.
+* `JShark.HotReload.Core` reads hub state through one `currentSnapshot`
+  (replacing `currentJsHashes`, `currentRevision`, `lastBuildError`, and
+  `lastCompiling`); `setBuildError` / `setBuildStart` are dropped in favour
+  of `broadcastEvent` with `BuildError` / `BuildStart`.

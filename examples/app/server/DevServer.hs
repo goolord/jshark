@@ -1,20 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module DevServer
   ( Example (..)
   , ServeMode (..)
-  , SitePaths (..)
   , exportExamples
   , serveExamples
-  , exportPaths
-  , serverPaths
   )
 where
 
-import Control.Exception (IOException)
-import qualified Control.Exception as Exception
-import Control.Monad (forM, forM_, void, when)
+import qualified Control.Exception as E
+import Control.Monad (filterM, forM, forM_, guard, when)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -25,65 +20,29 @@ import qualified JShark.Example.Life as Life
 import JShark.Example.Theme (githubCorner, themeLinks)
 import JShark.Example.Watch (exampleWatchTargets)
 import JShark.HotReload.Core
-  ( HotReloadConfig (..)
-  , HotReloadHub
-  , lookupHtml
-  , lookupJs
-  , newHotReloadHub
-  , registerHtml
-  , registerJs
-  )
 import JShark.HotReload.Wai (hotReloadMiddleware)
-import JShark.HotReload.Watcher
-  ( WatchTargets (..)
-  , startWatcher
-  )
+import JShark.HotReload.Watcher (WatchTargets (..), startWatcher)
 import Lucid
 import Lucid.Base (makeAttribute)
 import Network.Wai.Handler.Warp (setHost, setPort)
 import Paths_jshark_examples (getDataFileName)
-import Recompile (hotCabal, hotCompileBin, prepareCabalHot, startHsRecompiler)
+import Recompile (CabalHot (..), prepareCabalHot, startHsRecompiler)
 import System.Directory
-  ( copyFile
-  , createDirectoryIfMissing
-  , doesDirectoryExist
-  , doesFileExist
-  , doesPathExist
-  , listDirectory
-  , removePathForcibly
-  )
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import System.IO.Error (isAlreadyInUseError)
 import Web.Scotty
-
-resolveDataFile :: FilePath -> IO FilePath
-resolveDataFile rel = do
-  installed <- getDataFileName rel
-  firstExisting [installed, rel, "examples" </> rel]
- where
-  firstExisting [] = fail ("serve: missing data-file " <> rel)
-  firstExisting (p : ps) = do
-    ok <- pathExists p
-    if ok then pure p else firstExisting ps
-
-pathExists :: FilePath -> IO Bool
-pathExists p = do
-  ok <- doesFileExist p
-  if ok then pure True else doesDirectoryExist p
 
 -- | One compiled example, mounted at @/<name>@ (or @<name>/@ on a static site).
 data Example = Example
   { exampleName :: T.Text
   , exampleTitle :: T.Text
   , examplePage :: T.Text -> T.Text -> Html ()
+  -- ^ The page, given its script URL and static root.
   , exampleJs :: T.Text
-  , exampleSourceJs :: Maybe T.Text
-  -- ^ Display JS for the collapsible source pane ('prettyJS' of compiled
-  --   output when set). Life serves this at @source.js@; other examples
-  --   embed it in the page.
-  , exampleJsAction :: Maybe (IO T.Text)
-  -- ^ Optional live JS provider (recompile on request).
+  , exampleSourceJs :: T.Text
+  -- ^ Display JS ('prettyJS' of the compiled output), served at
+  --   @source.js@; Life loads it there, the others embed it in the page.
   }
 
 -- | Static assets only, or hot-reload hub + filesystem watcher.
@@ -104,25 +63,34 @@ data SitePaths = SitePaths
 serverPaths :: SitePaths
 serverPaths =
   SitePaths
-    { hrefExample = ("/" <>)
-    , srcShot = \n -> "/static/img/" <> n <> ".png"
-    , srcScript = \n -> "/" <> n <> "/app.js"
-    , indexStatic = "/static"
-    , srcStatic = "/static"
-    }
+    ("/" <>)
+    (\n -> "/static/img/" <> n <> ".png")
+    (\n -> "/" <> n <> "/app.js")
+    "/static"
+    "/static"
 
 -- | Relative URLs from @index.html@ and @<name>/index.html@.
 exportPaths :: SitePaths
 exportPaths =
   SitePaths
-    { hrefExample = (<> "/")
-    , srcShot = \n -> "static/img/" <> n <> ".png"
-    , srcScript = const "app.js"
-    , indexStatic = "static"
-    , srcStatic = "../static"
-    }
+    (<> "/")
+    (\n -> "static/img/" <> n <> ".png")
+    (const "app.js")
+    "static"
+    "../static"
 
--- | Extra JS assets for an example (route suffix, data-file path under package).
+pageAt :: SitePaths -> Example -> Html ()
+pageAt paths ex =
+  examplePage ex (srcScript paths (exampleName ex)) (srcStatic paths)
+
+-- | Life's sandboxed frame document.
+frameAt :: SitePaths -> Example -> Html ()
+frameAt paths ex =
+  Life.framePage (srcStatic paths) script (Life.assetBaseFor script)
+ where
+  script = srcScript paths (exampleName ex)
+
+-- | Extra JS assets for Life (route suffix, data-file path under package).
 lifeEngineJs :: [(FilePath, FilePath)]
 lifeEngineJs =
   [ ("js/pixi.min.js", "src/JShark/Example/Life/js/pixi.min.js")
@@ -130,345 +98,208 @@ lifeEngineJs =
   , ("js/shaders/cell.frag.glsl", "src/JShark/Example/Life/shaders/cell.frag.glsl")
   ]
 
--- | Sandboxed frame fetches @app.js@ / wasm from the example origin; CORP +
--- | ACAO are required. COOP/COEP stay off the shell HTML so the frame is not
--- | blocked by require-corp (SharedArrayBuffer workers need headers on the
--- | frame document itself).
-lifeAssetHeaders :: ActionM ()
-lifeAssetHeaders = do
-  setHeader "Cross-Origin-Resource-Policy" "cross-origin"
-  setHeader "Access-Control-Allow-Origin" "*"
-
-serverHost :: String
-serverHost = "127.0.0.1"
-
-serverOpts :: Int -> Options
-serverOpts port =
-  defaultOptions
-    { settings =
-        setHost "127.0.0.1" . setPort port $ settings defaultOptions
-    }
-
 -- | Serve every example and a screenshot directory at @/@.
 -- Tries @startPort@, then successive ports until warp binds.
 serveExamples :: ServeMode -> Int -> [Example] -> IO ()
 serveExamples mode startPort examples = do
   shots <- traverse exampleShot examples
-  assets <-
-    fmap concat $
-      traverse staticAsset staticFiles
-  treeAssets <- speedHighlightAssets
-  let
-    allAssets = assets ++ treeAssets
-  lifeJs <- traverse demoAssetPath lifeEngineJs
-  mHot <- case mode of
+  assets <- staticAssets
+  lifeJs <- traverse (traverse resolveDataFile) lifeEngineJs
+  mHub <- case mode of
     StaticServe -> pure Nothing
-    HotServe cfg -> do
-      hub <- newHotReloadHub cfg
-      forM_ examples $ \ex -> do
-        void (registerJs hub (exampleName ex) (exampleJs ex))
-        let
-          script = srcScript serverPaths (exampleName ex)
-          static = srcStatic serverPaths
-          pageHtml =
-            TL.toStrict $
-              renderText (examplePage ex script static)
-        void (registerHtml hub (exampleName ex) pageHtml)
-      hot <- prepareCabalHot
-      onHs <- startHsRecompiler hub hot
-      let
-        targets =
-          (exampleWatchTargets ["examples"])
-            { onHaskellSource = onHs
-            }
-      _ <- startWatcher hub targets
-      putStrLn
-        ( "hot-reload: haskell recompiler via "
-            <> hotCompileBin hot
-            <> " using "
-            <> hotCabal hot
-        )
-      hFlush stdout
-      pure (Just (cfg, hub))
-  tryServe
-    startPort
-    startPort
-    (startPort + 100)
-    mHot
-    shots
-    allAssets
-    lifeJs
-    examples
+    HotServe cfg -> Just <$> startHot cfg examples
+  let
+    maxPort = startPort + 100
+    routes = exampleRoutes mHub shots assets lifeJs examples
+    opts port =
+      defaultOptions
+        { settings = setHost "127.0.0.1" . setPort port $ settings defaultOptions
+        }
+    serveOn port
+      | port > maxPort =
+          fail ("no free port in range " <> show startPort <> ".." <> show maxPort)
+      | otherwise = do
+          putStrLn ("Examples on http://127.0.0.1:" <> show port)
+          hFlush stdout
+          scottyOpts (opts port) routes `E.catch` \e ->
+            if isAlreadyInUseError e
+              then do
+                hPutStrLn
+                  stderr
+                  ("port " <> show port <> " in use, trying " <> show (port + 1))
+                serveOn (port + 1)
+              else E.throwIO (e :: E.IOException)
+  serveOn startPort
 
-tryServe ::
-  Int
-  -> Int
-  -> Int
-  -> Maybe (HotReloadConfig, HotReloadHub)
-  -> [(Example, Maybe FilePath)]
-  -> [(String, FilePath)]
-  -> [(FilePath, FilePath)]
-  -> [Example]
-  -> IO ()
-tryServe startPort port maxPort mHot shots assets lifeJs examples
-  | port > maxPort =
-      fail $
-        "no free port in range "
-          <> show startPort
-          <> ".."
-          <> show maxPort
-  | otherwise = do
-      putStrLn ("Examples on http://" <> serverHost <> ":" <> show port)
-      hFlush stdout
-      Exception.catch
-        ( scottyOpts
-            (serverOpts port)
-            (exampleRoutes mHot shots assets lifeJs examples)
-        )
-        $ \e ->
-          if isAlreadyInUseError e
-            then do
-              hPutStrLn
-                stderr
-                ("port " <> show port <> " in use, trying " <> show (port + 1))
-              tryServe
-                startPort
-                (port + 1)
-                maxPort
-                mHot
-                shots
-                assets
-                lifeJs
-                examples
-            else Exception.throwIO (e :: IOException)
+-- | Seed a hub with every example's JS and page, then watch the sources.
+startHot :: HotReloadConfig -> [Example] -> IO HotReloadHub
+startHot cfg examples = do
+  hub <- newHotReloadHub cfg
+  forM_ examples $ \ex -> do
+    _ <- registerJs hub (exampleName ex) (exampleJs ex)
+    registerHtml
+      hub
+      (exampleName ex)
+      (TL.toStrict (renderText (pageAt serverPaths ex)))
+  hot <- prepareCabalHot
+  onHs <- startHsRecompiler hub hot
+  _ <-
+    startWatcher hub (exampleWatchTargets ["examples"]) {onHaskellSource = onHs}
+  putStrLn . unwords $
+    ["hot-reload: haskell recompiler via", hotCompileBin hot, "using", hotCabal hot]
+  hFlush stdout
+  pure hub
 
 exampleRoutes ::
-  Maybe (HotReloadConfig, HotReloadHub)
+  Maybe HotReloadHub
   -> [(Example, Maybe FilePath)]
-  -> [(String, FilePath)]
+  -> [(FilePath, FilePath)]
   -> [(FilePath, FilePath)]
   -> [Example]
   -> ScottyM ()
-exampleRoutes mHot shots assets lifeJs examples = do
-  case mHot of
-    Just (cfg, hub) -> middleware (hotReloadMiddleware cfg hub)
-    Nothing -> pure ()
-  get "/" $ do
-    setHeader "Content-Type" "text/html; charset=utf-8"
-    html $ renderText (indexPage serverPaths shots)
+exampleRoutes mHub shots assets lifeJs examples = do
+  forM_ mHub $ \hub ->
+    middleware (hotReloadMiddleware (hotReloadConfig hub) hub)
+  get "/" $ html (renderText (indexPage serverPaths shots))
   forM_ examples $ \ex -> do
     let
-      base = "/" <> T.unpack (exampleName ex)
-      page =
-        examplePage ex (srcScript serverPaths (exampleName ex)) (srcStatic serverPaths)
-      isLife = exampleName ex == "life"
-      mHub = fmap snd mHot
-    get (fromString base) $ do
-      setHeader "Content-Type" "text/html; charset=utf-8"
-      htmlBody <- liftIO (resolveExampleHtml mHub ex page)
-      html htmlBody
-    get (fromString (base <> "/")) $ do
-      setHeader "Content-Type" "text/html; charset=utf-8"
-      htmlBody <- liftIO (resolveExampleHtml mHub ex page)
-      html htmlBody
-    get (fromString (base <> "/app.js")) $ do
-      setHeader "Content-Type" "application/javascript; charset=utf-8"
-      setHeader "Cache-Control" "no-store"
-      when isLife lifeAssetHeaders
-      js <- liftIO (resolveExampleJs mHub ex)
-      text (TL.fromStrict js)
-    forM_ (exampleSourceJs ex) $ \src ->
-      get (fromString (base <> "/source.js")) $ do
+      name = exampleName ex
+      route suffix = get (fromString ("/" <> T.unpack name <> suffix))
+      isLife = name == "life"
+      page = TL.toStrict (renderText (pageAt serverPaths ex))
+      -- The hub's latest build of an artifact, else the startup one.
+      latest lookupFn fallback = case mHub of
+        Nothing -> pure fallback
+        Just hub -> maybe fallback fst <$> lookupFn hub name
+      js load = do
         setHeader "Content-Type" "application/javascript; charset=utf-8"
         setHeader "Cache-Control" "no-store"
-        when isLife lifeAssetHeaders
-        text (TL.fromStrict src)
+        when isLife crossOrigin
+        text . TL.fromStrict =<< liftIO load
+    forM_ ["", "/"] $ \suffix ->
+      route suffix $ html . TL.fromStrict =<< liftIO (latest lookupHtml page)
+    route "/app.js" $ js (latest lookupJs (exampleJs ex))
+    route "/source.js" $ js (pure (exampleSourceJs ex))
     when isLife $ do
-      let
-        static = srcStatic serverPaths
-        script = srcScript serverPaths (exampleName ex)
-        frame =
-          Life.framePage static script (Life.assetBaseFor script)
-      get (fromString (base <> "/frame")) $ do
-        setHeader "Content-Type" "text/html; charset=utf-8"
-        lifeAssetHeaders
-        html $ renderText frame
-      get (fromString (base <> "/frame/")) $ do
-        setHeader "Content-Type" "text/html; charset=utf-8"
-        lifeAssetHeaders
-        html $ renderText frame
-      forM_ lifeJs $ \(route, path) ->
-        get (fromString (base <> "/" <> route)) $ do
-          setHeader "Content-Type" (lifeAssetType route)
-          lifeAssetHeaders
-          file path
-  forM_ assets $ \(name, path) ->
-    get (fromString ("/static/" <> name)) $ do
-      setHeader "Content-Type" (staticType name)
+      forM_ ["/frame", "/frame/"] $ \suffix ->
+        route suffix $ crossOrigin >> html (renderText (frameAt serverPaths ex))
+      forM_ lifeJs $ \(sub, path) -> route ("/" <> sub) (asset sub path)
+  forM_ assets $ \(sub, path) ->
+    get (fromString ("/static/" <> sub)) (asset sub path)
+  forM_ shots $ \(ex, shot) -> forM_ shot $ \path ->
+    get (fromString (T.unpack (srcShot serverPaths (exampleName ex)))) $ do
+      setHeader "Content-Type" "image/png"
       setHeader "Cross-Origin-Resource-Policy" "cross-origin"
-      setHeader "Access-Control-Allow-Origin" "*"
       file path
-  forM_ shots $ \(ex, path) ->
-    case path of
-      Nothing -> pure ()
-      Just filePath ->
-        get (fromString ("/static/img/" <> T.unpack (exampleName ex) <> ".png")) $ do
-          setHeader "Content-Type" "image/png"
-          setHeader "Cross-Origin-Resource-Policy" "cross-origin"
-          file filePath
+ where
+  asset route path = do
+    setHeader "Content-Type" $ case takeExtension route of
+      ".js" -> "application/javascript; charset=utf-8"
+      ".css" -> "text/css; charset=utf-8"
+      ".wasm" -> "application/wasm"
+      ".glsl" -> "text/plain; charset=utf-8"
+      _ -> "application/octet-stream"
+    crossOrigin
+    file path
+
+-- | Life's sandboxed frame fetches @app.js@ / wasm from the example origin,
+-- so CORP + ACAO are required. COOP/COEP stay off the shell HTML so the
+-- frame is not blocked by require-corp (SharedArrayBuffer workers need
+-- headers on the frame document itself).
+crossOrigin :: ActionM ()
+crossOrigin = do
+  setHeader "Cross-Origin-Resource-Policy" "cross-origin"
+  setHeader "Access-Control-Allow-Origin" "*"
 
 -- | Write a static tree GitHub Pages can host.
 exportExamples :: FilePath -> [Example] -> IO ()
 exportExamples dest examples = do
   setLocaleEncoding utf8
-  destExists <- doesPathExist dest
-  when destExists (removePathForcibly dest)
+  removePathForcibly dest
   createDirectoryIfMissing True (dest </> "static")
   shots <- traverse exampleShot examples
   TL.writeFile (dest </> "index.html") (renderText (indexPage exportPaths shots))
   writeFile (dest </> ".nojekyll") ""
-  forM_ staticFiles (copyStatic dest)
-  copySpeedHighlight dest
-  forM_ shots $ \(ex, path) ->
-    case path of
-      Nothing -> pure ()
-      Just filePath ->
-        copyFileInto
-          filePath
-          (dest </> "static" </> "img" </> (T.unpack (exampleName ex) <> ".png"))
+  assets <- staticAssets
+  forM_ assets $ \(name, src) -> copyInto src (dest </> "static" </> name)
+  forM_ shots $ \(ex, shot) -> forM_ shot $ \src ->
+    copyInto
+      src
+      (dest </> "static" </> "img" </> T.unpack (exampleName ex) <> ".png")
   forM_ examples $ \ex -> do
     let
       name = T.unpack (exampleName ex)
       dir = dest </> name
     createDirectoryIfMissing True dir
     writeFile (dest </> name <> ".html") (slashRedirect name)
-    TL.writeFile
-      (dir </> "index.html")
-      ( renderText
-          (examplePage ex (srcScript exportPaths (exampleName ex)) (srcStatic exportPaths))
-      )
+    TL.writeFile (dir </> "index.html") (renderText (pageAt exportPaths ex))
     T.writeFile (dir </> "app.js") (exampleJs ex)
     when (exampleName ex == "life") $ do
       createDirectoryIfMissing True (dir </> "frame")
-      let
-        static = srcStatic exportPaths
-        script = srcScript exportPaths (exampleName ex)
       TL.writeFile
         (dir </> "frame" </> "index.html")
-        (renderText (Life.framePage static script (Life.assetBaseFor script)))
-      forM_ (exampleSourceJs ex) $ \src ->
-        T.writeFile (dir </> "source.js") src
-      createDirectoryIfMissing True (dir </> "js")
-      createDirectoryIfMissing True (dir </> "js/shaders")
+        (renderText (frameAt exportPaths ex))
+      T.writeFile (dir </> "source.js") (exampleSourceJs ex)
       forM_ lifeEngineJs $ \(route, rel) -> do
         src <- resolveDataFile rel
-        copyFileInto src (dir </> route)
+        copyInto src (dir </> route)
+ where
+  copyInto src out = do
+    createDirectoryIfMissing True (takeDirectory out)
+    copyFile src out
 
 -- | Pretty URL without a trailing slash (@/breakout@) would otherwise resolve
 -- @app.js@ as a sibling. GitHub Pages serves @<name>.html@ for that path.
 slashRedirect :: FilePath -> String
 slashRedirect name =
-  "<!DOCTYPE html><meta charset=\"utf-8\">"
-    <> "<meta http-equiv=\"refresh\" content=\"0;url="
-    <> name
-    <> "/\">"
-    <> "<link rel=\"canonical\" href=\""
-    <> name
-    <> "/\">"
-    <> "<script>location.replace("
-    <> show (name <> "/")
-    <> ")</script>"
+  concat
+    [ "<!DOCTYPE html><meta charset=\"utf-8\">"
+    , "<meta http-equiv=\"refresh\" content=\"0;url=" <> name <> "/\">"
+    , "<link rel=\"canonical\" href=\"" <> name <> "/\">"
+    , "<script>location.replace(" <> show (name <> "/") <> ")</script>"
+    ]
 
-copyFileInto :: FilePath -> FilePath -> IO ()
-copyFileInto src dest = do
-  createDirectoryIfMissing True (takeDirectory dest)
-  copyFile src dest
-
-copyStatic :: FilePath -> FilePath -> IO ()
-copyStatic dest name = do
-  src <- resolveDataFile ("static/" <> name)
-  exists <- doesFileExist src
-  if exists
-    then copyFileInto src (dest </> "static" </> name)
-    else fail ("export: missing data-file static/" <> name)
+-- | The installed data file, else the source-tree copy (run from the
+-- package or the repo root).
+resolveDataFile :: FilePath -> IO FilePath
+resolveDataFile rel = do
+  installed <- getDataFileName rel
+  found <- filterM doesPathExist [installed, rel, "examples" </> rel]
+  case found of
+    p : _ -> pure p
+    [] -> fail ("serve: missing data-file " <> rel)
 
 exampleShot :: Example -> IO (Example, Maybe FilePath)
 exampleShot ex = do
-  path <-
-    getDataFileName ("static/img/" <> T.unpack (exampleName ex) <> ".png")
+  path <- getDataFileName ("static/img/" <> T.unpack (exampleName ex) <> ".png")
   exists <- doesFileExist path
-  pure (ex, if exists then Just path else Nothing)
+  pure (ex, path <$ guard exists)
 
-staticAsset :: FilePath -> IO [(String, FilePath)]
-staticAsset name = do
-  path <- resolveDataFile ("static/" <> name)
-  exists <- doesFileExist path
-  pure [(name, path) | exists]
-
--- | URL segment under @/static/@ for vendored speed-highlight. Must match
--- @source-pane.js@ import @../speed-highlight/index.js@.
-speedHighlightPrefix :: FilePath
-speedHighlightPrefix = "speed-highlight"
-
-speedHighlightMissing :: String
-speedHighlightMissing =
-  "missing speed-highlight tree — run scripts/vendor-speed-highlight.sh"
-
-speedHighlightAssets :: IO [(String, FilePath)]
-speedHighlightAssets = do
-  root <- resolveDataFile ("static/" <> speedHighlightPrefix)
-  exists <- doesDirectoryExist root
-  if not exists
-    then fail ("serve: " <> speedHighlightMissing)
-    else do
-      assets <- walkStaticTree root speedHighlightPrefix
-      when (null assets) $
-        fail ("serve: " <> speedHighlightMissing)
-      pure assets
-
-walkStaticTree :: FilePath -> FilePath -> IO [(String, FilePath)]
-walkStaticTree dir routePrefix = do
-  entries <- listDirectory dir
-  fmap concat $
-    forM entries $ \entry -> do
+-- | Everything under @/static/@ as (route, path): 'staticFiles' plus the
+-- vendored speed-highlight tree, whose route must match @source-pane.js@'s
+-- @../speed-highlight/index.js@ import. Routes always use @/@.
+staticAssets :: IO [(FilePath, FilePath)]
+staticAssets = do
+  listed <- forM staticFiles $ \name ->
+    (,) name <$> resolveDataFile ("static/" <> name)
+  root <- resolveDataFile "static/speed-highlight"
+  isTree <- doesDirectoryExist root
+  tree <- if isTree then walk "speed-highlight" root else pure []
+  when (null tree) $
+    fail
+      "serve: missing speed-highlight tree — run \
+      \scripts/vendor-speed-highlight.sh"
+  pure (listed ++ tree)
+ where
+  walk route dir = do
+    entries <- listDirectory dir
+    fmap concat . forM entries $ \entry -> do
       let
         path = dir </> entry
-        route = urlRoute (routePrefix </> entry)
       isDir <- doesDirectoryExist path
-      if isDir then walkStaticTree path route else pure [(route, path)]
-
--- | Scotty routes and browser URLs always use @/@; 'System.FilePath' uses
--- backslashes on Windows.
-urlRoute :: FilePath -> FilePath
-urlRoute = map (\c -> if c == '\\' || c == '/' then '/' else c)
-
-copySpeedHighlight :: FilePath -> IO ()
-copySpeedHighlight dest = do
-  assets <- speedHighlightAssets
-  when (null assets) $
-    fail ("export: " <> speedHighlightMissing)
-  forM_ assets $ \(route, src) -> do
-    let
-      out = dest </> "static" </> route
-    copyFileInto src out
-
-demoAssetPath :: (FilePath, FilePath) -> IO (FilePath, FilePath)
-demoAssetPath (route, rel) = do
-  path <- resolveDataFile rel
-  pure (route, path)
-
-lifeAssetType :: FilePath -> TL.Text
-lifeAssetType route
-  | ".wasm" `T.isSuffixOf` T.pack route = "application/wasm"
-  | ".glsl" `T.isSuffixOf` T.pack route = "text/plain; charset=utf-8"
-  | otherwise = "application/javascript; charset=utf-8"
-
-staticType :: FilePath -> TL.Text
-staticType name
-  | ".js" `T.isSuffixOf` T.pack name = "application/javascript; charset=utf-8"
-  | ".css" `T.isSuffixOf` T.pack name = "text/css; charset=utf-8"
-  | ".wasm" `T.isSuffixOf` T.pack name = "application/wasm"
-  | otherwise = "application/octet-stream"
+      if isDir
+        then walk (route <> "/" <> entry) path
+        else pure [(route <> "/" <> entry, path)]
 
 indexPage :: SitePaths -> [(Example, Maybe FilePath)] -> Html ()
 indexPage paths shots = doctypehtml_ $
@@ -485,44 +316,11 @@ indexPage paths shots = doctypehtml_ $
         header_ [class_ "page-header"] $ do
           h1_ "Examples"
           p_ [class_ "page-meta"] "JShark → JavaScript"
-        div_ [class_ "example-grid"] $ mapM_ (exampleCard paths) shots
-
-exampleCard :: SitePaths -> (Example, Maybe FilePath) -> Html ()
-exampleCard paths (ex, shot) =
-  div_ $
-    a_ [href_ (hrefExample paths (exampleName ex))] $ do
-      case shot of
-        Nothing -> mempty
-        Just _ ->
-          img_
-            [ src_ (srcShot paths (exampleName ex))
-            , alt_ (exampleTitle ex)
-            ]
-      span_ (toHtml (exampleTitle ex))
-
-resolveExampleJs :: Maybe HotReloadHub -> Example -> IO T.Text
-resolveExampleJs mHub ex =
-  case exampleJsAction ex of
-    Just act -> act
-    Nothing ->
-      case mHub of
-        Nothing -> pure (exampleJs ex)
-        Just hub -> do
-          mCached <- lookupJs hub (exampleName ex)
-          case mCached of
-            Just (src, _) -> pure src
-            Nothing -> pure (exampleJs ex)
-
-resolveExampleHtml ::
-  Maybe HotReloadHub -> Example -> Html () -> IO TL.Text
-resolveExampleHtml mHub ex fallback =
-  case mHub of
-    Nothing -> pure (renderText fallback)
-    Just hub -> do
-      mCached <- lookupHtml hub (exampleName ex)
-      case mCached of
-        Just (src, _) -> pure (TL.fromStrict src)
-        Nothing -> pure (renderText fallback)
+        div_ [class_ "example-grid"] . forM_ shots $ \(ex, shot) ->
+          div_ . a_ [href_ (hrefExample paths (exampleName ex))] $ do
+            forM_ shot $ \_ ->
+              img_ [src_ (srcShot paths (exampleName ex)), alt_ (exampleTitle ex)]
+            span_ (toHtml (exampleTitle ex))
 
 staticFiles :: [FilePath]
 staticFiles =

@@ -7,37 +7,31 @@
 -- Do not pass extra configure flags (@--offline@, @--store-dir@, @--builddir@):
 -- Cabal treats those as a new configuration and does a full rebuild.
 module Recompile
-  ( exampleAppForHs
-  , startHsRecompiler
-  , findJsharkRoot
+  ( CabalHot (..)
   , prepareCabalHot
-  , CabalHot (..)
+  , startHsRecompiler
   )
 where
 
 import Control.Concurrent (forkIO, newEmptyMVar, takeMVar, tryPutMVar)
-import Control.Concurrent.STM (atomically, newTVarIO, readTVar, writeTVar)
 import Control.Exception (SomeException, try)
-import Control.Monad (filterM, forM_, forever, void, when)
-import Data.Char (toLower)
+import Control.Monad (filterM, forM_, forever, unless, void, when)
+import Data.Char (isDigit, toLower)
 import Data.Function (on)
-import Data.List (intercalate, isInfixOf, isPrefixOf, nubBy, sortOn)
+import Data.IORef (atomicModifyIORef', newIORef)
+import Data.List
+  ( dropWhileEnd
+  , intercalate
+  , isInfixOf
+  , isPrefixOf
+  , nub
+  , nubBy
+  , sortOn
+  )
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import JShark.Example.Watch
-  ( exampleAppForHs
-  , exampleAppsForHs
-  , isLucidShellPath
-  )
+import JShark.Example.Watch (exampleAppsForHs, isLucidShellPath)
 import JShark.HotReload.Core
-  ( HotReloadEvent (..)
-  , HotReloadHub
-  , broadcastEvent
-  , registerHtml
-  , registerJs
-  , setBuildError
-  , setBuildStart
-  )
 import System.Directory
   ( createDirectoryIfMissing
   , doesFileExist
@@ -49,11 +43,7 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.IO (hFlush, hPutStrLn, stderr, stdout)
 import System.Info (os)
-import System.Process
-  ( CreateProcess (..)
-  , proc
-  , readCreateProcessWithExitCode
-  )
+import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
 
 cacheDir :: FilePath
@@ -66,49 +56,53 @@ data CabalHot = CabalHot
   , hotCompileBin :: FilePath
   }
 
-data PendingApp = PendingApp
-  { pendingName :: T.Text
-  , pendingPage :: Bool
-  -- ^ True when a Lucid shell / ThemeHead edit forced a full page reload.
-  }
-  deriving Eq
-
--- GHC package-env from @cabal run@; do not touch CABAL_DIR / CABAL_CONFIG.
-poisonGhcEnv :: [String]
-poisonGhcEnv =
-  [ "GHC_PACKAGE_PATH"
-  , "GHC_ENVIRONMENT"
-  , "HASKELL_DIST_DIR"
-  , "CABAL_SANDBOX_PACKAGE_PATH"
-  ]
-
--- | Directory that contains the @cabal.project@ (repo root).
-findJsharkRoot :: IO FilePath
-findJsharkRoot = getCurrentDirectory >>= go
+-- | Run a program without the GHC package environment that @cabal run@
+-- sets (CABAL_DIR / CABAL_CONFIG are left alone). The child environment is
+-- replaced (Windows @CreateProcess@ lpEnvironment) instead of spawning a
+-- shell to unset variables.
+runClean ::
+  Maybe FilePath -> FilePath -> [String] -> IO (ExitCode, String, String)
+runClean dir exe args = do
+  env0 <- getEnvironment
+  readCreateProcessWithExitCode
+    (proc exe args) {cwd = dir, env = Just (filter (not . poisoned . fst) env0)}
+    ""
  where
-  go dir = do
+  poisoned name =
     let
-      proj = dir </> "cabal.project"
-    hasProj <- doesFileExist proj
-    if hasProj
-      then pure dir
-      else do
-        let
-          parent = takeDirectory dir
-        if parent == dir
-          then fail ("hot-reload: cannot find cabal.project above " <> dir)
-          else go parent
+      n = map toLower name
+     in
+      n
+        `elem` [ "ghc_package_path"
+               , "ghc_environment"
+               , "haskell_dist_dir"
+               , "cabal_sandbox_package_path"
+               ]
+        || "ghc_package_path" `isPrefixOf` n
 
-isPoison :: [String] -> String -> Bool
-isPoison names name =
+-- | Same flags as the parent @cabal run@: no extra configure switches.
+runCabal :: CabalHot -> [String] -> IO (ExitCode, String, String)
+runCabal hot = runClean (Just (hotRoot hot)) (hotCabal hot)
+
+prepareCabalHot :: IO CabalHot
+prepareCabalHot = do
+  root <- getCurrentDirectory >>= findRoot
+  cabal <- findCabal
+  createDirectoryIfMissing True (root </> cacheDir)
   let
-    n = map toLower name
-   in
-    n `elem` map (map toLower) names
-      || "ghc_package_path" `isPrefixOf` n
-
-stripNames :: [String] -> [(String, String)] -> [(String, String)]
-stripNames names = filter (not . isPoison names . fst)
+    hot = CabalHot root cabal (root </> "jshark-compile")
+  bin <- listCompileBin hot
+  pure hot {hotCompileBin = bin}
+ where
+  -- The directory that contains the @cabal.project@ (repo root).
+  findRoot dir = do
+    found <- doesFileExist (dir </> "cabal.project")
+    if found
+      then pure dir
+      else
+        if takeDirectory dir == dir
+          then fail ("hot-reload: cannot find cabal.project above " <> dir)
+          else findRoot (takeDirectory dir)
 
 -- | @findExecutables@ on directory-1.3.10/Windows returns only the first
 -- PATH hit. @cabal run@ prepends @%APPDATA%\\cabal\\bin@ (often 2.x) so
@@ -116,280 +110,125 @@ stripNames names = filter (not . isPoison names . fst)
 -- Probe ghcup first and stop at the first cabal-install >= 3.8.
 findCabal :: IO FilePath
 findCabal = do
-  candidates <- listCabalCandidates
-  go candidates []
+  dirs <- getExecSearchPath
+  let
+    names = if os == "mingw32" then ["cabal.exe", "cabal"] else ["cabal"]
+  existing <- filterM doesFileExist [dir </> name | dir <- dirs, name <- names]
+  go [] . sortOn rank . filter (not . isScript) $
+    nubBy ((==) `on` map toLower) existing
  where
-  go [] scored =
+  go scored [] =
     fail $
       "hot-reload: need cabal-install >= 3.8. Found: "
         <> intercalate ", " (map describe scored)
-  go (p : ps) scored = do
-    mv <- probeCabalVersion p
-    case mv of
-      Just v | v >= [3, 8] -> pure p
-      _ -> go ps ((p, mv) : scored)
+  go scored (p : ps) = do
+    m <- timeout 2000000 (runClean Nothing p ["--numeric-version"])
+    let
+      v = do
+        Just (ExitSuccess, out, _) <- pure m
+        l : _ <- pure (filter (not . null) (map trim (lines out)))
+        parseVersion l
+    if maybe False (>= [3, 8]) v then pure p else go ((p, v) : scored) ps
   describe (p, Nothing) = p <> " (not cabal-install 3.x)"
-  describe (p, Just v) =
-    p <> " (" <> intercalate "." (map show v) <> ")"
-
-listCabalCandidates :: IO [FilePath]
-listCabalCandidates = do
-  dirs <- getExecSearchPath
-  let
-    names
-      | os == "mingw32" = ["cabal.exe", "cabal"]
-      | otherwise = ["cabal"]
-  existing <- filterM doesFileExist [dir </> name | dir <- dirs, name <- names]
-  pure
-    ( sortOn
-        cabalRank
-        (filter (not . isScript) (nubBy ((==) `on` map toLower) existing))
-    )
-
--- Prefer ghcup; skip installdir 2.x and scoop shims until later.
-cabalRank :: FilePath -> Int
-cabalRank p =
-  let
+  describe (p, Just v) = p <> " (" <> intercalate "." (map show v) <> ")"
+  -- Prefer ghcup; skip installdir 2.x and scoop shims until later.
+  rank p
+    | "ghcup" `isInfixOf` l = 0 :: Int
+    | "scoop" `isInfixOf` l && "shims" `isInfixOf` l = 8
+    | "roaming" `isInfixOf` l && "cabal" `isInfixOf` l = 7
+    | otherwise = 1
+   where
     l = map toLower p
-   in
-    if "ghcup" `isInfixOf` l
-      then 0
-      else
-        if "scoop" `isInfixOf` l && "shims" `isInfixOf` l
-          then 8
-          else
-            if "roaming" `isInfixOf` l && "cabal" `isInfixOf` l
-              then 7
-              else 1
-
-isScript :: FilePath -> Bool
-isScript p =
-  let
-    ext = map toLower (takeExtension p)
-   in
-    ext `elem` [".cmd", ".bat"]
+  isScript p =
+    map toLower (takeExtension p) `elem` [".cmd", ".bat"]
       || ".cmd" `isInfixOf` map toLower p
 
-probeCabalVersion :: FilePath -> IO (Maybe [Int])
-probeCabalVersion cabal = do
-  env0 <- getEnvironment
-  m <-
-    timeout 2000000 $
-      readCreateProcessWithExitCode
-        (proc cabal ["--numeric-version"])
-          { env = Just (stripNames poisonGhcEnv env0)
-          }
-        ""
-  pure $ case m of
-    Just (ExitSuccess, out, _) ->
-      case filter (not . null) (map trim (lines out)) of
-        (line : _) -> parseNumericVersion line
-        [] -> Nothing
-    _ -> Nothing
-
-parseNumericVersion :: String -> Maybe [Int]
-parseNumericVersion s =
-  case go s of
-    [] -> Nothing
-    vs -> Just vs
+-- | Leading dot-separated numbers: @"3.12.1.0"@ is @[3, 12, 1, 0]@.
+parseVersion :: String -> Maybe [Int]
+parseVersion s = case go s of
+  [] -> Nothing
+  vs -> Just vs
  where
-  go [] = []
-  go xs =
-    let
-      (digits, rest) = span (`elem` ['0' .. '9']) xs
-     in
-      case (digits, rest) of
-        ([], _) -> []
-        (ds, []) -> [intFromDigits ds]
-        (ds, '.' : more) -> intFromDigits ds : go more
-        _ -> []
-  intFromDigits =
-    foldl (\acc c -> acc * 10 + (fromEnum c - fromEnum '0')) 0
-
--- | Same flags as the parent @cabal run@: no extra configure switches.
-runCabalHot :: CabalHot -> [String] -> IO (ExitCode, String, String)
-runCabalHot hot =
-  runCabal (hotRoot hot) (hotCabal hot) poisonGhcEnv []
-
--- | Replace the child environment (Windows @CreateProcess@ lpEnvironment)
--- instead of spawning PowerShell to unset variables.
-runCabal ::
-  FilePath
-  -> FilePath
-  -> [String]
-  -> [(String, String)]
-  -> [String]
-  -> IO (ExitCode, String, String)
-runCabal root cabal unsetNames extra args = do
-  env0 <- getEnvironment
-  let
-    extraKeys = map fst extra
-    envBlock = extra ++ stripNames (unsetNames ++ extraKeys) env0
-  readCreateProcessWithExitCode
-    (proc cabal args)
-      { cwd = Just root
-      , env = Just envBlock
-      }
-    ""
-
-prepareCabalHot :: IO CabalHot
-prepareCabalHot = do
-  root <- findJsharkRoot
-  cabal <- findCabal
-  createDirectoryIfMissing True (root </> cacheDir)
-  let
-    hot0 =
-      CabalHot
-        { hotRoot = root
-        , hotCabal = cabal
-        , hotCompileBin = root </> "jshark-compile"
-        }
-  bin <- listCompileBin hot0
-  pure hot0 {hotCompileBin = bin}
+  go xs = case span isDigit xs of
+    ([], _) -> []
+    (ds, []) -> [read ds]
+    (ds, '.' : more) -> read ds : go more
+    _ -> []
 
 listCompileBin :: CabalHot -> IO FilePath
 listCompileBin hot = do
-  (ec, out, _) <-
-    runCabalHot hot ["list-bin", "--", "exe:jshark-compile"]
-  case ec of
-    ExitSuccess ->
-      case filter (not . null) (lines out) of
-        (p : _) -> pure (trim p)
-        [] -> pure (hotCompileBin hot)
-    ExitFailure _ -> pure (hotCompileBin hot)
+  (ec, out, _) <- runCabal hot ["list-bin", "--", "exe:jshark-compile"]
+  pure $ case (ec, filter (not . null) (lines out)) of
+    (ExitSuccess, p : _) -> trim p
+    _ -> hotCompileBin hot
 
 -- | Background worker: queue example names, rebuild @jshark-compile@, run it,
--- then register JS+HTML and broadcast @JsUpdate@ or @PageReload@.
+-- then register JS+HTML and broadcast @JsUpdate@ or @PageReload@. Returns
+-- the hook for a changed source path.
 startHsRecompiler :: HotReloadHub -> CabalHot -> IO (FilePath -> IO ())
 startHsRecompiler hub hot = do
-  pending <- newTVarIO ([] :: [PendingApp])
+  -- (app, full page reload?) requests, newest first.
+  pending <- newIORef []
   wake <- newEmptyMVar
-  void $
-    forkIO $
-      forever $ do
-        takeMVar wake
-        apps <- atomically $ do
-          xs <- readTVar pending
-          writeTVar pending []
-          pure (mergePending xs)
-        forM_ apps $ \job -> do
-          result <-
-            try (recompileOne hub hot job) :: IO (Either SomeException ())
-          case result of
-            Left ex -> do
-              hPutStrLn stderr ("hot-reload: recompile crashed: " <> show ex)
-              setBuildError hub (T.pack (show ex))
-            Right () -> pure ()
-  pure $ \path ->
-    case exampleAppsForHs path of
-      [] -> pure ()
-      names -> do
-        let
-          page = isLucidShellPath path
-          jobs = [PendingApp n page | n <- names]
-        atomically $ do
-          xs <- readTVar pending
-          writeTVar pending (jobs ++ xs)
-        void (tryPutMVar wake ())
+  void . forkIO . forever $ do
+    takeMVar wake
+    jobs <- atomicModifyIORef' pending (\js -> ([], js))
+    -- One build per app, newest first; a Lucid shell / Theme edit in any
+    -- request forces a full page reload.
+    forM_ (nub (map fst jobs)) $ \app -> do
+      let
+        page = or [p | (a, p) <- jobs, a == app]
+      result <- try (recompileOne hub hot app page)
+      case result of
+        Left ex -> do
+          hPutStrLn stderr ("hot-reload: recompile crashed: " <> show ex)
+          broadcastEvent hub (BuildError (T.pack (show (ex :: SomeException))))
+        Right () -> pure ()
+  pure $ \path -> do
+    let
+      jobs = [(app, isLucidShellPath path) | app <- exampleAppsForHs path]
+    unless (null jobs) $ do
+      atomicModifyIORef' pending (\js -> (jobs ++ js, ()))
+      void (tryPutMVar wake ())
 
-mergePending :: [PendingApp] -> [PendingApp]
-mergePending = foldr step []
+recompileOne :: HotReloadHub -> CabalHot -> T.Text -> Bool -> IO ()
+recompileOne hub hot app page = do
+  broadcastEvent hub (BuildStart app)
+  say ("compiling " <> name <> " ...")
+  built <- runCabal hot ["build", "-v0", "--", "exe:jshark-compile"]
+  whenOk "cabal build jshark-compile" built $ do
+    binExists <- doesFileExist (hotCompileBin hot)
+    bin <- if binExists then pure (hotCompileBin hot) else listCompileBin hot
+    ran <- runClean (Just (hotRoot hot)) bin [name]
+    whenOk ("jshark-compile " <> name) ran $ do
+      jsOk <- doesFileExist jsFile
+      htmlOk <- doesFileExist htmlFile
+      if not jsOk
+        then broadcastEvent hub (BuildError ("missing " <> T.pack jsFile))
+        else do
+          h <- registerJs hub app =<< T.readFile jsFile
+          when htmlOk $ void (registerHtml hub app =<< T.readFile htmlFile)
+          if page
+            then do
+              broadcastEvent hub (PageReload ("lucid:" <> app))
+              say (name <> " page reload (" <> T.unpack h <> ")")
+            else do
+              broadcastEvent hub (JsUpdate app ("/" <> app <> "/app.js") h)
+              say (name <> " js ok (" <> T.unpack h <> ")")
  where
-  step job acc =
-    case filter ((== pendingName job) . pendingName) acc of
-      [] -> job : acc
-      (old : _) ->
-        let
-          merged =
-            PendingApp
-              (pendingName job)
-              (pendingPage job || pendingPage old)
-          rest = filter ((/= pendingName job) . pendingName) acc
-         in
-          merged : rest
-
-recompileOne :: HotReloadHub -> CabalHot -> PendingApp -> IO ()
-recompileOne hub hot job = do
-  let
-    app = pendingName job
-    root = hotRoot hot
-  setBuildStart hub app
-  hPutStrLn stdout ("hot-reload: compiling " <> T.unpack app <> " ...")
-  hFlush stdout
-  (buildEc, buildOut, buildErr) <-
-    runCabalHot hot ["build", "-v0", "--", "exe:jshark-compile"]
-  case buildEc of
+  name = T.unpack app
+  jsFile = hotRoot hot </> cacheDir </> (name <> ".js")
+  htmlFile = hotRoot hot </> cacheDir </> (name <> ".html")
+  say msg = putStrLn ("hot-reload: " <> msg) >> hFlush stdout
+  whenOk what (ec, out, err) k = case ec of
+    ExitSuccess -> k
     ExitFailure code -> do
       let
-        msg =
-          T.pack $
-            "cabal build jshark-compile failed ("
-              <> show code
-              <> ")\n"
-              <> buildOut
-              <> buildErr
-      hPutStrLn stderr (T.unpack msg)
-      setBuildError hub msg
-    ExitSuccess -> do
-      binExists <- doesFileExist (hotCompileBin hot)
-      bin <-
-        if binExists
-          then pure (hotCompileBin hot)
-          else listCompileBin hot
-      env0 <- getEnvironment
-      (ec, out, err) <-
-        readCreateProcessWithExitCode
-          (proc bin [T.unpack app])
-            { cwd = Just root
-            , env = Just (stripNames poisonGhcEnv env0)
-            }
-          ""
-      case ec of
-        ExitFailure code -> do
-          let
-            msg =
-              T.pack $
-                "jshark-compile "
-                  <> T.unpack app
-                  <> " failed ("
-                  <> show code
-                  <> ")\n"
-                  <> out
-                  <> err
-          hPutStrLn stderr (T.unpack msg)
-          setBuildError hub msg
-        ExitSuccess -> loadArtifacts hub root job
-
-loadArtifacts :: HotReloadHub -> FilePath -> PendingApp -> IO ()
-loadArtifacts hub root job = do
-  let
-    app = pendingName job
-    jsFile = root </> cacheDir </> (T.unpack app <> ".js")
-    htmlFile = root </> cacheDir </> (T.unpack app <> ".html")
-  jsOk <- doesFileExist jsFile
-  htmlOk <- doesFileExist htmlFile
-  if not jsOk
-    then setBuildError hub ("missing " <> T.pack jsFile)
-    else do
-      js <- T.readFile jsFile
-      hJs <- registerJs hub app js
-      when htmlOk $ do
-        html <- T.readFile htmlFile
-        void (registerHtml hub app html)
-      if pendingPage job
-        then do
-          broadcastEvent hub (PageReload ("lucid:" <> app))
-          hPutStrLn
-            stdout
-            ("hot-reload: " <> T.unpack app <> " page reload (" <> T.unpack hJs <> ")")
-        else do
-          broadcastEvent hub (JsUpdate app ("/" <> app <> "/app.js") hJs)
-          hPutStrLn
-            stdout
-            ("hot-reload: " <> T.unpack app <> " js ok (" <> T.unpack hJs <> ")")
-      hFlush stdout
+        msg = what <> " failed (" <> show code <> ")\n" <> out <> err
+      hPutStrLn stderr msg
+      broadcastEvent hub (BuildError (T.pack msg))
 
 trim :: String -> String
-trim = reverse . dropWhile isSp . reverse . dropWhile isSp
+trim = dropWhileEnd isSp . dropWhile isSp
  where
-  isSp c = c == ' ' || c == '\r' || c == '\n' || c == '\t'
+  isSp c = c `elem` [' ', '\r', '\n', '\t']
