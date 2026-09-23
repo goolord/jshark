@@ -488,7 +488,7 @@ finish n ms = case n of
   NGetField k (Ir (NFrozen fs))
     | [mo] <- ms
     , mDrop mo
-    , Just f <- lookup k [(k', c) | IrField False k' c@(Ir cn) <- reverse fs, not (isEffectNode cn)] ->
+    , Just f <- lookup k [(k', c) | IrField False k' c <- reverse fs, isPure c] ->
         optIr f
   NFrozen _ -> (Ir n, mconcat ms)
   NObjLit _ -> (Ir n, mconcat ms)
@@ -497,6 +497,7 @@ finish n ms = case n of
   NCall {} | mx : rest <- ms -> (Ir n, effectMd (nodeMeta mx (argsChain rest)))
   _ -> (Ir n, post n (chain ms))
  where
+  isPure (Ir c) = not (isEffectNode c)
   argsChain = foldr nodeMeta mempty
   folded res keepMd = case res of
     Just v@(SomeValue lv) -> (Ir (NLit v), litMeta lv <> chain ms)

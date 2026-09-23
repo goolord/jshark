@@ -22,8 +22,10 @@ in this guide:
 
 You can also set these as `default-extensions` in your `.cabal` file.
 
-Import `JShark.Prelude` for the core API and compiler, then add qualified
-imports for the platform modules you need:
+The `jshark` package holds the typed AST, the EDSL, and the compiler;
+`jshark-base` adds the platform bindings and the IO build driver. Import
+`JShark.Prelude` (from `jshark-base`) for the core API and compiler, then add
+qualified imports for the platform modules you need:
 
 ```haskell
 import JShark.Prelude
@@ -132,18 +134,18 @@ typed `Event` with accessors for common fields:
 wire :: Effect f ('MutableObject Dom.DomElement) -> EffectSyntax f (f 'Unit)
 wire el = do
   board <- Dom.byId "board"
-  addEventListenerS "keydown" board $ \e -> do
-    k <- eventKey e
+  Dom.addEventListenerS "keydown" board $ \e -> do
+    k <- Dom.eventKey e
     toSyntax_ (callMethod el "flash" (arg k <: RecNil))
     done
   done
 ```
 
-`addEventListenerS` takes the handler directly in `EffectSyntax` (the
-`Effect`-returning variant is `addEventListener`). Typed accessors cover
+`Dom.addEventListenerS` takes the handler directly in `EffectSyntax` (the
+`Effect`-returning variant is `Dom.addEventListener`). Typed accessors cover
 `eventKey`, `eventCode`, `eventRepeat`, `eventPointerId`, `eventButton`,
-`eventShiftKey`, `eventClientX/Y`, `eventOffsetX/Y`, and
-`Dom.eventTarget`. Use the unchecked `getProp' e "name"` for other fields.
+`eventShiftKey`, `eventClientX/Y`, `eventOffsetX/Y`, and `eventTarget`, all
+in `JShark.Dom`. Use the unchecked `getProp' e "name"` for other fields.
 
 ## Records, sums, and objects
 

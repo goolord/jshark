@@ -232,7 +232,8 @@ instance
     (Expr f a -> Expr f b -> Expr f c -> Expr f d)
     ('Function a ('Function b ('Function c d)))
   where
-  toLambda g = lambdaFromRow @'[Param "a" a, Param "b" b, Param "c" c] (\p -> g p.a p.b p.c)
+  toLambda g =
+    lambdaFromRow @'[Param "a" a, Param "b" b, Param "c" c] (\p -> g p.a p.b p.c)
 
 -- | Curried @'Function@ nest from an explicit parameter row.
 lambdaRow ::

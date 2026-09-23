@@ -29,7 +29,16 @@ import Control.Monad (forM_)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Dom (Event, addEventListener, addEventListenerS, addEventListener_, eventKey, eventPointerId, eventRepeat, window)
+import JShark.Dom
+  ( Event
+  , addEventListener
+  , addEventListenerS
+  , addEventListener_
+  , eventKey
+  , eventPointerId
+  , eventRepeat
+  , window
+  )
 import JShark.Generic (newRecord)
 import qualified JShark.Dom as Dom
 import qualified JShark.Example.Synth.Audio as Audio

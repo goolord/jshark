@@ -68,13 +68,15 @@ pureAST :: ClosedExpr u -> JS
 pureAST = pureASTWith Readable
 
 pureASTWith :: OutputStyle -> ClosedExpr u -> JS
-pureASTWith st e = renderSnippet (codegen st (fst (lowerOptExprIr (st == Readable) e)))
+pureASTWith st e =
+  renderSnippet (codegen st (fst (lowerOptExprIr (st == Readable) e)))
 
 effectfulAST :: ClosedEffect u -> JS
 effectfulAST = effectfulASTWith Readable
 
 effectfulASTWith :: OutputStyle -> ClosedEffect u -> JS
-effectfulASTWith st e = renderSnippet (codegen st (fst (lowerOptEffectIrWith (st == Readable) e)))
+effectfulASTWith st e =
+  renderSnippet (codegen st (fst (lowerOptEffectIrWith (st == Readable) e)))
 
 -- | Wrap preamble, declarations, and result in an IIFE so a minifier treats
 -- the result as live.
@@ -144,7 +146,8 @@ positions n = case n of
   NObjLit fs -> NObjLit (map field fs)
   _ -> fmap ((,) (if isEffectNode n then PX else PE)) n
  where
-  field (IrField k name c@(Ir cn)) = IrField k name (if isEffectNode cn then PX else PE, c)
+  field (IrField k name c@(Ir cn)) =
+    IrField k name (if isEffectNode cn then PX else PE, c)
 
 number :: Ir -> P
 number root = fst (runState (at PE root) 0)
@@ -897,7 +900,8 @@ renderLit = \case
     | MkCode d r fx <- renderLit x ->
         MkCode d (Just ("{some: true, value: " <> fromMaybe "undefined" r <> "}")) fx
   ValueOption Nothing -> Code mempty "{some: false}"
-  ValueResult (Right x) | MkCode d r _ <- renderLit x -> MkCode d (Just (resultObject True r)) False
+  ValueResult (Right x)
+    | MkCode d r _ <- renderLit x -> MkCode d (Just (resultObject True r)) False
   ValueResult (Left x)
     | MkCode d r _ <- renderLit x -> MkCode d (Just (resultObject False r)) False
   ValueRegex s -> Code mempty ("new RegExp" <> parens (jsQuote s))

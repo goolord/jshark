@@ -17,7 +17,6 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark
 import JShark.Api
-import JShark.Dom (addEventListenerS, eventKey)
 import qualified JShark.Generic as G
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
@@ -41,8 +40,8 @@ addFn a b = lambda (\x -> x + a + b)
 wire :: Effect f ('MutableObject Dom.DomElement) -> EffectSyntax f (f 'Unit)
 wire el = do
   board <- Dom.byId "board"
-  addEventListenerS "keydown" board $ \e -> do
-    k <- eventKey e
+  Dom.addEventListenerS "keydown" board $ \e -> do
+    k <- Dom.eventKey e
     toSyntax_ (callMethod el "flash" (arg k <: RecNil))
     done
   done

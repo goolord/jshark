@@ -15,7 +15,18 @@ import Control.Monad (forM_)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Dom (Event, addEventListener, eventButton, eventClientX, eventClientY, eventCode, eventOffsetX, eventOffsetY, eventShiftKey, window)
+import JShark.Dom
+  ( Event
+  , addEventListener
+  , eventButton
+  , eventClientX
+  , eventClientY
+  , eventCode
+  , eventOffsetX
+  , eventOffsetY
+  , eventShiftKey
+  , window
+  )
 import JShark.Generic (MutableObjectOf, toObject)
 import qualified JShark.Generic as G
 import JShark.Api.Types (Effect (LambdaE, Lift), Expr (Literal, Var))
