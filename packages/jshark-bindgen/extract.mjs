@@ -3,7 +3,7 @@
 // Usage: bun extract.mjs [--module NAME] [--prefix NAME] FILE
 
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
@@ -327,7 +327,7 @@ function walkSymbol(checker, sym, ffiPrefix, into) {
 }
 
 function moduleFromFile(file) {
-  const base = file.split("/").pop().replace(/\.(d\.)?(ts|tsx|js|mjs|cjs)$/i, "");
+  const base = basename(file).replace(/\.(d\.)?(ts|tsx|js|mjs|cjs)$/i, "");
   const titled = base ? base[0].toUpperCase() + base.slice(1) : "Bindings";
   return "JShark." + titled;
 }
