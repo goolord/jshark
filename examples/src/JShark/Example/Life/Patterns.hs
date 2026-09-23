@@ -32,8 +32,8 @@ import Data.Maybe (mapMaybe)
 import Data.STRef (STRef, modifySTRef, newSTRef, readSTRef, writeSTRef)
 import Data.Text (Text)
 import Data.Word (Word8)
+import GHC.Exts (fromList)
 import GHC.ST (ST, runST)
-import JShark (packUint8)
 import JShark.Example.Life.Palette (speciesColor)
 import JShark.Example.Life.Types
 
@@ -525,7 +525,7 @@ lcgRange s n =
 
 paletteBytes :: ByteArray
 paletteBytes =
-  packUint8
+  fromList
     [ w
     | i <- [0 .. discoverMax]
     , (r, g, b) <- [speciesColor i]
