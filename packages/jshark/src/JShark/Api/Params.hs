@@ -204,54 +204,35 @@ fnLit ::
   -> Expr f ('Fn (RowUs row) r)
 fnLit k = FnLit (fnFromRow k)
 
-class ToFn k where
-  type ToFnBinder k :: (Universe -> Type)
-  type ToFnRow k :: [Type]
-  type ToFnResult k :: Universe
-  toFn :: k -> Expr (ToFnBinder k) ('Fn (RowUs (ToFnRow k)) (ToFnResult k))
+-- | An uncurried JS @function(a, b[, c])@ from a Haskell function of
+-- 'Expr's ('fnLit' with parameters named @a@, @b@, @c@).
+class ToFn f k us r | k -> f us r where
+  toFn :: k -> Expr f ('Fn us r)
 
-instance forall f a b c. ToFn (Expr f a -> Expr f b -> Expr f c) where
-  type ToFnBinder (Expr f a -> Expr f b -> Expr f c) = f
-  type ToFnRow (Expr f a -> Expr f b -> Expr f c) = '[Param "a" a, Param "b" b]
-  type ToFnResult (Expr f a -> Expr f b -> Expr f c) = c
-  toFn g =
-    fnLit @('[Param "a" a, Param "b" b]) (\p -> g p.a p.b)
+instance ToFn f (Expr f a -> Expr f b -> Expr f c) '[a, b] c where
+  toFn g = fnLit @'[Param "a" a, Param "b" b] (\p -> g p.a p.b)
 
-instance forall f a b c d. ToFn (Expr f a -> Expr f b -> Expr f c -> Expr f d) where
-  type ToFnBinder (Expr f a -> Expr f b -> Expr f c -> Expr f d) = f
-  type
-    ToFnRow (Expr f a -> Expr f b -> Expr f c -> Expr f d) =
-      '[Param "a" a, Param "b" b, Param "c" c]
-  type ToFnResult (Expr f a -> Expr f b -> Expr f c -> Expr f d) = d
-  toFn g =
-    fnLit @('[Param "a" a, Param "b" b, Param "c" c]) (\p -> g p.a p.b p.c)
+instance ToFn f (Expr f a -> Expr f b -> Expr f c -> Expr f d) '[a, b, c] d where
+  toFn g = fnLit @'[Param "a" a, Param "b" b, Param "c" c] (\p -> g p.a p.b p.c)
 
-class ToLambda k where
-  type ToLambdaBinder k :: (Universe -> Type)
-  type ToLambdaResult k :: Universe
-  toLambda :: k -> Expr (ToLambdaBinder k) (ToLambdaResult k)
+-- | A curried @'Function@ nest from a Haskell function of one to three
+-- 'Expr's ('lambdaRow' with parameters named @a@, @b@, @c@).
+class ToLambda f k fn | k -> f fn where
+  toLambda :: k -> Expr f fn
 
-instance forall f a b. ToLambda (Expr f a -> Expr f b) where
-  type ToLambdaBinder (Expr f a -> Expr f b) = f
-  type ToLambdaResult (Expr f a -> Expr f b) = 'Function a b
-  toLambda g =
-    lambdaFromRow @('[Param "a" a]) (\p -> g p.a)
+instance ToLambda f (Expr f a -> Expr f b) ('Function a b) where
+  toLambda g = lambdaFromRow @'[Param "a" a] (\p -> g p.a)
 
-instance forall f a b c. ToLambda (Expr f a -> Expr f b -> Expr f c) where
-  type ToLambdaBinder (Expr f a -> Expr f b -> Expr f c) = f
-  type
-    ToLambdaResult (Expr f a -> Expr f b -> Expr f c) =
-      'Function a ('Function b c)
-  toLambda g =
-    lambdaFromRow @('[Param "a" a, Param "b" b]) (\p -> g p.a p.b)
+instance ToLambda f (Expr f a -> Expr f b -> Expr f c) ('Function a ('Function b c)) where
+  toLambda g = lambdaFromRow @'[Param "a" a, Param "b" b] (\p -> g p.a p.b)
 
-instance forall f a b c d. ToLambda (Expr f a -> Expr f b -> Expr f c -> Expr f d) where
-  type ToLambdaBinder (Expr f a -> Expr f b -> Expr f c -> Expr f d) = f
-  type
-    ToLambdaResult (Expr f a -> Expr f b -> Expr f c -> Expr f d) =
-      'Function a ('Function b ('Function c d))
-  toLambda g =
-    lambdaFromRow @('[Param "a" a, Param "b" b, Param "c" c]) (\p -> g p.a p.b p.c)
+instance
+  ToLambda
+    f
+    (Expr f a -> Expr f b -> Expr f c -> Expr f d)
+    ('Function a ('Function b ('Function c d)))
+  where
+  toLambda g = lambdaFromRow @'[Param "a" a, Param "b" b, Param "c" c] (\p -> g p.a p.b p.c)
 
 -- | Curried @'Function@ nest from an explicit parameter row.
 lambdaRow ::

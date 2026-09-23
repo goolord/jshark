@@ -193,7 +193,7 @@ reduce arr z f = applyNamed2 reduceChecked (reduceSeed arr z) (toLambda f)
 
 reduceSeed ::
   Expr f ('Array u) -> Expr f v -> Expr f ('Object (ReduceWith v u))
-reduceSeed arr z = FrozenLit [FieldLit @"arr" arr, FieldLit @"z" z]
+reduceSeed arr z = FrozenLit [FieldLit @"arr" (ArgExpr arr), FieldLit @"z" (ArgExpr z)]
 
 reduceChecked ::
   forall f acc u.
@@ -252,7 +252,7 @@ zipWith f xs ys =
 
 zipPair ::
   Expr f ('Array a) -> Expr f ('Array b) -> Expr f ('Object (ZipPair a b))
-zipPair xs ys = FrozenLit [FieldLit @"xs" xs, FieldLit @"ys" ys]
+zipPair xs ys = FrozenLit [FieldLit @"xs" (ArgExpr xs), FieldLit @"ys" (ArgExpr ys)]
 
 zipWithChecked ::
   forall f a b c.

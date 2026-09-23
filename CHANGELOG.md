@@ -34,6 +34,14 @@
   (replacing `plusE`, …, `mkEq`, `mkGTh`, …). `emptyObject` and `seqSyntax`
   are removed (use `newObject` and `*>`). Generated JavaScript is unchanged.
 
+* **Breaking:** `FieldLit` has two constructors, `FieldLit` and
+  `FieldLitExtra`, each carrying an `Arg` (`ArgExpr` or `ArgEffect`) instead
+  of separate `…Effect` constructors. `ToFn` and `ToLambda` are
+  multi-parameter classes with functional dependencies instead of
+  associated type families. The IR's `FieldKind` becomes an out-of-row flag,
+  and the optimizer shares the evaluator's equality (`valueEqM`) and
+  ordering (`valueCompare`).
+
 * **Breaking:** the compiler core is one first-order IR
   (`JShark.Compiler.Ir`) with a single lowering pass, optimizer, and
   emitter (`JShark.Compiler.Codegen`); the generated JavaScript is

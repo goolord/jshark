@@ -256,15 +256,10 @@ impossible = error "JShark.Generic: unreachable (TypeError instance)"
 
 data FieldKind = Prim | Rec | Sum | List FieldKind | Opt FieldKind
 
-data FieldDispatch f u where
-  FDExpr :: Expr f u -> FieldDispatch f u
-  FDEffect :: Effect f u -> FieldDispatch f u
-
 toFieldLit ::
   forall k r f u.
-  (KnownSymbol k, Field r k ~ u) => FieldDispatch f u -> FieldLit f r
-toFieldLit (FDExpr e) = FieldLit @k e
-toFieldLit (FDEffect e) = FieldLitEffect @k e
+  (KnownSymbol k, Field r k ~ u) => Arg f u -> FieldLit f r
+toFieldLit = FieldLit @k
 
 type family KindOf (a :: Type) :: FieldKind where
   KindOf Double = 'Prim
@@ -286,25 +281,25 @@ type family KindOfRep (r :: Type -> Type) :: FieldKind where
   KindOfRep _ = 'Rec
 
 class DispatchField (k :: FieldKind) a where
-  dispatchField :: a -> FieldDispatch f (FieldU a)
+  dispatchField :: a -> Arg f (FieldU a)
 
 instance (ToValue a, FieldU a ~ UniverseOf a) => DispatchField 'Prim a where
-  dispatchField x = FDExpr (toJS x)
+  dispatchField x = ArgExpr (toJS x)
 
 instance
   (Generic a, GToObject (Rep a) (As a), FieldU a ~ 'MutableObject (As a)) =>
   DispatchField 'Rec a
   where
-  dispatchField x = FDEffect (toObject x)
+  dispatchField x = ArgEffect (toObject x)
 
 instance
   (Generic a, GToSum a (Rep a), FieldU a ~ 'MutableObject (Tagged a)) =>
   DispatchField 'Sum a
   where
-  dispatchField x = FDEffect (toSum x)
+  dispatchField x = ArgEffect (toSum x)
 
 instance (ToValue a, FieldU [a] ~ UniverseOf [a]) => DispatchField ('List 'Prim) [a] where
-  dispatchField x = FDExpr (toJS x)
+  dispatchField x = ArgExpr (toJS x)
 
 instance
   ( Generic a
@@ -313,29 +308,29 @@ instance
   ) =>
   DispatchField ('List 'Rec) [a]
   where
-  dispatchField x = FDEffect (toObjectArray x)
+  dispatchField x = ArgEffect (toObjectArray x)
 
 instance
   (Generic a, GToSum a (Rep a), FieldU [a] ~ 'Array ('MutableObject (Tagged a))) =>
   DispatchField ('List 'Sum) [a]
   where
-  dispatchField x = FDEffect (toSumArray x)
+  dispatchField x = ArgEffect (toSumArray x)
 
 instance
   (ToValue a, FieldU (Maybe a) ~ UniverseOf (Maybe a)) =>
   DispatchField ('Opt 'Prim) (Maybe a)
   where
-  dispatchField x = FDExpr (toJS x)
+  dispatchField x = ArgExpr (toJS x)
 
 -- | @Just@ allocates the nested object on 'Effect', then 'unsafeNullable'
 -- for JS @null@ / object — not 'some' (no Option wrapper in object fields).
 nullableObject ::
   (a -> Effect f ('MutableObject r))
   -> Maybe a
-  -> FieldDispatch f ('Option ('MutableObject r))
-nullableObject _ Nothing = FDExpr none
+  -> Arg f ('Option ('MutableObject r))
+nullableObject _ Nothing = ArgExpr none
 nullableObject toObj (Just x) =
-  FDEffect (Bind Nothing (toObj x) (\o -> Lift (unsafeNullable (var o))))
+  ArgEffect (Bind Nothing (toObj x) (\o -> Lift (unsafeNullable (var o))))
 
 instance
   ( Generic a
@@ -685,14 +680,13 @@ instance
 emitTagged :: forall a f. String -> Effect f (SumOf a)
 emitTagged name = obj [field @"tag" (string (T.pack name))]
 
-extraPayload :: Typeable u => FieldDispatch f u -> FieldLit f r
-extraPayload (FDExpr e) = FieldLitExtra @"payload" e
-extraPayload (FDEffect e) = FieldLitExtraEffect @"payload" e
+extraPayload :: Typeable u => Arg f u -> FieldLit f r
+extraPayload = FieldLitExtra @"payload"
 
 emitTaggedPayloadDispatch ::
   forall a f u.
   Typeable u =>
-  String -> FieldDispatch f u -> Effect f (SumOf a)
+  String -> Arg f u -> Effect f (SumOf a)
 emitTaggedPayloadDispatch name p =
   obj [field @"tag" (string (T.pack name)), extraPayload p]
 
@@ -703,7 +697,7 @@ emitTaggedPayloadObject ::
 emitTaggedPayloadObject name innerFields =
   obj
     [ field @"tag" (string (T.pack name))
-    , FieldLitExtraEffect @"payload" (obj innerFields)
+    , FieldLitExtra @"payload" (ArgEffect (obj innerFields))
     ]
 
 class GToPayloadN (n :: Nat) (p :: Type -> Type) (row :: Type) where

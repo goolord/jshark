@@ -146,19 +146,18 @@ lowerM = \case
 
 lowerF :: FieldLit Tag r -> L (IrField Ir)
 lowerF = \case
-  FieldLit @k e -> IrField FPlain (key @k) <$> lowerE e
-  FieldLitEffect @k e -> IrField FEff (key @k) <$> lowerX e
-  FieldLitExtra @k e -> IrField FExtra (key @k) <$> lowerE e
-  FieldLitExtraEffect @k e -> IrField FExtraEff (key @k) <$> lowerX e
+  FieldLit @k a -> IrField False (key @k) <$> lowerArg a
+  FieldLitExtra @k a -> IrField True (key @k) <$> lowerArg a
+
+lowerArg :: Arg Tag u -> L Ir
+lowerArg = \case
+  ArgExpr e -> lowerE e
+  ArgEffect e -> lowerX e
 
 lowerArgs :: Rec (Arg Tag) us -> L [Ir]
 lowerArgs = \case
   RecNil -> pure []
-  RecCons a rest -> (:) <$> arg a <*> lowerArgs rest
- where
-  arg = \case
-    ArgExpr e -> lowerE e
-    ArgEffect e -> lowerX e
+  RecCons a rest -> (:) <$> lowerArg a <*> lowerArgs rest
 
 lowerX :: Effect Tag u -> L Ir
 lowerX = \case

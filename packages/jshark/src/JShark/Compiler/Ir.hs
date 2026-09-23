@@ -20,7 +20,6 @@ module JShark.Compiler.Ir
   ( N (..)
   , Ir (..)
   , IrField (..)
-  , FieldKind (..)
   , Op1 (..)
   , Op2 (..)
   , Meth (..)
@@ -42,15 +41,11 @@ import Data.Foldable (toList)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 import Data.Maybe (fromMaybe, isJust)
-import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import GHC.TypeLits (symbolVal)
 import JShark.Api.Types
   ( CmpOp
-  , Expr (Literal)
   , FFIForm
-  , FieldLit (..)
   , FixedOp (..)
   , LamInfo (..)
   , Math1 (..)
@@ -64,26 +59,25 @@ import JShark.Compiler.Evaluate
   ( isCheapValue
   , isFiniteDouble
   , jsShow
-  , keepLastByKey
+  , RF (..)
+  , SomeValue (..)
+  , recordEq
+  , valueCompare
+  , valueEqM
   , math1Fn
   , parseBigIntString
   , tryEvalBigBin
   , typeOfValue
   )
 
--- | A 'Value' with its universe hidden.
-data SomeValue where
-  SomeValue :: Value u -> SomeValue
-
 -- | A 'FixedOp' with its universes hidden.
 data SomeFixedOp where
   SomeFixedOp :: FixedOp a b c u -> SomeFixedOp
 
--- | Declared or out-of-row ('FExtra') object field, pure or effectful.
-data FieldKind = FPlain | FEff | FExtra | FExtraEff
-  deriving Eq
-
-data IrField r = IrField !FieldKind !Text r
+-- | An object field: out-of-row flag ('FieldLitExtra'), JS name, value.
+-- Whether the value is pure or an effect is its node's position
+-- ('isEffectNode').
+data IrField r = IrField !Bool !Text r
   deriving (Functor, Foldable, Traversable)
 
 -- | Binary kernel operators. The 'Bool' on 'OEq' \/ 'ONEq' selects the
@@ -494,7 +488,7 @@ finish n ms = case n of
   NGetField k (Ir (NFrozen fs))
     | [mo] <- ms
     , mDrop mo
-    , Just f <- lookup k [(k', c) | IrField FPlain k' c <- reverse fs] ->
+    , Just f <- lookup k [(k', c) | IrField False k' c@(Ir cn) <- reverse fs, not (isEffectNode cn)] ->
         optIr f
   NFrozen _ -> (Ir n, mconcat ms)
   NObjLit _ -> (Ir n, mconcat ms)
@@ -625,7 +619,7 @@ fold2 op x y = case op of
   OCmp c -> do
     SomeValue a <- litOf x
     SomeValue b <- litOf y
-    bool . cmpOpFn c <$> sameFamilyOrd a b
+    bool . cmpOpFn c <$> valueCompare a b
   _ -> Nothing
  where
   bool = SomeValue . ValueBool
@@ -705,7 +699,7 @@ isDropFixed = \case
 -- | Fold @==@ on same-family literals and on literal frozen records.
 eqFold :: Ir -> Ir -> Maybe Bool
 eqFold (Ir (NLit (SomeValue a))) (Ir (NLit (SomeValue b)))
-  | notFn a && notFn b = sameFamilyEq a b
+  | notFn a && notFn b = valueEqM a b
  where
   notFn = \case ValueFunction _ -> False; _ -> True
 eqFold (Ir (NFrozen as)) (Ir (NFrozen bs)) = do
@@ -713,65 +707,6 @@ eqFold (Ir (NFrozen as)) (Ir (NFrozen bs)) = do
   rb <- mapM irField bs
   recordEq ra rb
  where
-  irField (IrField kind k (Ir (NLit v)))
-    | kind == FPlain || kind == FExtra = Just (RF (kind == FExtra) k v)
+  irField (IrField extra k (Ir (NLit v))) = Just (RF extra k v)
   irField _ = Nothing
 eqFold _ _ = Nothing
-
-sameFamilyEq :: Value u -> Value v -> Maybe Bool
-sameFamilyEq a b = case (a, b) of
-  (ValueNumber x, ValueNumber y) -> Just (x == y)
-  (ValueBigInt x, ValueBigInt y) -> Just (x == y)
-  (ValueString x, ValueString y) -> Just (x == y)
-  (ValueBool x, ValueBool y) -> Just (x == y)
-  (ValueUnit, ValueUnit) -> Just True
-  (ValueArray xs, ValueArray ys)
-    | length xs /= length ys -> Just False
-    | otherwise -> allM (zipWith sameFamilyEq xs ys)
-  (ValueOption (Just x), ValueOption (Just y)) -> sameFamilyEq x y
-  (ValueOption x, ValueOption y) -> Just (null x && null y)
-  (ValueResult (Left x), ValueResult (Left y)) -> sameFamilyEq x y
-  (ValueResult (Right x), ValueResult (Right y)) -> sameFamilyEq x y
-  (ValueResult _, ValueResult _) -> Just False
-  (ValueRegex x, ValueRegex y) -> Just (x == y)
-  (ValueUint8Array x, ValueUint8Array y) -> Just (x == y)
-  (ValueFrozen xs, ValueFrozen ys) -> recordEq (map valueField xs) (map valueField ys)
-  (ValueFunction _, ValueFunction _) ->
-    error "JShark.Compiler.Ir: functions cannot be compared for equality"
-  _ -> Nothing
- where
-  -- Stop at the first 'False'; an unknown pair before it blocks the fold.
-  allM = \case
-    [] -> Just True
-    Just True : rest -> allM rest
-    r : _ -> r
-
-sameFamilyOrd :: Value u -> Value v -> Maybe Ordering
-sameFamilyOrd a b = case (a, b) of
-  (ValueNumber x, ValueNumber y) -> Just (compare x y)
-  (ValueBigInt x, ValueBigInt y) -> Just (compare x y)
-  (ValueString x, ValueString y) -> Just (compare x y)
-  (ValueBool x, ValueBool y) -> Just (compare x y)
-  _ -> Nothing
-
--- | A literal record field: extra flag, JS name, value.
-data RF = RF !Bool !Text !SomeValue
-
-valueField :: FieldLit Value r -> RF
-valueField = \case
-  FieldLit @k (Literal v) -> RF False (key (Proxy @k)) (SomeValue v)
-  FieldLitExtra @k (Literal v) -> RF True (key (Proxy @k)) (SomeValue v)
-  _ -> error "JShark.Compiler.Ir.valueField: unfrozen frozen-literal field"
- where
-  key p = T.pack (symbolVal p)
-
--- | Last-wins record equality mirroring the evaluator's frozen equality.
-recordEq :: [RF] -> [RF] -> Maybe Bool
-recordEq as bs
-  | length las /= length lbs = Just False
-  | otherwise = Just (all (\fa -> any (rfEq fa) lbs) las)
- where
-  las = keepLastByKey (\(RF _ k _) -> k) as
-  lbs = keepLastByKey (\(RF _ k _) -> k) bs
-  rfEq (RF xa ka (SomeValue va)) (RF xb kb (SomeValue vb)) =
-    xa == xb && ka == kb && fromMaybe False (sameFamilyEq va vb)

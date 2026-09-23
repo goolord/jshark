@@ -135,7 +135,7 @@ data P = P {pId :: !Int, pAnn :: [Text], pN :: N P}
 data Pos = PE | PX | PRaw
 
 -- | Where each child is packed: expression, effect, or as is.
-positions :: N r -> N (Pos, r)
+positions :: N Ir -> N (Pos, Ir)
 positions n = case n of
   NLetRec t r b -> NLetRec t (PRaw, r) (PRaw, b)
   NLam t i b -> NLam t i (PRaw, b)
@@ -154,7 +154,7 @@ positions n = case n of
   NObjLit fs -> NObjLit (map field fs)
   _ -> fmap ((,) (if isEffectNode n then PX else PE)) n
  where
-  field (IrField k name c) = IrField k name (if k == FEff || k == FExtraEff then PX else PE, c)
+  field (IrField k name c@(Ir cn)) = IrField k name (if isEffectNode cn then PX else PE, c)
 
 number :: Ir -> P
 number root = fst (runState (at PE root) 0)

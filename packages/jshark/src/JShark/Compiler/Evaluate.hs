@@ -23,7 +23,11 @@ module JShark.Compiler.Evaluate
   , isCheapValue
   , jsShow
   , typeOfValue
-  , keepLastByKey
+  , SomeValue (..)
+  , RF (..)
+  , valueEqM
+  , valueCompare
+  , recordEq
   , tryEvalBigBin
   , parseBigIntString
   , uint8Elems
@@ -43,7 +47,8 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Typeable (Typeable, eqT, type (:~:) (Refl))
+import Data.Maybe (fromMaybe)
+import Data.Typeable (type (:~:) (Refl))
 import GHC.Exts
   ( Int (..)
   , indexWord8Array#
@@ -54,7 +59,7 @@ import GHC.Exts
   , (+#)
   )
 import GHC.ST (ST (..), runST)
-import GHC.TypeLits (KnownSymbol, sameSymbol)
+import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
 import JShark.Api.Types
 import Numeric (readInt)
@@ -168,19 +173,21 @@ eval = \case
 
 evalField :: FieldLit Value r -> FieldLit Value r
 evalField = \case
-  FieldLit @k e -> FieldLit @k (Literal (eval e))
-  FieldLitEffect @k (Lift e) -> FieldLit @k (Literal (eval e))
-  FieldLitExtra @k e -> FieldLitExtra @k (Literal (eval e))
-  FieldLitExtraEffect @k (Lift e) -> FieldLitExtra @k (Literal (eval e))
-  FieldLitEffect _ -> cannotEval "effectful object field (FieldLitEffect); not a pure Lift"
-  FieldLitExtraEffect _ -> cannotEval "effectful object field (FieldLitExtraEffect); not a pure Lift"
+  FieldLit @k a -> FieldLit @k (ArgExpr (Literal (evalArg a)))
+  FieldLitExtra @k a -> FieldLitExtra @k (ArgExpr (Literal (evalArg a)))
+ where
+  evalArg :: Arg Value u -> Value u
+  evalArg = \case
+    ArgExpr e -> eval e
+    ArgEffect (Lift e) -> eval e
+    ArgEffect _ -> cannotEval "effectful object field; not a pure Lift"
 
 lookupField ::
   forall k r f. KnownSymbol k => [FieldLit f r] -> Maybe (Expr f (Field r k))
 lookupField = go . reverse
  where
   go [] = Nothing
-  go (FieldLit @k' e : rest) = case sameSymbol (Proxy @k) (Proxy @k') of
+  go (FieldLit @k' (ArgExpr e) : rest) = case sameSymbol (Proxy @k) (Proxy @k') of
     Just Refl -> Just e
     Nothing -> go rest
   go (_ : rest) = go rest
@@ -202,7 +209,9 @@ evalKernel = \case
   KOr x y -> case eval x of ValueBool True -> ValueBool True; _ -> eval y
   KEq _ x y -> ValueBool (valueEq (eval x) (eval y))
   KNEq _ x y -> ValueBool (not (valueEq (eval x) (eval y)))
-  KCmp c x y -> ValueBool (cmpOpFn c (valueCompare (eval x) (eval y)))
+  KCmp c x y ->
+    maybe (cannotEval "ordering comparison") (ValueBool . cmpOpFn c) $
+      valueCompare (eval x) (eval y)
 
 evalMethod :: Method Value u -> Value u
 evalMethod = \case
@@ -275,8 +284,8 @@ evalFixed op args = case (op, args) of
      in
       ValueArray
         [ ValueFrozen
-            [ FieldLit @"key" (Literal (ValueString k))
-            , FieldLit @"items" (Literal (ValueArray (groups Map.! k)))
+            [ FieldLit @"key" (ArgExpr (Literal (ValueString k)))
+            , FieldLit @"items" (ArgExpr (Literal (ValueArray (groups Map.! k))))
             ]
         | k <- keys
         ]
@@ -329,67 +338,74 @@ isFiniteDouble d = not (isNaN d) && not (isInfinite d)
 -- Values ----------------------------------------------------------------------
 
 valueEq :: Value u -> Value u -> Bool
-valueEq a b = case (a, b) of
-  (ValueNumber x, ValueNumber y) -> x == y
-  (ValueBigInt x, ValueBigInt y) -> x == y
-  (ValueString x, ValueString y) -> x == y
-  (ValueBool x, ValueBool y) -> x == y
-  (ValueUnit, ValueUnit) -> True
-  (ValueArray xs, ValueArray ys) -> length xs == length ys && and (zipWith valueEq xs ys)
-  (ValueOption (Just x), ValueOption (Just y)) -> valueEq x y
-  (ValueOption x, ValueOption y) -> null x && null y
-  (ValueResult (Left x), ValueResult (Left y)) -> valueEq x y
-  (ValueResult (Right x), ValueResult (Right y)) -> valueEq x y
-  (ValueResult _, ValueResult _) -> False
-  (ValueRegex x, ValueRegex y) -> x == y
-  (ValueUint8Array x, ValueUint8Array y) -> x == y
-  (ValueUint8ClampedArray x, ValueUint8ClampedArray y) -> x == y
-  -- A frozen object is a record, not a handle: compare by value, last
-  -- field of each name winning.
-  (ValueFrozen xs, ValueFrozen ys) ->
-    let
-      xs' = keepLastByKey fieldKey xs
-      ys' = keepLastByKey fieldKey ys
-     in
-      length xs' == length ys' && all (\x -> any (fieldEq x) ys') xs'
+valueEq a b = fromMaybe False (valueEqM a b)
+
+-- | Structural equality across universes: 'Nothing' when the two values are
+-- not of one comparable family (so the optimizer must not fold).
+valueEqM :: Value u -> Value v -> Maybe Bool
+valueEqM a b = case (a, b) of
+  (ValueNumber x, ValueNumber y) -> Just (x == y)
+  (ValueBigInt x, ValueBigInt y) -> Just (x == y)
+  (ValueString x, ValueString y) -> Just (x == y)
+  (ValueBool x, ValueBool y) -> Just (x == y)
+  (ValueUnit, ValueUnit) -> Just True
+  (ValueArray xs, ValueArray ys)
+    | length xs /= length ys -> Just False
+    | otherwise -> allM (zipWith valueEqM xs ys)
+  (ValueOption (Just x), ValueOption (Just y)) -> valueEqM x y
+  (ValueOption x, ValueOption y) -> Just (null x && null y)
+  (ValueResult (Left x), ValueResult (Left y)) -> valueEqM x y
+  (ValueResult (Right x), ValueResult (Right y)) -> valueEqM x y
+  (ValueResult _, ValueResult _) -> Just False
+  (ValueRegex x, ValueRegex y) -> Just (x == y)
+  (ValueUint8Array x, ValueUint8Array y) -> Just (x == y)
+  (ValueUint8ClampedArray x, ValueUint8ClampedArray y) -> Just (x == y)
+  -- A frozen object is a record, not a handle: compare by value.
+  (ValueFrozen xs, ValueFrozen ys) -> recordEq (map valueField xs) (map valueField ys)
   (ValueFunction _, ValueFunction _) -> cannotEval "function equality"
-
-fieldEq :: forall r. FieldLit Value r -> FieldLit Value r -> Bool
-fieldEq x y = case (x, y) of
-  (FieldLit @k a, FieldLit @k' b) -> declared @k @k' a b
-  (FieldLitEffect @k (Lift a), FieldLitEffect @k' (Lift b)) -> declared @k @k' a b
-  (FieldLitExtra @k a, FieldLitExtra @k' b) -> extra @k @k' a b
-  (FieldLitExtraEffect @k (Lift a), FieldLitExtraEffect @k' (Lift b)) -> extra @k @k' a b
-  _ -> False
+  _ -> Nothing
  where
-  declared ::
-    forall k k'.
-    (KnownSymbol k, KnownSymbol k') =>
-    Expr Value (Field r k) -> Expr Value (Field r k') -> Bool
-  declared a b = case sameSymbol (Proxy @k) (Proxy @k') of
-    Just Refl -> forced a b
-    Nothing -> False
-  extra ::
-    forall k k' u v.
-    (KnownSymbol k, KnownSymbol k', Typeable u, Typeable v) =>
-    Expr Value u -> Expr Value v -> Bool
-  extra a b = case (sameSymbol (Proxy @k) (Proxy @k'), eqT @u @v) of
-    (Just Refl, Just Refl) -> forced a b
-    _ -> False
-  forced :: Expr Value w -> Expr Value w -> Bool
-  forced (Literal a) (Literal b) = valueEq a b
-  forced _ _ = error "evaluate: frozen field was not forced"
+  -- Stop at the first 'False'; an unknown pair before it blocks the answer.
+  allM = \case
+    [] -> Just True
+    Just True : rest -> allM rest
+    r : _ -> r
 
--- | Only numbers, bigints, strings, and booleans support ordering comparisons.
-valueCompare :: Value u -> Value u -> Ordering
+-- | A literal record field: out-of-row flag, JS name, value.
+data RF = RF !Bool !Text SomeValue
+
+-- | A 'Value' with its universe hidden.
+data SomeValue where
+  SomeValue :: Value u -> SomeValue
+
+valueField :: FieldLit Value r -> RF
+valueField = \case
+  FieldLit @k (ArgExpr (Literal v)) -> RF False (symbolText @k) (SomeValue v)
+  FieldLitExtra @k (ArgExpr (Literal v)) -> RF True (symbolText @k) (SomeValue v)
+  _ -> error "evaluate: frozen field was not forced"
+ where
+  symbolText :: forall k. KnownSymbol k => Text
+  symbolText = T.pack (symbolVal (Proxy @k))
+
+-- | Record equality, the last field of each name winning.
+recordEq :: [RF] -> [RF] -> Maybe Bool
+recordEq as bs
+  | length las /= length lbs = Just False
+  | otherwise = Just (all (\fa -> any (rfEq fa) lbs) las)
+ where
+  las = keepLastByKey (\(RF _ k _) -> k) as
+  lbs = keepLastByKey (\(RF _ k _) -> k) bs
+  rfEq (RF xa ka (SomeValue va)) (RF xb kb (SomeValue vb)) =
+    xa == xb && ka == kb && fromMaybe False (valueEqM va vb)
+
+-- | Ordering on numbers, bigints, strings, and booleans; 'Nothing' otherwise.
+valueCompare :: Value u -> Value v -> Maybe Ordering
 valueCompare a b = case (a, b) of
-  (ValueNumber x, ValueNumber y) -> compare x y
-  (ValueBigInt x, ValueBigInt y) -> compare x y
-  (ValueString x, ValueString y) -> compare x y
-  (ValueBool x, ValueBool y) -> compare x y
-  _ ->
-    error
-      "evaluate: only numbers, bigints, strings, and booleans support ordering comparisons"
+  (ValueNumber x, ValueNumber y) -> Just (compare x y)
+  (ValueBigInt x, ValueBigInt y) -> Just (compare x y)
+  (ValueString x, ValueString y) -> Just (compare x y)
+  (ValueBool x, ValueBool y) -> Just (compare x y)
+  _ -> Nothing
 
 -- | Duplicable without cost: scalars, and results carrying one.
 isCheapValue :: Value u -> Bool

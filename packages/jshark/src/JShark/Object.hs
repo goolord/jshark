@@ -89,12 +89,12 @@ newObject = UnsafeObject "{}"
 
 -- | A frozen-object field literal @k: v@.
 field :: forall k r f. KnownSymbol k => Expr f (Field r k) -> FieldLit f r
-field = FieldLit @k
+field = FieldLit @k . ArgExpr
 
 -- | An effectful field literal @k: v@ (see 'obj').
 fieldEffect ::
   forall k r f. KnownSymbol k => Effect f (Field r k) -> FieldLit f r
-fieldEffect = FieldLitEffect @k
+fieldEffect = FieldLit @k . ArgEffect
 
 -- | Typed mutable object literal @{k: v, …}@. Identity-sensitive; not cheap to inline.
 obj :: [FieldLit f r] -> Effect f ('MutableObject r)

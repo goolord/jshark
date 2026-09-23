@@ -43,7 +43,7 @@ module JShark.Api.Types
   , Effect (..)
   , Arg (..)
   , Field
-  , FieldLit (FieldLit, FieldLitEffect, FieldLitExtra, FieldLitExtraEffect)
+  , FieldLit (..)
   , fieldKey
   , FFIForm (..)
   , Expr (..)
@@ -363,38 +363,19 @@ type instance Field (ReduceWith acc u) "arr" = 'Array u
 
 type instance Field (ReduceWith acc u) "z" = acc
 
--- | One field of an object literal. @k@ is the JS name ('fieldKey').
--- Typed constructors require the value's universe to be 'Field' @r@ @k@.
--- Extra constructors carry a key that is not in the row (Generic sum
--- @payload@ on 'Tagged').
+-- | One field of an object literal, pure ('ArgExpr') or effectful
+-- ('ArgEffect'). @k@ is the JS name ('fieldKey'). 'FieldLit' requires the
+-- value's universe to be 'Field' @r@ @k@; 'FieldLitExtra' carries a key
+-- that is not in the row (Generic sum @payload@ on 'Tagged').
 data FieldLit (f :: Universe -> Type) (r :: Type) where
-  -- | A known field with a pure value; the universe comes from 'Field'.
-  FieldLit ::
-    forall k f r.
-    KnownSymbol k =>
-    Expr f (Field r k) -> FieldLit f r
-  -- | A known field with an effectful value.
-  FieldLitEffect ::
-    forall k f r.
-    KnownSymbol k =>
-    Effect f (Field r k) -> FieldLit f r
-  -- | An out-of-row field with a pure value (used for sum @payload@).
+  FieldLit :: forall k f r. KnownSymbol k => Arg f (Field r k) -> FieldLit f r
   FieldLitExtra ::
-    forall k f r u.
-    (KnownSymbol k, Typeable u) =>
-    Expr f u -> FieldLit f r
-  -- | An out-of-row field with an effectful value.
-  FieldLitExtraEffect ::
-    forall k f r u.
-    (KnownSymbol k, Typeable u) =>
-    Effect f u -> FieldLit f r
+    forall k f r u. (KnownSymbol k, Typeable u) => Arg f u -> FieldLit f r
 
 -- | The JS property name carried by a 'FieldLit'.
 fieldKey :: FieldLit f r -> Text
 fieldKey (FieldLit @k _) = T.pack (symbolVal (Proxy :: Proxy k))
-fieldKey (FieldLitEffect @k _) = T.pack (symbolVal (Proxy :: Proxy k))
 fieldKey (FieldLitExtra @k _) = T.pack (symbolVal (Proxy :: Proxy k))
-fieldKey (FieldLitExtraEffect @k _) = T.pack (symbolVal (Proxy :: Proxy k))
 
 -- | PHOAS spine for @'Fn'@: @JfCons@ binders, @JfNil@ body.
 data FnBody (f :: Universe -> Type) (us :: [Universe]) (r :: Universe) where
