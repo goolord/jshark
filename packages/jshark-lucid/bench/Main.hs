@@ -11,7 +11,6 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import JShark
 import JShark.Api
-import JShark.Api.Rec (Rec (..))
 import JShark.Internal (effectfulAST, optimizedEffectSize)
 import JShark.Lucid
 import Lucid (button_, class_, div_, label_, li_, type_)

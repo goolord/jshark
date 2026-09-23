@@ -23,8 +23,7 @@ module JShark.Example.Life.Engine
 where
 
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf, newRecord)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (MutableObjectOf, newRecord)
 import JShark.Api.Types (Effect (FFI), FFIForm (FFILambda))
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)

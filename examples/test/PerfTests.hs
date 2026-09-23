@@ -15,7 +15,6 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import JShark (ClosedEffect, renderJS)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Api.Types as Ty
 import JShark.Example.Life (mainJS)
 import JShark.Internal (effectfulAST, optimizedEffectSize)

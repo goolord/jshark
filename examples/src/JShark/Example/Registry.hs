@@ -11,7 +11,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api.Syntax (fromSyntax)
 import JShark.Api.Types (ClosedEffect, Universe (Unit))
-import JShark.Compiler (CompilerConfig)
+import JShark.Build (CompilerConfig)
 import qualified JShark.Example.Breakout as Breakout
 import qualified JShark.Example.Life as Life
 import qualified JShark.Example.Synth as Synth

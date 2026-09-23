@@ -57,7 +57,7 @@ jobs:
         run: |
           version=$(sed -n 's/^version:[[:space:]]*//p' packages/jshark/jshark.cabal | head -1 | tr -d '[:space:]')
           paths=""
-          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+          for p in jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload; do
             t="dist-newstyle/sdist/$p-$version.tar.gz"
             test -f "$t" || { echo "missing verified tarball $t" >&2; exit 1; }
             paths="$paths $t"
@@ -80,7 +80,7 @@ jobs:
           fi
           # jshark first so dependents resolve.
           version=$(sed -n 's/^version:[[:space:]]*//p' packages/jshark/jshark.cabal | head -1 | tr -d '[:space:]')
-          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+          for p in jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload; do
             cabal upload --publish --token="$HACKAGE_TOKEN" "dist-newstyle/sdist/$p-$version.tar.gz"
           done
 

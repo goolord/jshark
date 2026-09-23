@@ -21,7 +21,7 @@ import JShark
   , pureProgram
   , renderJS
   )
-import JShark.Compiler
+import JShark.Build
   ( compileEffect
   , compilePure
   , defaultCompilerConfig

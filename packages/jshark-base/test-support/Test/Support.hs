@@ -53,6 +53,8 @@ module Test.Support
   , assertJSOmits
   , assertThrows
   , captureStderr
+  , andK
+  , orK
   , requireBiome
   )
 where
@@ -69,11 +71,10 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import JShark (JS, evaluate, renderJS)
 import JShark.Api
-import JShark.Api.Caller (callerBinderHint)
-import qualified JShark.Api.Generic as G
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Api.Syntax (callerBinderHint)
+import qualified JShark.Generic as G
 import JShark.Api.Types
-import JShark.Compiler (biomeAvailable)
+import JShark.Build (biomeAvailable)
 import JShark.Internal (effectfulAST, pureAST)
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
@@ -260,3 +261,8 @@ requireBiome = do
   avail <- biomeAvailable
   unless avail $
     assertFailure "biome not on PATH (install biome, bunx, or use nix develop)"
+
+-- | Raw kernel @&&@ \/ @||@ nodes that bypass the smart constructors' folds.
+andK, orK :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
+andK x y = Std (Kernel (KAnd x y))
+orK x y = Std (Kernel (KOr x y))

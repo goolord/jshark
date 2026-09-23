@@ -7,7 +7,6 @@ module Main (main) where
 import Bench.Stages (stageBenches, stageBenchesPure)
 import JShark
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Internal (optimizedEffectSize)
 import Test.Tasty.Bench
 

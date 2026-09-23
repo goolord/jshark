@@ -13,12 +13,12 @@ trap 'rm -rf "$tmp"' EXIT
 
 echo "== sdist =="
 rm -f dist-newstyle/sdist/*.tar.gz
-cabal sdist jshark jshark-lucid jshark-bindgen jshark-hotreload
+cabal sdist jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload
 
 version=$(sed -n 's/^version:[[:space:]]*//p' packages/jshark/jshark.cabal | head -1 | tr -d '[:space:]')
 
 echo "== unpack into $tmp =="
-for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+for p in jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload; do
   tarball="dist-newstyle/sdist/$p-$version.tar.gz"
   if [ ! -f "$tarball" ]; then
     echo "missing $tarball" >&2

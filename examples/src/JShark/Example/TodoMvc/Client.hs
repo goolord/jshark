@@ -13,8 +13,8 @@ module JShark.Example.TodoMvc.Client (mainJS, Todo, AppState) where
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf, newRecord)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Dom (addEventListener_, locationHash, onClick_, window)
+import JShark.Generic (MutableObjectOf, newRecord)
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import qualified JShark.Dom as Dom

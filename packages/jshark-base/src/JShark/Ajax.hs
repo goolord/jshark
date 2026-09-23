@@ -19,7 +19,6 @@ where
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as T
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Promise (Promise)
 import Network.HTTP.Types
 

@@ -3,14 +3,15 @@
 Run these commands from the repository root unless noted. The Cabal project
 contains five packages:
 
-- `packages/jshark` — core EDSL + compiler (suite `jshark-test`, bench `jshark-compiler`)
+- `packages/jshark` — core AST, EDSL surface, and compiler
+- `packages/jshark-base` — platform bindings and tooling; hosts the integration suite `jshark-test` and bench `jshark-compiler`
 - `packages/jshark-lucid` — Lucid DOM integration (suite `jshark-lucid-test`, bench `jshark-lucid-bench`)
 - `packages/jshark-bindgen` — TypeScript/JS FFI generator (suite `jshark-bindgen-test`)
 - `packages/jshark-hotreload` — hot-reload hub/WAI/watcher (suite `jshark-hotreload-test`)
 - `examples` — the four showcase apps, dev server, and compiler (suite `jshark-examples-test`, bench `jshark-examples-bench`)
 
-Shared test/bench support is the `jshark:testing` sublibrary
-(`packages/jshark/test-support/`: `Test.Support`, `CaptureStderr`,
+Shared test/bench support is the `jshark-base:testing` sublibrary
+(`packages/jshark-base/test-support/`: `Test.Support`, `CaptureStderr`,
 `Bench.Stages`); it is used by the core suite and by the examples package.
 
 ## Prerequisites
@@ -94,12 +95,12 @@ Benchmarks use tasty-bench and are for manual investigation only.
 
 | Cabal target | Package | Purpose |
 |--------------|---------|---------|
-| `jshark-compiler` | `jshark` | Synthetic programs at growing sizes (`packages/jshark/bench/Main.hs`) |
+| `jshark-compiler` | `jshark-base` | Synthetic programs at growing sizes (`packages/jshark-base/bench/Main.hs`) |
 | `jshark-examples-bench` | `examples` | Each example's whole program (`examples/bench/Main.hs`) |
 | `jshark-lucid-bench` | `jshark-lucid` | Lucid → DOM compile path |
 
 Both compiler benches split each program into the stages defined by
-`Bench.Stages` in the `jshark:testing` sublibrary:
+`Bench.Stages` in the `jshark-base:testing` sublibrary:
 
 | Bench | Meaning |
 |-------|---------|
@@ -195,8 +196,8 @@ cabal bench jshark-examples-bench -- -t 120s -p 'life'
 
 | Path | Role |
 |------|------|
-| `packages/jshark/test/Main.hs` | core test tree |
-| `packages/jshark/bench/Main.hs`, `Bench.Stages` (in `jshark:testing`) | synthetic `jshark-compiler` bench |
+| `packages/jshark-base/test/Main.hs` | core test tree |
+| `packages/jshark-base/bench/Main.hs`, `Bench.Stages` (in `jshark-base:testing`) | synthetic `jshark-compiler` bench |
 | `examples/test/Main.hs` | example/Life test tree |
 | `examples/test/ExampleTests.hs` | Bun parse tests for every example |
 | `examples/test/LifeTests.hs`, `BunTests.hs` | runtime JS checks |

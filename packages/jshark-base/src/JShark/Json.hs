@@ -11,7 +11,6 @@ module JShark.Json
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 
 -- | @JSON.stringify(x)@. Effectful: it throws on @BigInt@ and cyclic

@@ -117,7 +117,8 @@ JavaScript they compile to: **<https://goolord.github.io/jshark/>**
 
 | | |
 | :--- | :--- |
-| [**jshark**](packages/jshark) | The EDSL, host evaluator, and compiler. |
+| [**jshark**](packages/jshark) | The typed AST, the EDSL surface, the host evaluator, and the compiler. |
+| [**jshark-base**](packages/jshark-base) | Platform bindings (arrays, maps, DOM, canvas, timers, …), `Generic` encodings, the IO build driver, and the Bun runner. |
 | [**jshark-lucid**](packages/jshark-lucid) | DOM construction using Lucid's element and attribute combinators. |
 | [**jshark-bindgen**](packages/jshark-bindgen) | Generates typed Haskell bindings from TypeScript `.d.ts` files. |
 | [**jshark-hotreload**](packages/jshark-hotreload) | File watcher and SSE middleware for live reloading in a dev server. |

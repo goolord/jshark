@@ -13,7 +13,6 @@ module BindgenPlain
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 
 greet ::
   Expr f ('String)

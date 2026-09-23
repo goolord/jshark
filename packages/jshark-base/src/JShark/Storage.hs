@@ -14,7 +14,6 @@ module JShark.Storage
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Object hiding (get, set)
 
 -- | Opaque Web Storage handle ('localStorage' or 'sessionStorage').

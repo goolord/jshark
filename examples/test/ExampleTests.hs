@@ -14,7 +14,7 @@ import qualified Data.ByteString.Char8 as BC
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Bun.Internal (runJS)
-import JShark.Compiler (compileEffect, readableConfig)
+import JShark.Build (compileEffect, readableConfig)
 import JShark.Example.Registry (exampleLabels, exampleMainJS)
 import JShark.Example.Watch
   ( exampleAppForHs

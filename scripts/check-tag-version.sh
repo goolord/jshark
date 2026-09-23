@@ -18,7 +18,7 @@ case "$tag" in
 esac
 
 rc=0
-for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+for p in jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload; do
   cabal_file="packages/$p/$p.cabal"
   if [ ! -f "$cabal_file" ]; then
     echo "missing $cabal_file" >&2

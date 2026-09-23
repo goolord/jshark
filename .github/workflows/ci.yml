@@ -64,15 +64,15 @@ jobs:
 
       - name: Hackage checks
         run: |
-          for p in jshark jshark-lucid jshark-bindgen jshark-hotreload; do
+          for p in jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload; do
             (cd "packages/$p" && cabal check)
           done
 
       - name: Source distributions
-        run: cabal sdist jshark jshark-lucid jshark-bindgen jshark-hotreload
+        run: cabal sdist jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload
 
       - name: Haddock
-        run: cabal haddock jshark jshark-lucid jshark-bindgen jshark-hotreload
+        run: cabal haddock jshark jshark-base jshark-lucid jshark-bindgen jshark-hotreload
 
   pages-build:
     needs: check

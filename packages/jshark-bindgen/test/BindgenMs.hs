@@ -12,7 +12,6 @@ module BindgenMs
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 
 ms ::
   Expr f ('String)

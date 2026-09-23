@@ -32,8 +32,7 @@ where
 
 import Control.Monad (forM_)
 import JShark.Api
-import JShark.Api.Generic (toObject)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (toObject)
 import qualified JShark.Array as Array
 import JShark.Example.Life.DiscoverRuntime (collectPhaseKey)
 import JShark.Example.Life.Grid

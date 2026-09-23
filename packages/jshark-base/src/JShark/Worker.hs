@@ -17,7 +17,6 @@ module JShark.Worker
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 
 -- | @globalThis.crossOriginIsolated === true@ — COOP/COEP isolation is active.
 crossOriginIsolated :: EffectSyntax f (Expr f 'Bool)

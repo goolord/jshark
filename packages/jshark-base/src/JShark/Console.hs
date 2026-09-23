@@ -13,7 +13,6 @@ where
 
 import Data.Text (Text)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import Prelude hiding (error, log)
 
 console_ :: Text -> Expr f u -> EffectSyntax f ()

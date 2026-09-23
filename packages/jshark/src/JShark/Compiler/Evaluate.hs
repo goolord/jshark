@@ -187,10 +187,14 @@ lookupField = go . reverse
 
 evalKernel :: Kernel Value u -> Value u
 evalKernel = \case
-  KNum op x y -> ValueNumber (numOpFn op (num x) (num y))
-  KNegate x -> ValueNumber (negate (num x))
-  KBig op x y -> ValueBigInt (evalBigBin op (big x) (big y))
-  KBigNeg x -> ValueBigInt (negate (big x))
+  KNum op x y -> case (eval x, eval y) of
+    (ValueNumber a, ValueNumber b) -> ValueNumber (numOpFn op a b)
+    (ValueBigInt a, ValueBigInt b) -> ValueBigInt (evalBigBin op a b)
+    _ -> cannotEval "arithmetic operand"
+  KNegate x -> case eval x of
+    ValueNumber a -> ValueNumber (negate a)
+    ValueBigInt a -> ValueBigInt (negate a)
+    _ -> cannotEval "negation operand"
   KConcat x y -> ValueString (str x <> str y)
   KShow x -> ValueString (jsShow (eval x))
   KTypeOf x -> ValueString (typeOfValue (eval x))
@@ -495,29 +499,29 @@ digitBelow base c
   | Char.isAsciiUpper c = Char.ord c - Char.ord 'A' + 10 < base
   | otherwise = False
 
-evalBigBin :: BigBinOp -> Integer -> Integer -> Integer
+evalBigBin :: NumOp -> Integer -> Integer -> Integer
 evalBigBin op a b = case op of
-  BPlus -> a + b
-  BMinus -> a - b
-  BTimes -> a * b
-  BQuot -> quot a b
-  BRem -> rem a b
-  BBitAnd -> a .&. b
-  BBitOr -> a .|. b
-  BBitXor -> xor a b
-  BShl -> if b < 0 then negShift else shiftL a (fromInteger b)
-  BShr -> if b < 0 then negShift else shiftR a (fromInteger b)
+  NPlus -> a + b
+  NMinus -> a - b
+  NTimes -> a * b
+  NDiv -> quot a b
+  NRem -> rem a b
+  NBitAnd -> a .&. b
+  NBitOr -> a .|. b
+  NBitXor -> xor a b
+  NShl -> if b < 0 then negShift else shiftL a (fromInteger b)
+  NShr -> if b < 0 then negShift else shiftR a (fromInteger b)
+  NUShr -> jsFailure "BigInts have no unsigned right shift"
  where
   negShift = jsFailure "BigInt shift count is negative"
 
 -- | 'evalBigBin' where it cannot throw.
-tryEvalBigBin :: BigBinOp -> Integer -> Integer -> Maybe Integer
-tryEvalBigBin op a b = case op of
-  BQuot | b == 0 -> Nothing
-  BRem | b == 0 -> Nothing
-  BShl | b < 0 -> Nothing
-  BShr | b < 0 -> Nothing
-  _ -> Just (evalBigBin op a b)
+tryEvalBigBin :: NumOp -> Integer -> Integer -> Maybe Integer
+tryEvalBigBin op a b
+  | op `elem` [NDiv, NRem], b == 0 = Nothing
+  | op `elem` [NShl, NShr], b < 0 = Nothing
+  | NUShr <- op = Nothing
+  | otherwise = Just (evalBigBin op a b)
 
 uint8Elems :: ByteArray -> [Word8]
 uint8Elems (ByteArray ba#) =

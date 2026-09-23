@@ -33,7 +33,7 @@ import qualified JShark.Dom as Dom
 ```
 
 Platform modules share many names with base (`JShark.String.length`,
-`JShark.Map.lookup`), so keep them qualified. `JShark.Api.Classes`
+`JShark.Map.lookup`), so keep them qualified. `JShark.Classes`
 provides `Functor`/`Monad`-style instances for the EDSL types and is
 also designed for qualified import.
 

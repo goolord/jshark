@@ -76,7 +76,6 @@ import Data.String (IsString (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Dom as Dom
 import Lucid.Base (Attribute (..), Term (..), With (..))
 
@@ -173,7 +172,7 @@ prop n v = modifier $ \el -> void (setProp el (T.unpack n) v)
 
 -- | @el.addEventListener(event, () => body)@.
 on :: Text -> EffectSyntax f (f 'Unit) -> JsHtml f ()
-on ev body = modifier $ \el -> addEventListener_ ev el body
+on ev body = modifier $ \el -> Dom.addEventListener_ ev el body
 
 -- | A structural problem with a template. 'tePath' is the chain of element
 -- names from the root to the offending node (empty for a root modifier).

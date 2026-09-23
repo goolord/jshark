@@ -32,8 +32,7 @@ import Control.Monad (forM_)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf, newRecord)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (MutableObjectOf, newRecord)
 import JShark.Api.Types (Effect (Lift))
 import qualified JShark.Array as Array
 import qualified JShark.Dom as Dom

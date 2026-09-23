@@ -24,7 +24,6 @@ module BindgenToy
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 
 -- | JS @toy.Size@.
 data Size

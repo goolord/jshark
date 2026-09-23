@@ -1,0 +1,165 @@
+cabal-version: 3.4
+
+-- jshark-base: platform bindings, build tooling, and test support for jshark.
+name: jshark-base
+version: 0.1.0.0
+synopsis: Platform bindings and tooling for the JShark EDSL
+description:
+  Everything around the @jshark@ core that is not the AST or the compiler:
+  typed bindings for the JavaScript standard library and browser platform
+  (arrays, maps, DOM, canvas, timers, workers, …), the @Generic@ record
+  and sum encodings, universe-indexed @Functor@ \/ @Monad@ classes, the
+  IO build driver (Biome formatting, batch compiles, CLI flags), and a
+  Bun runner for executing compiled programs.
+homepage: https://github.com/goolord/jshark
+bug-reports: https://github.com/goolord/jshark/issues
+license: BSD-3-Clause
+license-file: LICENSE
+author:
+  goolord
+  chessai
+  Andrew Martin
+maintainer:
+  goolord <zacharyachurchill@gmail.com>
+copyright:
+  copyright 2019 goolord
+  copyright 2019 chessai
+  copyright 2019 Andrew Martin
+  copyright 2019 Kyle McKean
+category: Language
+stability: experimental
+build-type: Simple
+tested-with: GHC == 9.14.1
+extra-doc-files:
+  README.md
+  CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/goolord/jshark
+
+flag werror
+  description: Treat warnings as errors (development builds)
+  manual: True
+  default: False
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wextra
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+  if flag(werror)
+    ghc-options: -Werror
+
+library
+  import: warnings
+  exposed-modules:
+    JShark.Ajax
+    JShark.Array
+    JShark.Build
+    JShark.Bun
+    JShark.Bun.Internal
+    JShark.Canvas
+    JShark.Classes
+    JShark.Console
+    JShark.Dom
+    JShark.Generic
+    JShark.Json
+    JShark.Map
+    JShark.Math
+    JShark.Prelude
+    JShark.Promise
+    JShark.Regex
+    JShark.Set
+    JShark.Storage
+    JShark.String
+    JShark.Timers
+    JShark.Worker
+  build-depends:
+    , async >= 2.2 && < 2.4
+    , base >= 4.17 && < 5
+    , bytestring >= 0.10.8 && < 0.13
+    , directory >= 1.3 && < 1.4
+    , filepath >= 1.4 && < 1.6
+    , http-types >= 0.8 && < 1
+    , jshark >= 0.1 && < 0.2
+    , process >= 1.6 && < 1.7
+    , text >= 1.2 && < 3
+    , typed-process >= 0.2.11 && < 0.3
+  hs-source-dirs: src
+  default-language: Haskell2010
+
+-- | Shared test/bench support. Public so the example package (which
+-- cannot depend on a private component) can reuse it; this is not a
+-- user-facing API and may change without notice.
+library testing
+  import: warnings
+  visibility: public
+  exposed-modules:
+    Bench.Stages
+    CaptureStderr
+    Test.Support
+  hs-source-dirs: test-support
+  build-depends:
+    , base >= 4.17 && < 5
+    , bytestring >= 0.10.8 && < 0.13
+    , jshark
+    , jshark-base
+    , tasty >= 1.4 && < 1.6
+    , tasty-bench >= 0.3.5 && < 0.4
+    , tasty-hunit >= 0.10 && < 0.11
+    , text >= 1.2 && < 3
+  default-language: Haskell2010
+
+test-suite jshark-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+    TutorialSnippets
+  hs-source-dirs: test
+  build-depends:
+    , base
+    , bytestring >= 0.10.8 && < 0.13
+    , directory >= 1.3 && < 1.4
+    , filepath >= 1.4 && < 1.6
+    , jshark
+    , jshark-base
+    , jshark-base:testing
+    , tasty >= 1.4 && < 1.6
+    , tasty-hunit >= 0.10 && < 0.11
+    , text >= 1.2 && < 3
+    , vector >= 0.12 && < 0.14
+  default-language: Haskell2010
+  ghc-options:
+    -Wno-deprecations
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N1
+    -with-rtsopts=-M10G
+
+benchmark jshark-compiler
+  import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: bench
+  build-depends:
+    , base
+    , jshark
+    , jshark-base:testing
+    , tasty-bench >= 0.3.5 && < 0.4
+    , text >= 1.2 && < 3
+  default-language: Haskell2010
+  ghc-options:
+    -threaded
+    -rtsopts
+    -with-rtsopts=-N
+    -with-rtsopts=-M10G

@@ -19,7 +19,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Dom (locationHash)
 import qualified JShark.Array as Array
 import JShark.Bun
   ( BunConfig (..)
@@ -32,7 +32,7 @@ import JShark.Bun
   )
 import JShark.Bun.Internal (runJS, runJSTagged, runJSWith)
 import qualified JShark.Canvas as Canvas
-import JShark.Compiler
+import JShark.Build
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.Example.Life (initialCatalogCells, initialPop, soupSeedPop)
@@ -89,18 +89,18 @@ evalCases =
   , bunCase "lambda application" (apply (lambda (\x -> x * 2)) (number 21))
   , bunCase "if_ true" (if_ (bool True) (number 1) (number 2))
   , bunCase "if_ false" (if_ (bool False) (number 1) (number 2))
-  , bunCase "&& short-circuit false" (And (bool False) (bool True))
-  , bunCase "|| short-circuit true" (Or (bool True) (bool False))
-  , bunCase "let on && LHS" (let_ (bool True) (\x -> And x (bool False)))
-  , bunCase "let on && RHS" (let_ (bool True) (\x -> And (bool False) x))
+  , bunCase "&& short-circuit false" (andK (bool False) (bool True))
+  , bunCase "|| short-circuit true" (orK (bool True) (bool False))
+  , bunCase "let on && LHS" (let_ (bool True) (\x -> andK x (bool False)))
+  , bunCase "let on && RHS" (let_ (bool True) (\x -> andK (bool False) x))
   , bunCase "let in if_ branch" $
       let_ (number 5) (\x -> if_ (bool True) x (number 0))
   , bunCase "if_ does not evaluate its untaken branch" $
       untaken (bool False) (\b v -> if_ b (let_ v (\x -> x + x)) (number 0))
   , bunCase "|| does not evaluate a short-circuited right side" $
-      untaken (bool True) (\b v -> Or b (let_ v (\x -> x .== x)))
+      untaken (bool True) (\b v -> orK b (let_ v (\x -> x .== x)))
   , bunCase "&& does not evaluate a short-circuited right side" $
-      untaken (bool False) (\b v -> And b (let_ v (\x -> x .== x)))
+      untaken (bool False) (\b v -> andK b (let_ v (\x -> x .== x)))
   , bunCase "optionCase Some" $
       optionCase
         (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
@@ -117,8 +117,8 @@ evalCases =
       unsafeNullable (Literal ValueUnit)
   , bunCase "unsafeNullable preserves a tagged none as present" $
       unsafeNullable (none :: Expr f ('Option 'Number))
-  , bunCase "string concat" (Concat (string "a") (string "b"))
-  , bunCase "Show number" (Show (number 3))
+  , bunCase "string concat" (string "a" <> string "b")
+  , bunCase "Show number" (toString (number 3))
   , bunCase "Eq numbers" (number 1 .== number 1)
   , bunCase "NEq numbers" (number 1 .!= number 2)
   , bunCase "array map" (Array.map numArray (\x -> x + number 1))
@@ -134,7 +134,7 @@ evalCases =
         )
         (string "-")
   , bunCase "two comparisons share one $valueEq" $
-      And (number 1 .== number 1) (number 2 .== number 2)
+      andK (number 1 .== number 1) (number 2 .== number 2)
   , bunCase "letRec value rhs" (letRec (\_ -> number 1 + number 2) (\n -> n))
   , bunCase "option semigroup Maybe" $
       JShark.Api.some (string "a") <> JShark.Api.some (string "b")
@@ -177,7 +177,7 @@ evalCases =
   , bunCase "Uint8Array contents" (uint8Array (packUint8 [1, 2, 3]))
   , bunCase "Uint8Array Eq" $
       structuralEq (uint8Array (packUint8 [1, 2])) (uint8Array (packUint8 [1, 2]))
-  , bunCase "Show Uint8Array" (Show (uint8Array (packUint8 [1, 2, 3])))
+  , bunCase "Show Uint8Array" (toString (uint8Array (packUint8 [1, 2, 3])))
   , testCase "compileEffect ifE+LambdaE evaluates" $
       compileEffect defaultCompilerConfig prettyIfLambda >>= assertRuns "6"
   ]
@@ -239,7 +239,7 @@ effectCases =
       chained (resolved 5) (\p -> promiseThen p (\x -> expr (Var x + number 1)))
   , effectCase "promiseCatch receives the rejection reason" "\"caught:boom\"" $
       chained (ffi "Promise.reject" (arg (string "boom") <: RecNil)) $ \p ->
-        promiseCatch p (\e -> expr (Concat (string "caught:") (Var e)))
+        promiseCatch p (\e -> expr (string "caught:" <> Var e))
   , -- A fulfilled promise passes its value through @.catch@ untouched; the
     -- handler only runs on rejection. Recovery must preserve the resolution
     -- type, which is why @promiseCatch@ returns @Promise u@.

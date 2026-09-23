@@ -13,7 +13,6 @@ module JShark.Example.Life.Lut
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Example.Life.Grid (cellIdx, inBounds, setU8, u8Get)
 import JShark.Example.Life.LutBoot (lifeLutGlobalJs, lifeLutInstallJs)
 

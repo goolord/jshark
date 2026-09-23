@@ -25,7 +25,6 @@ module JShark.Example.Synth.Audio (module JShark.Example.Synth.Audio) where
 
 import Data.Text (Text)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Object (unsafeObjectAssign, unsafeObjectGet)
 

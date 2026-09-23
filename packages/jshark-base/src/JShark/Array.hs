@@ -57,7 +57,6 @@ where
 import qualified Data.List as List
 import JShark.Api
 import JShark.Api.Params (Param)
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import qualified JShark.Math as Math
 import Prelude hiding (concat, filter, length, map, zipWith)
@@ -226,7 +225,7 @@ reduceRight ::
   Expr f ('Array u) -> Expr f v -> (Expr f v -> Expr f u -> Expr f v) -> Expr f v
 reduceRight arr z f = Std (Method (MethReduceRight arr z (\a x -> f (var a) (var x))))
 
--- | @[x]@. One-element array; used by 'JShark.Api.Classes.pure'.
+-- | @[x]@. One-element array; used by 'JShark.Classes.pure'.
 singleton :: Expr f u -> Expr f ('Array u)
 -- A literal element makes a literal singleton array (@[x]@), avoiding a
 -- @[undefined].map@ that has to allocate and call back.

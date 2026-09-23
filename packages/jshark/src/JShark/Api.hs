@@ -124,13 +124,14 @@ module JShark.Api
   , resultCaseE
 
     -- * FFI
+  , Rec (..)
+  , (<:)
   , ffi
   , ffiExpr
   , callMethod
   , assign
 
     -- * Objects
-  , emptyObject
   , newObject
   , get
   , set
@@ -138,27 +139,6 @@ module JShark.Api
   , getProp
   , setProp
   , getProp'
-
-    -- * Events / window
-  , Event
-  , window
-  , host
-  , locationHash
-  , onClick
-  , onClick_
-  , addEventListener
-  , addEventListener_
-  , addEventListenerS
-  , eventKey
-  , eventCode
-  , eventRepeat
-  , eventPointerId
-  , eventClientX
-  , eventClientY
-  , eventButton
-  , eventShiftKey
-  , eventOffsetX
-  , eventOffsetY
 
     -- * Syntax
   , noOp
@@ -206,7 +186,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits (KnownSymbol)
-import JShark.Api.Caller (callerBinderHint)
 import JShark.Api.Params
   ( NamedLambdaRow (..)
   , ParamRec
@@ -222,114 +201,6 @@ import JShark.Api.Syntax
 import JShark.Api.Types
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
-
-data Window
-
-type instance Field Window "location.host" = 'String
-
-type instance Field Window "location.hash" = 'String
-
--- | The event object handed to 'addEventListener' callbacks. Read it
--- with the typed accessors ('eventKey', 'eventCode', …); @target@ is
--- typed in "JShark.Dom" ('JShark.Dom.eventTarget').
-data Event
-
-type instance Field Event "key" = 'String
-
-type instance Field Event "code" = 'String
-
-type instance Field Event "repeat" = 'Bool
-
-type instance Field Event "pointerId" = 'Number
-
-type instance Field Event "clientX" = 'Number
-
-type instance Field Event "clientY" = 'Number
-
-type instance Field Event "button" = 'Number
-
-type instance Field Event "offsetX" = 'Number
-
-type instance Field Event "offsetY" = 'Number
-
-type instance Field Event "shiftKey" = 'Bool
-
--- | @event.key@ — the key value for keyboard events.
-eventKey ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
-eventKey o = Object.get @"key" @Event (toEffect o)
-
--- | @event.code@ — the physical key code for keyboard events.
-eventCode ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
-eventCode o = Object.get @"code" @Event (toEffect o)
-
--- | @event.repeat@ — whether a held key is auto-repeating.
-eventRepeat ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
-eventRepeat o = Object.get @"repeat" @Event (toEffect o)
-
--- | @event.pointerId@ — the unique id of the pointer that fired the event.
-eventPointerId ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
-eventPointerId o = Object.get @"pointerId" @Event (toEffect o)
-
--- | @event.clientX@ — pointer x in viewport coordinates.
-eventClientX ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
-eventClientX o = Object.get @"clientX" @Event (toEffect o)
-
--- | @event.clientY@ — pointer y in viewport coordinates.
-eventClientY ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
-eventClientY o = Object.get @"clientY" @Event (toEffect o)
-
--- | @event.button@ — the mouse button index.
-eventButton ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
-eventButton o = Object.get @"button" @Event (toEffect o)
-
--- | @event.shiftKey@ — whether Shift was held.
-eventShiftKey ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
-eventShiftKey o = Object.get @"shiftKey" @Event (toEffect o)
-
--- | @event.offsetX@ — pointer x relative to the target element.
-eventOffsetX ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
-eventOffsetX o = Object.get @"offsetX" @Event (toEffect o)
-
--- | @event.offsetY@ — pointer y relative to the target element.
-eventOffsetY ::
-  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
-eventOffsetY o = Object.get @"offsetY" @Event (toEffect o)
-
--- | The global JS @window@ object.
-window :: Effect f ('MutableObject Window)
-window = unsafeObject "window"
-
--- | @window.location.host@.
-host :: EffectSyntax f (Expr f 'String)
-host = Object.get @"location.host" window
-
--- | @window.location.hash@.
-locationHash :: EffectSyntax f (Expr f 'String)
-locationHash = Object.get @"location.hash" window
-
--- | An empty mutable object; alias of 'newObject'.
-emptyObject :: Effect f ('MutableObject ())
-emptyObject = newObject
-
--- | Set an element's @onclick@ property to a raw handler (not
--- @addEventListener@).
-onClick ::
-  Effect f ('MutableObject obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
-onClick el f = toSyntax_ $ unsafeObjectAssign (unsafeObjectGet el "onclick") (LambdaE f)
-
--- | 'onClick' with the handler written in 'EffectSyntax'.
-onClick_ ::
-  Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
-onClick_ el body = onClick el $ \_ -> stmts body
 
 -- | Raw JS call. Codegen appends @(...)@ for the argument list; with
 --   'RecNil' that is a trailing @()@ (e.g. @performance.now@ →
@@ -453,7 +324,6 @@ loop0 rec body =
 -- | A JS number literal (IEEE double).
 number :: Double -> Expr f 'Number
 number = Literal . ValueNumber
-{-# INLINE number #-}
 
 -- | Exact integer literal. Codegen emits @Nn@ (negatives parenthesized).
 bigInt :: Integer -> Expr f 'BigInt
@@ -462,19 +332,15 @@ bigInt = Literal . ValueBigInt
 -- | A JS boolean literal.
 bool :: Bool -> Expr f 'Bool
 bool = Literal . ValueBool
-{-# INLINE bool #-}
 
 -- | JS @true@ / @false@ literals.
 true_, false_ :: Expr f 'Bool
 true_ = bool True
 false_ = bool False
-{-# INLINE true_ #-}
-{-# INLINE false_ #-}
 
 -- | A JS string literal.
 string :: Text -> Expr f 'String
 string = Literal . ValueString
-{-# INLINE string #-}
 
 -- | @new Uint8Array([…])@ from a host 'ByteArray'. All-zero buffers codegen
 -- as @new Uint8Array(n)@; non-zero literals keep the element list.
@@ -549,7 +415,7 @@ emptyArray = Literal (ValueArray [])
 
 -- | JS string coercion, like @String(x)@.
 toString :: Expr f u -> Expr f 'String
-toString = Show
+toString x = Std (Kernel (KShow x))
 
 -- | @arr.method(function(x){…})@ with an 'Effect' callback.
 arrayCallback ::
@@ -587,7 +453,6 @@ if_ :: Expr f 'Bool -> Expr f u -> Expr f u -> Expr f u
 if_ (Literal (ValueBool True)) t _ = t
 if_ (Literal (ValueBool False)) _ e = e
 if_ c t e = If c t e
-{-# INLINE [1] if_ #-}
 
 -- | Effectful conditional. Lift an 'Expr' test with 'expr'.
 ifE :: Effect f 'Bool -> Effect f u -> Effect f u -> Effect f u
@@ -700,42 +565,11 @@ resultCaseE r onErr onOk = ResultCaseE r (\e -> onErr (var e)) (\a -> onOk (var 
 
 -- | JS @typeof x@.
 typeOf :: Expr f u -> Expr f 'String
-typeOf = TypeOf
+typeOf x = Std (Kernel (KTypeOf x))
 
 -- | Boolean negation.
 not_ :: Expr f 'Bool -> Expr f 'Bool
 not_ c = c .== false_
-
--- | @el.addEventListener(name, handler)@ with an 'Effect'-returning handler.
-addEventListener ::
-  Text
-  -> Effect f ('MutableObject obj)
-  -> (Expr f ('MutableObject Event) -> Effect f a)
-  -> EffectSyntax f ()
-addEventListener name el handler =
-  toSyntax_ $
-    callMethod
-      el
-      "addEventListener"
-      (ArgExpr (string name) <: ArgEffect (LambdaE (\x -> handler (var x))) <: RecNil)
-
--- | 'addEventListener' with the handler written directly in
--- 'EffectSyntax' (no @stmts@ wrap needed).
-addEventListenerS ::
-  Text
-  -> Effect f ('MutableObject obj)
-  -> (Expr f ('MutableObject Event) -> EffectSyntax f (f 'Unit))
-  -> EffectSyntax f ()
-addEventListenerS name el handler =
-  addEventListener name el (stmts . handler)
-
--- | 'addEventListener' with an 'EffectSyntax' body that ignores the event.
-addEventListener_ ::
-  Text
-  -> Effect f ('MutableObject obj)
-  -> EffectSyntax f (f 'Unit)
-  -> EffectSyntax f ()
-addEventListener_ name el body = addEventListener name el $ \_ -> stmts body
 
 -- | Wrap an expression as an FFI argument.
 arg :: Expr f u -> Arg f u
@@ -830,7 +664,6 @@ whenS (Literal (ValueBool False)) _ = done
 -- Same as 'ifS': do not route through 'when_' / 'discard'. 'discard'
 -- under a constant-folded 'IfE' can drop impure FFI preludes.
 whenS c body = toSyntax $ IfE (expr c) (stmts body) noOp
-{-# INLINE [1] whenS #-}
 
 -- | 'ifE' in 'EffectSyntax' form.
 ifS ::
@@ -844,7 +677,6 @@ ifS ::
 ifS (Literal (ValueBool True)) t _ = t
 ifS (Literal (ValueBool False)) _ e = e
 ifS c t e = toSyntax $ IfE (expr c) (stmts t) (stmts e)
-{-# INLINE [1] ifS #-}
 
 -- | 'whenSomeE' in 'EffectSyntax' form: run the body when the
 -- already-bound option is present.
@@ -884,41 +716,28 @@ infixr 2 .||
 
 -- | Scalar equality and inequality (@===@ / @!==@).
 (.==), (.!=) :: KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
-(.==) = mkEq
-(.!=) = mkNEq
-{-# INLINE [1] (.==) #-}
-{-# INLINE [1] (.!=) #-}
+(.==) = eqE True
+(.!=) = eqE False
 
 -- | Ordering comparisons (@>@, @<@, @>=@, @<=@).
-(.>)
-  , (.<)
-  , (.>=)
-  , (.<=) ::
-    Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
-(.>) = mkGTh
-(.<) = mkLTh
-(.>=) = mkGTEq
-(.<=) = mkLTEq
-{-# INLINE [1] (.>) #-}
-{-# INLINE [1] (.<) #-}
-{-# INLINE [1] (.>=) #-}
-{-# INLINE [1] (.<=) #-}
+(.>), (.<), (.>=), (.<=) :: Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
+(.>) = cmpE CGT
+(.<) = cmpE CLT
+(.>=) = cmpE CGE
+(.<=) = cmpE CLE
 
 -- | Boolean conjunction and disjunction.
 (.&&), (.||) :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 (.&&) = andE
 (.||) = orE
-{-# INLINE (.&&) #-}
-{-# INLINE (.||) #-}
 
 -- | Unsigned right shift (@>>>@).
 ushr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-ushr = ushrE
-{-# INLINE [1] ushr #-}
+ushr = numE NUShr
 
 -- | BigInt truncating division (JS @/@). Number uses 'Fractional' @/@.
 quot_ :: Expr f 'BigInt -> Expr f 'BigInt -> Expr f 'BigInt
-quot_ x y = Std (Kernel (KBig BQuot x y))
+quot_ = numE NDiv
 
 -- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
 parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number

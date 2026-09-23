@@ -1,5 +1,6 @@
 packages:
   packages/jshark
+  packages/jshark-base
   packages/jshark-lucid
   packages/jshark-bindgen
   packages/jshark-hotreload
@@ -15,6 +16,8 @@ optimization: 2
 -- released packages stay buildable on future GHCs; developer builds enable
 -- it here.
 package jshark
+  flags: +werror
+package jshark-base
   flags: +werror
 package jshark-lucid
   flags: +werror

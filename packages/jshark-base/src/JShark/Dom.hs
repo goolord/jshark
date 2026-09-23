@@ -35,13 +35,33 @@ module JShark.Dom
   , setInnerText
   , getValue
   , setValue
+
+    -- * Events / window
+  , Event
+  , window
+  , host
+  , locationHash
+  , onClick
+  , onClick_
+  , addEventListener
+  , addEventListener_
+  , addEventListenerS
+  , eventKey
+  , eventCode
+  , eventRepeat
+  , eventPointerId
+  , eventClientX
+  , eventClientY
+  , eventButton
+  , eventShiftKey
+  , eventOffsetX
+  , eventOffsetY
   )
 where
 
 import Data.Text (Text)
 import JShark
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Object as Object
 
 -- | Browser node. 'MutableObject' so 'get' / 'Field' apply.
@@ -231,3 +251,139 @@ setValue ::
   -> Expr f 'String
   -> EffectSyntax f (f 'Unit)
 setValue el v = setProp el "value" v
+
+data Window
+
+type instance Field Window "location.host" = 'String
+
+type instance Field Window "location.hash" = 'String
+
+-- | The event object handed to 'addEventListener' callbacks. Read it
+-- with the typed accessors ('eventKey', 'eventCode', …); @target@ is
+-- typed in "JShark.Dom" ('JShark.Dom.eventTarget').
+data Event
+
+type instance Field Event "key" = 'String
+
+type instance Field Event "code" = 'String
+
+type instance Field Event "repeat" = 'Bool
+
+type instance Field Event "pointerId" = 'Number
+
+type instance Field Event "clientX" = 'Number
+
+type instance Field Event "clientY" = 'Number
+
+type instance Field Event "button" = 'Number
+
+type instance Field Event "offsetX" = 'Number
+
+type instance Field Event "offsetY" = 'Number
+
+type instance Field Event "shiftKey" = 'Bool
+
+-- | @event.key@ — the key value for keyboard events.
+eventKey ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
+eventKey o = Object.get @"key" @Event (toEffect o)
+
+-- | @event.code@ — the physical key code for keyboard events.
+eventCode ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'String)
+eventCode o = Object.get @"code" @Event (toEffect o)
+
+-- | @event.repeat@ — whether a held key is auto-repeating.
+eventRepeat ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
+eventRepeat o = Object.get @"repeat" @Event (toEffect o)
+
+-- | @event.pointerId@ — the unique id of the pointer that fired the event.
+eventPointerId ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventPointerId o = Object.get @"pointerId" @Event (toEffect o)
+
+-- | @event.clientX@ — pointer x in viewport coordinates.
+eventClientX ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventClientX o = Object.get @"clientX" @Event (toEffect o)
+
+-- | @event.clientY@ — pointer y in viewport coordinates.
+eventClientY ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventClientY o = Object.get @"clientY" @Event (toEffect o)
+
+-- | @event.button@ — the mouse button index.
+eventButton ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventButton o = Object.get @"button" @Event (toEffect o)
+
+-- | @event.shiftKey@ — whether Shift was held.
+eventShiftKey ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Bool)
+eventShiftKey o = Object.get @"shiftKey" @Event (toEffect o)
+
+-- | @event.offsetX@ — pointer x relative to the target element.
+eventOffsetX ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventOffsetX o = Object.get @"offsetX" @Event (toEffect o)
+
+-- | @event.offsetY@ — pointer y relative to the target element.
+eventOffsetY ::
+  ToEffect f ('MutableObject Event) o => o -> EffectSyntax f (Expr f 'Number)
+eventOffsetY o = Object.get @"offsetY" @Event (toEffect o)
+
+-- | The global JS @window@ object.
+window :: Effect f ('MutableObject Window)
+window = Object.unsafeObject "window"
+
+-- | @window.location.host@.
+host :: EffectSyntax f (Expr f 'String)
+host = Object.get @"location.host" window
+
+-- | @window.location.hash@.
+locationHash :: EffectSyntax f (Expr f 'String)
+locationHash = Object.get @"location.hash" window
+
+-- | Set an element's @onclick@ property to a raw handler (not
+-- @addEventListener@).
+onClick ::
+  Effect f ('MutableObject obj) -> (f 'Unit -> Effect f a) -> EffectSyntax f ()
+onClick el f =
+  toSyntax_ $ Object.unsafeObjectAssign (Object.unsafeObjectGet el "onclick") (LambdaE f)
+
+-- | 'onClick' with the handler written in 'EffectSyntax'.
+onClick_ ::
+  Effect f ('MutableObject obj) -> EffectSyntax f (f 'Unit) -> EffectSyntax f ()
+onClick_ el body = onClick el $ \_ -> stmts body
+
+-- | @el.addEventListener(name, handler)@ with an 'Effect'-returning handler.
+addEventListener ::
+  Text
+  -> Effect f ('MutableObject obj)
+  -> (Expr f ('MutableObject Event) -> Effect f a)
+  -> EffectSyntax f ()
+addEventListener name el handler =
+  toSyntax_ $
+    callMethod
+      el
+      "addEventListener"
+      (ArgExpr (string name) <: ArgEffect (LambdaE (\x -> handler (var x))) <: RecNil)
+
+-- | 'addEventListener' with the handler written directly in
+-- 'EffectSyntax' (no @stmts@ wrap needed).
+addEventListenerS ::
+  Text
+  -> Effect f ('MutableObject obj)
+  -> (Expr f ('MutableObject Event) -> EffectSyntax f (f 'Unit))
+  -> EffectSyntax f ()
+addEventListenerS name el handler =
+  addEventListener name el (stmts . handler)
+
+-- | 'addEventListener' with an 'EffectSyntax' body that ignores the event.
+addEventListener_ ::
+  Text
+  -> Effect f ('MutableObject obj)
+  -> EffectSyntax f (f 'Unit)
+  -> EffectSyntax f ()
+addEventListener_ name el body = addEventListener name el $ \_ -> stmts body

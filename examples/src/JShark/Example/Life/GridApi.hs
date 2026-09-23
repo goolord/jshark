@@ -20,14 +20,15 @@ import qualified Data.Text as T
 import Data.Word (Word8)
 import JShark.Api
   ( EffectSyntax
+  , Rec (..)
   , arg
   , forRange
   , setProp
   , stmts
   , toSyntax
   , u8Set
+  , (<:)
   )
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
   ( Effect (..)
   , Expr (..)

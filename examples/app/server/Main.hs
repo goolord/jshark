@@ -6,7 +6,7 @@ import Data.List (partition)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import DevServer (Example (..), ServeMode (..), exportExamples, serveExamples)
-import JShark.Compiler
+import JShark.Build
   ( CompilerConfig (..)
   , OutputStyle (..)
   , applyCompilerArgs

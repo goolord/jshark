@@ -119,6 +119,7 @@ library
     , directory
     , filepath
     , jshark
+    , jshark-base
     , jshark-hotreload
     , jshark-lucid
     , process
@@ -143,6 +144,7 @@ executable jshark-examples
     , directory
     , filepath
     , jshark
+    , jshark-base
     , jshark-examples
     , jshark-hotreload
     , lucid
@@ -166,6 +168,7 @@ executable jshark-compile
     , directory
     , filepath
     , jshark
+    , jshark-base
     , jshark-examples
     , lucid
     , text
@@ -204,8 +207,9 @@ benchmark jshark-examples-bench
   build-depends:
     , base
     , jshark
+    , jshark-base
     , jshark-examples
-    , jshark:testing
+    , jshark-base:testing
     , tasty-bench >= 0.3.5
     , text
   default-language: Haskell2010
@@ -239,8 +243,9 @@ test-suite jshark-examples-test
     , directory
     , filepath
     , jshark
+    , jshark-base
     , jshark-examples
-    , jshark:testing
+    , jshark-base:testing
     , process
     , tasty
     , tasty-hunit

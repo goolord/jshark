@@ -12,7 +12,7 @@
 -- methods map object-language values. Import qualified, or hide the
 -- "Prelude" names. 'Semigroup' / 'Monoid' on @Expr f ('Array u)@ (and
 -- friends) *are* the @base@ classes.
-module JShark.Api.Classes
+module JShark.Classes
   ( -- * Functor
     Functor (..)
   , void

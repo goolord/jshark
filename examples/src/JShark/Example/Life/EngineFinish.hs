@@ -12,8 +12,7 @@ module JShark.Example.Life.EngineFinish
 where
 
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (MutableObjectOf)
 import JShark.Example.Life.Grid (CellGrids (..), StepCtx, StepRegion (..))
 import qualified JShark.Example.Life.Lut as Lut
 import JShark.Example.Life.LutBoot (lifeLutGlobalJs)

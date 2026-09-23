@@ -883,17 +883,6 @@ op2JS = \case
     NShl -> "<<"
     NShr -> ">>"
     NUShr -> ">>>"
-  OBig op -> case op of
-    BPlus -> "+"
-    BMinus -> "-"
-    BTimes -> "*"
-    BQuot -> "/"
-    BRem -> "%"
-    BBitAnd -> "&"
-    BBitOr -> "|"
-    BBitXor -> "^"
-    BShl -> "<<"
-    BShr -> ">>"
   OEq _ -> "==="
   ONEq _ -> "!=="
   OCmp c -> case c of

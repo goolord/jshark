@@ -107,8 +107,6 @@ lowerK = \case
   KConcat x y -> k2 OConcat x y
   KNum op x y -> k2 (ONum op) x y
   KNegate x -> k1 ONeg x
-  KBig op x y -> k2 (OBig op) x y
-  KBigNeg x -> k1 OBigNeg x
   KAnd x y -> k2 OAnd x y
   KOr x y -> k2 OOr x y
   KEq s x y -> k2 (OEq s) x y

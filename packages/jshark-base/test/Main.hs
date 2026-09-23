@@ -18,15 +18,16 @@ import Data.Char (isDigit)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
+import JShark.Api.Types (Kernel (..), Std (..))
 import qualified JShark.Ajax as Ajax
 import JShark.Api
-import qualified JShark.Api.Classes as C
-import qualified JShark.Api.Generic as G
+import JShark.Dom (addEventListenerS, eventKey, locationHash, onClick)
+import qualified JShark.Classes as C
+import qualified JShark.Generic as G
 import JShark.Api.Params (Param)
-import JShark.Api.Rec (Rec (..), (<:))
 import qualified JShark.Array as Array
 import qualified JShark.Canvas as Canvas
-import JShark.Compiler
+import JShark.Build
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import JShark.Internal
@@ -134,7 +135,7 @@ validationTests =
     , valid "short-circuit" $ fromSyntax $ do
         a <- bindExpr (ffi "condA" RecNil)
         b <- bindExpr (ffi "condB" RecNil)
-        yield (if_ (And a b) (number 1) (number 2))
+        yield (if_ (andK a b) (number 1) (number 2))
     , valid "captures" $ fromSyntax $ do
         x <- bindExpr (ffi "n" RecNil)
         let
@@ -226,10 +227,10 @@ rewriteRuleTests =
         folds "jshark/or" True (bool False .|| bool True)
     , testCase "and/or keep an impure left" $ do
         case (Json.stringifyPure (number 1) .== string "1") .&& false_ of
-          And _ (Literal (ValueBool False)) -> pure ()
+          Std (Kernel (KAnd _ (Literal (ValueBool False)))) -> pure ()
           _ -> assertFailure "andE dropped impure left"
         case (Json.stringifyPure (number 1) .== string "1") .|| true_ of
-          Or _ (Literal (ValueBool True)) -> pure ()
+          Std (Kernel (KOr _ (Literal (ValueBool True)))) -> pure ()
           _ -> assertFailure "orE dropped impure left"
     , testCase "eq/ord fold number literals" $ do
         folds "jshark/eq/num" True (number 1 .== number 1)
@@ -294,11 +295,11 @@ evaluatorTests =
             Expr f ('Object LitRow)
         ).x
     , evalCase "frozen records compare by last-wins fields" True $
-        Eq
+        structuralEq
           (Object.frozen [Object.field @"x" (number 1)] :: Expr f ('Object LitRow))
           (Object.frozen [Object.field @"x" (number 1)])
     , evalCase @Text "Show of Result is JS String(object)" "[object Object]" $
-        Show (ok (number 5) :: Expr f ('Result 'String 'Number))
+        toString (ok (number 5) :: Expr f ('Result 'String 'Number))
     , testCase "Uint8Array literals compare by contents" $ do
         assertEval True $
           structuralEq
@@ -307,7 +308,7 @@ evaluatorTests =
         assertEval False $
           structuralEq (uint8Array (packUint8 [1, 2])) (uint8Array (packUint8 [1, 2, 3]))
     , evalCase @Text "Show of Uint8Array is comma-joined bytes" "1,2,3" $
-        Show (uint8Array sampleArray)
+        toString (uint8Array sampleArray)
     , evalCase @Text "typeof of Uint8Array is object" "object" $
         typeOf (uint8Array sampleArray)
     ]
@@ -335,11 +336,11 @@ codegenTests =
     , effectJS
         "let used once on the && RHS is not inlined"
         "const n0 = cond();\nconst n1 = bar();\nn1 && n0"
-        (with2 condE barE (\x y -> And y x))
+        (with2 condE barE (\x y -> andK y x))
     , effectJS
         "let used once on the && LHS is inlined"
         "const n0 = cond();\nconst n1 = bar();\nn0 && n1"
-        (with2 condE barE (\x y -> And x y))
+        (with2 condE barE (\x y -> andK x y))
     , effectJS "unknown function application is a direct call" "(f())(foo())" $
         ApplyE (ffi "f" RecNil) fooE
     , effectJS
@@ -604,11 +605,11 @@ stdlibTests =
         ["$checkedIndex", "throw"]
         (with2 (ffi "xs" RecNil) (ffi "i" RecNil) Array.index)
     , evalCase "Array.map evaluates" True $
-        Eq
+        structuralEq
           (Array.map numArray (\x -> x + number 1))
           (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
     , evalCase "Array.filter evaluates" True $
-        Eq
+        structuralEq
           (Array.filter numArray (\x -> x .> number 1))
           (Literal (ValueArray [ValueNumber 2]))
     , testCase "Array.groupBy is first-seen [{key, items}]" $ do
@@ -619,7 +620,7 @@ stdlibTests =
           keys = Array.map grouped (\g -> GetField @"key" g)
           firstItems = GetField @"items" (Array.index grouped (number 0))
         assertEval True $
-          Eq keys (Literal (ValueArray [ValueString "one", ValueString "two"]))
+          structuralEq keys (Literal (ValueArray [ValueString "one", ValueString "two"]))
         evaluateNumber (Array.length firstItems) @?= 2
     , pureHas
         "Array.groupBy emits the $groupBy shim"
@@ -677,7 +678,7 @@ stdlibTests =
             Array.reduce numArray (Var s) (\acc x -> acc + x)
         )
     , evalCase "Classes.fmap Array" True $
-        Eq
+        structuralEq
           (C.fmap (\x -> x + number 1) numArray)
           (Literal (ValueArray [ValueNumber 2, ValueNumber 3]))
     , testCase "Classes.liftA2 Option" $ do
@@ -689,13 +690,13 @@ stdlibTests =
         let
           pos x = if_ (x .> number 0) (some x) none
         assertEval True $
-          Eq
+          structuralEq
             (C.traverse pos numArray)
             (some (Literal (ValueArray [ValueNumber 1, ValueNumber 2])))
         assertEval @(Maybe [Double]) Nothing $
           C.traverse pos (Literal (ValueArray [ValueNumber 1, ValueNumber (-1)]))
     , evalCase "Classes.join Array" True $
-        Eq
+        structuralEq
           ( C.join
               ( Literal
                   ( ValueArray
@@ -709,7 +710,7 @@ stdlibTests =
     , evalCase @(Either Text Double) "Classes.bimap Result" (Right 3) $
         C.bimap id (\x -> x + 1) (ok (number 2) :: Expr f ('Result 'String 'Number))
     , evalCase "Classes Semigroup Array" True $
-        Eq
+        structuralEq
           (numArray C.<> Literal (ValueArray [ValueNumber 3]))
           (Literal (ValueArray [ValueNumber 1, ValueNumber 2, ValueNumber 3]))
     , evalCase @Double "Classes Category Function" 9 $
@@ -717,7 +718,7 @@ stdlibTests =
           (C.fmap (\y -> y + 1) (lambda (\x -> x * 2)) C.. lambda (\x -> x + 1))
           (number 3)
     , evalCase "Classes.mzipWith Array" True $
-        Eq
+        structuralEq
           ( C.mzipWith
               (+)
               numArray
@@ -725,7 +726,7 @@ stdlibTests =
           )
           (Literal (ValueArray [ValueNumber 11, ValueNumber 22]))
     , evalCase "Classes.foldMap Array String" True $
-        Eq
+        structuralEq
           (C.foldMap (\n -> if_ (n .== number 1) (string "a") (string "b")) numArray)
           (string "ab")
     , testCase "Classes.foldr is reduceRight" $ do
@@ -755,7 +756,7 @@ stdlibTests =
               (ValueArray [ValueOption Nothing, ValueOption (Just (ValueNumber 1))])
         assertEval @Text "[object Object]-[object Object]" $
           Array.join opts (string "-")
-        assertEval @Text "[object Object],[object Object]" (Show opts)
+        assertEval @Text "[object Object],[object Object]" (toString opts)
     , testCase "$valueEq helpers are defined once for two comparisons" $ do
         let
           js =
@@ -1386,7 +1387,7 @@ optimizeTests =
     , pureJS "if_ True takes the true branch" "1" $
         if_ (bool True) (number 1) (number 99)
     , pureJS "false && folds the RHS" "false" $
-        And (bool False) (number 1 .== number 0)
+        andK (bool False) (number 1 .== number 0)
     , effectJS "while false becomes a no-op" "" $
         while_ (expr (bool False)) (ffi "foo" RecNil)
     , effectJS

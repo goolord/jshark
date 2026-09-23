@@ -20,7 +20,6 @@ where
 import Control.Monad (void)
 import Data.Text (Text)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 
 callbackFFI ::

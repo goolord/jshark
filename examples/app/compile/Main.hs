@@ -10,7 +10,7 @@ import qualified Data.ByteString as BS
 import Data.List (partition)
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark.Compiler
+import JShark.Build
   ( applyCompilerArgs
   , compileEffect
   , defaultCompilerConfig

@@ -15,8 +15,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import JShark (renderJS)
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf, toObject)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (MutableObjectOf, toObject)
 import qualified JShark.Array as Array
 import JShark.Bun (evaluateEffectJSON)
 import JShark.Example.Life (mainJS)

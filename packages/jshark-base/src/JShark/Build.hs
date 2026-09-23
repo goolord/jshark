@@ -11,7 +11,7 @@
 --
 -- 'compileEffect' honors 'configProgress'; 'compileEffectPure' and
 -- 'compilePure' are silent; 'compileEffectIO' always reports.
-module JShark.Compiler
+module JShark.Build
   ( -- * Compiler Configuration
     CompilerConfig (..)
   , defaultCompilerConfig
@@ -43,15 +43,9 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Text (Text)
 import qualified Data.Text as T
+import JShark (ClosedEffect, ClosedExpr, JS, effectfulProgram, pureProgram, renderJS)
 import JShark.Api.Syntax (EffectSyntax, fromSyntax)
-import JShark.Api.Types (ClosedEffect, ClosedExpr)
-import JShark.Compiler.Codegen
-  ( effectfulAST
-  , effectfulProgram
-  , pureAST
-  , pureProgram
-  )
-import JShark.Compiler.Emit (JS, renderJS)
+import JShark.Internal (effectfulAST, pureAST)
 import Numeric (showFFloat)
 import System.CPUTime (getCPUTime)
 import System.Directory (findExecutable)
@@ -110,7 +104,7 @@ render cfg js = do
         Right o -> pure o
         Left err -> do
           unless (configQuiet cfg) $
-            report ("JShark.Compiler: " ++ err ++ "; using compact emit\n")
+            report ("JShark.Build: " ++ err ++ "; using compact emit\n")
           pure (BC.strip src)
   -- Forced so that "compiled" really means the bytes exist.
   out <$ evaluate (BS.length out)
@@ -128,7 +122,7 @@ compileEffect :: CompilerConfig -> ClosedEffect u -> IO ByteString
 compileEffect cfg eff = do
   (out, secs) <- timed (render cfg doc)
   when (configProgress cfg) $
-    report ("JShark.Compiler: compiled in " ++ duration secs ++ "\n")
+    report ("JShark.Build: compiled in " ++ duration secs ++ "\n")
   pure out
  where
   doc = case configStyle cfg of
@@ -185,7 +179,7 @@ compileJobsLabeled cfg jobs
             (\left -> let left' = filter (/= l) left in left' <$ draw left')
           pure out
       report
-        ( "\nJShark.Compiler: compiled "
+        ( "\nJShark.Build: compiled "
             ++ show total
             ++ " programs in "
             ++ duration secs

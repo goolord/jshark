@@ -31,8 +31,7 @@ where
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (MutableObjectOf)
 import JShark.Dom (DomElement)
 import JShark.Example.Life.Types
 import JShark.Promise (Promise)

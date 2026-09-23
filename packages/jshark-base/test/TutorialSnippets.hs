@@ -17,8 +17,8 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark
 import JShark.Api
-import qualified JShark.Api.Generic as G
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Dom (addEventListenerS, eventKey)
+import qualified JShark.Generic as G
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom
 import Test.Tasty (TestTree, testGroup)

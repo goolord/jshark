@@ -20,7 +20,6 @@ module JShark.Set
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types (Effect (..), Expr (Var))
 import JShark.Object (unsafeObjectGet)
 import Prelude hiding (mapM_)

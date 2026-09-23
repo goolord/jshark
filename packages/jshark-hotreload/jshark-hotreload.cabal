@@ -87,6 +87,7 @@ test-suite jshark-hotreload-test
     , filepath >= 1.4 && < 1.6
     , http-types >= 0.8 && < 1
     , jshark
+    , jshark-base
     , jshark-hotreload
     , tasty >= 1.4 && < 1.6
     , tasty-hunit >= 0.10 && < 0.11

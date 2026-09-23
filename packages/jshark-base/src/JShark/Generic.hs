@@ -15,7 +15,7 @@
 -- | 'Generic' product records and tagged sums as JShark objects.
 -- Records: row 'As' @a@ (or @type instance Field a k = ViaGeneric a k@).
 -- Sums: @{tag, payload}@ on row 'Tagged' @a@.
-module JShark.Api.Generic
+module JShark.Generic
   ( As
   , MutableObjectOf
   , Tagged
@@ -96,19 +96,19 @@ type family GFieldRep (r :: Type -> Type) (k :: Symbol) :: Universe where
   GFieldRep (C1 _ f) k = GFieldRep f k
   GFieldRep (S1 ('MetaSel ('Just k) _ _ _) (Rec0 a)) k = FieldU a
   GFieldRep (S1 ('MetaSel ('Just _) _ _ _) _) k =
-    TypeError ('Text "JShark.Api.Generic: no field " ':<>: 'ShowType k)
+    TypeError ('Text "JShark.Generic: no field " ':<>: 'ShowType k)
   GFieldRep (S1 ('MetaSel 'Nothing _ _ _) _) _ =
     TypeError
       ( 'Text
-          "JShark.Api.Generic: positional fields not supported; use record selectors"
+          "JShark.Generic: positional fields not supported; use record selectors"
       )
   GFieldRep (l :*: r) k = GFieldProd (GHasField l k) l r k
   GFieldRep (_ :+: _) _ =
-    TypeError ('Text "JShark.Api.Generic: sum types are not records")
+    TypeError ('Text "JShark.Generic: sum types are not records")
   GFieldRep U1 k =
-    TypeError ('Text "JShark.Api.Generic: no field " ':<>: 'ShowType k)
+    TypeError ('Text "JShark.Generic: no field " ':<>: 'ShowType k)
   GFieldRep V1 _ =
-    TypeError ('Text "JShark.Api.Generic: void type")
+    TypeError ('Text "JShark.Generic: void type")
 
 type family GHasField (r :: Type -> Type) (k :: Symbol) :: Bool where
   GHasField (S1 ('MetaSel ('Just k) _ _ _) _) k = 'True
@@ -252,7 +252,7 @@ newRecord = newObject
   _recordRow = toObject :: a -> Effect f ('MutableObject (As a))
 
 impossible :: a
-impossible = error "JShark.Api.Generic: unreachable (TypeError instance)"
+impossible = error "JShark.Generic: unreachable (TypeError instance)"
 
 data FieldKind = Prim | Rec | Sum | List FieldKind | Opt FieldKind
 
@@ -379,14 +379,14 @@ instance
 instance
   TypeError
     ( 'Text
-        "JShark.Api.Generic: positional fields not supported; use record selectors"
+        "JShark.Generic: positional fields not supported; use record selectors"
     ) =>
   GToObject (S1 ('MetaSel 'Nothing su ss ds) t) row
   where
   gtoFields _ = impossible
 
 instance
-  TypeError ('Text "JShark.Api.Generic: sum types are not records") =>
+  TypeError ('Text "JShark.Generic: sum types are not records") =>
   GToObject (l :+: r) row
   where
   gtoFields _ = impossible
@@ -413,7 +413,7 @@ type family GCtorU (a :: Type) (n :: Symbol) (r :: Type -> Type) :: Universe whe
   GCtorU a n (C1 ('MetaCons n _ _) p) = GPayloadU a n p
   GCtorU a n (l :+: r) = GCtorPick a n (GHasCtor l n) l r
   GCtorU _ n _ =
-    TypeError ('Text "JShark.Api.Generic: no constructor " ':<>: 'ShowType n)
+    TypeError ('Text "JShark.Generic: no constructor " ':<>: 'ShowType n)
 
 type family
   GCtorPick
@@ -444,7 +444,7 @@ type family GPayField (r :: Type -> Type) (n :: Symbol) (k :: Symbol) :: Univers
   GPayField (C1 ('MetaCons n _ _) p) n k = GPayIn p 0 k
   GPayField (l :+: r) n k = GPayPick (GHasCtor l n) l r n k
   GPayField _ n _ =
-    TypeError ('Text "JShark.Api.Generic: no constructor " ':<>: 'ShowType n)
+    TypeError ('Text "JShark.Generic: no constructor " ':<>: 'ShowType n)
 
 type family
   GPayPick
@@ -461,18 +461,18 @@ type family
 type family GPayIn (p :: Type -> Type) (ix :: Nat) (k :: Symbol) :: Universe where
   GPayIn (S1 ('MetaSel ('Just k) _ _ _) (Rec0 t)) _ k = FieldU t
   GPayIn (S1 ('MetaSel ('Just _) _ _ _) _) _ k =
-    TypeError ('Text "JShark.Api.Generic: no payload field " ':<>: 'ShowType k)
+    TypeError ('Text "JShark.Generic: no payload field " ':<>: 'ShowType k)
   GPayIn (S1 ('MetaSel 'Nothing _ _ _) (Rec0 t)) ix k =
     PayIfEq k (NatSym ix) (FieldU t)
   GPayIn (l :*: r) ix k =
     PayInPick (GPayHas l k ix) l r ix k
   GPayIn U1 _ k =
-    TypeError ('Text "JShark.Api.Generic: no payload field " ':<>: 'ShowType k)
+    TypeError ('Text "JShark.Generic: no payload field " ':<>: 'ShowType k)
 
 type family PayIfEq (a :: Symbol) (b :: Symbol) (u :: Universe) :: Universe where
   PayIfEq a a u = u
   PayIfEq a _ _ =
-    TypeError ('Text "JShark.Api.Generic: no payload field " ':<>: 'ShowType a)
+    TypeError ('Text "JShark.Generic: no payload field " ':<>: 'ShowType a)
 
 type family
   PayInPick
@@ -515,7 +515,7 @@ type family NatSym (n :: Nat) :: Symbol where
   NatSym 6 = "6"
   NatSym 7 = "7"
   NatSym _ =
-    TypeError ('Text "JShark.Api.Generic: at most 8 positional payload fields")
+    TypeError ('Text "JShark.Generic: at most 8 positional payload fields")
 
 -- | Sum → @{tag: "Ctor", payload?}@.
 toSum :: (Generic a, GToSum a (Rep a)) => a -> Effect f (SumOf a)
@@ -535,9 +535,9 @@ type family GCtorNames (r :: Type -> Type) :: [Symbol] where
   GCtorNames (l :+: r) = AppendSym (GCtorNames l) (GCtorNames r)
   GCtorNames (C1 ('MetaCons n _ _) _) = '[n]
   GCtorNames V1 =
-    TypeError ('Text "JShark.Api.Generic: caseSum expects a non-empty sum type")
+    TypeError ('Text "JShark.Generic: caseSum expects a non-empty sum type")
   GCtorNames _ =
-    TypeError ('Text "JShark.Api.Generic: caseSum expects a sum type")
+    TypeError ('Text "JShark.Generic: caseSum expects a sum type")
 
 type family AppendSym (xs :: [Symbol]) (ys :: [Symbol]) :: [Symbol] where
   AppendSym '[] ys = ys
@@ -619,7 +619,7 @@ emitCase t o (CaseCons @name hit rest) =
     (emitCase t o rest)
 emitCase t _ (CaseAny k) = k t
 emitCase t _ CaseEnd =
-  throw_ (string (T.pack "JShark.Api.Generic: caseSum: unhandled ") <> t)
+  throw_ (string (T.pack "JShark.Generic: caseSum: unhandled ") <> t)
 
 -- | @if (s.tag === "Ctor") hit(s.payload) else miss@. Nullary ctors
 -- pass 'Unit'; they do not read @payload@. One-arm; use 'caseSum' for

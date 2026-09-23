@@ -20,7 +20,7 @@ import JShark.Bindgen
 import JShark.Bindgen.Cli (Cli (..), parseCliArgs)
 import JShark.Bindgen.Ir (Diagnostic (..), irDiagnostics, irFuns)
 import JShark.Bun.Internal (JSProgram (..), bunTimeoutMicroseconds, runProgram)
-import JShark.Compiler (compileEffect, readableConfig)
+import JShark.Build (compileEffect, readableConfig)
 import Paths_jshark_bindgen (getDataFileName)
 import System.FilePath ((</>))
 import Test.Tasty (defaultMain, testGroup)

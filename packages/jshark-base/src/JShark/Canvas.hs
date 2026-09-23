@@ -42,7 +42,6 @@ where
 
 import Data.Text (Text)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Dom (DomElement)
 

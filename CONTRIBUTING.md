@@ -48,7 +48,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) prefixes that
 match the existing history (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
 `chore:`), with an optional scope (`compiler`, `bindgen`, `lucid`, `hotreload`).
 Keep commits focused. Codegen refactors must preserve emitted JavaScript
-byte-for-byte; the golden tests under `packages/jshark/test/` enforce this.
+byte-for-byte; the golden tests under `packages/jshark-base/test/` enforce this.
 
 ## Architecture
 

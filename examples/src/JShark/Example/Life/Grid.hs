@@ -43,8 +43,7 @@ where
 
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf)
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Generic (MutableObjectOf)
 import qualified JShark.Array as Array
 import JShark.Dom (DomElement)
 import qualified JShark.Dom as Dom

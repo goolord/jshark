@@ -12,7 +12,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 import JShark.Bun
   ( BunConfig (..)
@@ -98,7 +97,7 @@ lucidDomTests =
         ( attrOf
             "li"
             "data-id"
-            (li_ (dynAttr "data-id" (Concat (string "id-") (string "7"))))
+            (li_ (dynAttr "data-id" (string "id-" <> string "7")))
         )
         "\"id-7\""
     , domCase

@@ -10,7 +10,6 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -19,9 +18,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
--- Suppresses missing sigs on compare pattern synonyms only; GHC 9.14 cannot
--- attach @Comparable@ to bidirectional @GTh@/@LTh@/@GTEq@/@LTEq@ (see 'mkGTh').
-{-# OPTIONS_GHC -Wno-missing-pattern-synonym-signatures #-}
 
 -- | Two PHOAS syntax trees for a typed subset of JavaScript
 -- (Crockford's Good Parts kernel; binders as in Kmett's PHOAS).
@@ -54,29 +50,6 @@ module JShark.Api.Types
   , FnBody (..)
   , Std (..)
   , Kernel (..)
-  , data Plus
-  , data Times
-  , data Minus
-  , data Negate
-  , data FracDiv
-  , data Rem
-  , data BitAnd
-  , data BitOr
-  , data BitXor
-  , data Shl
-  , data Shr
-  , data UShr
-  , data And
-  , data Or
-  , data Eq
-  , data NEq
-  , data GTh
-  , data LTh
-  , data GTEq
-  , data LTEq
-  , data Concat
-  , data Show
-  , data TypeOf
   , FixedOp (..)
   , Math1 (..)
   , Math2 (..)
@@ -101,31 +74,22 @@ module JShark.Api.Types
   , noLamInfo
   , Comparable
   , KnownScalar
-  , NumericU (..)
-  , BigBinOp (..)
-  , mkEq
-  , mkNEq
+  , NumericU
+  , rem_
+  , bitAnd
+  , bitOr
+  , bitXor
+  , shl
+  , shr
+  , eqE
+  , cmpE
   , structuralEq
   , structuralNEq
-  , mkGTh
-  , mkLTh
-  , mkGTEq
-  , mkLTEq
-  , plusE
-  , timesE
-  , minusE
-  , fracDivE
+  , numE
   , negateE
   , andE
   , orE
   , concatE
-  , remE
-  , bitAndE
-  , bitOrE
-  , bitXorE
-  , shlE
-  , shrE
-  , ushrE
   )
 where
 
@@ -144,8 +108,6 @@ import GHC.TypeLits
   )
 import JShark.Api.Rec
 import JShark.Compiler.Emit (jsBit2, jsRem, jsShl, jsShr, jsUShr)
-import Prelude hiding ((>>))
-import qualified Prelude as P
 
 -- | The kind of a JShark value: its surface JS type. Every 'Expr' and
 -- 'Effect' node is indexed by a 'Universe'.
@@ -705,53 +667,21 @@ data Method :: (Universe -> Type) -> Universe -> Type where
     -> (f 'Number -> Expr f a)
     -> Method f ('Array a)
 
--- | Exact integer kernel ops. JS @/@ on BigInt is truncating quot.
-data BigBinOp
-  = -- | @+@
-    BPlus
-  | -- | @-@
-    BMinus
-  | -- | @*@
-    BTimes
-  | -- | Truncating @/@ (JS BigInt division).
-    BQuot
-  | -- | @%@
-    BRem
-  | -- | @&@
-    BBitAnd
-  | -- | @|@
-    BBitOr
-  | -- | @^@
-    BBitXor
-  | -- | @<<@
-    BShl
-  | -- | @>>@
-    BShr
-
--- | Binary @Number@ operators.
+-- | Binary arithmetic and bitwise operators, shared by 'Number' and
+-- 'BigInt' ('KNum'). On 'BigInt', @/@ truncates and @>>>@ throws.
 data NumOp
-  = -- | @+@
-    NPlus
-  | -- | @*@
-    NTimes
-  | -- | @-@
-    NMinus
-  | -- | @/@
-    NDiv
-  | -- | @%@
-    NRem
-  | -- | @&@
-    NBitAnd
-  | -- | @|@
-    NBitOr
-  | -- | @^@
-    NBitXor
-  | -- | @<<@
-    NShl
-  | -- | @>>@
-    NShr
-  | -- | @>>>@
-    NUShr
+  = NPlus
+  | NTimes
+  | NMinus
+  | NDiv
+  | NRem
+  | NBitAnd
+  | NBitOr
+  | NBitXor
+  | NShl
+  | NShr
+  | NUShr
+  deriving (Eq)
 
 -- | The host meaning of a 'NumOp', with JS 32-bit bitwise semantics.
 numOpFn :: NumOp -> Double -> Double -> Double
@@ -785,14 +715,9 @@ data Kernel :: (Universe -> Type) -> Universe -> Type where
     Expr f 'String
     -> Expr f 'String
     -> Kernel f 'String
-  KNum :: NumOp -> Expr f 'Number -> Expr f 'Number -> Kernel f 'Number
-  KNegate :: Expr f 'Number -> Kernel f 'Number
-  KBig ::
-    BigBinOp
-    -> Expr f 'BigInt
-    -> Expr f 'BigInt
-    -> Kernel f 'BigInt
-  KBigNeg :: Expr f 'BigInt -> Kernel f 'BigInt
+  -- | Arithmetic on 'Number' or 'BigInt' ('NumericU').
+  KNum :: NumericU u => NumOp -> Expr f u -> Expr f u -> Kernel f u
+  KNegate :: NumericU u => Expr f u -> Kernel f u
   KAnd ::
     Expr f 'Bool
     -> Expr f 'Bool
@@ -826,102 +751,6 @@ data Std :: (Universe -> Type) -> Universe -> Type where
     Kernel f u
     -> Std f u
 
--- | JS numeric addition: @x + y@.
-pattern Plus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern Plus x y <- Std (Kernel (KNum NPlus x y))
- where
-  Plus = plusE
-
--- | JS numeric multiplication: @x * y@.
-pattern Times :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern Times x y <- Std (Kernel (KNum NTimes x y))
- where
-  Times = timesE
-
--- | JS numeric subtraction: @x - y@.
-pattern Minus :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern Minus x y <- Std (Kernel (KNum NMinus x y))
- where
-  Minus = minusE
-
--- | JS numeric negation: @-x@.
-pattern Negate :: Expr f 'Number -> Expr f 'Number
-pattern Negate x <- Std (Kernel (KNegate x))
- where
-  Negate = negateE
-
--- | JS floating division: @x / y@.
-pattern FracDiv :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern FracDiv x y <- Std (Kernel (KNum NDiv x y))
- where
-  FracDiv = fracDivE
-
--- | JS remainder: @x % y@.
-pattern Rem :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern Rem x y <- Std (Kernel (KNum NRem x y))
- where
-  Rem = remE
-
--- | JS bitwise AND: @x & y@.
-pattern BitAnd :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern BitAnd x y <- Std (Kernel (KNum NBitAnd x y))
- where
-  BitAnd = bitAndE
-
--- | JS bitwise OR: @x | y@.
-pattern BitOr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern BitOr x y <- Std (Kernel (KNum NBitOr x y))
- where
-  BitOr = bitOrE
-
--- | JS bitwise XOR: @x ^ y@.
-pattern BitXor :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern BitXor x y <- Std (Kernel (KNum NBitXor x y))
- where
-  BitXor = bitXorE
-
--- | JS left shift: @x << y@.
-pattern Shl :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern Shl x y <- Std (Kernel (KNum NShl x y))
- where
-  Shl = shlE
-
--- | JS sign-propagating right shift: @x >> y@.
-pattern Shr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern Shr x y <- Std (Kernel (KNum NShr x y))
- where
-  Shr = shrE
-
--- | JS unsigned right shift: @x >>> y@.
-pattern UShr :: Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-pattern UShr x y <- Std (Kernel (KNum NUShr x y))
- where
-  UShr = ushrE
-
--- | Short-circuiting logical AND: @x && y@.
-pattern And :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-pattern And x y <- Std (Kernel (KAnd x y))
- where
-  And x y = Std (Kernel (KAnd x y))
-
--- | Short-circuiting logical OR: @x || y@.
-pattern Or :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
-pattern Or x y <- Std (Kernel (KOr x y))
- where
-  Or x y = Std (Kernel (KOr x y))
-
--- | Strict equality. Scalars become JS @===@; aggregates use @$valueEq@.
-pattern Eq :: Expr f a -> Expr f a -> Expr f 'Bool
-pattern Eq x y <- Std (Kernel (KEq _ x y))
- where
-  Eq x y = structuralEq x y
-
--- | Strict inequality. Scalars become JS @!==@; aggregates use @$valueEq@.
-pattern NEq :: Expr f a -> Expr f a -> Expr f 'Bool
-pattern NEq x y <- Std (Kernel (KNEq _ x y))
- where
-  NEq x y = structuralNEq x y
-
 -- | Equality that always uses structural @$valueEq@ (even for scalars).
 structuralEq :: Expr f a -> Expr f a -> Expr f 'Bool
 structuralEq x y = Std (Kernel (KEq True x y))
@@ -953,88 +782,26 @@ instance KnownScalar 'Unit where
 instance KnownScalar 'Regex where
   isScalarTy = True
 
--- | Equality that folds scalar literals at compile time. Uses @===@ when
--- @a@ is a 'KnownScalar', otherwise structural @$valueEq@.
-mkEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
-mkEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueBool (x == y))
-mkEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
-  Literal (ValueBool (x == y))
-mkEq (Literal (ValueString x)) (Literal (ValueString y)) =
-  Literal (ValueBool (x == y))
-mkEq x y = Std (Kernel (KEq (not (isScalarTy @a)) x y))
-{-# INLINE [1] mkEq #-}
-
--- | Negated 'mkEq', with the same literal folding and scalar/structural split.
-mkNEq :: forall f a. KnownScalar a => Expr f a -> Expr f a -> Expr f 'Bool
-mkNEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueBool (x /= y))
-mkNEq (Literal (ValueBool x)) (Literal (ValueBool y)) =
-  Literal (ValueBool (x /= y))
-mkNEq (Literal (ValueString x)) (Literal (ValueString y)) =
-  Literal (ValueBool (x /= y))
-mkNEq x y = Std (Kernel (KNEq (not (isScalarTy @a)) x y))
-{-# INLINE [1] mkNEq #-}
-
--- | Compare helpers carry the 'Comparable' constraint GHC cannot attach to
--- the bidirectional pattern synonyms below (two @Expr f a@ fields scope
--- separate type variables in GHC 9.14).
-mkGTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
-mkGTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueBool (x > y))
-mkGTh x y = Std (Kernel (KCmp CGT x y))
-{-# INLINE [1] mkGTh #-}
-
--- | @<@ helper that folds numeric literals; see 'mkGTh'.
-mkLTh :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
-mkLTh (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueBool (x < y))
-mkLTh x y = Std (Kernel (KCmp CLT x y))
-{-# INLINE [1] mkLTh #-}
-
--- | @>=@ helper that folds numeric literals; see 'mkGTh'.
-mkGTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
-mkGTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueBool (x >= y))
-mkGTEq x y = Std (Kernel (KCmp CGE x y))
-{-# INLINE [1] mkGTEq #-}
-
--- | @<=@ helper that folds numeric literals; see 'mkGTh'.
-mkLTEq :: forall f a. Comparable a => Expr f a -> Expr f a -> Expr f 'Bool
-mkLTEq (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
-  Literal (ValueBool (x <= y))
-mkLTEq x y = Std (Kernel (KCmp CLE x y))
-{-# INLINE [1] mkLTEq #-}
-
--- | @x > y@ for 'Comparable' universes.
-pattern GTh x y = Std (Kernel (KCmp CGT x y))
-
--- | @x < y@ for 'Comparable' universes.
-pattern LTh x y = Std (Kernel (KCmp CLT x y))
-
--- | @x >= y@ for 'Comparable' universes.
-pattern GTEq x y = Std (Kernel (KCmp CGE x y))
-
--- | @x <= y@ for 'Comparable' universes.
-pattern LTEq x y = Std (Kernel (KCmp CLE x y))
-
--- | JS string concatenation: @x + y@.
-pattern Concat :: Expr f 'String -> Expr f 'String -> Expr f 'String
-pattern Concat x y <- Std (Kernel (KConcat x y))
+-- | Equality (@True@) or inequality that folds scalar literals at compile
+-- time. Uses @===@ when @a@ is a 'KnownScalar', otherwise @$valueEq@.
+eqE :: forall f a. KnownScalar a => Bool -> Expr f a -> Expr f a -> Expr f 'Bool
+eqE want x y = case (x, y) of
+  (Literal (ValueNumber a), Literal (ValueNumber b)) -> lit (a == b)
+  (Literal (ValueBool a), Literal (ValueBool b)) -> lit (a == b)
+  (Literal (ValueString a), Literal (ValueString b)) -> lit (a == b)
+  _ -> Std (Kernel ((if want then KEq else KNEq) (not (isScalarTy @a)) x y))
  where
-  Concat = concatE
+  lit b = Literal (ValueBool (b == want))
 
--- | Render a value to its JS string form (@$show@).
-pattern Show :: Expr f a -> Expr f 'String
-pattern Show x <- Std (Kernel (KShow x))
- where
-  Show x = Std (Kernel (KShow x))
-
--- | JS @typeof x@.
-pattern TypeOf :: Expr f a -> Expr f 'String
-pattern TypeOf x <- Std (Kernel (KTypeOf x))
- where
-  TypeOf x = Std (Kernel (KTypeOf x))
+-- | Ordering comparison that folds numeric literals.
+cmpE :: Comparable a => CmpOp -> Expr f a -> Expr f a -> Expr f 'Bool
+cmpE op (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
+  Literal . ValueBool $ case op of
+    CGT -> x > y
+    CLT -> x < y
+    CGE -> x >= y
+    CLE -> x <= y
+cmpE op x y = Std (Kernel (KCmp op x y))
 
 -- | Closed pure term: no free PHOAS binders. The end @forall f. 'Expr' f u@.
 type ClosedExpr (u :: Universe) = forall (f :: Universe -> Type). Expr f u
@@ -1105,7 +872,7 @@ instance Monoid (Expr f a) => Monoid (Expr f ('Function r a)) where
 -- * @Value 'Number@ — @1@, @2.5@; arithmetic runs eagerly on host
 --   'Double's (so @'Literal' (1 + 2)@ is already @'Literal' 3@)
 -- * @Expr f 'Number@ — literals via 'Literal'; ops go through
---   'plusE' / 'timesE' / … so smart constructors fold
+--   'numE' so smart constructors fold
 --   literal-literal cases at compile time. Remaining ops stay
 --   AST nodes and fold later in codegen. @(**)@ is @Math.pow@,
 --   not @exp (log x * y)@.
@@ -1132,56 +899,16 @@ liftValue2 ::
   (Double -> Double -> Double) -> Value 'Number -> Value 'Number -> Value 'Number
 liftValue2 f (ValueNumber a) (ValueNumber b) = ValueNumber (f a b)
 
--- | Smart constructors fold literal-literal cases. INCOHERENT 'Num'
--- often inlines '(+)' past a named wrapper; these equations still
--- match. @INLINE [1]@ unfolds to the kernel after the match.
-numE :: NumOp -> Expr f 'Number -> Expr f 'Number -> Expr f 'Number
+-- | Arithmetic smart constructor; folds two 'Number' literals.
+numE :: NumericU u => NumOp -> Expr f u -> Expr f u -> Expr f u
 numE op (Literal (ValueNumber x)) (Literal (ValueNumber y)) =
   Literal (ValueNumber (numOpFn op x y))
 numE op x y = Std (Kernel (KNum op x y))
-{-# INLINE [1] numE #-}
 
--- | Smart numeric operators that fold two literals.
-plusE
-  , timesE
-  , minusE
-  , fracDivE
-  , remE
-  , bitAndE
-  , bitOrE
-  , bitXorE
-  , shlE
-  , shrE
-  , ushrE ::
-    Expr f 'Number -> Expr f 'Number -> Expr f 'Number
-plusE = numE NPlus
-timesE = numE NTimes
-minusE = numE NMinus
-fracDivE = numE NDiv
-remE = numE NRem
-bitAndE = numE NBitAnd
-bitOrE = numE NBitOr
-bitXorE = numE NBitXor
-shlE = numE NShl
-shrE = numE NShr
-ushrE = numE NUShr
-{-# INLINE [1] plusE #-}
-{-# INLINE [1] timesE #-}
-{-# INLINE [1] minusE #-}
-{-# INLINE [1] fracDivE #-}
-{-# INLINE [1] remE #-}
-{-# INLINE [1] bitAndE #-}
-{-# INLINE [1] bitOrE #-}
-{-# INLINE [1] bitXorE #-}
-{-# INLINE [1] shlE #-}
-{-# INLINE [1] shrE #-}
-{-# INLINE [1] ushrE #-}
-
--- | Smart 'Negate' that folds a numeric literal.
-negateE :: Expr f 'Number -> Expr f 'Number
+-- | Negation; folds a 'Number' literal.
+negateE :: NumericU u => Expr f u -> Expr f u
 negateE (Literal (ValueNumber x)) = Literal (ValueNumber (negate x))
 negateE x = Std (Kernel (KNegate x))
-{-# INLINE [1] negateE #-}
 
 -- | Short-circuit only when the left is already a literal. Dropping a
 -- non-literal left of @&& false@ / @|| true@ would skip 'Error' and
@@ -1191,7 +918,6 @@ andE (Literal (ValueBool False)) _ = Literal (ValueBool False)
 andE (Literal (ValueBool True)) y = y
 andE x (Literal (ValueBool True)) = x
 andE x y = Std (Kernel (KAnd x y))
-{-# INLINE [1] andE #-}
 
 -- | Logical OR with the same literal short-circuit gate as 'andE'.
 orE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
@@ -1199,57 +925,30 @@ orE (Literal (ValueBool True)) _ = Literal (ValueBool True)
 orE (Literal (ValueBool False)) y = y
 orE x (Literal (ValueBool False)) = x
 orE x y = Std (Kernel (KOr x y))
-{-# INLINE [1] orE #-}
 
 -- | String concatenation that folds two string literals.
 concatE :: Expr f 'String -> Expr f 'String -> Expr f 'String
 concatE (Literal (ValueString x)) (Literal (ValueString y)) =
   Literal (ValueString (x <> y))
 concatE x y = Std (Kernel (KConcat x y))
-{-# INLINE [1] concatE #-}
 
--- | Remainder and bitwise ops shared by IEEE 'Number' and exact 'BigInt'.
--- @>>>@ stays Number-only ('UShr').
-class NumericU (u :: Universe) where
-  -- | Remainder: @%@ for 'Number', exact remainder for 'BigInt'.
-  rem_ :: Expr f u -> Expr f u -> Expr f u
+-- | 'Number' and 'BigInt': the universes with arithmetic and bitwise ops.
+-- @>>>@ is 'Number'-only ('JShark.Api.ushr').
+class NumericU (u :: Universe)
 
-  -- | Bitwise AND.
-  bitAnd :: Expr f u -> Expr f u -> Expr f u
+instance NumericU 'Number
 
-  -- | Bitwise OR.
-  bitOr :: Expr f u -> Expr f u -> Expr f u
+instance NumericU 'BigInt
 
-  -- | Bitwise XOR.
-  bitXor :: Expr f u -> Expr f u -> Expr f u
-
-  -- | Left shift.
-  shl :: Expr f u -> Expr f u -> Expr f u
-
-  -- | Sign-propagating right shift.
-  shr :: Expr f u -> Expr f u -> Expr f u
-
-instance NumericU 'Number where
-  rem_ = remE
-  bitAnd = bitAndE
-  bitOr = bitOrE
-  bitXor = bitXorE
-  shl = shlE
-  shr = shrE
-
-instance NumericU 'BigInt where
-  rem_ = bigBin BRem
-  bitAnd = bigBin BBitAnd
-  bitOr = bigBin BBitOr
-  bitXor = bigBin BBitXor
-  shl = bigBin BShl
-  shr = bigBin BShr
-
-bigBin :: BigBinOp -> Expr f 'BigInt -> Expr f 'BigInt -> Expr f 'BigInt
-bigBin op x y = Std (Kernel (KBig op x y))
-
-bigNeg :: Expr f 'BigInt -> Expr f 'BigInt
-bigNeg x = Std (Kernel (KBigNeg x))
+-- | Remainder and bitwise operators on 'Number' (JS 32-bit semantics) and
+-- 'BigInt' (exact).
+rem_, bitAnd, bitOr, bitXor, shl, shr :: NumericU u => Expr f u -> Expr f u -> Expr f u
+rem_ = numE NRem
+bitAnd = numE NBitAnd
+bitOr = numE NBitOr
+bitXor = numE NBitXor
+shl = numE NShl
+shr = numE NShr
 
 liftBig1 :: (Integer -> Integer) -> Value 'BigInt -> Value 'BigInt
 liftBig1 f (ValueBigInt a) = ValueBigInt (f a)
@@ -1271,37 +970,29 @@ instance Num (Value 'BigInt) where
   negate = liftBig1 negate
 
 instance Num (Expr f 'BigInt) where
-  (+) = bigBin BPlus
-  (*) = bigBin BTimes
-  (-) = bigBin BMinus
-  abs x = If (GTEq x (Literal (ValueBigInt 0))) x (bigNeg x)
-  signum x =
-    If
-      (GTh x (Literal (ValueBigInt 0)))
-      (Literal (ValueBigInt 1))
-      ( If
-          (LTh x (Literal (ValueBigInt 0)))
-          (bigNeg (Literal (ValueBigInt 1)))
-          (Literal (ValueBigInt 0))
-      )
+  (+) = numE NPlus
+  (*) = numE NTimes
+  (-) = numE NMinus
+  abs x = If (cmpE CGE x 0) x (negate x)
+  signum x = If (cmpE CGT x 0) 1 (If (cmpE CLT x 0) (-1) 0)
   fromInteger n = Literal (ValueBigInt n)
-  negate = bigNeg
+  negate = negateE
 
 instance {-# INCOHERENT #-} forall (f :: Universe -> Type) u. u ~ 'Number => Num (Expr f u) where
-  (+) = plusE
-  (*) = timesE
-  (-) = minusE
+  (+) = numE NPlus
+  (*) = numE NTimes
+  (-) = numE NMinus
   abs = expr1 (FixMath1 Abs)
   signum = expr1 (FixMath1 Sign)
   fromInteger n = Literal (fromInteger n)
   negate = negateE
 
 instance forall (f :: Universe -> Type) u. u ~ 'Number => Fractional (Expr f u) where
-  (/) = fracDivE
+  (/) = numE NDiv
   fromRational r = Literal (fromRational r)
 
 instance forall (f :: Universe -> Type) u. u ~ 'Number => Floating (Expr f u) where
-  pi = Literal (ValueNumber P.pi)
+  pi = Literal (ValueNumber pi)
   exp = expr1 (FixMath1 Exp)
   log = expr1 (FixMath1 Log)
   sqrt = expr1 (FixMath1 Sqrt)

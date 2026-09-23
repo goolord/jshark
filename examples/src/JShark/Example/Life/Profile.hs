@@ -7,7 +7,6 @@
 module JShark.Example.Life.Profile (install, sampleFrame) where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Dom (DomElement)
 
 -- | Copy the GL renderer string and open the ring buffer.

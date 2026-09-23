@@ -17,7 +17,7 @@
 -- * 'toSyntax' yields the raw PHOAS binder @f u@ for a single use. This is
 --   the ergonomic form when the value exists only inside the block.
 -- * 'toSyntax_' runs an effect for its side effect and yields Haskell @()@;
---   use it for discarded statements. @(*>)@ / 'seqSyntax' sequence two
+--   use it for discarded statements. @(*>)@ \/ '(>>)' sequence two
 --   effects and discard the first result.
 --
 -- A raw repeatable computation is therefore an 'Effect' passed to
@@ -30,16 +30,18 @@ module JShark.Api.Syntax
   , toSyntax_
   , bindExpr
   , fromSyntax
-  , seqSyntax
   , (>>)
+  , callerBinderHint
   )
 where
 
 import Control.Monad (ap)
 import Data.Kind (Type)
+import Data.List (isPrefixOf)
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
-import GHC.Stack (HasCallStack)
-import JShark.Api.Caller (callerBinderHint)
+import qualified Data.Text as T
+import GHC.Stack (HasCallStack, SrcLoc (..), callStack, getCallStack)
 import JShark.Api.Types
   ( Effect (..)
   , Expr (Var)
@@ -97,13 +99,9 @@ bindEffectSyntax (EffectSyntaxUnpure hint m g) h =
   EffectSyntaxUnpure (maybe callerBinderHint Just hint) m (\x -> g x >>= h)
 bindEffectSyntax (EffectSyntaxThen m g) h = EffectSyntaxThen m (g >>= h)
 
--- | Sequence effects without bind codegen ('*>' / '>>').
-seqSyntax :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
-seqSyntax = (*>)
-
 infixr 1 >>
 
--- | Alias for '(>*>)': sequence effects, discarding the first result.
+-- | '(*>)': sequence effects, discarding the first result.
 (>>) :: EffectSyntax f a -> EffectSyntax f b -> EffectSyntax f b
 (>>) = (*>)
 
@@ -124,3 +122,50 @@ fromSyntax :: EffectSyntax f (f v) -> Effect f v
 fromSyntax (EffectSyntaxPure x) = Lift (Var x)
 fromSyntax (EffectSyntaxThen m b) = ThenE m (fromSyntax b)
 fromSyntax (EffectSyntaxUnpure hint m g) = Bind hint m (fromSyntax . g)
+
+-- Binder hints ---------------------------------------------------------------
+
+-- | Enclosing user function for the current call site, when known.
+--
+-- Skips JShark API frames and a few test/wrapper helpers so hints name the
+-- program (e.g. @mainJS@) rather than plumbing (@with1@, @fromSyntax@).
+callerBinderHint :: HasCallStack => Maybe Text
+callerBinderHint =
+  listToMaybe
+    [ T.pack name
+    | (name, loc) <- getCallStack callStack
+    , isUserFunction name loc
+    ]
+{-# NOINLINE callerBinderHint #-}
+
+isUserFunction :: String -> SrcLoc -> Bool
+isUserFunction name loc =
+  not (null name)
+    && not ("$" `isPrefixOf` name)
+    && name `notElem` skippedFunctions
+    && not (any (`isPrefixOf` srcLocModule loc) skippedModules)
+
+skippedFunctions :: [String]
+skippedFunctions =
+  [ "callerBinderHint"
+  , "bindEffectSyntax"
+  , ">>="
+  , ">>"
+  , "*>"
+  , "let_"
+  , "lambda"
+  , "lambdaE"
+  , "loop0"
+  , "fromSyntax"
+  , "toSyntax"
+  , "toSyntax_"
+  , "bindExpr"
+  , "with1"
+  , "with2"
+  ]
+
+skippedModules :: [String]
+skippedModules =
+  [ "JShark.Api"
+  , "JShark.Compiler"
+  ]

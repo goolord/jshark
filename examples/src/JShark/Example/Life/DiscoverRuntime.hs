@@ -8,7 +8,6 @@ module JShark.Example.Life.DiscoverRuntime (classifyAndResolveEffect, collectPha
 import Control.Monad (forM_)
 import Data.Text (Text)
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types (Effect (Lift))
 import qualified JShark.Array as Array
 import JShark.Example.Life.Grid (setU8)

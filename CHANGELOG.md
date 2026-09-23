@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+* **Breaking:** `jshark` is now only the typed AST, the EDSL surface, the
+  host evaluator, and the compiler. Everything else moves to the new
+  `jshark-base` package, keeping its module names: the platform bindings
+  (`JShark.Array`, `Map`, `Set`, `String`, `Math`, `Json`, `Regex`,
+  `Promise`, `Ajax`, `Console`, `Dom`, `Canvas`, `Storage`, `Timers`,
+  `Worker`), `JShark.Bun`, and `JShark.Prelude`. `JShark.Api.Generic` and
+  `JShark.Api.Classes` become `JShark.Generic` and `JShark.Classes`, and the
+  IO compile driver `JShark.Compiler` (Biome formatting, batch compiles, CLI
+  flags) becomes `JShark.Build`. The `jshark:testing` sublibrary, the
+  integration test suite, and the `jshark-compiler` bench move to
+  `jshark-base`. The core library now depends only on `base`,
+  `bytestring`, `containers`, `mtl`, and `text`.
+
+* **Breaking:** the event and window helpers (`Event`, `window`, `host`,
+  `locationHash`, `onClick`, `addEventListener*`, `event*` accessors) move
+  from `JShark.Api` to `JShark.Dom`.
+
+* **Breaking:** `JShark.Api` re-exports `Rec (..)` and `(<:)`, so the
+  separate `JShark.Api.Rec` import is no longer needed; `jshark-bindgen`
+  output no longer emits it. `JShark.Api.Caller` is folded into
+  `JShark.Api.Syntax` (`callerBinderHint`).
+
+* **Breaking:** the operator pattern synonyms (`Plus`, `Times`, `And`, `Or`,
+  `Eq`, `Concat`, `Show`, `GTh`, …) are removed; use the operators
+  (`+`, `.&&`, `.==`, `<>`, `toString`, `.>`, …) or `structuralEq`. `Kernel`
+  folds `KBig`/`KBigNeg` into `KNum`/`KNegate` (now shared by `Number` and
+  `BigInt`), `BigBinOp` is replaced by `NumOp`, `NumericU` is a plain
+  constraint with top-level `rem_`/`bitAnd`/`bitOr`/`bitXor`/`shl`/`shr`,
+  and the smart constructors are `numE`, `negateE`, `eqE`, and `cmpE`
+  (replacing `plusE`, …, `mkEq`, `mkGTh`, …). `emptyObject` and `seqSyntax`
+  are removed (use `newObject` and `*>`). Generated JavaScript is unchanged.
+
 * **Breaking:** the compiler core is one first-order IR
   (`JShark.Compiler.Ir`) with a single lowering pass, optimizer, and
   emitter (`JShark.Compiler.Codegen`); the generated JavaScript is

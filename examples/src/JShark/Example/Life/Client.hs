@@ -15,9 +15,9 @@ import Control.Monad (forM_)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf, toObject)
-import qualified JShark.Api.Generic as G
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Dom (Event, addEventListener, eventButton, eventClientX, eventClientY, eventCode, eventOffsetX, eventOffsetY, eventShiftKey, window)
+import JShark.Generic (MutableObjectOf, toObject)
+import qualified JShark.Generic as G
 import JShark.Api.Types (Effect (LambdaE, Lift), Expr (Literal, Var))
 import qualified JShark.Api.Types as Ts
 import qualified JShark.Array as Array
@@ -162,7 +162,7 @@ bootLoaded canvas app appH viewport renderDirty = do
   statRender <- Dom.lookupId (string lifeStatRenderId)
   settingsZoom <- Dom.lookupId (string lifeSettingsZoomId)
   meter <- hold (G.toObject (Fps (-1) 0))
-  tipSym <- toSyntax emptyObject
+  tipSym <- toSyntax newObject
   let
     tipRef = Lift (Var tipSym)
   hitsSym <- toSyntax Set.new

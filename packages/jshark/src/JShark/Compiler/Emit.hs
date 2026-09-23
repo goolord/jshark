@@ -58,7 +58,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Char (isDigit)
 import qualified Data.Char as Char
 import Data.Int (Int32)
-import Data.List (intersperse, nub, sortBy)
+import Data.List (elemIndex, intersperse, nub)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.String (IsString (..))
@@ -294,44 +294,18 @@ mergeHoistedSrc name existing incoming
 hoistTagName :: Text -> Text
 hoistTagName tag = "$" <> tag
 
--- | Alpha-rename @n0@, @n1@, … so the same hoisted lambda compares equal
--- across codegen sites that picked different binder ids.
+-- | Alpha-rename the @n0@, @n1@, … binders in order of appearance so the
+-- same hoisted lambda compares equal across sites that numbered it apart.
 canonicalHoistSrc :: Text -> Text
-canonicalHoistSrc src =
-  foldl' (\t (from, to) -> T.replace from to t) src renames
+canonicalHoistSrc src = T.concat (map rename toks)
  where
-  renames =
-    sortBy (\(a, _) (b, _) -> compare (T.length b) (T.length a)) $
-      zip ids (map (\i -> "p" <> T.pack (show (i :: Int))) [0 .. length ids - 1])
-  ids = nub (hoistNIdents src)
-
-hoistNIdents :: Text -> [Text]
-hoistNIdents src = go 0 []
- where
-  len = T.length src
-  go i acc
-    | i >= len = acc
-    | otherwise =
-        case T.uncons (T.drop i src) of
-          Nothing -> acc
-          Just ('n', rest) ->
-            case span isDigit (T.unpack rest) of
-              ([], _) -> go (i + 1) acc
-              (ds, _) ->
-                let
-                  ident = "n" <> T.pack ds
-                  prev = if i > 0 then Just (T.index src (i - 1)) else Nothing
-                 in
-                  if isIdentCont prev
-                    then go (i + 1) acc
-                    else
-                      go (i + 1 + length ds) $
-                        if ident `elem` acc
-                          then acc
-                          else acc ++ [ident]
-          Just _ -> go (i + 1) acc
-  isIdentCont (Just c) = Char.isAlphaNum c || c == '_'
-  isIdentCont Nothing = False
+  toks = T.groupBy (\a b -> ident a == ident b) src
+  ident c = Char.isAlphaNum c || c == '_' || c == '$'
+  binders = nub (filter isBinder toks)
+  isBinder t = case T.uncons t of
+    Just ('n', ds) -> not (T.null ds) && T.all isDigit ds
+    _ -> False
+  rename t = maybe t (\i -> "p" <> T.pack (show i)) (elemIndex t binders)
 
 -- | Render preamble bindings compactly; Biome formats the full emit.
 renderPreambleStyled :: Preamble -> JS

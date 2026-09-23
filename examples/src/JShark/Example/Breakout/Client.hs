@@ -12,9 +12,9 @@ module JShark.Example.Breakout.Client (mainJS) where
 
 import GHC.Generics (Generic)
 import JShark.Api
-import JShark.Api.Generic (MutableObjectOf, SumOf)
-import qualified JShark.Api.Generic as G
-import JShark.Api.Rec (Rec (..), (<:))
+import JShark.Dom (addEventListenerS, eventClientX, eventCode, window)
+import JShark.Generic (MutableObjectOf, SumOf)
+import qualified JShark.Generic as G
 import qualified JShark.Canvas as Canvas
 import qualified JShark.Dom as Dom
 import JShark.Example.Breakout.Types

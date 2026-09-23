@@ -100,7 +100,7 @@ uniqueNameSid sid registry = bindExpr $ fromSyntax $ do
   let
     takenSet = Lift taken
   base <- makeName registry sid
-  stSym <- toSyntax emptyObject
+  stSym <- toSyntax newObject
   let
     st = Lift (Var stSym)
   _ <- setProp st "candidate" base

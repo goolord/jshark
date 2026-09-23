@@ -37,7 +37,7 @@ emitModule ir =
     , "module " <> irModule ir
     ]
       <> exports
-      <> ["where", "", "import JShark.Api", "import JShark.Api.Rec (Rec (..), (<:))"]
+      <> ["where", "", "import JShark.Api"]
       <> ["import JShark.Promise (Promise)" | moduleUsesPromise ir]
       <> [""]
       <> concatMap phantom phantoms

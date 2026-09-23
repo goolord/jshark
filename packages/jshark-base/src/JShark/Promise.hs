@@ -24,7 +24,6 @@ module JShark.Promise
 where
 
 import JShark.Api
-import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Types
 
 -- | An opaque JS @Promise@ resolving a value in universe @u@.

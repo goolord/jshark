@@ -47,8 +47,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.TypeLits (symbolVal)
 import JShark.Api.Types
-  ( BigBinOp
-  , CmpOp
+  ( CmpOp
   , Expr (Literal)
   , FFIForm
   , FieldLit (..)
@@ -92,14 +91,13 @@ data IrField r = IrField !FieldKind !Text r
 data Op2
   = OConcat
   | ONum NumOp
-  | OBig BigBinOp
   | OAnd
   | OOr
   | OEq Bool
   | ONEq Bool
   | OCmp CmpOp
 
-data Op1 = ONeg | OBigNeg | OShow | OTypeOf
+data Op1 = ONeg | OShow | OTypeOf
 
 data Meth = MMap | MFilter | MReduce | MReduceRight | MToSorted | MFrom
   deriving Eq
@@ -619,10 +617,9 @@ fold2 op x y = case op of
     | Ir (LitV (ValueNumber a)) <- x
     , Ir (LitV (ValueNumber b)) <- y ->
         Just (SomeValue (ValueNumber (numOpFn n a b)))
-  OBig b
     | Ir (LitV (ValueBigInt a)) <- x
-    , Ir (LitV (ValueBigInt c)) <- y ->
-        SomeValue . ValueBigInt <$> tryEvalBigBin b a c
+    , Ir (LitV (ValueBigInt b)) <- y ->
+        SomeValue . ValueBigInt <$> tryEvalBigBin n a b
   OEq _ -> bool <$> eqFold x y
   ONEq _ -> bool . not <$> eqFold x y
   OCmp c -> do
@@ -636,7 +633,7 @@ fold2 op x y = case op of
 fold1 :: Op1 -> Ir -> Maybe SomeValue
 fold1 op (Ir x) = case (op, x) of
   (ONeg, LitV (ValueNumber a)) -> Just (SomeValue (ValueNumber (negate a)))
-  (OBigNeg, LitV (ValueBigInt a)) -> Just (SomeValue (ValueBigInt (negate a)))
+  (ONeg, LitV (ValueBigInt a)) -> Just (SomeValue (ValueBigInt (negate a)))
   (OShow, LitV (ValueFunction _)) -> Nothing
   (OShow, LitV v) -> Just (SomeValue (ValueString (jsShow v)))
   (OTypeOf, LitV v) -> Just (SomeValue (ValueString (typeOfValue v)))
