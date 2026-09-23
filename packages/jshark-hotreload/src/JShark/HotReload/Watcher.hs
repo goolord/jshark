@@ -8,8 +8,9 @@ module JShark.HotReload.Watcher
   )
 where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, waitCatch)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, tryReadMVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (filterM, void)
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -28,7 +29,6 @@ import System.FSNotify
   )
 import System.FilePath (splitDirectories, takeDirectory, takeExtension)
 import System.IO (hPutStrLn, stderr)
-import System.Timeout (timeout)
 
 -- | Directories and URL mapping for watched assets.
 data WatchTargets = WatchTargets
@@ -63,8 +63,12 @@ startWatcher hub targets = do
       try (watchTree mgr dir interesting queue) >>= \case
         Right unwatch -> pure [unwatch]
         Left ex -> [] <$ warn ("cannot watch " <> dir) ex
+    -- Poll the stop flag rather than @timeout debounceUs (takeMVar stop)@:
+    -- the timeout can fire after takeMVar has consumed the signal, losing it
+    -- and leaving the disposer blocked on the worker forever.
     drain = do
-      stopped <- timeout debounceUs (takeMVar stop)
+      threadDelay debounceUs
+      stopped <- tryReadMVar stop
       case stopped of
         Just () -> pure ()
         Nothing -> do
