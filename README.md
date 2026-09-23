@@ -103,7 +103,7 @@ sums, typed events, and the FFI.
 
 ## Demos
 
-Four applications, rebuilt from `master` on every push and shown next to the
+Four applications, rebuilt from `main` on every push and shown next to the
 JavaScript they compile to: **<https://goolord.github.io/jshark/>**
 
 | | |
