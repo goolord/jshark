@@ -42,6 +42,14 @@
   and the optimizer shares the evaluator's equality (`valueEqM`) and
   ordering (`valueCompare`).
 
+* **Breaking:** `EmitStyle` (whose integer-literal and bare-key flags were
+  always on) is replaced by `OutputStyle = Readable | Minified`, shared by
+  `JShark.Internal`'s `pureASTWith`/`effectfulASTWith` and `JShark.Build`;
+  `minifiedStyle` becomes `Minified`. `fixed1`/`fixed2`/`fixed3` are removed
+  (use `expr1`/`expr2`/`expr3`), and the `ZipPair`/`ReduceWith` rows move
+  into `JShark.Array`. `ffi` always builds an `FFICall`; codegen already
+  parenthesizes an arrow callee, so output is unchanged.
+
 * **Breaking:** the compiler core is one first-order IR
   (`JShark.Compiler.Ir`) with a single lowering pass, optimizer, and
   emitter (`JShark.Compiler.Codegen`); the generated JavaScript is

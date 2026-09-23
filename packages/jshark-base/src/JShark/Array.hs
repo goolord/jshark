@@ -1,9 +1,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | JS @Array.prototype@ and small array algorithms.
 --
@@ -60,6 +62,20 @@ import JShark.Api.Params (Param)
 import JShark.Api.Types
 import qualified JShark.Math as Math
 import Prelude hiding (concat, filter, length, map, zipWith)
+
+-- | @zipWith@ pair argument: @\{xs, ys\}@.
+data ZipPair (a :: Universe) (b :: Universe)
+
+type instance Field (ZipPair a b) "xs" = 'Array a
+
+type instance Field (ZipPair a b) "ys" = 'Array b
+
+-- | @reduce@ seed argument: @\{arr, z\}@.
+data ReduceWith (acc :: Universe) (u :: Universe)
+
+type instance Field (ReduceWith acc u) "arr" = 'Array u
+
+type instance Field (ReduceWith acc u) "z" = acc
 
 -- | @arr[i]@ after 'Math.trunc'. Out of range throws via @$checkedIndex@.
 index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u

@@ -183,7 +183,6 @@ where
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Text (Text)
-import qualified Data.Text as T
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits (KnownSymbol)
 import JShark.Api.Params
@@ -204,28 +203,15 @@ import qualified JShark.Object as Object
 
 -- | Raw JS call. Codegen appends @(...)@ for the argument list; with
 --   'RecNil' that is a trailing @()@ (e.g. @performance.now@ →
---   @performance.now()@). Parenthesized callees (IIFEs) stay 'FFICall'.
+--   @performance.now()@). A callee containing an arrow is parenthesized
+--   unless it already is.
 ffi :: Text -> Rec (Arg f) us -> Effect f v
-ffi s = FFI (classifyFFI s)
+ffi s = FFI (FFICall s)
 
 -- | Raw JS expression. With 'RecNil', codegen emits the string as-is (no
 --   trailing @()@). Use for comparisons, @typeof@, property reads, etc.
 ffiExpr :: Text -> Rec (Arg f) us -> Effect f v
 ffiExpr s = FFI (FFIExpr s)
-
--- | Classify a string for 'ffi'. Unparenthesized arrows become 'FFILambda';
---   everything else (including parenthesized IIFEs) becomes 'FFICall'.
-classifyFFI :: Text -> FFIForm
-classifyFFI s
-  | "(" `T.isPrefixOf` s = FFICall s
-  | isUnparenthesizedArrow s = FFILambda s
-  | otherwise = FFICall s
-
-isUnparenthesizedArrow :: Text -> Bool
-isUnparenthesizedArrow s =
-  case T.findIndex (== '=') s of
-    Just i -> T.length s > i + 1 && T.index s (i + 1) == '>'
-    Nothing -> False
 
 -- | Call @object.method(args...)@ — the receiver is an
 -- Effect handle (e.g. a DOM element), the method a free-text name.

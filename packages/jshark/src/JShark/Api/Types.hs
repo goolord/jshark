@@ -59,15 +59,10 @@ module JShark.Api.Types
   , cmpOpFn
   , FixedArgs (..)
   , Method (..)
-  , fixed1
-  , fixed2
-  , fixed3
   , expr1
   , expr2
   , expr3
   , GroupBy
-  , ZipPair
-  , ReduceWith
   , ClosedExpr
   , ClosedEffect
   , LamInfo (..)
@@ -349,20 +344,6 @@ type instance Field (GroupBy u) "key" = 'String
 
 type instance Field (GroupBy u) "items" = 'Array u
 
--- | @zipWith@ pair argument: @\{xs, ys\}@.
-data ZipPair (a :: Universe) (b :: Universe)
-
-type instance Field (ZipPair a b) "xs" = 'Array a
-
-type instance Field (ZipPair a b) "ys" = 'Array b
-
--- | @reduce@ seed argument: @\{arr, z\}@.
-data ReduceWith (acc :: Universe) (u :: Universe)
-
-type instance Field (ReduceWith acc u) "arr" = 'Array u
-
-type instance Field (ReduceWith acc u) "z" = acc
-
 -- | One field of an object literal, pure ('ArgExpr') or effectful
 -- ('ArgEffect'). @k@ is the JS name ('fieldKey'). 'FieldLit' requires the
 -- value's universe to be 'Field' @r@ @k@; 'FieldLitExtra' carries a key
@@ -589,29 +570,17 @@ data FixedArgs f a b c where
   -- | Three arguments.
   ArgsT :: Expr f a -> Expr f b -> Expr f c -> FixedArgs f a b c
 
--- | Apply a one-argument 'FixedOp' as a 'Std' term.
-fixed1 :: FixedOp a 'Unit 'Unit u -> Expr f a -> Std f u
-fixed1 op x = Fixed op (ArgsU x)
-
--- | Apply a two-argument 'FixedOp' as a 'Std' term.
-fixed2 :: FixedOp a b 'Unit u -> Expr f a -> Expr f b -> Std f u
-fixed2 op x y = Fixed op (ArgsB x y)
-
--- | Apply a three-argument 'FixedOp' as a 'Std' term.
-fixed3 :: FixedOp a b c u -> Expr f a -> Expr f b -> Expr f c -> Std f u
-fixed3 op x y z = Fixed op (ArgsT x y z)
-
 -- | 'Std' 'Fixed' as an 'Expr' (for 'Num'/'Floating' instances).
 expr1 :: FixedOp a 'Unit 'Unit u -> Expr f a -> Expr f u
-expr1 op x = Std (fixed1 op x)
+expr1 op x = Std (Fixed op (ArgsU x))
 
 -- | Two-argument 'FixedOp' directly as an 'Expr'.
 expr2 :: FixedOp a b 'Unit u -> Expr f a -> Expr f b -> Expr f u
-expr2 op x y = Std (fixed2 op x y)
+expr2 op x y = Std (Fixed op (ArgsB x y))
 
 -- | Three-argument 'FixedOp' directly as an 'Expr'.
 expr3 :: FixedOp a b c u -> Expr f a -> Expr f b -> Expr f c -> Expr f u
-expr3 op x y z = Std (fixed3 op x y z)
+expr3 op x y z = Std (Fixed op (ArgsT x y z))
 
 -- | Higher-order array stdlib (@.map@, @.reduce@, @Array.from@, …).
 data Method :: (Universe -> Type) -> Universe -> Type where
