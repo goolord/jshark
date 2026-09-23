@@ -45,7 +45,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import JShark (ClosedEffect, ClosedExpr, JS, effectfulProgram, pureProgram, renderJS)
 import JShark.Api.Syntax (EffectSyntax, fromSyntax)
-import JShark.Internal (effectfulAST, pureAST)
+import JShark.Internal (OutputStyle (..), effectfulAST, pureAST)
 import Numeric (showFFloat)
 import System.CPUTime (getCPUTime)
 import System.Directory (findExecutable)
@@ -53,14 +53,6 @@ import System.Exit (ExitCode (..))
 import System.IO (hFlush, hPutStr, stderr)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process.Typed (byteStringInput, proc, readProcess, setStdin)
-
--- | How to present compiled JavaScript.
-data OutputStyle
-  = -- | Pretty-print, do not minify. Not wrapped in an IIFE.
-    Readable
-  | -- | Wrap in an IIFE.
-    Minified
-  deriving (Show, Eq, Ord)
 
 -- | Top-level compiler configuration.
 data CompilerConfig = CompilerConfig

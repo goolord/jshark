@@ -12,16 +12,14 @@
 --    expression position ('NEmbed') and expressions in effect position
 --    ('NLift'), then fold @lit op lit@ arithmetic the tree optimizer left.
 -- 2. /Plan/: a pre-order walk names every binder (source hints under
---    'esSourceNames', otherwise @n0@, @n1@, …) and resolves variables.
+--    'Readable', otherwise @n0@, @n1@, …) and resolves variables.
 -- 3. /Emit/: nodes emit leaves-first, by height then number, each from its
 --    children's 'Code'. Temporaries and the shared preamble (runtime shims,
 --    hoisted @$name@ helpers) are allocated in that order.
 --
 -- Internal to the JShark compiler; its API may change between 0.x releases.
 module JShark.Compiler.Codegen
-  ( EmitStyle (..)
-  , minifiedStyle
-  , idiomaticStyle
+  ( OutputStyle (..)
   , pureProgram
   , effectfulProgram
   , pureAST
@@ -52,39 +50,31 @@ import JShark.Compiler.Evaluate (uint8Elems)
 import JShark.Compiler.Ir
 import JShark.Compiler.Lower (lowerOptEffectIrWith, lowerOptExprIr)
 
--- | Codegen presentation. Syntax flags are safe for minified output;
--- structure flags ('esSourceNames', 'esKeepLets') are for readable output.
-data EmitStyle = EmitStyle
-  { esIntLiterals :: !Bool
-  , esBareKeys :: !Bool
-  , esSourceNames :: !Bool
-  , esKeepLets :: !Bool
-  }
-  deriving (Eq, Show)
-
-minifiedStyle, idiomaticStyle :: EmitStyle
-minifiedStyle = EmitStyle True True False False
-idiomaticStyle = EmitStyle True True True True
+-- | How to present compiled JavaScript. 'Readable' names binders after
+-- their source hints and keeps single-use named bindings; 'Minified'
+-- numbers binders and inlines what it can.
+data OutputStyle = Readable | Minified
+  deriving (Show, Eq, Ord)
 
 -- | Compile a closed pure expression to a JavaScript IIFE.
 pureProgram :: ClosedExpr u -> JS
-pureProgram e = renderIIFE (codegen minifiedStyle (fst (lowerOptExprIr False e)))
+pureProgram e = renderIIFE (codegen Minified (fst (lowerOptExprIr False e)))
 
 -- | Compile a closed effectful program to a JavaScript IIFE.
 effectfulProgram :: ClosedEffect u -> JS
-effectfulProgram e = renderIIFE (codegen minifiedStyle (fst (lowerOptEffectIrWith False e)))
+effectfulProgram e = renderIIFE (codegen Minified (fst (lowerOptEffectIrWith False e)))
 
 pureAST :: ClosedExpr u -> JS
-pureAST = pureASTWith idiomaticStyle
+pureAST = pureASTWith Readable
 
-pureASTWith :: EmitStyle -> ClosedExpr u -> JS
-pureASTWith st e = renderSnippet (codegen st (fst (lowerOptExprIr (esKeepLets st) e)))
+pureASTWith :: OutputStyle -> ClosedExpr u -> JS
+pureASTWith st e = renderSnippet (codegen st (fst (lowerOptExprIr (st == Readable) e)))
 
 effectfulAST :: ClosedEffect u -> JS
-effectfulAST = effectfulASTWith idiomaticStyle
+effectfulAST = effectfulASTWith Readable
 
-effectfulASTWith :: EmitStyle -> ClosedEffect u -> JS
-effectfulASTWith st e = renderSnippet (codegen st (fst (lowerOptEffectIrWith (esKeepLets st) e)))
+effectfulASTWith :: OutputStyle -> ClosedEffect u -> JS
+effectfulASTWith st e = renderSnippet (codegen st (fst (lowerOptEffectIrWith (st == Readable) e)))
 
 -- | Wrap preamble, declarations, and result in an IIFE so a minifier treats
 -- the result as live.
@@ -208,12 +198,12 @@ nName :: Int -> Text
 nName n = "n" <> T.pack (show n)
 
 -- | Name a binder. A source hint is used once per JS function scope.
-alloc :: EmitStyle -> Maybe Text -> State PlanS Text
+alloc :: OutputStyle -> Maybe Text -> State PlanS Text
 alloc st hint = state $ \(PlanS n sc) ->
   let
     top = fromMaybe S.empty (listToMaybe sc)
     name = case hint of
-      Just t | t `S.notMember` top, esSourceNames st, jsSafeBinder t -> t
+      Just t | t `S.notMember` top, st == Readable, jsSafeBinder t -> t
       _ -> nName n
     sc' = case sc of
       x : rest -> S.insert name x : rest
@@ -228,7 +218,7 @@ inScope m = modify' push *> m <* modify' pop
   push (PlanS n sc) = PlanS n (S.empty : sc)
   pop (PlanS n sc) = PlanS n (case sc of _ : rest@(_ : _) -> rest; _ -> sc)
 
-plan :: EmitStyle -> IM.IntMap Text -> P -> State PlanS P
+plan :: OutputStyle -> IM.IntMap Text -> P -> State PlanS P
 plan st env (P i _ n) = case n of
   NVar t -> ret (toList (IM.lookup t env)) n
   NLet t h x b -> do
@@ -305,12 +295,12 @@ plan st env (P i _ n) = case n of
 -- | Emit state: the next temporary number and the preamble.
 data ES = ES !Int !Preamble
 
-codegen :: EmitStyle -> Ir -> (Preamble, Code)
+codegen :: OutputStyle -> Ir -> (Preamble, Code)
 codegen st ir =
   let
     (root, PlanS next _) = runState (plan st IM.empty (foldArith (number ir))) (PlanS 0 [S.empty])
     step (!table, !es) p =
-      let (es', c) = emit st (table IM.!) es p in (IM.insert (pId p) c table, es')
+      let (es', c) = emit (table IM.!) es p in (IM.insert (pId p) c table, es')
     (tableF, ES _ pre) = foldl' step (IM.empty, ES next emptyPreamble) (layered root)
    in
     (pre, tableF IM.! pId root)
@@ -321,9 +311,9 @@ tmp (ES n p) = (nName n, ES (n + 1) p)
 shim :: Builtin -> [JS] -> ES -> (ES, JS)
 shim b args (ES n p) = let (p', js) = useShim b args p in (ES n p', js)
 
-emit :: EmitStyle -> (Int -> Code) -> ES -> P -> (ES, Code)
-emit st table s0 (P _ ann n) = case n of
-  NLit (SomeValue v) -> same (renderLit st v)
+emit :: (Int -> Code) -> ES -> P -> (ES, Code)
+emit table s0 (P _ ann n) = case n of
+  NLit (SomeValue v) -> same (renderLit v)
   NVar _ -> same (Code mempty (maybe mempty jsText (listToMaybe ann)))
   NEmbed e -> same (c e)
   NLift e -> same (c e)
@@ -760,7 +750,7 @@ emit st table s0 (P _ ann n) = case n of
 
   objectLit fs =
     let
-      parts = [(d, (jsPropKey st k <> ":") <+> r) | IrField _ k e <- fs, Code d r <- [c e]]
+      parts = [(d, (jsPropKey k <> ":") <+> r) | IrField _ k e <- fs, Code d r <- [c e]]
      in
       Code
         (mconcat (mapMaybe (nonEmpty . fst) parts))
@@ -893,23 +883,23 @@ op2JS = \case
   OAnd -> "&&"
   OOr -> "||"
 
-renderLit :: EmitStyle -> Value u -> Code
-renderLit st = \case
-  ValueNumber d -> Code mempty (jsNumber st d)
+renderLit :: Value u -> Code
+renderLit = \case
+  ValueNumber d -> Code mempty (jsNumber d)
   ValueBigInt i ->
     Code
       mempty
       (if i >= 0 then jsString (shows i "n") else parens (jsString (shows i "n")))
-  ValueArray xs -> let cs = map (renderLit st) xs in Code (decls cs) (brackets (refs cs))
+  ValueArray xs -> let cs = map renderLit xs in Code (decls cs) (brackets (refs cs))
   ValueString s -> Code mempty (jsQuote s)
   ValueUnit -> MkCode Nothing Nothing False
   ValueOption (Just x)
-    | MkCode d r fx <- renderLit st x ->
+    | MkCode d r fx <- renderLit x ->
         MkCode d (Just ("{some: true, value: " <> fromMaybe "undefined" r <> "}")) fx
   ValueOption Nothing -> Code mempty "{some: false}"
-  ValueResult (Right x) | MkCode d r _ <- renderLit st x -> MkCode d (Just (resultObject True r)) False
+  ValueResult (Right x) | MkCode d r _ <- renderLit x -> MkCode d (Just (resultObject True r)) False
   ValueResult (Left x)
-    | MkCode d r _ <- renderLit st x -> MkCode d (Just (resultObject False r)) False
+    | MkCode d r _ <- renderLit x -> MkCode d (Just (resultObject False r)) False
   ValueRegex s -> Code mempty ("new RegExp" <> parens (jsQuote s))
   ValueUint8Array ba -> Code mempty (bytesLit "Uint8Array" ba)
   ValueUint8ClampedArray ba -> Code mempty (bytesLit "Uint8ClampedArray" ba)
@@ -938,10 +928,9 @@ resultObject isOk payload =
         <+> ("value:" <+> fromMaybe "undefined" payload)
     )
 
-jsNumber :: EmitStyle -> Double -> JS
-jsNumber st d
-  | esIntLiterals st
-  , not (isNaN d || isInfinite d)
+jsNumber :: Double -> JS
+jsNumber d
+  | not (isNaN d || isInfinite d)
   , -- @-0.0@ is a distinct JS value and must keep its sign.
     not (isNegativeZero d)
   , let
@@ -951,9 +940,9 @@ jsNumber st d
       jsDecimal i
   | otherwise = jsDouble d
 
-jsPropKey :: EmitStyle -> Text -> JS
-jsPropKey st k
-  | esBareKeys st && jsIdent k = jsText k
+jsPropKey :: Text -> JS
+jsPropKey k
+  | jsIdent k = jsText k
   | otherwise = dquotes (jsText k)
 
 -- | @o.k@ for an identifier or a dotted identifier path, else @o["k"]@.

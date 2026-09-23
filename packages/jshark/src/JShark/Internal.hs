@@ -11,8 +11,7 @@ module JShark.Internal
   , pureASTWith
   , effectfulAST
   , effectfulASTWith
-  , EmitStyle (..)
-  , minifiedStyle
+  , OutputStyle (..)
 
     -- * IR
   , irEffectFromClosed

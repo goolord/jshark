@@ -55,7 +55,7 @@ import JShark.Example.Life.Types
 import JShark.Internal
   ( effectfulAST
   , effectfulASTWith
-  , minifiedStyle
+  , OutputStyle (..)
   , optimizedEffectSize
   )
 import qualified JShark.Math as Math
@@ -140,7 +140,7 @@ lifeTests =
                 life = stmts mainJS
                 irNodes = optimizedEffectSize life
               js <-
-                Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTWith minifiedStyle life))
+                Ex.evaluate $ TE.decodeUtf8 (renderJS (effectfulASTWith Minified life))
               -- Mutable array reads (u8Index, FixArrLen, …) are no longer
               -- moved/inlined across writes, so a handful stay as bindings.
               irNodes @?= 70675

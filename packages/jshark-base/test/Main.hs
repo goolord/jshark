@@ -38,7 +38,6 @@ import JShark.Internal
   , SomeValue (..)
   , builtinSrc
   , effectfulASTWith
-  , minifiedStyle
   , optIr
   , validateOptimizedEffect
   , validateOptimizedExpr
@@ -399,7 +398,7 @@ codegenTests =
 
 -- | Minified-style emit of a do-block program.
 minified :: (forall f. EffectSyntax f (f u)) -> JS
-minified body = effectfulASTWith minifiedStyle (fromSyntax body)
+minified body = effectfulASTWith Minified (fromSyntax body)
 
 -- | Fills a fresh one-byte array inside a three-step for loop.
 forRangeFill :: Effect f 'Unit
@@ -455,7 +454,7 @@ controlFlowTests =
         ["const n1 = n0[0];\nn0[0] = 7;"]
         u8ReadThenWrite
     , jsHas "flat forRange_ emits u8Set in loop body" ["for (let", "[n"] $
-        effectfulASTWith minifiedStyle forRangeFill
+        effectfulASTWith Minified forRangeFill
     , jsHas "flat bindExpr forRange u8Set keeps loop" ["for (let", "[n", "= 255;"] $
         minified $ do
           buf <- bindExpr (newByteArray (number 4))
@@ -499,7 +498,7 @@ controlFlowTests =
     , effectJS "multi-arg arrow FFI wraps IIFE" "((a,b)=>a+b)(1, 2)" $
         ffi ("(a,b)=>a+b") (arg (number 1) <: arg (number 2) <: RecNil)
     , jsIs "flat multi-arg arrow FFI wraps IIFE" "((a,b)=>a+b)(1, 2)"
-        $ effectfulASTWith minifiedStyle
+        $ effectfulASTWith Minified
         $ ffi ("(a,b)=>a+b") (arg (number 1) <: arg (number 2) <: RecNil)
     , pureJS
         "u8Index renders direct Uint8Array indexing"
@@ -1451,8 +1450,8 @@ codegenFoldTests =
     "codegen folds"
     [ testCase "constant fold chains" $
         jsText
-          (effectfulASTWith minifiedStyle (expr ((number 1 + number 2) + number 3)))
-          @?= jsText (effectfulASTWith minifiedStyle (expr (number 6)))
+          (effectfulASTWith Minified (expr ((number 1 + number 2) + number 3)))
+          @?= jsText (effectfulASTWith Minified (expr (number 6)))
     , testCase "optIr keeps a mutating loop effectful" $
         let
           ?keepLets = False
