@@ -74,8 +74,6 @@ lowerE = \case
     o' <- lowerE o
     e' <- lowerE (e (Const te))
     Ir . NResCase o' te e' tk <$> lowerE (k (Const tk))
-  Index a i -> Ir <$> (NIndex <$> lowerE a <*> lowerE i)
-  U8Index a i -> Ir <$> (NU8Index <$> lowerE a <*> lowerE i)
   Error m -> Ir . NError <$> lowerE m
   Std (Fixed op args) ->
     Ir . NFixed (SomeFixedOp op) <$> case args of

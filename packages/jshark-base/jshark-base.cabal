@@ -5,8 +5,10 @@ name: jshark-base
 version: 0.1.0.0
 synopsis: Platform bindings and tooling for the JShark EDSL
 description:
-  Everything around the @jshark@ core that is not the AST or the compiler:
-  typed bindings for the JavaScript standard library and browser platform
+  Everything around the @jshark@ core that is not the AST, the evaluator,
+  or the compiler: the EDSL surface (@JShark.Api@, @JShark.Object@), the
+  one-import @JShark@ module, typed bindings for the JavaScript standard
+  library and browser platform
   (arrays, maps, DOM, canvas, timers, workers, …), the @Generic@ record
   and sum encodings, universe-indexed @Functor@ \/ @Monad@ classes, the
   IO build driver (Biome formatting, batch compiles, CLI flags), and a
@@ -62,7 +64,11 @@ common warnings
 library
   import: warnings
   exposed-modules:
+    JShark
     JShark.Ajax
+    JShark.Api
+    JShark.Api.Params
+    JShark.Api.Syntax
     JShark.Array
     JShark.Build
     JShark.Bun
@@ -75,6 +81,7 @@ library
     JShark.Json
     JShark.Map
     JShark.Math
+    JShark.Object
     JShark.Prelude
     JShark.Promise
     JShark.Regex
@@ -83,6 +90,8 @@ library
     JShark.String
     JShark.Timers
     JShark.Worker
+  other-modules:
+    JShark.Host
   build-depends:
     , async >= 2.2 && < 2.4
     , base >= 4.17 && < 5
@@ -154,6 +163,7 @@ benchmark jshark-compiler
   build-depends:
     , base
     , jshark
+    , jshark-base
     , jshark-base:testing
     , tasty-bench >= 0.3.5 && < 0.4
     , text >= 1.2 && < 3

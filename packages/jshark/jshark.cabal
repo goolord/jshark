@@ -10,10 +10,12 @@ description:
   @do@ notation, and codegen emits clean JavaScript whose binder names
   and callstack hints are preserved.
 
-  The API separates pure expressions (@Expr@) from side effects
-  (@Effect@). Pure terms can be evaluated directly in Haskell. Platform
-  bindings (DOM, canvas, arrays, timers, …), build tooling, and the Bun
-  test runner live in @jshark-base@.
+  This package is the core: the typed AST, which separates pure
+  expressions (@Expr@) from side effects (@Effect@), the host evaluator
+  for pure terms, and the compiler (@JShark.Core@). The EDSL surface, the
+  one-import @JShark@ module, platform bindings (DOM, canvas, arrays,
+  timers, …), build tooling, and the Bun test runner live in
+  @jshark-base@.
 homepage: https://github.com/goolord/jshark
 bug-reports: https://github.com/goolord/jshark/issues
 license: BSD-3-Clause
@@ -68,14 +70,10 @@ common warnings
 library
   import: warnings
   exposed-modules:
-    JShark
-    JShark.Api
-    JShark.Api.Params
     JShark.Api.Rec
-    JShark.Api.Syntax
     JShark.Api.Types
+    JShark.Core
     JShark.Internal
-    JShark.Object
   other-modules:
     -- Compiler internals; tests and tooling reach them through
     -- 'JShark.Internal'.

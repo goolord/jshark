@@ -1,8 +1,11 @@
--- | JShark compiler facade: PHOAS terms to JavaScript.
+-- | The @jshark@ core package's entry point: the typed AST, the host
+-- evaluator, and the compiler, PHOAS terms to JavaScript.
 --
--- User-facing syntax lives in 'JShark.Api.Types' and 'JShark.Api'. This module
--- re-exports the compile pipeline and the two entry points
--- ('pureProgram', 'effectfulProgram').
+-- The EDSL surface ('JShark.Api') and the one-import "JShark" facade live in
+-- @jshark-base@. This module re-exports the AST from 'JShark.Api.Types',
+-- the evaluator, and the compile entry points: 'pureProgram' and
+-- 'effectfulProgram' (minified IIFEs) and 'pureAST' / 'effectfulAST'
+-- (readable snippets).
 --
 -- == Pipeline
 --
@@ -18,8 +21,8 @@
 -- @
 --
 -- Named lambdas ('Lambda' with 'Just' tag) hoist to shared @$name@ bindings
--- (see 'JShark.Api.namedLambda', 'namedLambdaRow', 'applyNamed2').
-module JShark
+-- (see @namedLambda@, @namedLambdaRow@, @applyNamed2@ in @JShark.Api@).
+module JShark.Core
   ( Expr (..)
   , FnBody (..)
   , LamInfo (..)
@@ -38,6 +41,11 @@ module JShark
   , uint8Elems
   , pureProgram
   , effectfulProgram
+  , pureAST
+  , pureASTWith
+  , effectfulAST
+  , effectfulASTWith
+  , OutputStyle (..)
   , JS
   , renderJS
   , escapeJsString
@@ -47,7 +55,15 @@ module JShark
 where
 
 import JShark.Api.Types
-import JShark.Compiler.Codegen (effectfulProgram, pureProgram)
+import JShark.Compiler.Codegen
+  ( OutputStyle (..)
+  , effectfulAST
+  , effectfulASTWith
+  , effectfulProgram
+  , pureAST
+  , pureASTWith
+  , pureProgram
+  )
 import JShark.Compiler.Emit (JS, escapeJsString, renderJS)
 import JShark.Compiler.Evaluate
   ( EvalFailure (..)

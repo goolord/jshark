@@ -60,7 +60,7 @@ module JShark.Dom
 where
 
 import Data.Text (Text)
-import JShark
+import JShark.Core
 import JShark.Api
 import qualified JShark.Object as Object
 

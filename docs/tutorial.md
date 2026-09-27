@@ -22,9 +22,10 @@ in this guide:
 
 You can also set these as `default-extensions` in your `.cabal` file.
 
-The `jshark` package holds the typed AST, the EDSL, and the compiler;
-`jshark-base` adds the platform bindings and the IO build driver. Import
-`JShark.Prelude` (from `jshark-base`) for the core API and compiler, then add
+The `jshark` package holds the typed AST, the evaluator, and the compiler;
+`jshark-base` adds the EDSL, the platform bindings, and the IO build
+driver. Import `JShark.Prelude` (from `jshark-base`) for the EDSL and the
+build driver, or `JShark` for the EDSL, evaluator, and compiler, then add
 qualified imports for the platform modules you need:
 
 ```haskell

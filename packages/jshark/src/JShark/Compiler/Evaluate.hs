@@ -29,7 +29,6 @@ module JShark.Compiler.Evaluate
   , valueCompare
   , recordEq
   , tryEvalBigBin
-  , parseBigIntString
   , uint8Elems
   , valueEq
   , joinElem
@@ -43,8 +42,6 @@ import Control.Exception (Exception, throw, try)
 import qualified Control.Exception as E (evaluate)
 import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
-import Data.Char (digitToInt, isSpace)
-import qualified Data.Char as Char
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -63,7 +60,6 @@ import GHC.ST (ST (..), runST)
 import GHC.TypeLits (KnownSymbol, sameSymbol, symbolVal)
 import GHC.Word (Word8 (..))
 import JShark.Api.Types
-import Numeric (readInt)
 
 -- | Why the host interpreter could not produce a value.
 data EvalFailure
@@ -103,20 +99,11 @@ tryEvaluate e = try (E.evaluate (evaluate e))
 num :: Expr Value 'Number -> Double
 num e = case eval e of ValueNumber d -> d
 
-big :: Expr Value 'BigInt -> Integer
-big e = case eval e of ValueBigInt n -> n
-
 str :: Expr Value 'String -> Text
 str e = case eval e of ValueString s -> s
 
 arr :: Expr Value ('Array u) -> [Value u]
 arr e = case eval e of ValueArray vs -> vs
-
-bytes :: Expr Value u -> ByteArray
-bytes e = case eval e of
-  ValueUint8Array ba -> ba
-  ValueUint8ClampedArray ba -> ba
-  _ -> error "evaluate: expected a byte buffer"
 
 call :: Value ('Function u v) -> Value u -> Value v
 call (ValueFunction f) = f
@@ -139,16 +126,6 @@ eval = \case
     ValueResult (Left x) -> eval (e x)
     ValueResult (Right x) -> eval (k x)
   FnLit {} -> cannotEval "Fn (fn)"
-  Index xs i ->
-    let
-      vs = arr xs
-     in
-      maybe (jsFailure "array index out of bounds") id (at vs (num i))
-  U8Index b i ->
-    maybe
-      (jsFailure "uint8 index out of bounds")
-      (ValueNumber . fromIntegral)
-      (at (uint8Elems (bytes b)) (num i))
   Error m -> jsFailure (T.unpack (str m))
   Std (Fixed op args) -> evalFixed op args
   Std (Method m) -> evalMethod m
@@ -165,12 +142,6 @@ eval = \case
         (cannotEval "GetField of a frozen object with effectful fields")
         eval
         (lookupField @k fs)
- where
-  at vs d
-    | isFiniteDouble d, i >= 0, i < length vs = Just (vs !! i)
-    | otherwise = Nothing
-   where
-    i = truncate d :: Int
 
 evalField :: FieldLit Value r -> FieldLit Value r
 evalField = \case
@@ -246,25 +217,6 @@ evalFixed op args = case (op, args) of
   (FixSome, ArgsU x) -> ValueOption (Just (eval x))
   (FixMath1 m, ArgsU x) -> ValueNumber (math1Fn m (num x))
   (FixMath2 m, ArgsB x y) -> ValueNumber (math2Fn m (num x) (num y))
-  (FixU8Len, ArgsU b) -> ValueNumber (fromIntegral (length (uint8Elems (bytes b))))
-  (FixParseInt, ArgsB s r) -> ValueNumber (jsParseInt (str s) (truncate (num r)))
-  (FixToBigInt, ArgsU x) ->
-    let
-      d = num x
-      n = truncate d
-     in
-      if isFiniteDouble d && d == fromInteger n
-        then ValueBigInt n
-        else
-          jsFailure "Number cannot be converted to BigInt because it is not an integer"
-  (FixFromBigInt, ArgsU x) -> ValueNumber (fromInteger (big x))
-  (FixParseBigInt, ArgsU x) ->
-    ValueBigInt
-      ( maybe
-          (jsFailure "invalid BigInt string")
-          id
-          (parseBigIntString (T.unpack (str x)))
-      )
   (FixConcat, ArgsB x y) -> ValueArray (arr x ++ arr y)
   (FixCall2, ArgsT f x y) -> call (call (eval f) (eval x)) (eval y)
   (FixLib p, ArgsU x) | Just f <- libEval p -> f (eval x) ValueUnit ValueUnit
@@ -442,45 +394,6 @@ typeOfValue = \case
   ValueUnit -> "undefined"
   ValueFunction {} -> "function"
   _ -> "object"
-
-jsParseInt :: Text -> Int -> Double
-jsParseInt s r
-  | r < 2 || r > 36 = 0 / 0
-  | otherwise =
-      let
-        (neg, t) = sign (dropWhile isSpace (T.unpack s))
-       in
-        case readInt (fromIntegral r :: Integer) (digitBelow r) digitToInt t of
-          (n, _) : _ -> fromInteger (if neg then negate n else n)
-          [] -> 0 / 0
-
-sign :: String -> (Bool, String)
-sign = \case
-  '-' : xs -> (True, xs)
-  '+' : xs -> (False, xs)
-  xs -> (False, xs)
-
--- | JS @BigInt(s)@: optional sign and @0x@ \/ @0b@ \/ @0o@ prefix.
-parseBigIntString :: String -> Maybe Integer
-parseBigIntString raw =
-  let
-    (neg, rest) = sign (dropWhile isSpace (reverse (dropWhile isSpace (reverse raw))))
-    (base, digits) = case map Char.toLower (take 2 rest) of
-      "0x" -> (16, drop 2 rest)
-      "0b" -> (2, drop 2 rest)
-      "0o" -> (8, drop 2 rest)
-      _ -> (10, rest)
-   in
-    case readInt (fromIntegral base :: Integer) (digitBelow base) digitToInt digits of
-      (n, []) : _ | not (null digits) -> Just (if neg then negate n else n)
-      _ -> Nothing
-
-digitBelow :: Int -> Char -> Bool
-digitBelow base c
-  | Char.isDigit c = Char.ord c - Char.ord '0' < base
-  | Char.isAsciiLower c = Char.ord c - Char.ord 'a' + 10 < base
-  | Char.isAsciiUpper c = Char.ord c - Char.ord 'A' + 10 < base
-  | otherwise = False
 
 evalBigBin :: NumOp -> Integer -> Integer -> Integer
 evalBigBin op a b = case op of

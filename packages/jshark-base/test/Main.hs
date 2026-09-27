@@ -20,7 +20,6 @@ import qualified Data.Text as T
 import JShark
 import JShark.Api.Types (Kernel (..), Std (..))
 import qualified JShark.Ajax as Ajax
-import JShark.Api
 import JShark.Dom (addEventListenerS, eventKey, locationHash, onClick)
 import qualified JShark.Classes as C
 import qualified JShark.Generic as G
@@ -37,7 +36,6 @@ import JShark.Internal
   , N (..)
   , SomeValue (..)
   , builtinSrc
-  , effectfulASTWith
   , optIr
   , validateOptimizedEffect
   , validateOptimizedExpr
@@ -95,7 +93,7 @@ evaluationOutcomeTests =
           other -> assertFailure ("expected EvalJsFailure, got " <> show other)
     , testCase "out-of-bounds index is a JS-like failure" $
         failure
-          (Index (Literal (ValueArray [ValueNumber 1])) (number 3) :: ClosedExpr 'Number)
+          (Array.index (Literal (ValueArray [ValueNumber 1])) (number 3) :: ClosedExpr 'Number)
           >>= \case
             EvalJsFailure msg ->
               assertBool
@@ -423,7 +421,7 @@ controlFlowTests =
         with1 condE (\c -> if_ c (number 1) (number 2))
     , evalCase @Double "optionCase on Some" 6 $
         optionCase
-          (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
+          (JShark.some (number 5) :: Expr f ('Option 'Number))
           (number 0)
           (\x -> x + 1)
     , evalCase @Double "optionCase on None" 0 $

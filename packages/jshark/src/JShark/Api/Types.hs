@@ -24,7 +24,7 @@
 --
 -- * 'Expr' is pure. The kernel is the language: literals, operators,
 --   @===@ / @!==@ (never @==@), @?:@, @typeof@, unary functions,
---   @const@ lets, object literals, @a[i]@. No @with@, @eval@, @new@,
+--   @const@ lets, object literals. No @with@, @eval@, @new@,
 --   or @this@. Combinators such as @zipWith@ are Haskell functions
 --   that build this tree, not extra constructors.
 -- * One 'Std' constructor holds every pure JS standard-library name
@@ -38,7 +38,7 @@
 -- @type End p = forall x. p x x@. The two trees meet at FFI via 'Arg'.
 module JShark.Api.Types
   ( Universe (..)
-  , U8Buffer
+  , U8Buffer (..)
   , Value (..)
   , Effect (..)
   , Arg (..)
@@ -158,11 +158,15 @@ data Universe
 -- ('Uint8ClampedArray') or wraps mod 256 ('Uint8Array'). The emitted
 -- @arr[i] = v@ is identical; the array's own type picks the semantics, so
 -- the operations are shared and only the type distinguishes them.
-class U8Buffer (u :: Universe)
+class U8Buffer (u :: Universe) where
+  -- | The host contents of a buffer value.
+  bufferBytes :: Value u -> ByteArray
 
-instance U8Buffer 'Uint8Array
+instance U8Buffer 'Uint8Array where
+  bufferBytes (ValueUint8Array ba) = ba
 
-instance U8Buffer 'Uint8ClampedArray
+instance U8Buffer 'Uint8ClampedArray where
+  bufferBytes (ValueUint8ClampedArray ba) = ba
 
 -- | A fully evaluated host value indexed by its 'Universe'. This is the
 -- host denotation used by 'JShark.evaluate' (@f = Value@).
@@ -438,17 +442,6 @@ data Expr :: (Universe -> Type) -> Universe -> Type where
     -> (f a -> Expr f v)
     -> Expr f v
     -- ^ Eliminate a 'Result', analogous to 'either'.
-  Index ::
-    Expr f ('Array u)
-    -> Expr f 'Number
-    -> Expr f u
-    -- ^ JS @a[i]@. 'JShark.Array.index' wraps this with trunc / bounds / 'Error'.
-  U8Index ::
-    U8Buffer u =>
-    Expr f u
-    -> Expr f 'Number
-    -> Expr f 'Number
-    -- ^ JS @u8[i]@ without the bounds shim.
   Error ::
     Expr f 'String
     -> Expr f u
@@ -486,12 +479,7 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixMath1 :: Math1 -> FixedOp 'Number 'Unit 'Unit 'Number
   -- | @Math.<name>(x, y)@.
   FixMath2 :: Math2 -> FixedOp 'Number 'Number 'Unit 'Number
-  FixU8Len :: U8Buffer u => FixedOp u 'Unit 'Unit 'Number
   FixConcat :: FixedOp ('Array u) ('Array u) 'Unit ('Array u)
-  FixParseInt :: FixedOp 'String 'Number 'Unit 'Number
-  FixToBigInt :: FixedOp 'Number 'Unit 'Unit 'BigInt
-  FixFromBigInt :: FixedOp 'BigInt 'Unit 'Unit 'Number
-  FixParseBigInt :: FixedOp 'String 'Unit 'Unit 'BigInt
   -- | Uncurried call @(f)(x, y)@ for hoisted two-arg helpers ('applyNamed2').
   FixCall2 ::
     FixedOp ('Function a ('Function b r)) a b r
@@ -503,11 +491,6 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   -- is 'UnsafeNullable', not this.
   FixSome ::
     FixedOp u 'Unit 'Unit ('Option u)
-  -- | Foreign-boundary adapter: unwrap a tagged 'Option' to a native
-  -- @null@\/value. Inverse of 'UnsafeNullable'; emitted only when passing
-  -- an 'Option' to a foreign parameter declared @T | null@.
-  FixOptionToNative ::
-    FixedOp ('Option u) 'Unit 'Unit u
 
 -- | A fixed-arity JS operation defined by a library instead of the
 -- compiler. Argument slots past its arity are 'Unit' in the type and
@@ -525,6 +508,14 @@ data LibOp a b c u = LibOp
   , libDrop :: !Bool
   -- ^ The optimizer may drop the call when its result is unused. 'False'
   -- when it can run user code or throw (@JSON.stringify@).
+  , libParenFirst :: !Bool
+  -- ^ Parenthesize a first argument that is not a simple operand. A
+  -- 'LibMethod' or 'LibProp' receiver needs it; 'False' prints the first
+  -- argument as is.
+  , libAccess :: !Bool
+  -- ^ Size the node like an element access in the optimizer's inlining
+  -- estimate: it adds nothing beyond its arguments, and a folded result
+  -- stays as cheap as they are. 'False' sizes it like a call.
   }
 
 -- | How a 'LibOp' prints, given its first argument @x@ and the rest @y, …@.
@@ -533,6 +524,8 @@ data LibForm
     LibMethod !Text
   | -- | @x.name@. One argument.
     LibProp !Text
+  | -- | @x[y]@.
+    LibIndex
   | -- | @name(x, y, …)@, for a global such as @JSON.stringify@.
     LibCall !Text
   | -- | @$name(x, y, …)@ with JavaScript source @src@. Codegen prints
@@ -541,9 +534,10 @@ data LibForm
     LibHelper !Text !Text
 
 -- | A 'LibOp' with no host meaning and no fold, which the optimizer may
--- move and drop. Override fields with record update.
+-- move and drop, sizes like a call, and whose first argument is
+-- parenthesized when needed. Override fields with record update.
 libOp :: LibForm -> LibOp a b c u
-libOp form = LibOp form Nothing (const Nothing) True True
+libOp form = LibOp form Nothing (const Nothing) True True True False
 
 -- | A 'Value' with its universe hidden, as literals appear in the IR.
 data SomeValue where

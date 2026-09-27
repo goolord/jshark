@@ -1,8 +1,11 @@
 # jshark-base
 
 Everything around the [`jshark`](https://github.com/goolord/jshark/tree/master/packages/jshark)
-core that is not the AST or the compiler:
+core that is not the AST, the evaluator, or the compiler:
 
+- `JShark`: one import for the EDSL, the AST, the evaluator, and the
+  compiler;
+- `JShark.Api`, `JShark.Object`: the EDSL surface;
 - typed bindings for the JavaScript standard library and browser platform:
   `JShark.Array`, `JShark.Map`, `JShark.Set`, `JShark.String`, `JShark.Math`,
   `JShark.Json`, `JShark.Regex`, `JShark.Promise`, `JShark.Ajax`,

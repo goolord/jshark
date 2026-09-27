@@ -67,6 +67,31 @@
   exports `valueEq` and `joinElem` for library evaluators. Generated
   JavaScript is unchanged.
 
+* **Breaking:** the EDSL surface moves from `jshark` to `jshark-base`,
+  keeping its module names: `JShark.Api`, `JShark.Api.Syntax`,
+  `JShark.Api.Params`, and `JShark.Object`. The `JShark` module moves
+  with it and now re-exports the whole core plus the EDSL (and `obj`,
+  `frozen`, `field`), so `import JShark` alone reaches the AST, the
+  evaluator, `pureProgram` / `effectfulProgram`, the readable
+  `pureAST` / `effectfulAST` renderers, and the EDSL. The core's own
+  entry point is `JShark.Core`. Code that imported `JShark` and
+  `JShark.Api` together should drop the second import, and a package that
+  depended only on `jshark` for the EDSL now needs `jshark-base`.
+
+* **Breaking:** more library operations leave the compiler for `LibOp`s in
+  `jshark-base`. The `Index` and `U8Index` expression nodes and the
+  `$checkedIndex` built-in become `$checkedIndex` (`LibHelper`) and `x[i]`
+  (`LibIndex`) ops in `JShark.Array` and `JShark.Api`; `FixU8Len`,
+  `FixParseInt`, `FixToBigInt`, `FixFromBigInt`, `FixParseBigInt`, and
+  `FixOptionToNative` become `LibOp`s beside `u8Len`, `parseInt_`,
+  `toBigInt`, `fromBigInt`, `parseBigInt_`, and `unsafeOptionToNative`.
+  `LibOp` gains `libParenFirst` (whether a non-simple first argument is
+  parenthesized) and `libAccess` (size the op like an element access in
+  the optimizer's inlining estimate), which keep these two ops' output
+  identical. `U8Buffer` gains `bufferBytes`. `U8Fill` stays in the core
+  beside `U8Set`. Generated JavaScript, including the optimizer's inlining
+  decisions, is unchanged.
+
 * **Breaking:** the compiler core is one first-order IR
   (`JShark.Compiler.Ir`) with a single lowering pass, optimizer, and
   emitter (`JShark.Compiler.Codegen`); the generated JavaScript is

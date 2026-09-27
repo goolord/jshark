@@ -16,7 +16,6 @@ module TutorialSnippets (tutorialSnippets) where
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import JShark
-import JShark.Api
 import qualified JShark.Generic as G
 import qualified JShark.Console as Console
 import qualified JShark.Dom as Dom

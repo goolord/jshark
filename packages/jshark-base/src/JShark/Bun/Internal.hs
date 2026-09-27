@@ -30,7 +30,7 @@ import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
-import JShark (escapeJsString)
+import JShark.Core (escapeJsString)
 import System.Directory
   ( createDirectory
   , doesFileExist

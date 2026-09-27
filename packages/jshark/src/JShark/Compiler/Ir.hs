@@ -66,7 +66,6 @@ import JShark.Compiler.Evaluate
   , valueCompare
   , valueEqM
   , math1Fn
-  , parseBigIntString
   , tryEvalBigBin
   , typeOfValue
   )
@@ -111,8 +110,6 @@ data N r
   | NResOk r
   | NResErr r
   | NResCase r !Int r !Int r
-  | NIndex r r
-  | NU8Index r r
   | NError r
   | NFixed SomeFixedOp [r]
   | NFnLit [Int] [Maybe Text] r
@@ -299,8 +296,6 @@ fixedKeep op = leaf (isMoveFixed op) (isDropFixed op) False
 -- | Per-node flags: effects, and mutable reads that may not move.
 post :: N r -> Meta -> Meta
 post n md = case n of
-  NU8Index {} -> md {mMove = False}
-  NIndex {} -> md {mMove = False, mDrop = False}
   _ | isImpure n -> effectMd md
   _ -> md
 
@@ -477,14 +472,16 @@ optIr ir@(Ir n) = case n of
 -- | Combine optimized children, folding where the children allow it.
 finish :: (?keepLets :: Bool) => N Ir -> [Meta] -> (Ir, Meta)
 finish n ms = case n of
-  NIndex (Ir (LitV (ValueArray vs))) (Ir (LitV (ValueNumber d)))
-    | isFiniteDouble d
-    , let
-        i = truncate d :: Int
-    , i >= 0 && i < length vs ->
-        let v = vs !! i in (Ir (NLit (SomeValue v)), litMeta v <> mconcat ms)
   NK2 op x y -> folded (fold2 op x y) (leaf True True False)
   NK1 op x -> folded (fold1 op x) (leaf True True False)
+  NFixed (SomeFixedOp (FixLib p)) xs
+    | libAccess p -> case libFoldIr p xs of
+        Just v@(SomeValue lv) -> (Ir (NLit v), litMeta lv <> mconcat ms)
+        Nothing ->
+          let
+            md = chain ms
+           in
+            (Ir n, md {mMove = mMove md && libMove p, mDrop = mDrop md && libDrop p})
   NFixed (SomeFixedOp op) xs -> folded (foldFixed op xs) (fixedKeep op)
   NGetField k (Ir (NFrozen fs))
     | [mo] <- ms
@@ -644,17 +641,14 @@ foldFixed op args = case (op, map litOf args) of
     | m == Max || m == Min
     , isFiniteDouble a && isFiniteDouble b ->
         Just (num ((if m == Max then max else min) a b))
-  (FixLib p, lits) | Just vs <- sequence lits -> libFold p vs
-  (FixToBigInt, [Just (SomeValue (ValueNumber d))])
-    | isFiniteDouble d
-    , d == fromInteger (truncate d) ->
-        Just (SomeValue (ValueBigInt (truncate d)))
-  (FixFromBigInt, [Just (SomeValue (ValueBigInt i))]) -> Just (num (fromInteger i))
-  (FixParseBigInt, [Just (SomeValue (ValueString s))]) ->
-    SomeValue . ValueBigInt <$> parseBigIntString (T.unpack s)
+  (FixLib p, _) -> libFoldIr p args
   _ -> Nothing
  where
   num = SomeValue . ValueNumber
+
+-- | A 'LibOp' fold, tried when every argument is a literal.
+libFoldIr :: LibOp a b c u -> [Ir] -> Maybe SomeValue
+libFoldIr p args = libFold p =<< mapM litOf args
 
 -- | Math results that are exact in every JS engine.
 exactMath1 :: Math1 -> Double -> Maybe Double

@@ -43,7 +43,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark (ClosedEffect, ClosedExpr, JS, effectfulProgram, pureProgram, renderJS)
+import JShark.Core (ClosedEffect, ClosedExpr, JS, effectfulProgram, pureProgram, renderJS)
 import JShark.Api.Syntax (EffectSyntax, fromSyntax)
 import JShark.Internal (OutputStyle (..), effectfulAST, pureAST)
 import Numeric (showFFloat)

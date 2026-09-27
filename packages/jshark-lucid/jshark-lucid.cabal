@@ -99,6 +99,7 @@ benchmark jshark-lucid-bench
     , base
     , bytestring >= 0.10.8 && < 0.13
     , jshark
+    , jshark-base
     , jshark-lucid
     , lucid
     , text >= 1.2 && < 3

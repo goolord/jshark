@@ -472,14 +472,6 @@ emit table s0 (P _ ann n) = case n of
                   Nothing
            in
             (s1, Code stmt (jsText rv))
-  NIndex a i
-    | Code ad ar <- c a
-    , Code idd ir <- c i ->
-        let (s1, call) = shim CheckedIndex [ar, ir] s0 in (s1, Code (ad $$ idd) call)
-  NU8Index a i
-    | Code ad ar <- c a
-    , Code idd ir <- c i ->
-        same (Code (ad $$ idd) (ar <> brackets ir))
   NError m
     | Code d r <- c m ->
         same (Code d ("(function(){throw new Error(" <> r <> ");}())"))
@@ -750,7 +742,7 @@ emit table s0 (P _ ann n) = case n of
       ( needHelper op s0
       , Code
           (foldr1 ($$) [d | Code d _ <- cs])
-          (fixedJS op (operand x r) [a | Code _ a <- drop 1 cs])
+          (fixedJS op (firstArg op x r) [a | Code _ a <- drop 1 cs])
       )
     _ -> error "JShark.Compiler.Codegen: unexpected fixed arity"
   lower m = jsString (map Char.toLower (show m))
@@ -780,6 +772,10 @@ emit table s0 (P _ ann n) = case n of
     _ -> 0
 
   operand p d = if isSimple p then d else parens d
+
+  firstArg :: FixedOp a b cc u -> P -> JS -> JS
+  firstArg (FixLib p) _ r | not (libParenFirst p) = r
+  firstArg _ x r = operand x r
 
 keepRef :: JS -> Code -> Code
 keepRef d (MkCode _ r f) = MkCode (nonEmpty d) r f
@@ -816,8 +812,6 @@ isSimple p = case pN p of
   NK1 {} -> True
   NFixed {} -> True
   NFnLit {} -> True
-  NIndex {} -> True
-  NU8Index {} -> True
   NNullable x -> isSimple x
   NFrozen {} -> True
   NGetField {} -> True
@@ -836,18 +830,13 @@ isSimple p = case pN p of
 -- remaining arguments.
 fixedJS :: FixedOp a b c u -> JS -> [JS] -> JS
 fixedJS op r args = case op of
-  FixU8Len -> r <> ".length"
-  FixToBigInt -> call "BigInt"
-  FixFromBigInt -> call "Number"
-  FixParseBigInt -> call "BigInt"
   FixSome -> "{some: true, value: " <> r <> "}"
-  FixOptionToNative -> call "((o) => o.some ? o.value : null)"
   FixConcat -> method "concat"
-  FixParseInt -> call "parseInt"
   FixCall2 -> parens r <> parens (commas args)
   FixLib p -> case libForm p of
     LibMethod name -> method (jsText name)
     LibProp name -> r <> "." <> jsText name
+    LibIndex -> r <> brackets (commas args)
     LibCall name -> call (jsText name)
     LibHelper name _ -> call (jsText (hoistTagName name))
   _ -> error "JShark.Compiler.Codegen: not a plain fixed op"

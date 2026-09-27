@@ -229,8 +229,7 @@ jsRem a b
 -- ('ArrayEq', 'DeepEqual', 'Uint8ArrayEq') because those bodies call
 -- each other.
 data Builtin
-  = CheckedIndex
-  | ValueEq
+  = ValueEq
   | ArrayEq
   | DeepEqual
   | Uint8ArrayEq
@@ -330,7 +329,6 @@ callShim b args =
 
 builtinName :: Builtin -> Text
 builtinName = \case
-  CheckedIndex -> "$checkedIndex"
   ValueEq -> "$valueEq"
   ArrayEq -> "$arrayEq"
   DeepEqual -> "$deepEqual"
@@ -338,8 +336,6 @@ builtinName = \case
 
 builtinSrc :: Builtin -> Text
 builtinSrc = \case
-  CheckedIndex ->
-    "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
   ValueEq ->
     "function(a,b){if(a===b)return true;if(a===null||b===null||typeof a!==\"object\"||typeof b!==\"object\")return false;if(Array.isArray(a)&&Array.isArray(b))return $arrayEq(a,b);if(a instanceof Uint8Array&&b instanceof Uint8Array)return $uint8ArrayEq(a,b);if(a.constructor===Object&&b.constructor===Object)return $deepEqual(a,b);return false}"
   ArrayEq ->

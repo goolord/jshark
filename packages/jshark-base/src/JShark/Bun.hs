@@ -30,7 +30,6 @@ where
 import qualified Data.ByteString.Char8 as BC
 import Data.Text (Text)
 import qualified Data.Text as T
-import JShark (effectfulProgram, escapeJsString, renderJS)
 import JShark.Api.Types (ClosedEffect)
 import JShark.Bun.Internal
   ( JSProgram (..)
@@ -38,6 +37,7 @@ import JShark.Bun.Internal
   , plainProgram
   , runProgram
   )
+import JShark.Core (effectfulProgram, escapeJsString, renderJS)
 
 -- | How to run the program: the JS globals it may reach for, and how
 -- long it may take.

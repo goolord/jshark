@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -182,6 +183,7 @@ where
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Type)
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Stack (HasCallStack)
 import GHC.TypeLits (KnownSymbol)
 import JShark.Api.Params
@@ -197,6 +199,14 @@ import JShark.Api.Params
 import JShark.Api.Rec (Rec (..), (<:))
 import JShark.Api.Syntax
 import JShark.Api.Types
+import JShark.Host
+  ( elemAt
+  , exactInteger
+  , jsFailure
+  , jsParseInt
+  , parseBigIntString
+  , u8Elems
+  )
 import JShark.Object hiding (get, set)
 import qualified JShark.Object as Object
 
@@ -350,7 +360,22 @@ newByteArray n =
 
 -- | @arr[i]@ — read one byte of a 'Uint8Array' / 'Uint8ClampedArray'.
 u8Index :: U8Buffer u => Expr f u -> Expr f 'Number -> Expr f 'Number
-u8Index = U8Index
+u8Index = expr2 (FixLib u8IndexOp)
+
+-- Reads bytes an 'Effect' may write: never moved. The buffer prints as is.
+u8IndexOp :: U8Buffer u => LibOp u 'Number 'Unit 'Number
+u8IndexOp =
+  (libOp LibIndex)
+    { libEval =
+        Just $ \b (ValueNumber i) _ ->
+          maybe
+            (jsFailure "uint8 index out of bounds")
+            (ValueNumber . fromIntegral)
+            (elemAt (u8Elems b) i)
+    , libMove = False
+    , libParenFirst = False
+    , libAccess = True
+    }
 
 -- | @arr[i] = b@ — write one byte. Wraps mod 256 for 'Uint8Array' and
 -- clamps to @0…255@ for 'Uint8ClampedArray' (the array's own semantics).
@@ -375,7 +400,11 @@ u8Copy dst src =
 
 -- | @arr.length@ — the length of a byte buffer.
 u8Len :: U8Buffer u => Expr f u -> Expr f 'Number
-u8Len = expr1 FixU8Len
+u8Len =
+  expr1
+    (FixLib (libOp (LibProp "length")) {libEval = Just (\b _ _ -> count b)})
+ where
+  count b = ValueNumber (fromIntegral (length (u8Elems b)))
 
 -- | @for (let i = start; i < end; i++) body@ — the loop index is
 -- a number; the body is an Effect.
@@ -509,7 +538,8 @@ unsafeNullable = UnsafeNullable
 -- 'unsafeNullable'; generated bindings emit it around 'Option' arguments.
 -- Not a general eliminator — use 'optionCase' inside JShark.
 unsafeOptionToNative :: Expr f ('Option u) -> Expr f u
-unsafeOptionToNative = expr1 FixOptionToNative
+unsafeOptionToNative =
+  expr1 (FixLib (libOp (LibCall "((o) => o.some ? o.value : null)")))
 
 -- | 'unsafeOptionToNative' for an effectful argument (an 'Option' handle),
 -- binding the effect first.
@@ -726,7 +756,15 @@ quot_ = numE NDiv
 
 -- | @parseInt(s, radix)@. The radix is required (Crockford appendix A).
 parseInt_ :: Expr f 'String -> Expr f 'Number -> Expr f 'Number
-parseInt_ s r = expr2 FixParseInt s r
+parseInt_ s r = expr2 (FixLib parseIntOp) s r
+
+parseIntOp :: LibOp 'String 'Number 'Unit 'Number
+parseIntOp =
+  (libOp (LibCall "parseInt"))
+    { libEval =
+        Just
+          (\(ValueString s) (ValueNumber r) _ -> ValueNumber (jsParseInt s (truncate r)))
+    }
 
 -- | JS @Number(x)@ coercion on strings (unlike 'parseInt_', no radix,
 -- accepts decimals; yields NaN on garbage).
@@ -735,12 +773,49 @@ toNumber x = fmap var (toSyntax (ffi "Number" (arg x <: RecNil)))
 
 -- | @BigInt(n)@. Throws when @n@ is not an integer Number.
 toBigInt :: Expr f 'Number -> Expr f 'BigInt
-toBigInt = expr1 FixToBigInt
+toBigInt = expr1 (FixLib toBigIntOp)
+
+toBigIntOp :: LibOp 'Number 'Unit 'Unit 'BigInt
+toBigIntOp =
+  (libOp (LibCall "BigInt"))
+    { libEval =
+        Just $ \(ValueNumber d) _ _ ->
+          maybe
+            (jsFailure "Number cannot be converted to BigInt because it is not an integer")
+            ValueBigInt
+            (exactInteger d)
+    , libFold = \case
+        [SomeValue (ValueNumber d)] -> SomeValue . ValueBigInt <$> exactInteger d
+        _ -> Nothing
+    }
 
 -- | @Number(n)@. Large values may lose precision.
 fromBigInt :: Expr f 'BigInt -> Expr f 'Number
-fromBigInt = expr1 FixFromBigInt
+fromBigInt = expr1 (FixLib fromBigIntOp)
+
+fromBigIntOp :: LibOp 'BigInt 'Unit 'Unit 'Number
+fromBigIntOp =
+  (libOp (LibCall "Number"))
+    { libEval = Just (\(ValueBigInt n) _ _ -> ValueNumber (fromInteger n))
+    , libFold = \case
+        [SomeValue (ValueBigInt n)] -> Just (SomeValue (ValueNumber (fromInteger n)))
+        _ -> Nothing
+    }
 
 -- | @BigInt(s)@. Accepts an optional sign and @0x@ / @0b@ / @0o@ prefixes.
 parseBigInt_ :: Expr f 'String -> Expr f 'BigInt
-parseBigInt_ = expr1 FixParseBigInt
+parseBigInt_ = expr1 (FixLib parseBigIntOp)
+
+parseBigIntOp :: LibOp 'String 'Unit 'Unit 'BigInt
+parseBigIntOp =
+  (libOp (LibCall "BigInt"))
+    { libEval =
+        Just $ \(ValueString s) _ _ ->
+          ValueBigInt
+            (maybe (jsFailure "invalid BigInt string") id (parse s))
+    , libFold = \case
+        [SomeValue (ValueString s)] -> SomeValue . ValueBigInt <$> parse s
+        _ -> Nothing
+    }
+ where
+  parse = parseBigIntString . T.unpack

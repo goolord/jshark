@@ -18,7 +18,6 @@ import Data.List (intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
 import JShark
-import JShark.Api
 import JShark.Dom (locationHash)
 import qualified JShark.Array as Array
 import JShark.Bun
@@ -103,16 +102,16 @@ evalCases =
       untaken (bool False) (\b v -> andK b (let_ v (\x -> x .== x)))
   , bunCase "optionCase Some" $
       optionCase
-        (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
+        (JShark.some (number 5) :: Expr f ('Option 'Number))
         (number 0)
         (\x -> x + 1)
   , bunCase "optionCase None" $
       optionCase (none :: Expr f ('Option 'Number)) (number 0) (\x -> x + 1)
   , bunCase "some is the wrapped value" $
-      (JShark.Api.some (number 5) :: Expr f ('Option 'Number))
+      (JShark.some (number 5) :: Expr f ('Option 'Number))
   , bunCase "none is tagged none" (none :: Expr f ('Option 'Number))
   , bunCase "some none nests faithfully" $
-      JShark.Api.some (none :: Expr f ('Option 'Number))
+      JShark.some (none :: Expr f ('Option 'Number))
   , bunCase "unsafeNullable of undefined is none" $
       unsafeNullable (Literal ValueUnit)
   , bunCase "unsafeNullable preserves a tagged none as present" $
@@ -137,7 +136,7 @@ evalCases =
       andK (number 1 .== number 1) (number 2 .== number 2)
   , bunCase "letRec value rhs" (letRec (\_ -> number 1 + number 2) (\n -> n))
   , bunCase "option semigroup Maybe" $
-      JShark.Api.some (string "a") <> JShark.Api.some (string "b")
+      JShark.some (string "a") <> JShark.some (string "b")
   , bunCase "array groupBy keys" $
       Array.map
         ( Array.groupBy numArray $ \n ->

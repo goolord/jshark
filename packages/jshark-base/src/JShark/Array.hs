@@ -10,7 +10,8 @@
 
 -- | JS @Array.prototype@ and small array algorithms.
 --
--- Most reads compile to kernel 'Index' (codegen @$checkedIndex@). Mutations
+-- 'index' compiles to the hoisted @$checkedIndex@ helper, which truncates
+-- the index and throws when it is out of range. Mutations
 -- ('push', 'clear', 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers
 -- (@$zipWith@, @$reduce@, @$toSorted@) come from 'namedLambdaRow' and are
 -- called with 'applyNamed2'; @$groupBy@ is hand-written JavaScript bound
@@ -65,6 +66,7 @@ import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Params (Param)
 import JShark.Api.Types
+import JShark.Host (elemAt, jsFailure)
 import JShark.Internal (joinElem, valueEq)
 import qualified JShark.Math as Math
 import Prelude hiding (concat, filter, length, map, zipWith)
@@ -95,7 +97,29 @@ index :: Expr f ('Array u) -> Expr f 'Number -> Expr f u
 index arr i =
   case foldArrayIndex arr i of
     Just e -> e
-    Nothing -> Index arr i
+    Nothing -> expr2 (FixLib arrIndex) arr i
+
+-- @$checkedIndex@: truncate, bounds-check, throw. It reads elements an
+-- 'Effect' may write and can throw, so it is never moved or dropped; the
+-- array prints as is inside the call.
+arrIndex :: LibOp ('Array u) 'Number 'Unit u
+arrIndex =
+  ( libOp
+      ( LibHelper
+          "checkedIndex"
+          "function(a,i){var n=Math.trunc(i);if(!(n>=0&&n<a.length))throw new Error(\"jshark: index\");return a[n];}"
+      )
+  )
+    { libEval = Just $ \(ValueArray xs) (ValueNumber i) _ ->
+        maybe (jsFailure "array index out of bounds") id (elemAt xs i)
+    , libFold = \case
+        [SomeValue (ValueArray xs), SomeValue (ValueNumber i)] -> SomeValue <$> elemAt xs i
+        _ -> Nothing
+    , libMove = False
+    , libDrop = False
+    , libParenFirst = False
+    , libAccess = True
+    }
 
 -- | 'index' under a name that says the bounds check is part of the
 -- contract (it throws instead of returning @undefined@).
@@ -105,17 +129,8 @@ indexChecked = index
 foldArrayIndex ::
   Expr f ('Array u) -> Expr f 'Number -> Maybe (Expr f u)
 foldArrayIndex arr i = case (arr, i) of
-  (Literal (ValueArray vs), Literal (ValueNumber d))
-    | finiteDouble d
-    , let
-        idx = truncate d :: Int
-    , idx >= 0
-    , idx < List.length vs ->
-        Just (Literal (vs !! idx))
+  (Literal (ValueArray vs), Literal (ValueNumber d)) -> Literal <$> elemAt vs d
   _ -> Nothing
-
-finiteDouble :: Double -> Bool
-finiteDouble d = not (isNaN d) && not (isInfinite d)
 
 -- | @arr.length@.
 length :: Expr f ('Array u) -> Expr f 'Number
