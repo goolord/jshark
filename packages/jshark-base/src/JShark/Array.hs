@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -13,7 +14,7 @@
 -- ('push', 'clear', 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers
 -- (@$zipWith@, @$reduce@, @$toSorted@) come from 'namedLambdaRow' and are
 -- called with 'applyNamed2'; @$groupBy@ is hand-written JavaScript bound
--- through a 'Helper'.
+-- through a 'LibHelper'.
 --
 -- Read-only and copying operations are 'Expr': 'index', 'length',
 -- 'includes', 'join', 'map', 'filter', 'reduce', 'reduceRight',
@@ -60,9 +61,11 @@ module JShark.Array
 where
 
 import qualified Data.List as List
+import qualified Data.Text as T
 import JShark.Api
 import JShark.Api.Params (Param)
 import JShark.Api.Types
+import JShark.Internal (joinElem, valueEq)
 import qualified JShark.Math as Math
 import Prelude hiding (concat, filter, length, map, zipWith)
 
@@ -116,7 +119,20 @@ finiteDouble d = not (isNaN d) && not (isInfinite d)
 
 -- | @arr.length@.
 length :: Expr f ('Array u) -> Expr f 'Number
-length = expr1 FixArrLen
+length = expr1 (FixLib arrLength)
+
+-- Array reads see the elements, which an 'Effect' may mutate: never moved.
+arrLength :: LibOp ('Array u) 'Unit 'Unit 'Number
+arrLength =
+  (libOp (LibProp "length"))
+    { libEval = Just (\(ValueArray xs) _ _ -> count xs)
+    , libFold = \case
+        [SomeValue (ValueArray xs)] -> Just (SomeValue (count xs))
+        _ -> Nothing
+    , libMove = False
+    }
+ where
+  count xs = ValueNumber (fromIntegral (List.length xs))
 
 -- | @arr.map(function(x){...})@. The callback stays on 'Expr'.
 map :: Expr f ('Array u) -> (Expr f u -> Expr f v) -> Expr f ('Array v)
@@ -151,7 +167,14 @@ filterE_ arr f = bindExpr $ filterE arr (\x -> fromSyntax (f x))
 
 -- | @arr.includes(x)@ — strict equality.
 includes :: Expr f ('Array u) -> Expr f u -> Expr f 'Bool
-includes xs x = expr2 FixIncludes xs x
+includes xs x = expr2 (FixLib arrIncludes) xs x
+
+arrIncludes :: LibOp ('Array u) u 'Unit 'Bool
+arrIncludes =
+  (libOp (LibMethod "includes"))
+    { libEval = Just (\(ValueArray xs) y _ -> ValueBool (any (valueEq y) xs))
+    , libMove = False
+    }
 
 -- | @arr.concat(other)@ — a new array; does not mutate.
 concat :: Expr f ('Array u) -> Expr f ('Array u) -> Expr f ('Array u)
@@ -159,7 +182,17 @@ concat xs ys = expr2 FixConcat xs ys
 
 -- | @arr.join(sep)@.
 join :: Expr f ('Array u) -> Expr f 'String -> Expr f 'String
-join xs sep = expr2 FixJoin xs sep
+join xs sep = expr2 (FixLib arrJoin) xs sep
+
+arrJoin :: LibOp ('Array u) 'String 'Unit 'String
+arrJoin =
+  (libOp (LibMethod "join"))
+    { libEval =
+        Just
+          ( \(ValueArray xs) (ValueString sep) _ -> ValueString (T.intercalate sep (List.map joinElem xs))
+          )
+    , libMove = False
+    }
 
 -- | @arr.length = 0@. Clears in place without reallocating.
 clear :: Expr f ('Array u) -> Effect f 'Unit
@@ -265,16 +298,18 @@ groupBy ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f 'String)
   -> Expr f ('Array ('Object (GroupBy u)))
-groupBy arr keyFn = expr2 (FixHelper groupByHelper) arr (toLambda keyFn)
+groupBy arr keyFn = expr2 (FixLib arrGroupBy) arr (toLambda keyFn)
 
-groupByHelper ::
-  Helper ('Array u) ('Function u 'String) 'Unit ('Array ('Object (GroupBy u)))
-groupByHelper =
-  Helper
-    { helperName = "groupBy"
-    , helperSrc =
-        "function(arr,key){var m=new Map(),out=[];for(var i=0;i<arr.length;i++){if(!(i in arr))continue;var x=arr[i],k=key(x),e=m.get(k);if(e===undefined){e={key:k,items:[]};m.set(k,e);out.push(e)}e.items.push(x)}return out}"
-    , helperEval = \(ValueArray xs) (ValueFunction key) _ ->
+arrGroupBy ::
+  LibOp ('Array u) ('Function u 'String) 'Unit ('Array ('Object (GroupBy u)))
+arrGroupBy =
+  ( libOp
+      ( LibHelper
+          "groupBy"
+          "function(arr,key){var m=new Map(),out=[];for(var i=0;i<arr.length;i++){if(!(i in arr))continue;var x=arr[i],k=key(x),e=m.get(k);if(e===undefined){e={key:k,items:[]};m.set(k,e);out.push(e)}e.items.push(x)}return out}"
+      )
+  )
+    { libEval = Just $ \(ValueArray xs) (ValueFunction key) _ ->
         let
           keyOf x = case key x of ValueString k -> k
           keyed = [(keyOf x, x) | x <- xs]
@@ -287,6 +322,7 @@ groupByHelper =
                 ]
             | k <- List.nub (List.map fst keyed)
             ]
+    , libMove = False
     }
 
 -- | @zipWith@; result length is 'Math.min'. One hoisted @$zipWith@ helper.
@@ -333,7 +369,27 @@ zipWithChecked =
 -- | @arr.slice(start, end)@. Copy; does not mutate.
 arraySlice ::
   Expr f ('Array u) -> Expr f 'Number -> Expr f 'Number -> Expr f ('Array u)
-arraySlice xs a b = expr3 FixArrSlice xs a b
+arraySlice xs a b = expr3 (FixLib arrSlice) xs a b
+
+arrSlice :: LibOp ('Array u) 'Number 'Number ('Array u)
+arrSlice =
+  (libOp (LibMethod "slice"))
+    { libEval =
+        Just
+          (\(ValueArray xs) (ValueNumber a) (ValueNumber b) -> ValueArray (jsSlice xs a b))
+    , libMove = False
+    }
+
+-- | JS @Array.prototype.slice@: truncate, count negatives from the end, clamp.
+jsSlice :: [a] -> Double -> Double -> [a]
+jsSlice vs start end = take (max 0 (clamp end - k)) (drop k vs)
+ where
+  len = List.length vs
+  k = clamp start
+  clamp x
+    | isNaN x = 0
+    | isInfinite x = if x < 0 then 0 else len
+    | otherwise = let n = truncate x in if n < 0 then max 0 (len + n) else min n len
 
 -- | @arr.sort(function(a,b){…})@. Mutates in place.
 sort ::

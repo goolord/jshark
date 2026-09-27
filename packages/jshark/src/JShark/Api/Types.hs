@@ -62,7 +62,10 @@ module JShark.Api.Types
   , expr1
   , expr2
   , expr3
-  , Helper (..)
+  , LibOp (..)
+  , LibForm (..)
+  , libOp
+  , SomeValue (..)
   , ClosedExpr
   , ClosedEffect
   , LamInfo (..)
@@ -483,28 +486,19 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixMath1 :: Math1 -> FixedOp 'Number 'Unit 'Unit 'Number
   -- | @Math.<name>(x, y)@.
   FixMath2 :: Math2 -> FixedOp 'Number 'Number 'Unit 'Number
-  FixArrLen :: FixedOp ('Array u) 'Unit 'Unit 'Number
   FixU8Len :: U8Buffer u => FixedOp u 'Unit 'Unit 'Number
-  FixStrLen :: FixedOp 'String 'Unit 'Unit 'Number
-  FixStringify :: FixedOp u 'Unit 'Unit 'String
-  FixIncludes :: FixedOp ('Array u) u 'Unit 'Bool
   FixConcat :: FixedOp ('Array u) ('Array u) 'Unit ('Array u)
-  FixJoin :: FixedOp ('Array u) 'String 'Unit 'String
   FixParseInt :: FixedOp 'String 'Number 'Unit 'Number
   FixToBigInt :: FixedOp 'Number 'Unit 'Unit 'BigInt
   FixFromBigInt :: FixedOp 'BigInt 'Unit 'Unit 'Number
   FixParseBigInt :: FixedOp 'String 'Unit 'Unit 'BigInt
-  FixArrSlice :: FixedOp ('Array u) 'Number 'Number ('Array u)
-  -- | @x.name(y, …)@, a library-named method on an immutable receiver
-  -- (e.g. @String.prototype@ in @JShark.String@). The call must be pure:
-  -- the optimizer moves and drops it like the other fixed ops. Opaque to
-  -- 'JShark.evaluate'.
-  FixMethod :: !Text -> FixedOp a b c u
   -- | Uncurried call @(f)(x, y)@ for hoisted two-arg helpers ('applyNamed2').
   FixCall2 ::
     FixedOp ('Function a ('Function b r)) a b r
-  -- | A library-supplied runtime helper, called as @$name(x, …)@.
-  FixHelper :: Helper a b c u -> FixedOp a b c u
+  -- | A library-defined operation (e.g. @Array.prototype.join@ in
+  -- @JShark.Array@). Its JS form, host meaning, and optimizer flags are
+  -- the 'LibOp' fields.
+  FixLib :: LibOp a b c u -> FixedOp a b c u
   -- | Tagged @Option@ @some@: @{some: true, value: x}@. Native null\/value
   -- is 'UnsafeNullable', not this.
   FixSome ::
@@ -515,20 +509,45 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixOptionToNative ::
     FixedOp ('Option u) 'Unit 'Unit u
 
--- | A pure runtime helper defined by a library instead of the compiler
--- (e.g. @groupBy@ in @JShark.Array@). Codegen prints
--- @const $name = src;@ once in the preamble, deduplicated alongside hoisted
--- lambdas, and calls it as @$name(x, …)@. 'helperEval' is the host meaning
--- under 'JShark.evaluate'; argument slots past the helper's arity receive
--- 'ValueUnit'. A call may read its mutable arguments, so the optimizer never
--- moves one, but drops it when the result is unused.
-data Helper a b c u = Helper
-  { helperName :: !Text
-  -- ^ Binding name without the @$@ sigil.
-  , helperSrc :: !Text
-  -- ^ JavaScript function source bound to @$name@.
-  , helperEval :: Value a -> Value b -> Value c -> Value u
+-- | A fixed-arity JS operation defined by a library instead of the
+-- compiler. Argument slots past its arity are 'Unit' in the type and
+-- receive 'ValueUnit' in 'libEval'.
+data LibOp a b c u = LibOp
+  { libForm :: !LibForm
+  , libEval :: !(Maybe (Value a -> Value b -> Value c -> Value u))
+  -- ^ Host meaning under 'JShark.evaluate'. 'Nothing' leaves the op
+  -- codegen-only (@EvalUnsupported@).
+  , libFold :: [SomeValue] -> Maybe SomeValue
+  -- ^ Compile-time result, tried when every argument is a literal.
+  , libMove :: !Bool
+  -- ^ The optimizer may move the call. 'False' when it reads mutable
+  -- state, such as an array's elements.
+  , libDrop :: !Bool
+  -- ^ The optimizer may drop the call when its result is unused. 'False'
+  -- when it can run user code or throw (@JSON.stringify@).
   }
+
+-- | How a 'LibOp' prints, given its first argument @x@ and the rest @y, …@.
+data LibForm
+  = -- | @x.name(y, …)@.
+    LibMethod !Text
+  | -- | @x.name@. One argument.
+    LibProp !Text
+  | -- | @name(x, y, …)@, for a global such as @JSON.stringify@.
+    LibCall !Text
+  | -- | @$name(x, y, …)@ with JavaScript source @src@. Codegen prints
+    -- @const $name = src;@ once in the preamble, deduplicated alongside
+    -- hoisted lambdas. The name excludes the @$@ sigil.
+    LibHelper !Text !Text
+
+-- | A 'LibOp' with no host meaning and no fold, which the optimizer may
+-- move and drop. Override fields with record update.
+libOp :: LibForm -> LibOp a b c u
+libOp form = LibOp form Nothing (const Nothing) True True
+
+-- | A 'Value' with its universe hidden, as literals appear in the IR.
+data SomeValue where
+  SomeValue :: Value u -> SomeValue
 
 -- | One-argument @Math@ functions; the JS name is the lowercased
 -- constructor.
@@ -865,7 +884,8 @@ negateE x = Std (Kernel (KNegate x))
 
 -- | Short-circuit only when the left is already a literal. Dropping a
 -- non-literal left of @&& false@ / @|| true@ would skip 'Error' and
--- 'FixStringify' (impure). Same gate as the optimizer's foldAnd/foldOr.
+-- undroppable library ops such as @JSON.stringify@. Same gate as the
+-- optimizer's foldAnd/foldOr.
 andE :: Expr f 'Bool -> Expr f 'Bool -> Expr f 'Bool
 andE (Literal (ValueBool False)) _ = Literal (ValueBool False)
 andE (Literal (ValueBool True)) y = y

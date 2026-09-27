@@ -51,6 +51,7 @@ import JShark.Api.Types
   , Math1 (..)
   , Math2 (..)
   , NumOp
+  , LibOp (..)
   , Value (..)
   , cmpOpFn
   , numOpFn
@@ -643,7 +644,7 @@ foldFixed op args = case (op, map litOf args) of
     | m == Max || m == Min
     , isFiniteDouble a && isFiniteDouble b ->
         Just (num ((if m == Max then max else min) a b))
-  (FixArrLen, [Just (SomeValue (ValueArray vs))]) -> Just (num (fromIntegral (length vs)))
+  (FixLib p, lits) | Just vs <- sequence lits -> libFold p vs
   (FixToBigInt, [Just (SomeValue (ValueNumber d))])
     | isFiniteDouble d
     , d == fromInteger (truncate d) ->
@@ -680,21 +681,16 @@ exactMath1 m a = case m of
 -- | Array reads, stringify, and calls see mutable state: they may not move.
 isMoveFixed :: FixedOp a b c u -> Bool
 isMoveFixed = \case
-  FixArrLen -> False
-  FixIncludes -> False
   FixConcat -> False
-  FixJoin -> False
-  FixArrSlice -> False
-  FixHelper _ -> False
-  FixStringify -> False
   FixCall2 -> False
+  FixLib p -> libMove p
   _ -> True
 
 -- | Stringify may run @toJSON@ and a call may do anything: never dropped.
 isDropFixed :: FixedOp a b c u -> Bool
 isDropFixed = \case
-  FixStringify -> False
   FixCall2 -> False
+  FixLib p -> libDrop p
   _ -> True
 
 -- | Fold @==@ on same-family literals and on literal frozen records.

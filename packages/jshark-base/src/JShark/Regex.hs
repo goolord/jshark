@@ -18,4 +18,4 @@ regex = Literal . ValueRegex
 
 -- | @re.test(s)@ — whether @re@ matches @s@.
 test :: Expr f 'Regex -> Expr f 'String -> Expr f 'Bool
-test re s = expr2 (FixMethod "test") re s
+test re s = expr2 (FixLib (libOp (LibMethod "test"))) re s

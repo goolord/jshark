@@ -50,21 +50,22 @@
   into `JShark.Array`. `ffi` always builds an `FFICall`; codegen already
   parenthesizes an arrow callee, so output is unchanged.
 
-* **Breaking:** `groupBy` moves out of the compiler. The `FixGroupBy` op
-  and the `GroupBy` shim in `Builtin` are replaced by a generic
-  `FixHelper`, which carries a library-defined `Helper` (binding name,
-  JavaScript source, host evaluator); codegen hoists its source into the
-  preamble next to named lambdas and calls it as `$name(…)`.
-  `JShark.Array` now owns the `$groupBy` source, its evaluator, and the
-  `GroupBy` row, which `JShark` and `JShark.Api` no longer export (import
-  it from `JShark.Array`). Generated JavaScript is unchanged.
-
-* **Breaking:** the string and regex method ops `FixToUpper`, `FixToLower`,
-  `FixTrim`, `FixIndexOf`, `FixSplit`, `FixSlice`, `FixReplace`, and
-  `FixTest` are replaced by one `FixMethod name` op that emits
-  `x.name(…)`; `JShark.String` and `JShark.Regex` now supply the method
-  names. `FixStrLen` stays, since it is a property read rather than a
-  call. Generated JavaScript is unchanged.
+* **Breaking:** library-level stdlib operations move out of the compiler
+  into `jshark-base`. A new `FixLib` op carries a `LibOp` record defined
+  by the library: its JS form (`LibMethod` for `x.name(…)`, `LibProp` for
+  `x.name`, `LibCall` for `name(x, …)`, `LibHelper` for a `$name(…)` whose
+  source is hoisted into the preamble), an optional host evaluator, a
+  literal fold, and whether the optimizer may move or drop the call.
+  `libOp` builds a pure default. It replaces `FixArrLen`, `FixStrLen`,
+  `FixIncludes`, `FixJoin`, `FixArrSlice`, `FixStringify`, `FixGroupBy`,
+  and the string and regex methods (`FixToUpper`, `FixToLower`, `FixTrim`,
+  `FixIndexOf`, `FixSplit`, `FixSlice`, `FixReplace`, `FixTest`), which
+  `JShark.Array`, `JShark.String`, `JShark.Regex`, and `JShark.Json` now
+  define. The `$groupBy` shim leaves `Builtin`, and the `GroupBy` row
+  moves to `JShark.Array` (`JShark` and `JShark.Api` no longer export
+  it). `SomeValue` moves to `JShark.Api.Types`, and `JShark.Internal`
+  exports `valueEq` and `joinElem` for library evaluators. Generated
+  JavaScript is unchanged.
 
 * **Breaking:** the compiler core is one first-order IR
   (`JShark.Compiler.Ir`) with a single lowering pass, optimizer, and

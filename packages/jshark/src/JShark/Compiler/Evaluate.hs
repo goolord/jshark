@@ -31,6 +31,8 @@ module JShark.Compiler.Evaluate
   , tryEvalBigBin
   , parseBigIntString
   , uint8Elems
+  , valueEq
+  , joinElem
   , packUint8
   , isFiniteDouble
   , math1Fn
@@ -244,7 +246,6 @@ evalFixed op args = case (op, args) of
   (FixSome, ArgsU x) -> ValueOption (Just (eval x))
   (FixMath1 m, ArgsU x) -> ValueNumber (math1Fn m (num x))
   (FixMath2 m, ArgsB x y) -> ValueNumber (math2Fn m (num x) (num y))
-  (FixArrLen, ArgsU xs) -> ValueNumber (fromIntegral (length (arr xs)))
   (FixU8Len, ArgsU b) -> ValueNumber (fromIntegral (length (uint8Elems (bytes b))))
   (FixParseInt, ArgsB s r) -> ValueNumber (jsParseInt (str s) (truncate (num r)))
   (FixToBigInt, ArgsU x) ->
@@ -266,13 +267,10 @@ evalFixed op args = case (op, args) of
       )
   (FixConcat, ArgsB x y) -> ValueArray (arr x ++ arr y)
   (FixCall2, ArgsT f x y) -> call (call (eval f) (eval x)) (eval y)
-  (FixIncludes, ArgsB xs y) -> let v = eval y in ValueBool (any (valueEq v) (arr xs))
-  (FixJoin, ArgsB xs sep) -> ValueString (T.intercalate (str sep) (map joinElem (arr xs)))
-  (FixArrSlice, ArgsT xs a b) -> ValueArray (slice (arr xs) (num a) (num b))
-  (FixHelper h, ArgsU x) -> helperEval h (eval x) ValueUnit ValueUnit
-  (FixHelper h, ArgsB x y) -> helperEval h (eval x) (eval y) ValueUnit
-  (FixHelper h, ArgsT x y z) -> helperEval h (eval x) (eval y) (eval z)
-  -- String and regex ops are codegen-only.
+  (FixLib p, ArgsU x) | Just f <- libEval p -> f (eval x) ValueUnit ValueUnit
+  (FixLib p, ArgsB x y) | Just f <- libEval p -> f (eval x) (eval y) ValueUnit
+  (FixLib p, ArgsT x y z) | Just f <- libEval p -> f (eval x) (eval y) (eval z)
+  -- A 'LibOp' without 'libEval' is codegen-only.
   _ -> cannotEval "a fixed stdlib op"
 
 math1Fn :: Math1 -> Double -> Double
@@ -358,9 +356,6 @@ valueEqM a b = case (a, b) of
 data RF = RF !Bool !Text SomeValue
 
 -- | A 'Value' with its universe hidden.
-data SomeValue where
-  SomeValue :: Value u -> SomeValue
-
 valueField :: FieldLit Value r -> RF
 valueField = \case
   FieldLit @k (ArgExpr (Literal v)) -> RF False (symbolText @k) (SomeValue v)
@@ -447,17 +442,6 @@ typeOfValue = \case
   ValueUnit -> "undefined"
   ValueFunction {} -> "function"
   _ -> "object"
-
--- | JS @Array.prototype.slice@: truncate, count negatives from the end, clamp.
-slice :: [a] -> Double -> Double -> [a]
-slice vs start end = take (max 0 (clamp end - k)) (drop k vs)
- where
-  len = length vs
-  k = clamp start
-  clamp x
-    | isNaN x = 0
-    | isInfinite x = if x < 0 then 0 else len
-    | otherwise = let n = truncate x in if n < 0 then max 0 (len + n) else min n len
 
 jsParseInt :: Text -> Int -> Double
 jsParseInt s r

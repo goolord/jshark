@@ -24,6 +24,10 @@ module JShark.Internal
     -- * Runtime shims
   , Builtin (ValueEq)
   , builtinSrc
+
+    -- * Host semantics for library primitives ('JShark.Api.Types.LibOp')
+  , valueEq
+  , joinElem
   )
 where
 
@@ -31,6 +35,7 @@ import Data.Text (Text)
 import JShark.Api.Types (ClosedEffect, ClosedExpr)
 import JShark.Compiler.Codegen
 import JShark.Compiler.Emit (Builtin (ValueEq), builtinSrc)
+import JShark.Compiler.Evaluate (joinElem, valueEq)
 import JShark.Compiler.Ir
 import JShark.Compiler.Lower
 

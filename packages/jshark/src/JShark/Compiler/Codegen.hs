@@ -316,8 +316,8 @@ shim b args (ES n p) = let (p', js) = useShim b args p in (ES n p', js)
 
 -- | Bind a library helper's source in the preamble.
 needHelper :: FixedOp a b c u -> ES -> ES
-needHelper (FixHelper h) (ES n p) =
-  ES n (insertHoisted (hoistTagName (helperName h)) (helperSrc h) p)
+needHelper (FixLib LibOp {libForm = LibHelper name src}) (ES n p) =
+  ES n (insertHoisted (hoistTagName name) src p)
 needHelper _ s = s
 
 emit :: (Int -> Code) -> ES -> P -> (ES, Code)
@@ -836,23 +836,20 @@ isSimple p = case pN p of
 -- remaining arguments.
 fixedJS :: FixedOp a b c u -> JS -> [JS] -> JS
 fixedJS op r args = case op of
-  FixArrLen -> r <> ".length"
   FixU8Len -> r <> ".length"
-  FixStrLen -> r <> ".length"
-  FixStringify -> call "JSON.stringify"
   FixToBigInt -> call "BigInt"
   FixFromBigInt -> call "Number"
   FixParseBigInt -> call "BigInt"
   FixSome -> "{some: true, value: " <> r <> "}"
   FixOptionToNative -> call "((o) => o.some ? o.value : null)"
-  FixIncludes -> method "includes"
   FixConcat -> method "concat"
-  FixJoin -> method "join"
   FixParseInt -> call "parseInt"
   FixCall2 -> parens r <> parens (commas args)
-  FixHelper h -> call (jsText (hoistTagName (helperName h)))
-  FixArrSlice -> method "slice"
-  FixMethod name -> method (jsText name)
+  FixLib p -> case libForm p of
+    LibMethod name -> method (jsText name)
+    LibProp name -> r <> "." <> jsText name
+    LibCall name -> call (jsText name)
+    LibHelper name _ -> call (jsText (hoistTagName name))
   _ -> error "JShark.Compiler.Codegen: not a plain fixed op"
  where
   method name = r <> "." <> name <> parens (commas args)

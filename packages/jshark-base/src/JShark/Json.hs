@@ -27,7 +27,9 @@ stringify x =
 -- the optimizer still treats it as effectful (it may throw) and never
 -- discards it.
 stringifyPure :: Expr f u -> Expr f 'String
-stringifyPure = expr1 FixStringify
+stringifyPure =
+  expr1
+    (FixLib (libOp (LibCall "JSON.stringify")) {libMove = False, libDrop = False})
 
 -- | @JSON.parse(x)@. Throws on bad JSON, so this is an 'Effect'. The
 -- result type is asserted by the caller and not checked.
