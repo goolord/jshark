@@ -685,7 +685,7 @@ isMoveFixed = \case
   FixConcat -> False
   FixJoin -> False
   FixArrSlice -> False
-  FixGroupBy -> False
+  FixHelper _ -> False
   FixStringify -> False
   FixCall2 -> False
   _ -> True

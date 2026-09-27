@@ -314,6 +314,12 @@ tmp (ES n p) = (nName n, ES (n + 1) p)
 shim :: Builtin -> [JS] -> ES -> (ES, JS)
 shim b args (ES n p) = let (p', js) = useShim b args p in (ES n p', js)
 
+-- | Bind a library helper's source in the preamble.
+needHelper :: FixedOp a b c u -> ES -> ES
+needHelper (FixHelper h) (ES n p) =
+  ES n (insertHoisted (hoistTagName (helperName h)) (helperSrc h) p)
+needHelper _ s = s
+
 emit :: (Int -> Code) -> ES -> P -> (ES, Code)
 emit table s0 (P _ ann n) = case n of
   NLit (SomeValue v) -> same (renderLit v)
@@ -740,14 +746,12 @@ emit table s0 (P _ ann n) = case n of
     (FixMath1 m, _, [Code d r]) -> same (Code d ("Math." <> lower m <> parens r))
     (FixMath2 m, _, [Code d r, Code d' r']) ->
       same (Code (d $$ d') ("Math." <> lower m <> parens (r <> ", " <> r')))
-    (FixGroupBy, [x, _], [Code d r, Code d' r']) ->
-      let (s1, call) = shim GroupBy [operand x r, r'] s0 in (s1, Code (d $$ d') call)
     (_, x : _, cs@(Code _ r : _)) ->
-      same
-        ( Code
-            (foldr1 ($$) [d | Code d _ <- cs])
-            (fixedJS op (operand x r) [a | Code _ a <- drop 1 cs])
-        )
+      ( needHelper op s0
+      , Code
+          (foldr1 ($$) [d | Code d _ <- cs])
+          (fixedJS op (operand x r) [a | Code _ a <- drop 1 cs])
+      )
     _ -> error "JShark.Compiler.Codegen: unexpected fixed arity"
   lower m = jsString (map Char.toLower (show m))
 
@@ -832,9 +836,6 @@ isSimple p = case pN p of
 -- remaining arguments.
 fixedJS :: FixedOp a b c u -> JS -> [JS] -> JS
 fixedJS op r args = case op of
-  FixToUpper -> method "toUpperCase"
-  FixToLower -> method "toLowerCase"
-  FixTrim -> method "trim"
   FixArrLen -> r <> ".length"
   FixU8Len -> r <> ".length"
   FixStrLen -> r <> ".length"
@@ -844,17 +845,14 @@ fixedJS op r args = case op of
   FixParseBigInt -> call "BigInt"
   FixSome -> "{some: true, value: " <> r <> "}"
   FixOptionToNative -> call "((o) => o.some ? o.value : null)"
-  FixIndexOf -> method "indexOf"
-  FixSplit -> method "split"
   FixIncludes -> method "includes"
   FixConcat -> method "concat"
   FixJoin -> method "join"
-  FixTest -> method "test"
   FixParseInt -> call "parseInt"
   FixCall2 -> parens r <> parens (commas args)
-  FixSlice -> method "slice"
+  FixHelper h -> call (jsText (hoistTagName (helperName h)))
   FixArrSlice -> method "slice"
-  FixReplace -> method "replace"
+  FixMethod name -> method (jsText name)
   _ -> error "JShark.Compiler.Codegen: not a plain fixed op"
  where
   method name = r <> "." <> name <> parens (commas args)

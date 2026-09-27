@@ -62,7 +62,7 @@ module JShark.Api.Types
   , expr1
   , expr2
   , expr3
-  , GroupBy
+  , Helper (..)
   , ClosedExpr
   , ClosedEffect
   , LamInfo (..)
@@ -337,13 +337,6 @@ data Arg :: (Universe -> Type) -> Universe -> Type where
 -- instances. The index on 'Object' / 'MutableObject' is this host 'Type', not a 'Universe'.
 type family Field (r :: Type) (k :: Symbol) :: Universe
 
--- | @groupBy@ result row: @[{key, items}]@. Not a null-prototype dict.
-data GroupBy (u :: Universe)
-
-type instance Field (GroupBy u) "key" = 'String
-
-type instance Field (GroupBy u) "items" = 'Array u
-
 -- | One field of an object literal, pure ('ArgExpr') or effectful
 -- ('ArgEffect'). @k@ is the JS name ('fieldKey'). 'FieldLit' requires the
 -- value's universe to be 'Field' @r@ @k@; 'FieldLitExtra' carries a key
@@ -490,33 +483,28 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   FixMath1 :: Math1 -> FixedOp 'Number 'Unit 'Unit 'Number
   -- | @Math.<name>(x, y)@.
   FixMath2 :: Math2 -> FixedOp 'Number 'Number 'Unit 'Number
-  FixToUpper :: FixedOp 'String 'Unit 'Unit 'String
-  FixToLower :: FixedOp 'String 'Unit 'Unit 'String
-  FixTrim :: FixedOp 'String 'Unit 'Unit 'String
   FixArrLen :: FixedOp ('Array u) 'Unit 'Unit 'Number
   FixU8Len :: U8Buffer u => FixedOp u 'Unit 'Unit 'Number
   FixStrLen :: FixedOp 'String 'Unit 'Unit 'Number
   FixStringify :: FixedOp u 'Unit 'Unit 'String
-  FixIndexOf :: FixedOp 'String 'String 'Unit 'Number
-  FixSplit :: FixedOp 'String 'String 'Unit ('Array 'String)
   FixIncludes :: FixedOp ('Array u) u 'Unit 'Bool
   FixConcat :: FixedOp ('Array u) ('Array u) 'Unit ('Array u)
   FixJoin :: FixedOp ('Array u) 'String 'Unit 'String
-  FixTest :: FixedOp 'Regex 'String 'Unit 'Bool
   FixParseInt :: FixedOp 'String 'Number 'Unit 'Number
   FixToBigInt :: FixedOp 'Number 'Unit 'Unit 'BigInt
   FixFromBigInt :: FixedOp 'BigInt 'Unit 'Unit 'Number
   FixParseBigInt :: FixedOp 'String 'Unit 'Unit 'BigInt
-  FixSlice :: FixedOp 'String 'Number 'Number 'String
   FixArrSlice :: FixedOp ('Array u) 'Number 'Number ('Array u)
-  FixReplace :: FixedOp 'String 'String 'String 'String
+  -- | @x.name(y, …)@, a library-named method on an immutable receiver
+  -- (e.g. @String.prototype@ in @JShark.String@). The call must be pure:
+  -- the optimizer moves and drops it like the other fixed ops. Opaque to
+  -- 'JShark.evaluate'.
+  FixMethod :: !Text -> FixedOp a b c u
   -- | Uncurried call @(f)(x, y)@ for hoisted two-arg helpers ('applyNamed2').
   FixCall2 ::
     FixedOp ('Function a ('Function b r)) a b r
-  -- | @groupBy(arr, keyFn)@ — one pass, first-seen key order, append-only
-  -- groups. Codegen emits the local-Map @$groupBy@ shim.
-  FixGroupBy ::
-    FixedOp ('Array u) ('Function u 'String) 'Unit ('Array ('Object (GroupBy u)))
+  -- | A library-supplied runtime helper, called as @$name(x, …)@.
+  FixHelper :: Helper a b c u -> FixedOp a b c u
   -- | Tagged @Option@ @some@: @{some: true, value: x}@. Native null\/value
   -- is 'UnsafeNullable', not this.
   FixSome ::
@@ -526,6 +514,21 @@ data FixedOp (a :: Universe) (b :: Universe) (c :: Universe) (u :: Universe) whe
   -- an 'Option' to a foreign parameter declared @T | null@.
   FixOptionToNative ::
     FixedOp ('Option u) 'Unit 'Unit u
+
+-- | A pure runtime helper defined by a library instead of the compiler
+-- (e.g. @groupBy@ in @JShark.Array@). Codegen prints
+-- @const $name = src;@ once in the preamble, deduplicated alongside hoisted
+-- lambdas, and calls it as @$name(x, …)@. 'helperEval' is the host meaning
+-- under 'JShark.evaluate'; argument slots past the helper's arity receive
+-- 'ValueUnit'. A call may read its mutable arguments, so the optimizer never
+-- moves one, but drops it when the result is unused.
+data Helper a b c u = Helper
+  { helperName :: !Text
+  -- ^ Binding name without the @$@ sigil.
+  , helperSrc :: !Text
+  -- ^ JavaScript function source bound to @$name@.
+  , helperEval :: Value a -> Value b -> Value c -> Value u
+  }
 
 -- | One-argument @Math@ functions; the JS name is the lowercased
 -- constructor.

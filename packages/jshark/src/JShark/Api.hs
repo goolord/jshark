@@ -40,7 +40,6 @@ module JShark.Api
   , NumericU
   , structuralEq
   , structuralNEq
-  , GroupBy
 
     -- * Literals
   , number

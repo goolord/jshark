@@ -24,29 +24,29 @@ length = expr1 FixStrLen
 
 -- | Index of the first occurrence of @sub@, or -1.
 indexOf :: Expr f 'String -> Expr f 'String -> Expr f 'Number
-indexOf s sub = expr2 FixIndexOf s sub
+indexOf s sub = expr2 (FixMethod "indexOf") s sub
 
 -- | @s.slice(a, b)@ — negative indices count from the end.
 slice :: Expr f 'String -> Expr f 'Number -> Expr f 'Number -> Expr f 'String
-slice s a b = expr3 FixSlice s a b
+slice s a b = expr3 (FixMethod "slice") s a b
 
 -- | @s.toUpperCase()@.
 toUpper :: Expr f 'String -> Expr f 'String
-toUpper = expr1 FixToUpper
+toUpper = expr1 (FixMethod "toUpperCase")
 
 -- | @s.toLowerCase()@.
 toLower :: Expr f 'String -> Expr f 'String
-toLower = expr1 FixToLower
+toLower = expr1 (FixMethod "toLowerCase")
 
 -- | @s.trim()@.
 trim :: Expr f 'String -> Expr f 'String
-trim = expr1 FixTrim
+trim = expr1 (FixMethod "trim")
 
 -- | @s.split(sep)@ — an array of the pieces.
 split :: Expr f 'String -> Expr f 'String -> Expr f ('Array 'String)
-split s sep = expr2 FixSplit s sep
+split s sep = expr2 (FixMethod "split") s sep
 
 -- | @s.replace(from, to)@ — the FIRST occurrence only
 -- (matches JS; no regex here).
 replace :: Expr f 'String -> Expr f 'String -> Expr f 'String -> Expr f 'String
-replace s pat rep = expr3 FixReplace s pat rep
+replace s pat rep = expr3 (FixMethod "replace") s pat rep

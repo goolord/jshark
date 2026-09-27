@@ -11,7 +11,9 @@
 --
 -- Most reads compile to kernel 'Index' (codegen @$checkedIndex@). Mutations
 -- ('push', 'clear', 'sort') are 'Effect' / 'CallMethod'. Hoisted helpers
--- (@$groupBy@) come from 'namedLambdaRow' and are called with 'applyNamed2'.
+-- (@$zipWith@, @$reduce@, @$toSorted@) come from 'namedLambdaRow' and are
+-- called with 'applyNamed2'; @$groupBy@ is hand-written JavaScript bound
+-- through a 'Helper'.
 --
 -- Read-only and copying operations are 'Expr': 'index', 'length',
 -- 'includes', 'join', 'map', 'filter', 'reduce', 'reduceRight',
@@ -49,6 +51,7 @@ module JShark.Array
   , reduceRight
   , singleton
   , groupBy
+  , GroupBy
   , zipWith
   , arraySlice
   , sort
@@ -62,6 +65,13 @@ import JShark.Api.Params (Param)
 import JShark.Api.Types
 import qualified JShark.Math as Math
 import Prelude hiding (concat, filter, length, map, zipWith)
+
+-- | @groupBy@ result row: @[{key, items}]@. Not a null-prototype dict.
+data GroupBy (u :: Universe)
+
+type instance Field (GroupBy u) "key" = 'String
+
+type instance Field (GroupBy u) "items" = 'Array u
 
 -- | @zipWith@ pair argument: @\{xs, ys\}@.
 data ZipPair (a :: Universe) (b :: Universe)
@@ -255,7 +265,29 @@ groupBy ::
   Expr f ('Array u)
   -> (Expr f u -> Expr f 'String)
   -> Expr f ('Array ('Object (GroupBy u)))
-groupBy arr keyFn = expr2 FixGroupBy arr (toLambda keyFn)
+groupBy arr keyFn = expr2 (FixHelper groupByHelper) arr (toLambda keyFn)
+
+groupByHelper ::
+  Helper ('Array u) ('Function u 'String) 'Unit ('Array ('Object (GroupBy u)))
+groupByHelper =
+  Helper
+    { helperName = "groupBy"
+    , helperSrc =
+        "function(arr,key){var m=new Map(),out=[];for(var i=0;i<arr.length;i++){if(!(i in arr))continue;var x=arr[i],k=key(x),e=m.get(k);if(e===undefined){e={key:k,items:[]};m.set(k,e);out.push(e)}e.items.push(x)}return out}"
+    , helperEval = \(ValueArray xs) (ValueFunction key) _ ->
+        let
+          keyOf x = case key x of ValueString k -> k
+          keyed = [(keyOf x, x) | x <- xs]
+         in
+          ValueArray
+            [ ValueFrozen
+                [ FieldLit @"key" (ArgExpr (Literal (ValueString k)))
+                , FieldLit @"items"
+                    (ArgExpr (Literal (ValueArray [x | (k', x) <- keyed, k' == k])))
+                ]
+            | k <- List.nub (List.map fst keyed)
+            ]
+    }
 
 -- | @zipWith@; result length is 'Math.min'. One hoisted @$zipWith@ helper.
 zipWith ::

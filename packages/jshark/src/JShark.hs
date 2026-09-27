@@ -25,7 +25,6 @@ module JShark
   , LamInfo (..)
   , noLamInfo
   , Value (..)
-  , GroupBy
   , Arg (..)
   , ClosedExpr
   , ClosedEffect

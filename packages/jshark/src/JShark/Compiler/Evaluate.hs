@@ -43,7 +43,6 @@ import Data.Array.Byte (ByteArray (..))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
 import Data.Char (digitToInt, isSpace)
 import qualified Data.Char as Char
-import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -270,25 +269,9 @@ evalFixed op args = case (op, args) of
   (FixIncludes, ArgsB xs y) -> let v = eval y in ValueBool (any (valueEq v) (arr xs))
   (FixJoin, ArgsB xs sep) -> ValueString (T.intercalate (str sep) (map joinElem (arr xs)))
   (FixArrSlice, ArgsT xs a b) -> ValueArray (slice (arr xs) (num a) (num b))
-  (FixGroupBy, ArgsB xs keyFn) ->
-    let
-      f = eval keyFn
-      step (order, gs) x =
-        let
-          k = case call f x of ValueString s -> s
-         in
-          if Map.member k gs
-            then (order, Map.adjust (++ [x]) k gs)
-            else (order ++ [k], Map.insert k [x] gs)
-      (keys, groups) = foldl' step ([], Map.empty) (arr xs)
-     in
-      ValueArray
-        [ ValueFrozen
-            [ FieldLit @"key" (ArgExpr (Literal (ValueString k)))
-            , FieldLit @"items" (ArgExpr (Literal (ValueArray (groups Map.! k))))
-            ]
-        | k <- keys
-        ]
+  (FixHelper h, ArgsU x) -> helperEval h (eval x) ValueUnit ValueUnit
+  (FixHelper h, ArgsB x y) -> helperEval h (eval x) (eval y) ValueUnit
+  (FixHelper h, ArgsT x y z) -> helperEval h (eval x) (eval y) (eval z)
   -- String and regex ops are codegen-only.
   _ -> cannotEval "a fixed stdlib op"
 
