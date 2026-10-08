@@ -14,12 +14,11 @@
 ---
 
 JShark embeds a typed subset of JavaScript in Haskell, inspired by
-Crockford's *JavaScript: The Good Parts*. A jshark program is a Haskell
-value built from two GADTs indexed by a `Universe` kind: `Expr f u` for pure
-expressions and `Effect f u` for effectful statements. GHC typechecks the program, and the
-jshark compiler lowers it to JavaScript with no runtime library. Standard library functions
-that make the language more sane (structural equality, `groupBy`) are printed in a preamble
-only when a program uses them.
+Crockford's *JavaScript: The Good Parts*. Pure and effectful code is split
+in `Expr f (u :: Universe)` and `Effect f (u :: Universe)` respectively.
+The jshark compiler lowers the typed AST to idiomatic JavaScript with no runtime library.
+Standard library functions that make the language more sane (structural equality, `groupBy`) 
+are printed in a preamble only when a program uses them.
 
 ```haskell
 greet :: Expr f 'String -> Effect f 'Unit
@@ -42,15 +41,24 @@ concatenation before emitting.
 
 ### Types
 
-`Universe` models JavaScript's runtime types: `Number` (an IEEE 754 double
-with 32-bit bitwise operators), `BigInt`, `String`, `Bool`, `Unit`,
-`Array u`, `Function u v` (unary, nested for currying), `Fn us v` (an
-uncurried n-ary JS function), `Option u`, `Result e a`, `Map k v`, `Set u`,
-`Uint8Array`, and frozen or mutable objects over a Haskell row type.
-`Option` compiles to `{some, value}` and `Result` to `{ok, value}`, so nested
-options stay distinct. `Generic` records become plain objects and `Generic`
-sums become `{tag, payload}` objects with coverage-checked case analysis.
-
+| Haskell Type (`Universe`) | JavaScript Runtime Type / Structure | Description & Semantics |
+| --- | --- | --- |
+| `Number` | `number` | IEEE 754 64-bit float with 32-bit bitwise operations |
+| `BigInt` | `bigint` | Arbitrary-precision integer |
+| `String` | `string` | UTF-16 text string |
+| `Bool` | `boolean` | `true` or `false` |
+| `Unit` | `undefined` / `null` | Unit / void value |
+| `Array u` | `Array` (`u[]`) | Standard JavaScript array |
+| `Function u v` | `(u) => v` | Unary function; chained/nested to support currying |
+| `Fn us v` | `(...us) => v` | Uncurried native $n$-ary JavaScript function |
+| `Option u` | `{ some, value }` | Tagged object instead of `null` to ensure nested options (e.g., `Some(None)`) remain distinct |
+| `Result e a` | `{ ok, value }` | Tagged object representing success (`ok: true`) or failure (`ok: false`) |
+| `Map k v` | `Map` | Standard JavaScript key-value map |
+| `Set u` | `Set` | Standard JavaScript set |
+| `Uint8Array` | `Uint8Array` | Typed byte array buffer view |
+| Row-typed objects | `Object` | Frozen (`Object.freeze`) or mutable key-value object |
+| `Generic` records | Plain `Object` | Record fields mapped directly to object properties |
+| `Generic` sums | `{ tag, payload }` | Tagged union with coverage-checked pattern matching |
 Binders use parametric higher-order abstract syntax (PHOAS). A `let_` or a
 lambda takes a Haskell function over the binder type `f`, and closed programs
 are polymorphic in `f`, so a term with a free or captured variable does not
@@ -144,12 +152,10 @@ nix develop
 cabal build all
 ```
 
-Without Nix, you need **GHC 9.14+** and **Cabal 3.12+**. Outside Windows,
-`cabal.project` builds this repository with the LLVM 20 backend, so `opt-20`
-and `llc-20` must be on `PATH`. That setting is local to the repository, and
-projects that depend on `jshark` do not need LLVM. [Bun](https://bun.sh) runs
-the generated JavaScript in the test suites, and `jshark-bindgen` needs Bun
-and the `typescript` package to read declaration files.
+Requirements:
+- [Bun](https://bun.sh) runs the generated JavaScript in the test suites + `jshark-bindgen`
+- `llc-20` to build with `cabal.project`
+- `typescript` for `jshark-bindgen`
 
 Serve the demos with live reloading at `http://localhost:3000`:
 
