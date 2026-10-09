@@ -59,6 +59,7 @@ concatenation before emitting.
 | Row-typed objects | `Object` | Frozen (`Object.freeze`) or mutable key-value object |
 | `Generic` records | Plain `Object` | Record fields mapped directly to object properties |
 | `Generic` sums | `{ tag, payload }` | Tagged union with coverage-checked pattern matching |
+
 Binders use parametric higher-order abstract syntax (PHOAS). A `let_` or a
 lambda takes a Haskell function over the binder type `f`, and closed programs
 are polymorphic in `f`, so a term with a free or captured variable does not
