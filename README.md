@@ -59,10 +59,6 @@ concatenation before emitting.
 | Row-typed objects | `Object` | Frozen (`Object.freeze`) or mutable key-value object |
 | `Generic` records | Plain `Object` | Record fields mapped directly to object properties |
 | `Generic` sums | `{ tag, payload }` | Tagged union with coverage-checked pattern matching |
-Binders use parametric higher-order abstract syntax (PHOAS). A `let_` or a
-lambda takes a Haskell function over the binder type `f`, and closed programs
-are polymorphic in `f`, so a term with a free or captured variable does not
-typecheck.
 
 ### Pure and effectful code
 
@@ -75,7 +71,7 @@ through `EffectSyntax`, which reifies each bind as an `Effect` node.
 [Bun](https://bun.sh), with [happy-dom](https://github.com/capricorn86/happy-dom)
 supplying `document` and `window` when a test needs them.
 
-### Foreign code
+### FFI
 
 `ffi` is the backdoor to JavaScript proper. The callee is
 unchecked JavaScript text, the arguments are a typed record, and the result
@@ -111,8 +107,8 @@ sums, typed events, and the FFI.
 
 ## Demos
 
-Four applications, rebuilt from `main` on every push and shown next to the
-JavaScript they compile to: **<https://goolord.github.io/jshark/>**
+**<https://goolord.github.io/jshark/>**
+each demo contains the compiled JavaScript in the human readable output format
 
 | | |
 | :--- | :--- |
@@ -143,8 +139,6 @@ li_ $ do
 
 ## Building
 
-With Nix, the dev shell provides the full toolchain:
-
 ```bash
 git clone https://github.com/goolord/jshark.git
 cd jshark
@@ -174,19 +168,6 @@ Run the tests:
 ```bash
 cabal test all --test-show-details=direct
 ```
-
-## Limitations
-
-Some of JavaScript is outside the subset on purpose:
-
-- Classes, `this`, and prototype mutation are not modelled. Use `ffi` for
-  APIs that require them.
-- Type checking stops at the FFI boundary. A foreign call is only as correct
-  as the signature written for it, and it can throw at runtime; `catch_`
-  handles that.
-- JShark does not resolve modules or bundle dependencies. Load npm packages
-  with a script tag or your own bundler, then bind them with `ffi` or
-  `jshark-bindgen`.
 
 ## Documentation
 
